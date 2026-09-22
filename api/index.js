@@ -8,7 +8,7 @@ const manifest = {
     name: "MOVINA",
     description: "He thong gop nguon truc tiep",
 
-    resources: ["catalog", "stream"],
+    resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["tt", "vnwpsw"],
 
@@ -153,9 +153,11 @@ async function fetchCatalogFromPhimApi(args) {
 builder.defineCatalogHandler(async (args) => {
 
     console.log(
-        "[CATALOG]",
+        "[CATALOG] type:",
         args.type,
+        "id:",
         args.id,
+        "search:",
         args.extra?.search || ""
     );
 
@@ -165,6 +167,7 @@ builder.defineCatalogHandler(async (args) => {
             await fetchCatalogFromPhimApi(args);
 
         if (!Array.isArray(items)) {
+
             return {
                 metas: []
             };
@@ -177,7 +180,11 @@ builder.defineCatalogHandler(async (args) => {
                 const movieName =
                     String(item.name);
 
+                const poster =
+                    makePosterUrl(item);
+
                 return {
+
                     id:
                         "vnwpsw:" +
                         encodeURIComponent(movieName),
@@ -191,7 +198,7 @@ builder.defineCatalogHandler(async (args) => {
                         movieName,
 
                     poster:
-                        makePosterUrl(item),
+                        poster,
 
                     description:
                         "Original: " +
@@ -233,6 +240,275 @@ builder.defineCatalogHandler(async (args) => {
 
 
 /* ============================================================
+   META HANDLER
+   ============================================================ */
+
+builder.defineMetaHandler(async (args) => {
+
+    console.log(
+        "[META] type:",
+        args.type,
+        "id:",
+        args.id
+    );
+
+    try {
+
+        let movieName = "";
+
+        const rawId =
+            String(args.id || "");
+
+        /*
+         * ID do Catalog tạo:
+         *
+         * vnwpsw:Tên%20phim
+         */
+
+        if (
+            rawId.startsWith("vnwpsw:")
+        ) {
+
+            movieName =
+                decodeURIComponent(
+                    rawId.substring(
+                        "vnwpsw:".length
+                    )
+                );
+
+        } else if (
+            rawId.startsWith("tt")
+        ) {
+
+            const imdbId =
+                rawId.split(":")[0];
+
+            const cleanType =
+                args.type === "series"
+                    ? "series"
+                    : "movie";
+
+            const res =
+                await axios.get(
+                    "https://stremio.com/" +
+                    cleanType +
+                    "/" +
+                    imdbId +
+                    ".json",
+                    {
+                        timeout: 5000
+                    }
+                );
+
+            if (
+                res.data?.meta?.name
+            ) {
+
+                movieName =
+                    res.data.meta.name;
+            }
+
+        } else {
+
+            movieName =
+                decodeURIComponent(rawId);
+        }
+
+        console.log(
+            "[META] Movie:",
+            movieName
+        );
+
+        if (!movieName) {
+
+            console.log(
+                "[META] Không tìm thấy tên phim"
+            );
+
+            return {
+                meta: null
+            };
+        }
+
+
+        /* ----------------------------------------------------
+           Tìm phim lại trên PhimAPI
+           ---------------------------------------------------- */
+
+        const searchUrl =
+            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+            encodeURIComponent(movieName) +
+            "&limit=10";
+
+        console.log(
+            "[META] Search:",
+            searchUrl
+        );
+
+        const res =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0",
+                        "Accept":
+                            "application/json"
+                    }
+                }
+            );
+
+        const items =
+            res.data?.data?.items ||
+            res.data?.items ||
+            [];
+
+        console.log(
+            "[META] Search results:",
+            items.length
+        );
+
+
+        /* ----------------------------------------------------
+           Tìm chính xác tên phim trước
+           ---------------------------------------------------- */
+
+        let item =
+            items.find(
+                x =>
+                    x &&
+                    x.name &&
+                    x.name.toLowerCase() ===
+                    movieName.toLowerCase()
+            );
+
+
+        /* ----------------------------------------------------
+           Nếu không khớp tuyệt đối thì lấy kết quả đầu
+           ---------------------------------------------------- */
+
+        if (
+            !item &&
+            items.length > 0
+        ) {
+
+            item =
+                items[0];
+        }
+
+
+        /* ----------------------------------------------------
+           Không tìm được trên API
+           ---------------------------------------------------- */
+
+        if (!item) {
+
+            console.log(
+                "[META] Không tìm thấy item:",
+                movieName
+            );
+
+            return {
+
+                meta: {
+
+                    id:
+                        args.id,
+
+                    type:
+                        args.type === "series"
+                            ? "series"
+                            : "movie",
+
+                    name:
+                        movieName
+
+                }
+
+            };
+        }
+
+
+        /* ----------------------------------------------------
+           Tạo Meta
+           ---------------------------------------------------- */
+
+        const poster =
+            makePosterUrl(item);
+
+        const meta = {
+
+            id:
+                args.id,
+
+            type:
+                args.type === "series"
+                    ? "series"
+                    : "movie",
+
+            name:
+                item.name ||
+                movieName,
+
+            poster:
+                poster,
+
+            description:
+                "Original: " +
+                (
+                    item.origin_name ||
+                    item.original_name ||
+                    item.name ||
+                    movieName
+                ) +
+                " (" +
+                (
+                    item.year ||
+                    "New"
+                ) +
+                ")",
+
+            releaseInfo:
+                item.year
+                    ? String(item.year)
+                    : undefined,
+
+            genres:
+                Array.isArray(item.category)
+                    ? item.category.map(
+                        x =>
+                            typeof x === "string"
+                                ? x
+                                : x.name
+                    )
+                    : undefined
+        };
+
+        console.log(
+            "[META] OK:",
+            meta.name
+        );
+
+        return {
+            meta
+        };
+
+    } catch (e) {
+
+        console.error(
+            "[META ERROR]",
+            e?.message || e
+        );
+
+        return {
+            meta: null
+        };
+    }
+});
+
+
+/* ============================================================
    NGUONC
    ============================================================ */
 
@@ -247,9 +523,12 @@ async function fetchNguonC(movieName) {
             encodeURIComponent(movieName);
 
         const res =
-            await axios.get(searchUrl, {
-                timeout: 4000
-            });
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 4000
+                }
+            );
 
         if (
             res.data?.items &&
@@ -264,9 +543,12 @@ async function fetchNguonC(movieName) {
                 movieSlug;
 
             const detail =
-                await axios.get(detailUrl, {
-                    timeout: 4000
-                });
+                await axios.get(
+                    detailUrl,
+                    {
+                        timeout: 4000
+                    }
+                );
 
             const episodes =
                 detail.data?.film?.episodes || [];
@@ -280,14 +562,23 @@ async function fetchNguonC(movieName) {
                     if (!ep.m3u8_url) return;
 
                     streams.push({
-                        name: "🎬 [API] NguonC",
+
+                        name:
+                            "🎬 [API] NguonC",
+
                         title:
                             "Tap " +
                             ep.name +
                             " - " +
-                            (server.server_name || ""),
+                            (
+                                server.server_name ||
+                                ""
+                            ),
+
                         url:
-                            String(ep.m3u8_url)
+                            String(
+                                ep.m3u8_url
+                            )
                     });
                 });
             });
@@ -320,14 +611,19 @@ async function fetchKKPhim(movieName) {
             encodeURIComponent(movieName);
 
         const res =
-            await axios.get(searchUrl, {
-                timeout: 4000
-            });
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 4000
+                }
+            );
 
         const items =
             res.data?.data?.items || [];
 
-        if (items.length > 0) {
+        if (
+            items.length > 0
+        ) {
 
             const movieSlug =
                 items[0].slug;
@@ -337,30 +633,46 @@ async function fetchKKPhim(movieName) {
                 movieSlug;
 
             const detail =
-                await axios.get(detailUrl, {
-                    timeout: 4000
-                });
+                await axios.get(
+                    detailUrl,
+                    {
+                        timeout: 4000
+                    }
+                );
 
             const episodesData =
                 detail.data?.episodes || [];
 
             episodesData.forEach(server => {
 
-                if (!server.server_data) return;
+                if (!server.server_data) {
+                    return;
+                }
 
                 server.server_data.forEach(ep => {
 
-                    if (!ep.link_m3u8) return;
+                    if (!ep.link_m3u8) {
+                        return;
+                    }
 
                     streams.push({
-                        name: "⚡ [API] KKPhim",
+
+                        name:
+                            "⚡ [API] KKPhim",
+
                         title:
                             "Ban phat: " +
                             ep.name +
                             " - " +
-                            (server.server_name || ""),
+                            (
+                                server.server_name ||
+                                ""
+                            ),
+
                         url:
-                            String(ep.link_m3u8)
+                            String(
+                                ep.link_m3u8
+                            )
                     });
                 });
             });
@@ -393,16 +705,29 @@ async function fetchVSMov(movieName) {
             encodeURIComponent(movieName);
 
         const res =
-            await axios.get(searchUrl, {
-                timeout: 4000
-            });
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 4000
+                }
+            );
 
-        if (res.data?.stream_url) {
+        if (
+            res.data?.stream_url
+        ) {
 
             streams.push({
-                name: "🌟 [API] VSMov",
-                title: "Luong phat VSMov",
-                url: String(res.data.stream_url)
+
+                name:
+                    "🌟 [API] VSMov",
+
+                title:
+                    "Luong phat VSMov",
+
+                url:
+                    String(
+                        res.data.stream_url
+                    )
             });
 
         } else if (
@@ -410,8 +735,13 @@ async function fetchVSMov(movieName) {
         ) {
 
             streams.push({
-                name: "🌟 [API] VSMov",
-                title: "Luong phat VSMov",
+
+                name:
+                    "🌟 [API] VSMov",
+
+                title:
+                    "Luong phat VSMov",
+
                 url:
                     String(
                         res.data.results.stream_url
@@ -450,16 +780,21 @@ async function scrapePhimLongTieng(movieName) {
             "/";
 
         const searchRes =
-            await axios.get(searchUrl, {
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                },
-                timeout: 4000
-            });
+            await axios.get(
+                searchUrl,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    },
+                    timeout: 4000
+                }
+            );
 
         const parseHtml =
-            cheerio.load(searchRes.data);
+            cheerio.load(
+                searchRes.data
+            );
 
         const firstMovieLink =
             parseHtml(
@@ -483,25 +818,36 @@ async function scrapePhimLongTieng(movieName) {
                 );
 
             const parseMovie =
-                cheerio.load(movieRes.data);
+                cheerio.load(
+                    movieRes.data
+                );
 
             const scripts =
-                parseMovie("script").text();
+                parseMovie(
+                    "script"
+                ).text();
 
             const m3u8Match =
                 scripts.match(
                     /(https?:\/\/[^"']+\.m3u8[^"']*)/
                 );
 
-            if (m3u8Match?.[1]) {
+            if (
+                m3u8Match?.[1]
+            ) {
 
                 streams.push({
+
                     name:
                         "🔊 [Scrape] LongTieng",
+
                     title:
                         "Ban Thuyet Minh / Long Tieng (.m3u8)",
+
                     url:
-                        String(m3u8Match[1])
+                        String(
+                            m3u8Match[1]
+                        )
                 });
             }
         }
@@ -533,16 +879,21 @@ async function scrapeMotPhimTV(movieName) {
             encodeURIComponent(movieName);
 
         const searchRes =
-            await axios.get(searchUrl, {
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                },
-                timeout: 4000
-            });
+            await axios.get(
+                searchUrl,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    },
+                    timeout: 4000
+                }
+            );
 
         const parseHtml =
-            cheerio.load(searchRes.data);
+            cheerio.load(
+                searchRes.data
+            );
 
         const firstMovieLink =
             parseHtml(
@@ -566,25 +917,36 @@ async function scrapeMotPhimTV(movieName) {
                 );
 
             const parseMovie =
-                cheerio.load(movieRes.data);
+                cheerio.load(
+                    movieRes.data
+                );
 
             const scripts =
-                parseMovie("script").text();
+                parseMovie(
+                    "script"
+                ).text();
 
             const m3u8Match =
                 scripts.match(
                     /(https?:\/\/[^"']+\.m3u8[^"']*)/
                 );
 
-            if (m3u8Match?.[1]) {
+            if (
+                m3u8Match?.[1]
+            ) {
 
                 streams.push({
+
                     name:
                         "📺 [Scrape] MotPhimTV",
+
                     title:
                         "Luong phat du phong MotPhim",
+
                     url:
-                        String(m3u8Match[1])
+                        String(
+                            m3u8Match[1]
+                        )
                 });
             }
         }
@@ -617,9 +979,14 @@ builder.defineStreamHandler(async (args) => {
     let movieName = "";
 
     const parts =
-        String(args.id || "").split(":");
+        String(
+            args.id || ""
+        ).split(":");
 
-    if (args.id?.startsWith("tt")) {
+
+    if (
+        args.id?.startsWith("tt")
+    ) {
 
         try {
 
@@ -665,7 +1032,9 @@ builder.defineStreamHandler(async (args) => {
 
         movieName =
             decodeURIComponent(
-                parts.slice(1).join(":")
+                parts
+                    .slice(1)
+                    .join(":")
             );
 
     } else {
@@ -676,10 +1045,12 @@ builder.defineStreamHandler(async (args) => {
             );
     }
 
+
     console.log(
         "[STREAM] Movie:",
         movieName
     );
+
 
     if (
         !movieName ||
@@ -690,6 +1061,7 @@ builder.defineStreamHandler(async (args) => {
             streams: []
         };
     }
+
 
     const [
         nguonc,
@@ -707,21 +1079,27 @@ builder.defineStreamHandler(async (args) => {
 
     ]);
 
+
     const orderedStreams = [
+
         ...nguonc,
         ...kkphim,
         ...vsmov,
         ...longtieng,
         ...motphim
+
     ];
+
 
     console.log(
         "[STREAM] Total:",
         orderedStreams.length
     );
 
+
     return {
-        streams: orderedStreams
+        streams:
+            orderedStreams
     };
 });
 
@@ -734,7 +1112,9 @@ const addonInterface =
     builder.getInterface();
 
 const sdkRouter =
-    getRouter(addonInterface);
+    getRouter(
+        addonInterface
+    );
 
 
 module.exports = async (req, res) => {
@@ -754,11 +1134,15 @@ module.exports = async (req, res) => {
         "GET, OPTIONS"
     );
 
-    if (req.method === "OPTIONS") {
+
+    if (
+        req.method === "OPTIONS"
+    ) {
 
         res.status(200).end();
         return;
     }
+
 
     sdkRouter(
         req,
