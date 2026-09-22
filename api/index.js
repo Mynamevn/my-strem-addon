@@ -17,8 +17,8 @@ const builder = new addonBuilder(manifest);
 // Hàm phụ dịch IMDB ID sang tên phim tiếng Việt/Anh để đi tìm kiếm
 async function getMovieName(stremioId) {
     try {
-        const cleanId = stremioId.split(":")[0];
-        const res = await axios.get(`https://stremio.com{cleanId}.json`, { timeout: 3000 });
+        const cleanId = stremioId.split(":");
+        const res = await axios.get(`https://stremio.com{cleanId[0]}.json`, { timeout: 3000 });
         return res.data.meta ? res.data.meta.name : "Minecraft";
     } catch {
         return "Minecraft"; 
@@ -161,11 +161,10 @@ async function scrapeMotPhimTV(movieName) {
     return streams;
 }
 
-// Giao diện xử lý chính gom các luồng phát
+// Giao diện xử lý chính gộp các luồng phát
 builder.defineStreamHandler(async (args) => {
     const movieName = await getMovieName(args.id);
     
-    // Gọi chạy song song đồng thời giúp giảm thời gian phản hồi tối đa
     const [nguonc, kkphim, vsmov, longtieng, motphim] = await Promise.all([
         fetchNguonC(movieName),
         fetchKKPhim(movieName),
@@ -174,7 +173,6 @@ builder.defineStreamHandler(async (args) => {
         scrapeMotPhimTV(movieName)
     ]);
 
-    // Xếp thứ tự chuẩn: 3 API lên đầu -> Tiếp theo mới tới 2 trang cào dữ liệu HTML
     const orderedStreams = [
         ...nguonc,
         ...kkphim,
@@ -186,10 +184,8 @@ builder.defineStreamHandler(async (args) => {
     return { streams: orderedStreams };
 });
 
-// HỆ THỐNG ĐỊNH TUYẾN (ROUTER) CHUẨN ĐÃ ĐƯỢC FIX LỖI 404 VERCEL
 const addonInterface = builder.getInterface();
 module.exports = (req, res) => {
-    // Kích hoạt CORS đầy đủ để Stremio không bị lỗi chặn bảo mật chéo kênh
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', '*');
@@ -201,12 +197,10 @@ module.exports = (req, res) => {
 
     const { url } = req;
     
-    // 1. Phân giải link manifest.json gốc
     if (url === '/' || url === '/manifest.json') {
         return res.status(200).json(addonInterface.manifest);
     }
     
-    // 2. Tách cấu trúc URL thành các tham số sạch để Stremio SDK xử lý
     const pathParts = url.split('/').filter(Boolean);
     
     if (pathParts.length >= 3) {
@@ -215,7 +209,6 @@ module.exports = (req, res) => {
         const idWithExt = pathParts[2];
         const id = idWithExt.replace('.json', '');
 
-        // Trích xuất luồng stream phim
         if (resource === 'stream') {
             return builder.getRouter().handleStream({ type, id }, (err, result) => {
                 if (err) return res.status(500).json({ error: err.message });
@@ -224,6 +217,5 @@ module.exports = (req, res) => {
         }
     }
 
-    // Trả cấu trúc trống nếu gọi sai Endpoint
     return res.status(404).json({ error: "Not Found" });
 };
