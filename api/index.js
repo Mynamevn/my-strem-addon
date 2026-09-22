@@ -1162,89 +1162,40 @@ builder.defineStreamHandler(async (args) => {
     }
 
 
-        console.log(
-        "[STREAM] Movie:",
-        movieName
-    );
-
+        console.log("[STREAM] Movie name resolved:", movieName);
     if (!movieName || movieName.toLowerCase() === "phim") {
         console.log("[STREAM] Không có tên phim hợp lệ");
-        return {
-            streams: []
-        };
+        return { streams: [] };
     }
-
-    /*
-     * Phần lấy stream nên kết nối tới các nguồn mà bạn
-     * có quyền sử dụng.
-     *
-     * Ví dụ:
-     *
-     * const streams = await fetchYourAuthorizedSources(movieName);
-     *
-     * Hiện tại để tránh làm addon trả về dữ liệu không hợp lệ,
-     * ta trả về danh sách rỗng.
-     */
-
-    console.log(
-        "[STREAM] Movie name resolved:",
-        movieName
-    );
-
-    return {
-        streams: []
-    };
+    const [nguonc, kkphim, vsmov, longtieng, motphim] = await Promise.all([
+        fetchNguonC(movieName),
+        fetchKKPhim(movieName),
+        fetchVSMov(movieName),
+        scrapePhimLongTieng(movieName),
+        scrapeMotPhimTV(movieName)
+    ]);
+    const orderedStreams = [...nguonc, ...kkphim, ...vsmov, ...longtieng, ...motphim];
+    return { streams: orderedStreams };
 });
 
-
-/* ============================================================
-   ROUTER
-   ============================================================ */
-
 const addonInterface = builder.getInterface();
-
 const sdkRouter = getRouter(addonInterface);
 
 module.exports = async (req, res) => {
-
-    res.setHeader(
-        "Access-Control-Allow-Origin",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Headers",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, OPTIONS"
-    );
-
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     if (req.method === "OPTIONS") {
         res.status(200).end();
         return;
     }
-
     try {
-
-        sdkRouter(
-            req,
-            res,
-            () => {
-                res.statusCode = 404;
-                res.end();
-            }
-        );
-
+        sdkRouter(req, res, () => {
+            res.statusCode = 404;
+            res.end();
+        });
     } catch (e) {
-
-        console.error(
-            "[ROUTER ERROR]",
-            e?.message || e
-        );
-
+        console.error("[ROUTER ERROR]", e?.message || e);
         if (!res.headersSent) {
             res.statusCode = 500;
             res.end("Internal Server Error");
