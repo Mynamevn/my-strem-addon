@@ -1162,9 +1162,8 @@ builder.defineStreamHandler(async (args) => {
     }
 
 
-        console.log("[STREAM] Movie name resolved:", movieName);
+        console.log("[STREAM] Movie:", movieName);
     if (!movieName || movieName.toLowerCase() === "phim") {
-        console.log("[STREAM] Không có tên phim hợp lệ");
         return { streams: [] };
     }
     const [nguonc, kkphim, vsmov, longtieng, motphim] = await Promise.all([
@@ -1182,23 +1181,15 @@ const addonInterface = builder.getInterface();
 const sdkRouter = getRouter(addonInterface);
 
 module.exports = async (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    if (req.method === "OPTIONS") {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
-    try {
-        sdkRouter(req, res, () => {
-            res.statusCode = 404;
-            res.end();
-        });
-    } catch (e) {
-        console.error("[ROUTER ERROR]", e?.message || e);
-        if (!res.headersSent) {
-            res.statusCode = 500;
-            res.end("Internal Server Error");
-        }
-    }
+    sdkRouter(req, res, () => {
+        res.statusCode = 404;
+        res.end();
+    });
 };
