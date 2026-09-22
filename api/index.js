@@ -4,7 +4,7 @@ const cheerio = require('cheerio');
 
 const manifest = {
     "id": "community.paproplayer.multisource.v2000",
-    "version": "2",
+    "version": "2000.0.0",
     "name": "PA MULTI SOURCE STREAM",
     "description": "He thong tu dong gop luong truc tiep (.m3u8): NguonC, KKPhim, VSMov, 1Phim32, MotPhimTV",
     "resources": ["catalog", "stream"],
