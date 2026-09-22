@@ -113,15 +113,15 @@ async function scrapePhimLongTieng(movieName) {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 5000 
         });
-        const \$ = cheerio.load(searchRes.data);
-        const firstMovieLink = \$('.list-films .item a').first().attr('href');
+        const $ = cheerio.load(searchRes.data);
+        const firstMovieLink = $('.list-films .item a').first().attr('href');
         if (firstMovieLink) {
             const movieRes = await axios.get(firstMovieLink, { 
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
                 timeout: 5000
             });
-            const \$movie = cheerio.load(movieRes.data);
-            const scripts = \$movie('script').text();
+            const $movie = cheerio.load(movieRes.data);
+            const scripts = $movie('script').text();
             const m3u8Match = scripts.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/);
             if (m3u8Match) {
                 streams.push({
@@ -144,15 +144,15 @@ async function scrapeMotPhimTV(movieName) {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 5000 
         });
-        const \$ = cheerio.load(searchRes.data);
-        const firstMovieLink = \$('.list-films .item a').first().attr('href');
+        const $ = cheerio.load(searchRes.data);
+        const firstMovieLink = $('.list-films .item a').first().attr('href');
         if (firstMovieLink) {
             const movieRes = await axios.get(firstMovieLink, { 
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
                 timeout: 5000
             });
-            const \$movie = cheerio.load(movieRes.data);
-            const scripts = \$movie('script').text();
+            const $movie = cheerio.load(movieRes.data);
+            const scripts = $movie('script').text();
             const m3u8Match = scripts.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/);
             if (m3u8Match) {
                 streams.push({
