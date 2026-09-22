@@ -44,7 +44,7 @@ builder.defineCatalogHandler(async (args) => {
         apiUrl = 'https://phimapi.com';
     }
     if (args.extra && args.extra.search) {
-        apiUrl = 'https://phimapi.com' + encodeURIComponent(args.extra.search) + '&limit=12';
+        apiUrl = 'https://phimapi.com/v1/api/tim-kiem?keyword=' + encodeURIComponent(args.extra.search) + '&limit=12';
     }
     try {
         const res = await axios.get(apiUrl, { timeout: 4000 });
@@ -94,7 +94,7 @@ async function fetchNguonC(movieName) {
 async function fetchKKPhim(movieName) {
     let streams = [];
     try {
-        const searchUrl = 'https://phimapi.com' + encodeURIComponent(movieName);
+        const searchUrl = 'https://phimapi.com/v1/api/tim-kiem?keyword=' + encodeURIComponent(movieName);
         const res = await axios.get(searchUrl, { timeout: 4000 });
         if (res.data && res.data.data && res.data.data.items && res.data.data.items.length > 0) {
             const movieSlug = res.data.data.items[0].slug;
@@ -145,7 +145,7 @@ async function scrapePhimLongTieng(movieName) {
     let streams = [];
     try {
         const searchSlug = toSlug(movieName);
-        const searchUrl = 'https://1phim32.com' + encodeURIComponent(searchSlug) + '/';
+        const searchUrl = 'https://www.1phim32.com/search/' + encodeURIComponent(searchSlug) + '/';
         const searchRes = await axios.get(searchUrl, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 4000 
@@ -175,7 +175,7 @@ async function scrapePhimLongTieng(movieName) {
 async function scrapeMotPhimTV(movieName) {
     let streams = [];
     try {
-        const searchUrl = 'https://motphimtv.run' + encodeURIComponent(movieName);
+        const searchUrl = 'https://motphimtv.run/?search=' + encodeURIComponent(movieName);
         const searchRes = await axios.get(searchUrl, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 4000 
@@ -255,7 +255,7 @@ module.exports = async (req, res) => {
         res.status(200).end();
         return;
     }
-    getRouter(addonInterface)(req, res, () => {
+    sdkRouter(req, res, () => {
         res.statusCode = 404;
         res.end();
     });
