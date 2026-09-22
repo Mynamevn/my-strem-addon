@@ -14,11 +14,16 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+// BẮT BUỘC: Thêm hàm xử lý Catalog ảo để Stremio chấp nhận cài đặt Addon thành công
+builder.defineCatalogHandler(() => {
+    return Promise.resolve({ metas: [] });
+});
+
 // Hàm phụ dịch IMDB ID sang tên phim tiếng Việt/Anh để đi tìm kiếm
 async function getMovieName(stremioId) {
     try {
         const cleanId = stremioId.split(":");
-        const res = await axios.get(`https://stremio.com{cleanId[0]}.json`, { timeout: 3000 });
+        const res = await axios.get(`https://stremio.com{cleanId}.json`, { timeout: 3000 });
         return res.data.meta ? res.data.meta.name : "Minecraft";
     } catch {
         return "Minecraft"; 
@@ -31,7 +36,7 @@ async function fetchNguonC(movieName) {
     try {
         const res = await axios.get(`https://nguonc.com{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.items && res.data.items.length > 0) {
-            const movieSlug = res.data.items[0].slug;
+            const movieSlug = res.data.items.slug;
             const detail = await axios.get(`https://nguonc.com{movieSlug}`, { timeout: 4000 });
             const episodes = detail.data.film.episodes || [];
             episodes.forEach(server => {
@@ -58,7 +63,7 @@ async function fetchKKPhim(movieName) {
     try {
         const res = await axios.get(`https://kkphim.vip{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.data && res.data.data.items && res.data.data.items.length > 0) {
-            const movieSlug = res.data.data.items[0].slug;
+            const movieSlug = res.data.data.items.slug;
             const detail = await axios.get(`https://kkphim.vip{movieSlug}`, { timeout: 4000 });
             const serverData = detail.data.data.server_data || [];
             serverData.forEach(server => {
@@ -85,7 +90,7 @@ async function fetchVSMov(movieName) {
     try {
         const res = await axios.get(`https://vsmov.com{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.results && res.data.results.length > 0) {
-            const videoUrl = res.data.results[0].stream_url;
+            const videoUrl = res.data.results.stream_url;
             if (videoUrl) {
                 streams.push({
                     name: "🌟 [API] VSMov",
@@ -122,7 +127,7 @@ async function scrapePhimLongTieng(movieName) {
                 streams.push({
                     name: "🔊 [Scrape] LongTieng",
                     title: `Bản Thuyết Minh / Lồng Tiếng`,
-                    url: m3u8Match[0]
+                    url: m3u8Match[1]
                 });
             }
         }
@@ -153,7 +158,7 @@ async function scrapeMotPhimTV(movieName) {
                 streams.push({
                     name: "📺 [Scrape] MotPhimTV",
                     title: `Luồng phát dự phòng MotPhim`,
-                    url: m3u8Match[0]
+                    url: m3u8Match[1]
                 });
             }
         }
@@ -166,11 +171,11 @@ builder.defineStreamHandler(async (args) => {
     const movieName = await getMovieName(args.id);
     
     const [nguonc, kkphim, vsmov, longtieng, motphim] = await Promise.all([
-        fetchNguonC(movieName),
-        fetchKKPhim(movieName),
-        fetchVSMov(movieName),
-        scrapePhimLongTieng(movieName),
-        scrapeMotPhimTV(movieName)
+        fetchNguonC(movieName).catch(() => []),
+        fetchKKPhim(movieName).catch(() => []),
+        fetchVSMov(movieName).catch(() => []),
+        scrapePhimLongTieng(movieName).catch(() => []),
+        scrapeMotPhimTV(movieName).catch(() => [])
     ]);
 
     const orderedStreams = [
@@ -211,6 +216,11 @@ module.exports = (req, res) => {
 
         if (resource === 'stream') {
             return builder.getRouter().handleStream({ type, id }, (err, result) => {
+                if (err) return res.status(500).json({ error: err.message });
+                return res.status(200).json(result);
+            });
+        } else if (resource === 'catalog') {
+            return builder.getRouter().handleCatalog({ type, id }, (err, result) => {
                 if (err) return res.status(500).json({ error: err.message });
                 return res.status(200).json(result);
             });
