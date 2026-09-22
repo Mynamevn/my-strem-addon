@@ -5,9 +5,9 @@ const cheerio = require('cheerio');
 // 1. Giữ nguyên 100% cấu trúc Manifest mẫu đã cài đặt thành công của bạn
 const manifest = {
     "id": "community.paproplayer.secure.v1000",
-    "version": "1007.0.0", // Tăng phiên bản để Stremio xóa hoàn toàn cache lỗi cũ trên thiết bị
+    "version": "1010.0.0", // Tăng phiên bản lên v1010 để ép Stremio xóa hoàn toàn cache lỗi cũ
     "name": "PA Ultimate Addon",
-    "description": "Hệ thống gộp nguồn trực tiếp chuẩn (.m3u8) v1007",
+    "description": "Hệ thống gộp nguồn trực tiếp chuẩn (.m3u8) v1010",
     "resources": ["catalog", "stream"],
     "types": ["movie", "series"],
     "idPrefixes": ["tt", "vnwpsw"],
@@ -163,7 +163,7 @@ async function scrapePhimLongTieng(movieName) {
                 streams.push({
                     name: "🔊 [Scrape] LongTieng",
                     title: `Bản Thuyết Minh / Lồng Tiếng (.m3u8)`,
-                    url: m3u8Match[1]
+                    url: m3u8Match[0]
                 });
             }
         }
@@ -192,7 +192,7 @@ async function scrapeMotPhimTV(movieName) {
                 streams.push({
                     name: "📺 [Scrape] MotPhimTV",
                     title: `Luồng phát dự phòng MotPhim (.m3u8)`,
-                    url: m3u8Match[1]
+                    url: m3u8Match[0]
                 });
             }
         }
@@ -205,11 +205,12 @@ builder.defineStreamHandler(async (args) => {
     let movieName = "phim";
     const parts = args.id.split(':');
 
-    // Đồng bộ giải quyết dứt điểm lỗi chữ "phim", tự động dịch mã IMDB sang tên thật
+    // Tự động dịch mã IMDB sang tên thật bằng API Cinemeta chuẩn toàn cầu
     if (args.id.startsWith('tt')) {
         try {
+            const cleanId = parts[0];
             const cleanType = args.type === 'series' ? 'series' : 'movie';
-            const res = await axios.get(`https://stremio.com{cleanType}/${args.id}.json`, { timeout: 2000 });
+            const res = await axios.get(`https://stremio.com{cleanType}/${cleanId}.json`, { timeout: 2000 });
             if (res.data?.meta?.name) movieName = res.data.meta.name;
         } catch (e) { movieName = "phim"; }
     } else if (parts.length > 1) {
@@ -250,4 +251,17 @@ const sdkRouter = getRouter(addonInterface);
 module.exports = async (req, res) => {
     // Giữ nguyên cơ chế mở chặn CORS nguyên bản của bạn để SmartTV, Mobile kết nối thông suốt
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
+res.setHeader('Access-Control-Allow-Headers', '*');
+res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+
+if (req.method === 'OPTIONS') {
+res.status(200).end();
+return;
+}
+
+// Chuyển tiếp cho router của SDK xử lý đồng bộ để tránh sập lỗi mạng Vercel
+sdkRouter(req, res, () => {
+res.statusCode = 404;
+res.end();
+});
+};
