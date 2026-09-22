@@ -4,7 +4,7 @@ const cheerio = require('cheerio');
 
 const manifest = {
     "id": "community.paproplayer.multisource.v2000",
-    "version": "2000.0.2",
+    "version": "2000.0.3", // Đẩy phiên bản lên v2000.0.3 để Stremio cập nhật luồng mới lập tức
     "name": "PA MULTI SOURCE STREAM",
     "description": "He thong tu dong gop luong truc tiep (.m3u8): NguonC, KKPhim, VSMov, 1Phim32, MotPhimTV",
     "resources": ["catalog", "stream"],
@@ -125,11 +125,11 @@ async function fetchVSMov(movieName) {
                 title: "Luong phat VSMov",
                 url: res.data.stream_url
             });
-        } else if (res.data && res.data.results && res.data.results.length > 0 && res.data.results[0].stream_url) {
+        } else if (res.data && res.data.results && res.data.results.stream_url) {
             streams.push({
                 name: "🌟 [API] VSMov",
                 title: "Luong phat VSMov",
-                url: res.data.results[0].stream_url
+                url: res.data.results.stream_url
             });
         }
     } catch (e) { console.log("VSMov error"); }
@@ -155,11 +155,11 @@ async function scrapePhimLongTieng(movieName) {
             const parseMovie = cheerio.load(movieRes.data);
             const scripts = parseMovie('script').text();
             const m3u8Match = scripts.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/);
-            if (m3u8Match) {
+            if (m3u8Match && m3u8Match[1]) {
                 streams.push({
                     name: "🔊 [Scrape] LongTieng",
                     title: "Ban Thuyet Minh / Long Tieng (.m3u8)",
-                    url: m3u8Match[0]
+                    url: m3u8Match[1]
                 });
             }
         }
@@ -184,11 +184,11 @@ async function scrapeMotPhimTV(movieName) {
             const parseMovie = cheerio.load(movieRes.data);
             const scripts = parseMovie('script').text();
             const m3u8Match = scripts.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/);
-            if (m3u8Match) {
+            if (m3u8Match && m3u8Match[1]) {
                 streams.push({
                     name: "📺 [Scrape] MotPhimTV",
                     title: "Luong phat du phong MotPhim",
-                    url: m3u8Match[0]
+                    url: m3u8Match[1]
                 });
             }
         }
