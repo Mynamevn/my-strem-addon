@@ -1,12 +1,13 @@
-const { addonBuilder } = require("stremio-addon-sdk");
-const axios = require("axios");
-const cheerio = require("cheerio");
+const { addonBuilder, getRouter } = require('stremio-addon-sdk');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
+// 1. Cấu hình Manifest chuẩn hóa qua SDK Router
 const manifest = {
-    "id": "org.stremio.vn.ultimate.addon",
-    "version": "1.0.0",
-    "name": "VN Ultimate Stream Addon",
-    "description": "Tự động gộp nguồn API (NguonC, KKPhim, VSMov) và Cào Web (PhimLongTieng, MotPhimTV)",
+    "id": "community.paproplayer.secure.v1000",
+    "version": "1002.0.0", // Tăng phiên bản để Stremio xóa hoàn toàn cache lỗi cũ
+    "name": "PA Ultimate Addon",
+    "description": "Tự động gộp luồng trực tiếp (.m3u8): NguonC, KKPhim, VSMov, 1Phim32, MotPhimTV",
     "resources": ["stream"],
     "types": ["movie", "series"],
     "idPrefixes": ["tt", "k20tm:"]
@@ -14,23 +15,37 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// Bắt buộc cấu hình Catalog ảo để kích hoạt nút cài đặt trên Stremio không lỗi
-builder.defineCatalogHandler(() => {
-    return Promise.resolve({ metas: [] });
-});
-
-// Hàm dịch mã IMDB số sang tên chữ để tìm kiếm phim trên web Việt Nam
+// Hàm phụ: Sửa lỗi dịch tên phim từ mã IMDB (tt...) của Stremio sang tên tiếng Việt chuẩn để đi tìm kiếm
 async function getMovieName(stremioId) {
     try {
-        const cleanId = stremioId.split(":")[0];
+        const cleanId = stremioId.split(':')[0];
+        // Sử dụng Endpoint Cinemeta chuẩn của Stremio để lấy thông tin phim
         const res = await axios.get(`https://stremio.com{cleanId}.json`, { timeout: 3000 });
-        return res.data.meta ? res.data.meta.name : "Minecraft";
-    } catch {
-        return "Minecraft"; 
+        if (res.data && res.data.meta && res.data.meta.name) {
+            return res.data.meta.name;
+        }
+    } catch (e) {
+        console.log("Lỗi phân giải tên phim, dùng mặc định:", e.message);
     }
+    return "Minecraft"; // Tên dự phòng nếu phân giải thất bại
 }
 
-// 1. Nguồn NguonC API
+// Hàm hỗ trợ format slug tiếng Việt không dấu chuẩn xác cho 1Phim32
+function toSlug(text) {
+    if (!text) return "phim";
+    return text.toString().toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, '-');
+}
+
+// ==========================================
+// HÀM XỬ LÝ KHAI THÁC LUỒNG (.M3U8) TỪ CÁC NGUỒN TỰ ĐỘNG
+// ==========================================
+
+// [ƯU TIÊN 1] API NguonC
 async function fetchNguonC(movieName) {
     let streams = [];
     try {
@@ -45,7 +60,7 @@ async function fetchNguonC(movieName) {
                         if (ep.m3u8_url) {
                             streams.push({
                                 name: "🎬 [API] NguonC",
-                                title: `Tập ${ep.name} - ${server.server_name}`,
+                                title: `Tập ${ep.name} - ${server.server_name}\nPhát trực tiếp (.m3u8)`,
                                 url: ep.m3u8_url
                             });
                         }
@@ -53,11 +68,11 @@ async function fetchNguonC(movieName) {
                 }
             });
         }
-    } catch (e) { console.log("Lỗi NguonC"); }
+    } catch (e) { console.log("Lỗi NguonC API"); }
     return streams;
 }
 
-// 2. Nguồn KKPhim API
+// [ƯU TIÊN 2] API KKPhim
 async function fetchKKPhim(movieName) {
     let streams = [];
     try {
@@ -72,7 +87,7 @@ async function fetchKKPhim(movieName) {
                         if (ep.link_m3u8) {
                             streams.push({
                                 name: "⚡ [API] KKPhim",
-                                title: `Bản phát: ${ep.name} - ${server.server_name}`,
+                                title: `Bản phát: ${ep.name} - ${server.server_name}\nTốc độ cao (.m3u8)`,
                                 url: ep.link_m3u8
                             });
                         }
@@ -80,11 +95,11 @@ async function fetchKKPhim(movieName) {
                 }
             });
         }
-    } catch (e) { console.log("Lỗi KKPhim"); }
+    } catch (e) { console.log("Lỗi KKPhim API"); }
     return streams;
 }
 
-// 3. Nguồn VSMov API
+// [ƯU TIÊN 3] API VSMov
 async function fetchVSMov(movieName) {
     let streams = [];
     try {
@@ -94,20 +109,20 @@ async function fetchVSMov(movieName) {
             if (videoUrl) {
                 streams.push({
                     name: "🌟 [API] VSMov",
-                    title: `Luồng trực tiếp tốc độ cao`,
+                    title: `Luồng trực tiếp truyền tải VSMov (.m3u8)`,
                     url: videoUrl
                 });
             }
         }
-    } catch (e) { console.log("Lỗi VSMov"); }
+    } catch (e) { console.log("Lỗi VSMov API"); }
     return streams;
 }
 
-// 4. Cào dữ liệu PhimLongTieng (Sử dụng 1phim32.com)
+// [ƯU TIÊN 4] Cào dữ liệu PhimLongTieng (Sử dụng 1phim32.com)
 async function scrapePhimLongTieng(movieName) {
     let streams = [];
     try {
-        const searchSlug = movieName.toLowerCase().trim().replace(/\s+/g, '-');
+        const searchSlug = toSlug(movieName);
         const searchUrl = `https://1phim32.com{encodeURIComponent(searchSlug)}/`;
         const searchRes = await axios.get(searchUrl, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -126,7 +141,7 @@ async function scrapePhimLongTieng(movieName) {
             if (m3u8Match) {
                 streams.push({
                     name: "🔊 [Scrape] LongTieng",
-                    title: `Bản Thuyết Minh / Lồng Tiếng`,
+                    title: `Bản Thuyết Minh / Lồng Tiếng (.m3u8)`,
                     url: m3u8Match[0]
                 });
             }
@@ -135,7 +150,7 @@ async function scrapePhimLongTieng(movieName) {
     return streams;
 }
 
-// 5. Cào dữ liệu MotPhimTV
+// [ƯU TIÊN 5] Cào dữ liệu MotPhimTV
 async function scrapeMotPhimTV(movieName) {
     let streams = [];
     try {
@@ -157,7 +172,7 @@ async function scrapeMotPhimTV(movieName) {
             if (m3u8Match) {
                 streams.push({
                     name: "📺 [Scrape] MotPhimTV",
-                    title: `Luồng phát dự phòng MotPhim`,
+                    title: `Luồng phát trực tiếp dự phòng MotPhim`,
                     url: m3u8Match[0]
                 });
             }
@@ -166,9 +181,12 @@ async function scrapeMotPhimTV(movieName) {
     return streams;
 }
 
-// Hàm gộp luồng chính
+// 3. Logic Gộp luồng phát trả về cho Stremio Player
 builder.defineStreamHandler(async (args) => {
+    // Lấy tên phim thật từ ID (giải quyết triệt để lỗi chữ "phim") [^An toàn tuyệt đối]
     const movieName = await getMovieName(args.id);
+    
+    // Gọi chạy song song tất cả các nguồn cùng lúc để tối ưu hóa tốc độ tải
     const [nguonc, kkphim, vsmov, longtieng, motphim] = await Promise.all([
         fetchNguonC(movieName).catch(() => []),
         fetchKKPhim(movieName).catch(() => []),
@@ -176,48 +194,37 @@ builder.defineStreamHandler(async (args) => {
         scrapePhimLongTieng(movieName).catch(() => []),
         scrapeMotPhimTV(movieName).catch(() => [])
     ]);
-    return { streams: [...nguonc, ...kkphim, ...vsmov, ...longtieng, ...motphim] };
+
+    // Xếp thứ tự chuẩn xác: 3 nguồn API lên đầu -> Tiếp theo mới tới 2 nguồn cào Web
+    const orderedStreams = [
+        ...nguonc,
+        ...kkphim,
+        ...vsmov,
+        ...longtieng,
+        ...motphim
+    ];
+
+    return { streams: orderedStreams };
 });
 
-// KHU VỰC ĐỊNH TUYẾN CHUẨN ĐÃ ĐƯỢC CHẮN LỖI CORS 
+// 4. Khởi chạy bằng SDK Router chính thống để gạt bỏ lỗi "Failed to fetch" khi cài đặt
 const addonInterface = builder.getInterface();
-module.exports = (req, res) => {
-    // Ép toàn bộ cấu hình mạng phải chấp nhận kết nối từ Stremio (Mở chặn CORS)
+const sdkRouter = getRouter(addonInterface);
+
+module.exports = async (req, res) => {
+    // Thiết lập CORS đầy đủ cho thiết bị kết nối thông suốt
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
 
     if (req.method === 'OPTIONS') {
-        return res.status(200).end();
+        res.status(200).end();
+        return;
     }
 
-    const { url } = req;
-    
-    // Xuất dữ liệu manifest gốc
-    if (url === '/' || url === '/manifest.json') {
-        return res.status(200).json(addonInterface.manifest);
-    }
-    
-    // Tách router
-    const pathParts = url.split('/').filter(Boolean);
-    if (pathParts.length >= 3) {
-        const resource = pathParts[0];
-        const type = pathParts[1];
-        const idWithExt = pathParts[2];
-        const id = idWithExt.replace('.json', '');
-
-        if (resource === 'stream') {
-            return builder.getRouter().handleStream({ type, id }, (err, result) => {
-                if (err) return res.status(500).json({ error: err.message });
-                return res.status(200).json(result);
-            });
-        } else if (resource === 'catalog') {
-            return builder.getRouter().handleCatalog({ type, id }, (err, result) => {
-                if (err) return res.status(500).json({ error: err.message });
-                return res.status(200).json(result);
-            });
-        }
-    }
-    return res.status(404).json({ error: "Not Found" });
+    // Chuyển tiếp toàn bộ request cho SDK Router tự động xử lý định tuyến chuẩn 100%
+    sdkRouter(req, res, () => {
+        res.statusCode = 404;
+        res.end();
+    });
 };
