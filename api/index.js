@@ -4,9 +4,9 @@ const cheerio = require('cheerio');
 
 const manifest = {
     "id": "community.paproplayer.multisource.v2000",
-    "version": "2000.0.4", 
+    "version": "2000.0.8", 
     "name": "PA MULTI SOURCE STREAM",
-    "description": "He thong tu dong gop luong truc tiep (.m3u8): NguonC, KKPhim, VSMov, 1Phim32, MotPhimTV",
+    "description": "He thong gop nguon truc tiep (.m3u8): NguonC, KKPhim, VSMov, 1Phim32, MotPhimTV v2000.0.8",
     "resources": ["catalog", "stream"],
     "types": ["movie", "series"],
     "idPrefixes": ["tt", "vnwpsw"],
@@ -66,10 +66,12 @@ builder.defineCatalogHandler(async (args) => {
 async function fetchNguonC(movieName) {
     let streams = [];
     try {
-        const res = await axios.get(`https://nguonc.com{encodeURIComponent(movieName)}`, { timeout: 4000 });
+        const searchUrl = 'https://nguonc.com' + encodeURIComponent(movieName);
+        const res = await axios.get(searchUrl, { timeout: 4000 });
         if (res.data && res.data.items && res.data.items.length > 0) {
             const movieSlug = res.data.items[0].slug;
-            const detail = await axios.get(`https://nguonc.com{movieSlug}`, { timeout: 4000 });
+            const detailUrl = 'https://nguonc.com' + movieSlug;
+            const detail = await axios.get(detailUrl, { timeout: 4000 });
             const episodes = detail.data?.film?.episodes || [];
             episodes.forEach(server => {
                 if (server.items) {
@@ -78,7 +80,7 @@ async function fetchNguonC(movieName) {
                             streams.push({
                                 name: "🎬 [API] NguonC",
                                 title: "Tap " + ep.name + " - " + server.server_name,
-                                url: ep.m3u8_url
+                                url: String(ep.m3u8_url)
                             });
                         }
                     });
@@ -92,19 +94,21 @@ async function fetchNguonC(movieName) {
 async function fetchKKPhim(movieName) {
     let streams = [];
     try {
-        const res = await axios.get(`https://kkphim.vip{encodeURIComponent(movieName)}`, { timeout: 4000 });
+        const searchUrl = 'https://phimapi.com' + encodeURIComponent(movieName);
+        const res = await axios.get(searchUrl, { timeout: 4000 });
         if (res.data && res.data.data && res.data.data.items && res.data.data.items.length > 0) {
             const movieSlug = res.data.data.items[0].slug;
-            const detail = await axios.get(`https://kkphim.vip{movieSlug}`, { timeout: 4000 });
-            const serverData = detail.data?.data?.server_data || [];
-            serverData.forEach(server => {
+            const detailUrl = 'https://phimapi.com' + movieSlug;
+            const detail = await axios.get(detailUrl, { timeout: 4000 });
+            const episodesData = detail.data?.episodes || [];
+            episodesData.forEach(server => {
                 if (server.server_data) {
                     server.server_data.forEach(ep => {
                         if (ep.link_m3u8) {
                             streams.push({
                                 name: "⚡ [API] KKPhim",
                                 title: "Ban phat: " + ep.name + " - " + server.server_name,
-                                url: ep.link_m3u8
+                                url: String(ep.link_m3u8)
                             });
                         }
                     });
@@ -118,18 +122,19 @@ async function fetchKKPhim(movieName) {
 async function fetchVSMov(movieName) {
     let streams = [];
     try {
-        const res = await axios.get(`https://vsmov.com{encodeURIComponent(movieName)}`, { timeout: 4000 });
+        const searchUrl = 'https://vsmov.com' + encodeURIComponent(movieName);
+        const res = await axios.get(searchUrl, { timeout: 4000 });
         if (res.data && res.data.stream_url) {
             streams.push({
                 name: "🌟 [API] VSMov",
                 title: "Luong phat VSMov",
-                url: res.data.stream_url
+                url: String(res.data.stream_url)
             });
-        } else if (res.data && res.data.results && res.data.results.length > 0 && res.data.results[0].stream_url) {
+        } else if (res.data && res.data.results && res.data.results.stream_url) {
             streams.push({
                 name: "🌟 [API] VSMov",
                 title: "Luong phat VSMov",
-                url: res.data.results[0].stream_url
+                url: String(res.data.results.stream_url)
             });
         }
     } catch (e) { console.log("VSMov error"); }
@@ -140,7 +145,7 @@ async function scrapePhimLongTieng(movieName) {
     let streams = [];
     try {
         const searchSlug = toSlug(movieName);
-        const searchUrl = `https://1phim32.com{encodeURIComponent(searchSlug)}/`;
+        const searchUrl = 'https://1phim32.com' + encodeURIComponent(searchSlug) + '/';
         const searchRes = await axios.get(searchUrl, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 4000 
@@ -155,11 +160,11 @@ async function scrapePhimLongTieng(movieName) {
             const parseMovie = cheerio.load(movieRes.data);
             const scripts = parseMovie('script').text();
             const m3u8Match = scripts.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/);
-            if (m3u8Match) {
+            if (m3u8Match && m3u8Match[1]) {
                 streams.push({
                     name: "🔊 [Scrape] LongTieng",
                     title: "Ban Thuyet Minh / Long Tieng (.m3u8)",
-                    url: m3u8Match[0]
+                    url: String(m3u8Match[1])
                 });
             }
         }
@@ -170,7 +175,8 @@ async function scrapePhimLongTieng(movieName) {
 async function scrapeMotPhimTV(movieName) {
     let streams = [];
     try {
-        const searchRes = await axios.get(`https://motphimtv.run{encodeURIComponent(movieName)}`, { 
+        const searchUrl = 'https://motphimtv.run' + encodeURIComponent(movieName);
+        const searchRes = await axios.get(searchUrl, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             timeout: 4000 
         });
@@ -184,11 +190,11 @@ async function scrapeMotPhimTV(movieName) {
             const parseMovie = cheerio.load(movieRes.data);
             const scripts = parseMovie('script').text();
             const m3u8Match = scripts.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/);
-            if (m3u8Match) {
+            if (m3u8Match && m3u8Match[1]) {
                 streams.push({
                     name: "📺 [Scrape] MotPhimTV",
                     title: "Luong phat du phong MotPhim",
-                    url: m3u8Match[0]
+                    url: String(m3u8Match[1])
                 });
             }
         }
@@ -202,9 +208,9 @@ builder.defineStreamHandler(async (args) => {
     
     if (args.id.startsWith('tt')) {
         try {
-            const imdbId = parts[0]; 
+            const imdbId = parts[0];
             const cleanType = args.type === 'series' ? 'series' : 'movie';
-            const res = await axios.get(`https://stremio.com{cleanType}/${imdbId}.json`, { timeout: 3000 });
+            const res = await axios.get('https://stremio.com' + cleanType + '/' + imdbId + '.json', { timeout: 3000 });
             if (res.data && res.data.meta && res.data.meta.name) {
                 movieName = res.data.meta.name;
             }
@@ -249,7 +255,7 @@ module.exports = async (req, res) => {
         res.status(200).end();
         return;
     }
-    sdkRouter(req, res, () => {
+    getRouter(addonInterface)(req, res, () => {
         res.statusCode = 404;
         res.end();
     });
