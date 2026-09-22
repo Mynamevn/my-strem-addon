@@ -4,7 +4,7 @@ const cheerio = require('cheerio');
 
 const manifest = {
     "id": "community.paproplayer.multisource.v2000",
-    "version": "2000.0.1",
+    "version": "2000.0.2",
     "name": "PA MULTI SOURCE STREAM",
     "description": "He thong tu dong gop luong truc tiep (.m3u8): NguonC, KKPhim, VSMov, 1Phim32, MotPhimTV",
     "resources": ["catalog", "stream"],
@@ -66,10 +66,10 @@ builder.defineCatalogHandler(async (args) => {
 async function fetchNguonC(movieName) {
     let streams = [];
     try {
-        const res = await axios.get(`https://nguonc.com{encodeURIComponent(movieName)}`, { timeout: 3000 });
+        const res = await axios.get(`https://nguonc.com{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.items && res.data.items.length > 0) {
             const movieSlug = res.data.items[0].slug;
-            const detail = await axios.get(`https://nguonc.com{movieSlug}`, { timeout: 3000 });
+            const detail = await axios.get(`https://nguonc.com{movieSlug}`, { timeout: 4000 });
             const episodes = detail.data?.film?.episodes || [];
             episodes.forEach(server => {
                 if (server.items) {
@@ -85,17 +85,17 @@ async function fetchNguonC(movieName) {
                 }
             });
         }
-    } catch (e) { console.log("NguonC timeout"); }
+    } catch (e) { console.log("NguonC error"); }
     return streams;
 }
 
 async function fetchKKPhim(movieName) {
     let streams = [];
     try {
-        const res = await axios.get(`https://kkphim.vip{encodeURIComponent(movieName)}`, { timeout: 3000 });
+        const res = await axios.get(`https://kkphim.vip{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.data && res.data.data.items && res.data.data.items.length > 0) {
             const movieSlug = res.data.data.items[0].slug;
-            const detail = await axios.get(`https://kkphim.vip{movieSlug}`, { timeout: 3000 });
+            const detail = await axios.get(`https://kkphim.vip{movieSlug}`, { timeout: 4000 });
             const serverData = detail.data?.data?.server_data || [];
             serverData.forEach(server => {
                 if (server.server_data) {
@@ -111,28 +111,28 @@ async function fetchKKPhim(movieName) {
                 }
             });
         }
-    } catch (e) { console.log("KKPhim timeout"); }
+    } catch (e) { console.log("KKPhim error"); }
     return streams;
 }
 
 async function fetchVSMov(movieName) {
     let streams = [];
     try {
-        const res = await axios.get(`https://vsmov.com{encodeURIComponent(movieName)}`, { timeout: 3000 });
+        const res = await axios.get(`https://vsmov.com{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.stream_url) {
             streams.push({
                 name: "🌟 [API] VSMov",
                 title: "Luong phat VSMov",
                 url: res.data.stream_url
             });
-        } else if (res.data && res.data.results && res.data.results.stream_url) {
+        } else if (res.data && res.data.results && res.data.results.length > 0 && res.data.results[0].stream_url) {
             streams.push({
                 name: "🌟 [API] VSMov",
                 title: "Luong phat VSMov",
-                url: res.data.results.stream_url
+                url: res.data.results[0].stream_url
             });
         }
-    } catch (e) { console.log("VSMov timeout"); }
+    } catch (e) { console.log("VSMov error"); }
     return streams;
 }
 
@@ -140,16 +140,17 @@ async function scrapePhimLongTieng(movieName) {
     let streams = [];
     try {
         const searchSlug = toSlug(movieName);
-        const searchRes = await axios.get(`https://1phim32.com{encodeURIComponent(searchSlug)}/`, { 
+        const searchUrl = `https://1phim32.com{encodeURIComponent(searchSlug)}/`;
+        const searchRes = await axios.get(searchUrl, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-            timeout: 3000 
+            timeout: 4000 
         });
         const parseHtml = cheerio.load(searchRes.data);
         const firstMovieLink = parseHtml('.list-films .item a').first().attr('href');
         if (firstMovieLink) {
             const movieRes = await axios.get(firstMovieLink, { 
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-                timeout: 3000
+                timeout: 4000
             });
             const parseMovie = cheerio.load(movieRes.data);
             const scripts = parseMovie('script').text();
@@ -162,7 +163,7 @@ async function scrapePhimLongTieng(movieName) {
                 });
             }
         }
-    } catch (e) { console.log("LongTieng timeout"); }
+    } catch (e) { console.log("LongTieng error"); }
     return streams;
 }
 
@@ -171,14 +172,14 @@ async function scrapeMotPhimTV(movieName) {
     try {
         const searchRes = await axios.get(`https://motphimtv.run{encodeURIComponent(movieName)}`, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-            timeout: 3000 
+            timeout: 4000 
         });
         const parseHtml = cheerio.load(searchRes.data);
         const firstMovieLink = parseHtml('.list-films .item a').first().attr('href');
         if (firstMovieLink) {
             const movieRes = await axios.get(firstMovieLink, { 
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-                timeout: 3000
+                timeout: 4000
             });
             const parseMovie = cheerio.load(movieRes.data);
             const scripts = parseMovie('script').text();
@@ -191,7 +192,7 @@ async function scrapeMotPhimTV(movieName) {
                 });
             }
         }
-    } catch (e) { console.log("MotPhimTV timeout"); }
+    } catch (e) { console.log("MotPhimTV error"); }
     return streams;
 }
 
@@ -203,8 +204,8 @@ builder.defineStreamHandler(async (args) => {
         try {
             const imdbId = parts[0]; 
             const cleanType = args.type === 'series' ? 'series' : 'movie';
-            const res = await axios.get(`https://stremio.com{cleanType}/${imdbId}.json`, { timeout: 2500 });
-            if (res.data?.meta?.name) {
+            const res = await axios.get(`https://stremio.com{cleanType}/${imdbId}.json`, { timeout: 3000 });
+            if (res.data && res.data.meta && res.data.meta.name) {
                 movieName = res.data.meta.name;
             }
         } catch (e) { movieName = ""; }
@@ -215,7 +216,7 @@ builder.defineStreamHandler(async (args) => {
     }
     
     if (!movieName || movieName.toLowerCase() === "phim") {
-        movieName = "Minecraft";
+        return { streams: [] };
     }
 
     const [nguonc, kkphim, vsmov, longtieng, motphim] = await Promise.all([
