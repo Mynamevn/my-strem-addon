@@ -38,6 +38,11 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+
 function toSlug(text) {
     if (!text) return "phim";
 
@@ -51,31 +56,80 @@ function toSlug(text) {
 }
 
 
-/*
- * ============================================================
- * BƯỚC 1 - CATALOG / BOARD
- * Chỉ sửa phần lấy danh sách phim.
- * Các source stream bên dưới giữ nguyên.
- * ============================================================
- */
+/* ============================================================
+   POSTER
+   ============================================================ */
+
+function makePosterUrl(item) {
+    if (!item) return undefined;
+
+    const rawPoster =
+        item.poster_url ||
+        item.poster ||
+        item.thumb_url ||
+        item.thumb ||
+        '';
+
+    if (!rawPoster) {
+        return undefined;
+    }
+
+    const poster = String(rawPoster).trim();
+
+    // Đã là URL đầy đủ
+    if (
+        poster.startsWith('https://') ||
+        poster.startsWith('http://')
+    ) {
+        return poster;
+    }
+
+    // URL dạng //domain/path
+    if (poster.startsWith('//')) {
+        return 'https:' + poster;
+    }
+
+    // Đường dẫn tương đối
+    const cleanPath = poster.startsWith('/')
+        ? poster
+        : '/' + poster;
+
+    return 'https://phimimg.com' + cleanPath;
+}
+
+
+/* ============================================================
+   CATALOG / BOARD
+   ============================================================ */
 
 async function fetchCatalogFromPhimApi(args) {
+
     const search = args.extra?.search;
 
     let apiUrl;
 
     if (search && search.trim()) {
-        // Search phim
+
         apiUrl =
             'https://phimapi.com/v1/api/tim-kiem?keyword=' +
             encodeURIComponent(search.trim()) +
             '&limit=20';
+
     } else {
-        // Danh sách phim mới
-        if (args.type === 'series' || args.id === 'pa_series_new') {
-            apiUrl = 'https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20';
+
+        if (
+            args.type === 'series' ||
+            args.id === 'pa_series_new'
+        ) {
+
+            apiUrl =
+                'https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20';
+
         } else {
-            apiUrl = 'https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20';
+
+            apiUrl =
+                'https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20';
+
         }
     }
 
@@ -91,11 +145,6 @@ async function fetchCatalogFromPhimApi(args) {
 
     const data = res.data || {};
 
-    /*
-     * API có thể trả:
-     * data.items
-     * hoặc items
-     */
     const items =
         data?.data?.items ||
         data?.items ||
@@ -103,29 +152,15 @@ async function fetchCatalogFromPhimApi(args) {
 
     console.log('[CATALOG] Items:', items.length);
 
+    // Log item đầu tiên để kiểm tra cấu trúc poster
+    if (items.length > 0) {
+        console.log(
+            '[CATALOG] First item:',
+            JSON.stringify(items[0])
+        );
+    }
+
     return items;
-}
-
-
-function makePosterUrl(item) {
-    if (!item) return undefined;
-
-    const poster =
-        item.poster_url ||
-        item.poster ||
-        item.thumb_url ||
-        item.thumb ||
-        '';
-
-    if (!poster) {
-        return undefined;
-    }
-
-    if (poster.startsWith('http://') || poster.startsWith('https://')) {
-        return poster;
-    }
-
-    return 'https://phimimg.com' + poster;
 }
 
 
@@ -142,10 +177,17 @@ builder.defineCatalogHandler(async (args) => {
 
     try {
 
-        const items = await fetchCatalogFromPhimApi(args);
+        const items =
+            await fetchCatalogFromPhimApi(args);
 
-        if (!Array.isArray(items) || items.length === 0) {
-            console.log('[CATALOG] Không có item');
+        if (
+            !Array.isArray(items) ||
+            items.length === 0
+        ) {
+
+            console.log(
+                '[CATALOG] Không có item'
+            );
 
             return {
                 metas: []
@@ -156,25 +198,35 @@ builder.defineCatalogHandler(async (args) => {
             .filter(item => item && item.name)
             .map(item => {
 
-                /*
-                 * ID nội bộ của addon.
-                 *
-                 * Không dùng slug ở bước này để tránh phụ thuộc
-                 * vào cấu trúc slug của từng API.
-                 */
-                const movieName = String(item.name);
+                const movieName =
+                    String(item.name);
+
+                const poster =
+                    makePosterUrl(item);
+
+                console.log(
+                    '[CATALOG] Poster:',
+                    movieName,
+                    '=>',
+                    poster || 'NO POSTER'
+                );
 
                 return {
-                    id: 'vnwpsw:' + encodeURIComponent(movieName),
+
+                    id:
+                        'vnwpsw:' +
+                        encodeURIComponent(movieName),
 
                     type:
                         args.type === 'series'
                             ? 'series'
                             : 'movie',
 
-                    name: movieName,
+                    name:
+                        movieName,
 
-                    poster: makePosterUrl(item),
+                    poster:
+                        poster,
 
                     description:
                         'Original: ' +
@@ -192,7 +244,10 @@ builder.defineCatalogHandler(async (args) => {
                 };
             });
 
-        console.log('[CATALOG] Metas:', metas.length);
+        console.log(
+            '[CATALOG] Metas:',
+            metas.length
+        );
 
         return {
             metas
@@ -212,37 +267,42 @@ builder.defineCatalogHandler(async (args) => {
 });
 
 
-/*
- * ============================================================
- * CÁC PHẦN STREAM GIỮ NGUYÊN TỪ v2000.0.8
- * ============================================================
- */
+/* ============================================================
+   NGUONC
+   ============================================================ */
 
 async function fetchNguonC(movieName) {
+
     let streams = [];
 
     try {
+
         const searchUrl =
             'https://nguonc.com' +
             encodeURIComponent(movieName);
 
-        const res = await axios.get(searchUrl, {
-            timeout: 4000
-        });
+        const res =
+            await axios.get(searchUrl, {
+                timeout: 4000
+            });
 
         if (
             res.data &&
             res.data.items &&
             res.data.items.length > 0
         ) {
-            const movieSlug = res.data.items[0].slug;
+
+            const movieSlug =
+                res.data.items[0].slug;
 
             const detailUrl =
-                'https://nguonc.com' + movieSlug;
+                'https://nguonc.com' +
+                movieSlug;
 
-            const detail = await axios.get(detailUrl, {
-                timeout: 4000
-            });
+            const detail =
+                await axios.get(detailUrl, {
+                    timeout: 4000
+                });
 
             const episodes =
                 detail.data?.film?.episodes || [];
@@ -262,7 +322,8 @@ async function fetchNguonC(movieName) {
                                     ep.name +
                                     " - " +
                                     server.server_name,
-                                url: String(ep.m3u8_url)
+                                url:
+                                    String(ep.m3u8_url)
                             });
 
                         }
@@ -275,14 +336,22 @@ async function fetchNguonC(movieName) {
         }
 
     } catch (e) {
-        console.log("NguonC error");
+
+        console.log(
+            "NguonC error"
+        );
     }
 
     return streams;
 }
 
 
+/* ============================================================
+   KKPHIM
+   ============================================================ */
+
 async function fetchKKPhim(movieName) {
+
     let streams = [];
 
     try {
@@ -291,9 +360,10 @@ async function fetchKKPhim(movieName) {
             'https://phimapi.com/v1/api/tim-kiem?keyword=' +
             encodeURIComponent(movieName);
 
-        const res = await axios.get(searchUrl, {
-            timeout: 4000
-        });
+        const res =
+            await axios.get(searchUrl, {
+                timeout: 4000
+            });
 
         if (
             res.data &&
@@ -309,9 +379,10 @@ async function fetchKKPhim(movieName) {
                 'https://phimapi.com' +
                 movieSlug;
 
-            const detail = await axios.get(detailUrl, {
-                timeout: 4000
-            });
+            const detail =
+                await axios.get(detailUrl, {
+                    timeout: 4000
+                });
 
             const episodesData =
                 detail.data?.episodes || [];
@@ -325,13 +396,15 @@ async function fetchKKPhim(movieName) {
                         if (ep.link_m3u8) {
 
                             streams.push({
-                                name: "⚡ [API] KKPhim",
+                                name:
+                                    "⚡ [API] KKPhim",
                                 title:
                                     "Ban phat: " +
                                     ep.name +
                                     " - " +
                                     server.server_name,
-                                url: String(ep.link_m3u8)
+                                url:
+                                    String(ep.link_m3u8)
                             });
 
                         }
@@ -344,14 +417,22 @@ async function fetchKKPhim(movieName) {
         }
 
     } catch (e) {
-        console.log("KKPhim error");
+
+        console.log(
+            "KKPhim error"
+        );
     }
 
     return streams;
 }
 
 
+/* ============================================================
+   VSMOV
+   ============================================================ */
+
 async function fetchVSMov(movieName) {
+
     let streams = [];
 
     try {
@@ -360,16 +441,23 @@ async function fetchVSMov(movieName) {
             'https://vsmov.com' +
             encodeURIComponent(movieName);
 
-        const res = await axios.get(searchUrl, {
-            timeout: 4000
-        });
+        const res =
+            await axios.get(searchUrl, {
+                timeout: 4000
+            });
 
-        if (res.data && res.data.stream_url) {
+        if (
+            res.data &&
+            res.data.stream_url
+        ) {
 
             streams.push({
-                name: "🌟 [API] VSMov",
-                title: "Luong phat VSMov",
-                url: String(res.data.stream_url)
+                name:
+                    "🌟 [API] VSMov",
+                title:
+                    "Luong phat VSMov",
+                url:
+                    String(res.data.stream_url)
             });
 
         } else if (
@@ -379,42 +467,54 @@ async function fetchVSMov(movieName) {
         ) {
 
             streams.push({
-                name: "🌟 [API] VSMov",
-                title: "Luong phat VSMov",
-                url: String(
-                    res.data.results.stream_url
-                )
+                name:
+                    "🌟 [API] VSMov",
+                title:
+                    "Luong phat VSMov",
+                url:
+                    String(
+                        res.data.results.stream_url
+                    )
             });
-
         }
 
     } catch (e) {
-        console.log("VSMov error");
+
+        console.log(
+            "VSMov error"
+        );
     }
 
     return streams;
 }
 
 
+/* ============================================================
+   1PHIM32
+   ============================================================ */
+
 async function scrapePhimLongTieng(movieName) {
+
     let streams = [];
 
     try {
 
-        const searchSlug = toSlug(movieName);
+        const searchSlug =
+            toSlug(movieName);
 
         const searchUrl =
             'https://www.1phim32.com/search/' +
             encodeURIComponent(searchSlug) +
             '/';
 
-        const searchRes = await axios.get(searchUrl, {
-            headers: {
-                'User-Agent':
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-            },
-            timeout: 4000
-        });
+        const searchRes =
+            await axios.get(searchUrl, {
+                headers: {
+                    'User-Agent':
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                },
+                timeout: 4000
+            });
 
         const parseHtml =
             cheerio.load(searchRes.data);
@@ -429,13 +529,16 @@ async function scrapePhimLongTieng(movieName) {
         if (firstMovieLink) {
 
             const movieRes =
-                await axios.get(firstMovieLink, {
-                    headers: {
-                        'User-Agent':
-                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                    },
-                    timeout: 4000
-                });
+                await axios.get(
+                    firstMovieLink,
+                    {
+                        headers: {
+                            'User-Agent':
+                                'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                        },
+                        timeout: 4000
+                    }
+                );
 
             const parseMovie =
                 cheerio.load(movieRes.data);
@@ -448,27 +551,39 @@ async function scrapePhimLongTieng(movieName) {
                     /(https?:\/\/[^"']+\.m3u8[^"']*)/
                 );
 
-            if (m3u8Match && m3u8Match[1]) {
+            if (
+                m3u8Match &&
+                m3u8Match[1]
+            ) {
 
                 streams.push({
-                    name: "🔊 [Scrape] LongTieng",
+                    name:
+                        "🔊 [Scrape] LongTieng",
                     title:
                         "Ban Thuyet Minh / Long Tieng (.m3u8)",
-                    url: String(m3u8Match[1])
+                    url:
+                        String(m3u8Match[1])
                 });
-
             }
         }
 
     } catch (e) {
-        console.log("LongTieng error");
+
+        console.log(
+            "LongTieng error"
+        );
     }
 
     return streams;
 }
 
 
+/* ============================================================
+   MOTPHIMTV
+   ============================================================ */
+
 async function scrapeMotPhimTV(movieName) {
+
     let streams = [];
 
     try {
@@ -499,13 +614,16 @@ async function scrapeMotPhimTV(movieName) {
         if (firstMovieLink) {
 
             const movieRes =
-                await axios.get(firstMovieLink, {
-                    headers: {
-                        'User-Agent':
-                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                    },
-                    timeout: 4000
-                });
+                await axios.get(
+                    firstMovieLink,
+                    {
+                        headers: {
+                            'User-Agent':
+                                'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                        },
+                        timeout: 4000
+                    }
+                );
 
             const parseMovie =
                 cheerio.load(movieRes.data);
@@ -518,59 +636,74 @@ async function scrapeMotPhimTV(movieName) {
                     /(https?:\/\/[^"']+\.m3u8[^"']*)/
                 );
 
-            if (m3u8Match && m3u8Match[1]) {
+            if (
+                m3u8Match &&
+                m3u8Match[1]
+            ) {
 
                 streams.push({
-                    name: "📺 [Scrape] MotPhimTV",
+                    name:
+                        "📺 [Scrape] MotPhimTV",
                     title:
                         "Luong phat du phong MotPhim",
-                    url: String(m3u8Match[1])
+                    url:
+                        String(m3u8Match[1])
                 });
-
             }
         }
 
     } catch (e) {
-        console.log("MotPhimTV error");
+
+        console.log(
+            "MotPhimTV error"
+        );
     }
 
     return streams;
 }
 
 
+/* ============================================================
+   STREAM HANDLER
+   ============================================================ */
+
 builder.defineStreamHandler(async (args) => {
 
     let movieName = "";
 
-    const parts = args.id.split(':');
+    const parts =
+        args.id.split(':');
 
     if (args.id.startsWith('tt')) {
 
         try {
 
-            const imdbId = parts[0];
+            const imdbId =
+                parts[0];
 
             const cleanType =
                 args.type === 'series'
                     ? 'series'
                     : 'movie';
 
-            const res = await axios.get(
-                'https://stremio.com' +
-                cleanType +
-                '/' +
-                imdbId +
-                '.json',
-                {
-                    timeout: 3000
-                }
-            );
+            const res =
+                await axios.get(
+                    'https://stremio.com' +
+                    cleanType +
+                    '/' +
+                    imdbId +
+                    '.json',
+                    {
+                        timeout: 3000
+                    }
+                );
 
             if (
                 res.data &&
                 res.data.meta &&
                 res.data.meta.name
             ) {
+
                 movieName =
                     res.data.meta.name;
             }
@@ -580,21 +713,28 @@ builder.defineStreamHandler(async (args) => {
             movieName = "";
         }
 
-    } else if (parts.length > 1) {
+    } else if (
+        parts.length > 1
+    ) {
 
         movieName =
-            decodeURIComponent(parts[1]);
+            decodeURIComponent(
+                parts[1]
+            );
 
     } else {
 
         movieName =
-            decodeURIComponent(args.id);
+            decodeURIComponent(
+                args.id
+            );
     }
 
     if (
         !movieName ||
         movieName.toLowerCase() === "phim"
     ) {
+
         return {
             streams: []
         };
@@ -607,11 +747,13 @@ builder.defineStreamHandler(async (args) => {
         longtieng,
         motphim
     ] = await Promise.all([
+
         fetchNguonC(movieName),
         fetchKKPhim(movieName),
         fetchVSMov(movieName),
         scrapePhimLongTieng(movieName),
         scrapeMotPhimTV(movieName)
+
     ]);
 
     const orderedStreams = [
@@ -623,10 +765,15 @@ builder.defineStreamHandler(async (args) => {
     ];
 
     return {
-        streams: orderedStreams
+        streams:
+            orderedStreams
     };
 });
 
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
 
 const addonInterface =
     builder.getInterface();
@@ -652,7 +799,9 @@ module.exports = async (req, res) => {
         'GET, OPTIONS'
     );
 
-    if (req.method === 'OPTIONS') {
+    if (
+        req.method === 'OPTIONS'
+    ) {
 
         res.status(200).end();
         return;
