@@ -1,4 +1,4 @@
-﻿const { addonBuilder } = require("stremio-addon-sdk");
+const { addonBuilder } = require("stremio-addon-sdk");
 const axios = require("axios");
 const cheerio = require("cheerio");
 
@@ -18,7 +18,7 @@ const builder = new addonBuilder(manifest);
 async function getMovieName(stremioId) {
     try {
         const cleanId = stremioId.split(":")[0];
-        const res = await axios.get(`https://stremio.com{cleanId}.json`);
+        const res = await axios.get(`https://stremio.com{cleanId}.json`, { timeout: 3000 });
         return res.data.meta ? res.data.meta.name : "Minecraft";
     } catch {
         return "Minecraft"; 
@@ -32,21 +32,23 @@ async function fetchNguonC(movieName) {
         const res = await axios.get(`https://nguonc.com{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.items && res.data.items.length > 0) {
             const movieSlug = res.data.items[0].slug;
-            const detail = await axios.get(`https://nguonc.com{movieSlug}`);
+            const detail = await axios.get(`https://nguonc.com{movieSlug}`, { timeout: 4000 });
             const episodes = detail.data.film.episodes || [];
             episodes.forEach(server => {
-                server.items.forEach(ep => {
-                    if (ep.m3u8_url) {
-                        streams.push({
-                            name: "🎬 [API] NguonC",
-                            title: `Tập ${ep.name} - ${server.server_name}`,
-                            url: ep.m3u8_url
-                        });
-                    }
-                });
+                if (server.items) {
+                    server.items.forEach(ep => {
+                        if (ep.m3u8_url) {
+                            streams.push({
+                                name: "🎬 [API] NguonC",
+                                title: `Tập ${ep.name} - ${server.server_name}`,
+                                url: ep.m3u8_url
+                            });
+                        }
+                    });
+                }
             });
         }
-    } catch (e) { console.log("Lỗi NguonC API"); }
+    } catch (e) { console.log("Lỗi NguonC API:", e.message); }
     return streams;
 }
 
@@ -57,19 +59,23 @@ async function fetchKKPhim(movieName) {
         const res = await axios.get(`https://kkphim.vip{encodeURIComponent(movieName)}`, { timeout: 4000 });
         if (res.data && res.data.data && res.data.data.items && res.data.data.items.length > 0) {
             const movieSlug = res.data.data.items[0].slug;
-            const detail = await axios.get(`https://kkphim.vip{movieSlug}`);
+            const detail = await axios.get(`https://kkphim.vip{movieSlug}`, { timeout: 4000 });
             const serverData = detail.data.data.server_data || [];
-            serverData.forEach(ep => {
-                if (ep.link_m3u8) {
-                    streams.push({
-                        name: "⚡ [API] KKPhim",
-                        title: `Bản phát: ${ep.name}`,
-                        url: ep.link_m3u8
+            serverData.forEach(server => {
+                if (server.server_data) {
+                    server.server_data.forEach(ep => {
+                        if (ep.link_m3u8) {
+                            streams.push({
+                                name: "⚡ [API] KKPhim",
+                                title: `Bản phát: ${ep.name} - ${server.server_name}`,
+                                url: ep.link_m3u8
+                            });
+                        }
                     });
                 }
             });
         }
-    } catch (e) { console.log("Lỗi KKPhim API"); }
+    } catch (e) { console.log("Lỗi KKPhim API:", e.message); }
     return streams;
 }
 
@@ -88,7 +94,7 @@ async function fetchVSMov(movieName) {
                 });
             }
         }
-    } catch (e) { console.log("Lỗi VSMov API"); }
+    } catch (e) { console.log("Lỗi VSMov API:", e.message); }
     return streams;
 }
 
@@ -106,7 +112,8 @@ async function scrapePhimLongTieng(movieName) {
         const firstMovieLink = \$('.list-films .item a').first().attr('href');
         if (firstMovieLink) {
             const movieRes = await axios.get(firstMovieLink, { 
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+                timeout: 5000
             });
             const \$movie = cheerio.load(movieRes.data);
             const scripts = \$movie('script').text();
@@ -119,7 +126,7 @@ async function scrapePhimLongTieng(movieName) {
                 });
             }
         }
-    } catch (e) { console.log("Lỗi cào PhimLongTieng"); }
+    } catch (e) { console.log("Lỗi cào PhimLongTieng:", e.message); }
     return streams;
 }
 
@@ -136,7 +143,8 @@ async function scrapeMotPhimTV(movieName) {
         const firstMovieLink = \$('.list-films .item a').first().attr('href');
         if (firstMovieLink) {
             const movieRes = await axios.get(firstMovieLink, { 
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+                timeout: 5000
             });
             const \$movie = cheerio.load(movieRes.data);
             const scripts = \$movie('script').text();
@@ -149,7 +157,7 @@ async function scrapeMotPhimTV(movieName) {
                 });
             }
         }
-    } catch (e) { console.log("Lỗi cào MotPhimTV"); }
+    } catch (e) { console.log("Lỗi cào MotPhimTV:", e.message); }
     return streams;
 }
 
@@ -178,26 +186,44 @@ builder.defineStreamHandler(async (args) => {
     return { streams: orderedStreams };
 });
 
+// HỆ THỐNG ĐỊNH TUYẾN (ROUTER) CHUẨN ĐÃ ĐƯỢC FIX LỖI 404 VERCEL
 const addonInterface = builder.getInterface();
 module.exports = (req, res) => {
+    // Kích hoạt CORS đầy đủ để Stremio không bị lỗi chặn bảo mật chéo kênh
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
     const { url } = req;
+    
+    // 1. Phân giải link manifest.json gốc
     if (url === '/' || url === '/manifest.json') {
-        res.setHeader('Content-Type', 'application/json');
         return res.status(200).json(addonInterface.manifest);
     }
-    const pathParts = url.split('/');
-    const resource = pathParts[1];
-    const type = pathParts[2];
-    const id = pathParts[3] ? pathParts[3].replace('.json', '') : null;
+    
+    // 2. Tách cấu trúc URL thành các tham số sạch để Stremio SDK xử lý
+    const pathParts = url.split('/').filter(Boolean);
+    
+    if (pathParts.length >= 3) {
+        const resource = pathParts[0];
+        const type = pathParts[1];
+        const idWithExt = pathParts[2];
+        const id = idWithExt.replace('.json', '');
 
-    if (resource === 'stream' && type && id) {
-        builder.getRouter().handleStream({ type, id }, (err, result) => {
-            if (err) return res.status(500).send(err);
-            res.setHeader('Content-Type', 'application/json');
-            return res.status(200).json(result);
-        });
-    } else {
-        return res.status(404).send('Not Found');
+        // Trích xuất luồng stream phim
+        if (resource === 'stream') {
+            return builder.getRouter().handleStream({ type, id }, (err, result) => {
+                if (err) return res.status(500).json({ error: err.message });
+                return res.status(200).json(result);
+            });
+        }
     }
+
+    // Trả cấu trúc trống nếu gọi sai Endpoint
+    return res.status(404).json({ error: "Not Found" });
 };
- 
