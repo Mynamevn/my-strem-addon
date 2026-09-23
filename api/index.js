@@ -1462,101 +1462,303 @@ async function fetchVSMov(movieName) {
 
 
         // ============================================================
-        // 7. CHỌN PHIM TỐT NHẤT
-        // ============================================================
+// 7. CHỌN PHIM TỐT NHẤT
+// ============================================================
 
-        const selected =
-            ranked[0];
+const selected =
+    ranked[0];
+
+const movie =
+    selected?.item || {};
+
+const foundName =
+    String(
+        movie?.name ||
+        movie?.origin_name ||
+        movieName
+    ).trim();
+
+const movieSlug =
+    String(
+        movie?.slug ||
+        ""
+    ).trim();
+
+console.log(
+    "[VSMOV] SELECTED NAME:",
+    foundName
+);
+
+console.log(
+    "[VSMOV] SELECTED ORIGIN:",
+    movie?.origin_name || ""
+);
+
+console.log(
+    "[VSMOV] SELECTED SLUG:",
+    movieSlug
+);
+
+console.log(
+    "[VSMOV] SELECTED SCORE:",
+    selected?.score
+);
 
 
-        const movie =
-            selected.item;
+// ============================================================
+// 8. NẾU CÓ SLUG → ĐI THẲNG TRANG PHIM
+// ============================================================
 
+if (movieSlug) {
 
-        const movieSlug =
-            String(
-                movie?.slug ||
-                ""
-            );
-
-
-        const foundName =
-            movie?.name ||
-            movie?.origin_name ||
-            movieName;
-
-
-        if (
-            !movieSlug
-        ) {
-
-            console.log(
-                "[VSMOV] Candidate không có slug"
-            );
-
-            return streams;
-
-        }
-
-
-        console.log(
-            "[VSMOV] SELECTED:",
-            foundName
-        );
-
-        console.log(
-            "[VSMOV] ORIGIN:",
-            movie?.origin_name || ""
-        );
-
-        console.log(
-            "[VSMOV] SLUG:",
+    const movieUrl =
+        "https://vsmov.com/phim/" +
+        encodeURIComponent(
             movieSlug
         );
 
-        console.log(
-            "[VSMOV] SCORE:",
-            selected.score
-        );
+    console.log(
+        "[VSMOV] EXACT MOVIE PAGE:",
+        movieUrl
+    );
 
 
-        // ============================================================
-        // 8. EXACT VSMOV PAGE
-        // ============================================================
+    // ----------------------------------------------------------
+    // FALLBACK EXACT PAGE
+    // ----------------------------------------------------------
 
-        const movieUrl =
-            "https://vsmov.com/phim/" +
-            encodeURIComponent(
-                movieSlug
+    const fallbackStream = {
+
+        name:
+            "🌐 [Fallback] VSmov",
+
+        title:
+            "Mở VSmov - " +
+            foundName,
+
+        externalUrl:
+            movieUrl
+
+    };
+
+
+    // ----------------------------------------------------------
+    // LẤY HTML TRANG PHIM
+    // ----------------------------------------------------------
+
+    let html = "";
+
+    try {
+
+        const movieResponse =
+            await axios.get(
+                movieUrl,
+                {
+                    timeout: 8000,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+
+                        "Accept-Language":
+                            "vi,en-US;q=0.9,en;q=0.8",
+
+                        "Referer":
+                            "https://vsmov.com/"
+
+                    }
+                }
+            );
+
+
+        html =
+            String(
+                movieResponse.data || ""
             );
 
 
         console.log(
-            "[VSMOV] EXACT PAGE:",
-            movieUrl
+            "[VSMOV] Movie HTML length:",
+            html.length
         );
 
 
-        // ============================================================
-        // 9. LUÔN TẠO FALLBACK EXACT PAGE TRƯỚC
-        //
-        // Như vậy kể cả bước lấy M3U8 thất bại,
-        // VSmov vẫn xuất hiện.
-        // ============================================================
+    } catch (e) {
 
-        const fallbackStream = {
+        console.log(
+            "[VSMOV] Movie page ERROR:",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+    }
+
+
+    // ----------------------------------------------------------
+    // TÌM VIDEO HASH
+    // ----------------------------------------------------------
+
+    let videoHash = "";
+
+    const hashPatterns = [
+
+        /data-hash=["']([^"']+)["']/i,
+
+        /videoHash\s*[:=]\s*["']([^"']+)["']/i,
+
+        /video_hash\s*[:=]\s*["']([^"']+)["']/i,
+
+        /\/video\/([a-f0-9-]{20,})/i,
+
+        /\/stream\/([a-f0-9-]{20,})\/master\.m3u8/i
+
+    ];
+
+
+    for (
+        const pattern
+        of hashPatterns
+    ) {
+
+        const match =
+            html.match(pattern);
+
+
+        if (
+            match &&
+            match[1]
+        ) {
+
+            videoHash =
+                match[1];
+
+            break;
+
+        }
+
+    }
+
+
+    // ----------------------------------------------------------
+    // CÓ M3U8
+    // ----------------------------------------------------------
+
+    if (videoHash) {
+
+        console.log(
+            "[VSMOV] VIDEO HASH:",
+            videoHash
+        );
+
+
+        const streamUrl =
+            "https://v8.streamvsmov.com/stream/" +
+            videoHash +
+            "/master.m3u8";
+
+
+        streams.push({
 
             name:
-                "🌐 [Fallback] VSmov",
+                "🌟 [Scrape] VSmov",
 
             title:
-                "Mở đúng trang VSmov - " +
+                "Luồng phát VSmov - " +
                 foundName,
 
-            externalUrl:
-                movieUrl
+            url:
+                streamUrl,
 
-        };
+            behaviorHints: {
+
+                httpReferrer:
+                    movieUrl,
+
+                bingeGroup:
+                    "vsmov"
+
+            }
+
+        });
+
+
+        console.log(
+            "[VSMOV] M3U8:",
+            streamUrl
+        );
+
+    } else {
+
+        console.log(
+            "[VSMOV] Không lấy được M3U8"
+        );
+
+    }
+
+
+    // ----------------------------------------------------------
+    // LUÔN CÓ EXACT PAGE
+    // ----------------------------------------------------------
+
+    streams.push(
+        fallbackStream
+    );
+
+
+    console.log(
+        "[VSMOV] FINAL:",
+        streams.length,
+        "streams"
+    );
+
+
+    return streams;
+}
+
+
+// ============================================================
+// 9. CHỈ KHI KHÔNG CÓ SLUG MỚI DÙNG SEARCH FALLBACK
+// ============================================================
+
+console.log(
+    "[VSMOV] Có candidate nhưng không có slug"
+);
+
+
+const fallbackKeyword =
+    searchNames.length > 1
+        ? searchNames[searchNames.length - 1]
+        : movieName;
+
+
+const fallbackSearchUrl =
+    "https://vsmov.com/?search=" +
+    encodeURIComponent(
+        fallbackKeyword
+    );
+
+
+streams.push({
+
+    name:
+        "🔎 [Fallback Search] VSmov",
+
+    title:
+        "Tìm trên VSmov - " +
+        fallbackKeyword,
+
+    externalUrl:
+        fallbackSearchUrl
+
+});
+
+
+return streams;
 
 
         // ============================================================
@@ -2367,20 +2569,7 @@ builder.defineStreamHandler(async (args) => {
                 encodeURIComponent(
                     movieName
                 )
-        },
-
-{
-    name:
-        "🔎 [Fallback Search] VSmov",
-
-    title:
-        "Tìm phim trên VSmov - " +
-        movieName,
-
-    externalUrl:
-        "https://vsmov.com/?search=" +
-        encodeURIComponent(movieName)
-}
+        }
 
     ];
 
