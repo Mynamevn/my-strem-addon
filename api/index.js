@@ -2048,7 +2048,7 @@ builder.defineStreamHandler(async (args) => {
 });
 
 /* ============================================================
-   ROUTER / VERCEL EXPORT
+   VERCEL HANDLER
    ============================================================ */
 
 const router =
@@ -2056,4 +2056,15 @@ const router =
         builder.getInterface()
     );
 
-module.exports = router;
+module.exports = function handler(req, res) {
+    return router(req, res, function next(err) {
+        if (err) {
+            console.error("[ROUTER ERROR]", err);
+
+            if (!res.headersSent) {
+                res.statusCode = 500;
+                res.end("Internal Server Error");
+            }
+        }
+    });
+};
