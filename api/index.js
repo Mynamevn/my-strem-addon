@@ -1,176 +1,1253 @@
-const { addonBuilder } = require('stremio-addon-sdk');
+const { addonBuilder, getRouter } = require('stremio-addon-sdk');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
-// 1. Cấu hình Manifest từ bản v20 - Thêm tiền tố tt để Stremio khóa chặt hàng phim trên Board
 const manifest = {
-    "id": "community.paproplayer.secure.v500",
-    "version": "500.0.0", // Nâng hẳn lên v500 để ép xóa sạch bộ nhớ cache lỗi cũ trên mọi thiết bị
-    "name": "PA",
-    "description": "Hệ thống kết nối luồng nội bộ PA v500.",
-    "resources": ["catalog", "stream"],
-    "types": ["movie", "series"],
-    "idPrefixes": ["tt", "vnwpsw"],
-    "catalogs": [
+    id: "community.paproplayer.multisource.v2000",
+    version: "0.1.0",
+    name: "MOVINA",
+    description: "He thong gop nguon truc tiep",
+
+    resources: ["catalog", "meta", "stream"],
+    types: ["movie", "series"],
+    idPrefixes: ["tt", "vnwpsw"],
+
+    catalogs: [
         {
-            "type": "movie",
-            "id": "pa_movies_new",
-            "name": "Phim lẻ mới (PA)",
-            "extra": [{ "name": "search", "isRequired": false }]
+            type: "movie",
+            id: "pa_movies_new",
+            name: "Phim le moi",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
         },
         {
-            "type": "series",
-            "id": "pa_series_new",
-            "name": "Phim bộ mới (PA)",
-            "extra": [{ "name": "search", "isRequired": false }]
+            type: "series",
+            id: "pa_series_new",
+            name: "Phim bo moi",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
         }
     ]
 };
 
 const builder = new addonBuilder(manifest);
 
-// Hàm hỗ trợ format slug tiếng Việt không dấu chuẩn xác cho 1Phim32
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+
 function toSlug(text) {
     if (!text) return "phim";
-    return text.toString().toLowerCase()
+
+    return text
+        .toString()
+        .toLowerCase()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/đ/g, "d")
-        .replace(/[^a-z0-9\s]/g, '')
-        .replace(/\s+/g, '-');
+        .replace(/[^a-z0-9\s]/g, "")
+        .replace(/\s+/g, "-");
 }
 
-// 2. Logic Catalog: Kéo danh sách phim từ API hiển thị mượt mà cố định lên Board
-const catalogHandler = async (args) => {
-    let apiUrl = 'https://phimapi.com';
-    if (args.type === 'series' || args.id === 'pa_series_new') {
-        apiUrl = 'https://phimapi.com';
-    }
 
-    if (args.extra && args.extra.search) {
-        apiUrl = 'https://phimapi.com' + encodeURIComponent(args.extra.search) + '&limit=12';
-    }
-
+function decodeMovieName(id) {
     try {
-        const res = await fetch(apiUrl);
-        const data = await res.json();
-        const items = data?.data?.items || data?.items || [];
-        
-        if (items.length > 0) {
-            const metas = items.map(item => ({
-                id: 'vnwpsw:' + encodeURIComponent(item.name),
-                type: args.type || 'movie',
-                name: item.name,
-                poster: item.poster_url?.startsWith('http') ? item.poster_url : 'https://phimimg.com' + item.poster_url,
-                description: 'Tên gốc: ' + (item.origin_name || item.name) + ' (' + (item.year || 'New') + ')'
-            }));
-            return { metas };
+        const rawId = String(id || "");
+
+        if (rawId.startsWith("vnwpsw:")) {
+            return decodeURIComponent(
+                rawId.substring("vnwpsw:".length)
+            );
         }
-    } catch (e) { console.error(e); }
 
-    return { metas: [] };
-};
+        if (rawId.startsWith("tt")) {
+            return "";
+        }
 
-// 3. Logic Stream: Nâng cấp trực tiếp từ bản v20, vá lỗi dính chữ bằng liên kết mảng thô độc lập
-const streamHandler = async (args) => {
-    let movieName = "Phim";
-    const parts = args.id.split(':');
+        if (rawId.includes(":")) {
+            return decodeURIComponent(
+                rawId.split(":").slice(1).join(":")
+            );
+        }
 
-    // Chuyển hóa thông minh: Nếu mở phim từ kho chung Stremio, tự động tra cứu dịch sang tên Tiếng Việt
-    if (args.id.startsWith('tt')) {
-        try {
-            const cleanType = args.type === 'series' ? 'series' : 'movie';
-            const res = await fetch('https://strem.io' + cleanType + '/' + args.id + '.json');
-            const data = await res.json();
-            if (data?.meta?.name) {
-                movieName = data.meta.name;
-            }
-        } catch (e) { movieName = "phim"; }
-    } else if (parts.length > 1) {
-        movieName = decodeURIComponent(parts[1]);
+        return decodeURIComponent(rawId);
+
+    } catch (e) {
+        return "";
+    }
+}
+
+
+/* ============================================================
+   POSTER
+   ============================================================ */
+
+function makePosterUrl(item) {
+    if (!item) return undefined;
+
+    const rawPoster =
+        item.poster_url ||
+        item.poster ||
+        item.thumb_url ||
+        item.thumb ||
+        "";
+
+    if (!rawPoster) return undefined;
+
+    const poster = String(rawPoster).trim();
+
+    if (
+        poster.startsWith("https://") ||
+        poster.startsWith("http://")
+    ) {
+        return poster;
+    }
+
+    if (poster.startsWith("//")) {
+        return "https:" + poster;
+    }
+
+    const cleanPath = poster.startsWith("/")
+        ? poster
+        : "/" + poster;
+
+    return "https://phimimg.com" + cleanPath;
+}
+
+
+/* ============================================================
+   CATALOG
+   ============================================================ */
+
+async function fetchCatalogFromPhimApi(args) {
+
+    const search = args.extra?.search;
+
+    let apiUrl;
+
+    if (search && search.trim()) {
+
+        apiUrl =
+            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+            encodeURIComponent(search.trim()) +
+            "&limit=20";
+
+    } else if (
+        args.type === "series" ||
+        args.id === "pa_series_new"
+    ) {
+
+        apiUrl =
+            "https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20";
+
     } else {
-        movieName = decodeURIComponent(args.id);
+
+        apiUrl =
+            "https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20";
     }
 
-    const slugQuery = toSlug(movieName);
-    const urlQuery = encodeURIComponent(movieName).replace(/%20/g, '+');
+    console.log("[CATALOG] Request:", apiUrl);
 
-    // NỐI CHUỖI KHÓA CỨNG DẤU GẠCH CHÉO VÀ TỪ KHÓA TÌM KIẾM - CAM KẾT HIỂN THỊ ĐỦ 100% CẤU TRÚC MẪU CỦA BẠN
-    const link1Phim32 = 'https://1phim32.com' + '/search/' + slugQuery + '/';
-    const linkNguonC = 'https://nguonc.com' + '/tim-kiem?keyword=' + urlQuery;
-    const linkMotPhim = 'https://motphimtv.run' + '/?search=' + urlQuery;
-
-    const streams = [
-        {
-            name: "🌐 PA [1Phim32]",
-            title: 'Mở trình phát nhúng 1Phim32 cho phim: ' + movieName,
-            playerFrameUrl: link1Phim32,
-            externalUrl: link1Phim32
-        },
-        {
-            name: "🌐 PA [NguồnC]",
-            title: 'Mở trình phát nhúng NguồnC cho phim: ' + movieName,
-            playerFrameUrl: linkNguonC,
-            externalUrl: linkNguonC
-        },
-        {
-            name: "🌐 PA [MọtPhim]",
-            title: 'Mở trình phát nhúng MọtPhim cho phim: ' + movieName,
-            playerFrameUrl: linkMotPhim,
-            externalUrl: linkMotPhim
+    const res = await axios.get(apiUrl, {
+        timeout: 8000,
+        headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
         }
-    ];
+    });
 
-    return { streams };
-};
+    const data = res.data || {};
 
-// 4. Bộ định tuyến Router Serverless Native xử lý siêu tốc cho Vercel - Khóa chặt Board ổn định
-module.exports = async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    const items =
+        data?.data?.items ||
+        data?.items ||
+        [];
 
-    if (req.method === 'OPTIONS') return res.status(200).end();
+    console.log("[CATALOG] Items:", items.length);
 
-    const cleanUrl = req.url.replace(/\/+/g, '/');
-    const [pathPart, queryPart] = cleanUrl.split('?');
+    return items;
+}
+
+
+builder.defineCatalogHandler(async (args) => {
+
+    console.log(
+        "[CATALOG] type:",
+        args.type,
+        "id:",
+        args.id,
+        "search:",
+        args.extra?.search || ""
+    );
 
     try {
-        if (pathPart === '/' || pathPart === '/manifest.json') {
-            return res.status(200).json(manifest);
+
+        const items =
+            await fetchCatalogFromPhimApi(args);
+
+        if (!Array.isArray(items)) {
+            return { metas: [] };
         }
 
-        if (pathPart.includes('/catalog/')) {
-            const cleanPath = pathPart.replace('.json', '');
-            const parts = cleanPath.split('/').filter(p => p);
-            const type = parts[1];
-            const id = parts[2];
-            const extraStr = parts[3];
-            const extra = {};
+        const metas = items
+            .filter(item => item && item.name)
+            .map(item => {
 
-            if (extraStr && extraStr.includes('=')) {
-                const [key, val] = extraStr.split('=');
-                if (key && val) extra[key] = decodeURIComponent(val);
-            } else if (queryPart && queryPart.includes('=')) {
-                const params = new URLSearchParams(queryPart);
-                if (params.has('search')) extra['search'] = params.get('search');
+                const movieName =
+                    String(item.name);
+
+                return {
+                    id:
+                        "vnwpsw:" +
+                        encodeURIComponent(movieName),
+
+                    type:
+                        args.type === "series"
+                            ? "series"
+                            : "movie",
+
+                    name:
+                        movieName,
+
+                    poster:
+                        makePosterUrl(item),
+
+                    description:
+                        "Original: " +
+                        (
+                            item.origin_name ||
+                            item.original_name ||
+                            movieName
+                        ) +
+                        " (" +
+                        (
+                            item.year ||
+                            "New"
+                        ) +
+                        ")"
+                };
+            });
+
+        console.log(
+            "[CATALOG] Metas:",
+            metas.length
+        );
+
+        return { metas };
+
+    } catch (e) {
+
+        console.error(
+            "[CATALOG ERROR]",
+            e?.message || e
+        );
+
+        return { metas: [] };
+    }
+});
+
+
+/* ============================================================
+   META
+   ============================================================ */
+
+builder.defineMetaHandler(async (args) => {
+
+    console.log(
+        "[META] type:",
+        args.type,
+        "id:",
+        args.id
+    );
+
+    try {
+
+        let movieName = "";
+
+        const rawId =
+            String(args.id || "");
+
+        if (rawId.startsWith("vnwpsw:")) {
+
+            movieName =
+                decodeURIComponent(
+                    rawId.substring("vnwpsw:".length)
+                );
+
+        } else if (rawId.startsWith("tt")) {
+
+            const imdbId =
+                rawId.split(":")[0];
+
+            const cleanType =
+                args.type === "series"
+                    ? "series"
+                    : "movie";
+
+            try {
+
+                const res =
+                    await axios.get(
+                        "https://stremio.com/" +
+                        cleanType +
+                        "/" +
+                        imdbId +
+                        ".json",
+                        {
+                            timeout: 5000
+                        }
+                    );
+
+                movieName =
+                    res.data?.meta?.name || "";
+
+            } catch (e) {
+
+                console.log(
+                    "[META IMDB ERROR]",
+                    e?.message || e
+                );
             }
 
-            const result = await catalogHandler({ type, id, extra });
-            return res.status(200).json({ metas: result.metas || [] });
+        } else {
+
+            movieName =
+                decodeURIComponent(rawId);
         }
 
-        if (pathPart.includes('/stream/')) {
-            const cleanPath = pathPart.replace('.json', '');
-            const parts = cleanPath.split('/').filter(p => p);
-            const type = parts[1];
-            const id = parts.slice(2).join('/'); 
+        console.log(
+            "[META] Movie:",
+            movieName
+        );
 
-            const result = await streamHandler({ type, id: decodeURIComponent(id) });
-            return res.status(200).json({ streams: result.streams || [] });
+        if (!movieName) {
+            return { meta: null };
         }
 
-        return res.status(200).json(manifest);
-    } catch (error) {
-        return res.status(200).json({ metas: [], streams: [] });
+        const searchUrl =
+            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+            encodeURIComponent(movieName) +
+            "&limit=10";
+
+        const res =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const items =
+            res.data?.data?.items ||
+            res.data?.items ||
+            [];
+
+        let item =
+            items.find(
+                x =>
+                    x &&
+                    x.name &&
+                    x.name.toLowerCase() ===
+                    movieName.toLowerCase()
+            );
+
+        if (!item && items.length > 0) {
+            item = items[0];
+        }
+
+        if (!item) {
+
+            return {
+                meta: {
+                    id: args.id,
+                    type:
+                        args.type === "series"
+                            ? "series"
+                            : "movie",
+                    name: movieName
+                }
+            };
+        }
+
+        const meta = {
+
+            id: args.id,
+
+            type:
+                args.type === "series"
+                    ? "series"
+                    : "movie",
+
+            name:
+                item.name ||
+                movieName,
+
+            poster:
+                makePosterUrl(item),
+
+            description:
+                "Original: " +
+                (
+                    item.origin_name ||
+                    item.original_name ||
+                    item.name ||
+                    movieName
+                ) +
+                " (" +
+                (
+                    item.year ||
+                    "New"
+                ) +
+                ")",
+
+            releaseInfo:
+                item.year
+                    ? String(item.year)
+                    : undefined,
+
+            genres:
+                Array.isArray(item.category)
+                    ? item.category.map(
+                        x =>
+                            typeof x === "string"
+                                ? x
+                                : x.name
+                    )
+                    : undefined
+        };
+
+        console.log(
+            "[META] OK:",
+            meta.name
+        );
+
+        return { meta };
+
+    } catch (e) {
+
+        console.error(
+            "[META ERROR]",
+            e?.message || e
+        );
+
+        return { meta: null };
+    }
+});
+
+
+/* ============================================================
+   NGUONC
+   API:
+   https://phim.nguonc.com/api
+   ============================================================ */
+
+async function fetchNguonC(movieName) {
+
+    const streams = [];
+
+    try {
+
+        console.log(
+            "[NGUONC] Search:",
+            movieName
+        );
+
+        const searchUrl =
+            "https://phim.nguonc.com/api/films/search?keyword=" +
+            encodeURIComponent(movieName);
+
+        const res =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const items =
+            res.data?.items || [];
+
+        console.log(
+            "[NGUONC] Search results:",
+            items.length
+        );
+
+        if (!items.length) {
+            return streams;
+        }
+
+        const movie =
+            items[0];
+
+        const movieSlug =
+            movie.slug;
+
+        if (!movieSlug) {
+            return streams;
+        }
+
+        console.log(
+            "[NGUONC] Slug:",
+            movieSlug
+        );
+
+        const detailUrl =
+            "https://phim.nguonc.com/api/film/" +
+            encodeURIComponent(movieSlug);
+
+        const detail =
+            await axios.get(
+                detailUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const episodes =
+            detail.data?.movie?.episodes ||
+            detail.data?.episodes ||
+            [];
+
+        episodes.forEach(server => {
+
+            const serverItems =
+                server.items ||
+                server.server_data ||
+                [];
+
+            serverItems.forEach(ep => {
+
+                const streamUrl =
+                    ep.link_m3u8 ||
+                    ep.m3u8_url;
+
+                if (!streamUrl) return;
+
+                streams.push({
+
+                    name:
+                        "🎬 [API] NguonC",
+
+                    title:
+                        "Tap " +
+                        (
+                            ep.name ||
+                            ep.slug ||
+                            ""
+                        ) +
+                        " - " +
+                        (
+                            server.server_name ||
+                            ""
+                        ),
+
+                    url:
+                        String(streamUrl)
+                });
+            });
+        });
+
+        console.log(
+            "[NGUONC] Streams:",
+            streams.length
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[NGUONC ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+    }
+
+    return streams;
+}
+
+
+/* ============================================================
+   KKPHIM / PHIMAPI
+   ============================================================ */
+
+async function fetchKKPhim(movieName) {
+
+    const streams = [];
+
+    try {
+
+        console.log(
+            "[KKPHIM] Search:",
+            movieName
+        );
+
+        const searchUrl =
+            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+            encodeURIComponent(movieName) +
+            "&limit=10";
+
+        const res =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const items =
+            res.data?.data?.items ||
+            res.data?.items ||
+            [];
+
+        console.log(
+            "[KKPHIM] Search results:",
+            items.length
+        );
+
+        if (!items.length) {
+            return streams;
+        }
+
+        const movie =
+            items.find(
+                x =>
+                    x?.name?.toLowerCase() ===
+                    movieName.toLowerCase()
+            ) ||
+            items[0];
+
+        const movieSlug =
+            movie?.slug;
+
+        if (!movieSlug) {
+            return streams;
+        }
+
+        console.log(
+            "[KKPHIM] Slug:",
+            movieSlug
+        );
+
+        /*
+         * QUAN TRỌNG:
+         * Endpoint detail phải là:
+         *
+         * /v1/api/phim/{slug}
+         */
+
+        const detailUrl =
+            "https://phimapi.com/v1/api/phim/" +
+            encodeURIComponent(movieSlug);
+
+        const detail =
+            await axios.get(
+                detailUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const episodesData =
+            detail.data?.episodes ||
+            [];
+
+        episodesData.forEach(server => {
+
+            const serverData =
+                server.server_data ||
+                [];
+
+            serverData.forEach(ep => {
+
+                if (!ep.link_m3u8) {
+                    return;
+                }
+
+                streams.push({
+
+                    name:
+                        "⚡ [API] KKPhim",
+
+                    title:
+                        "Ban phat: " +
+                        (
+                            ep.name ||
+                            ""
+                        ) +
+                        " - " +
+                        (
+                            server.server_name ||
+                            ""
+                        ),
+
+                    url:
+                        String(
+                            ep.link_m3u8
+                        )
+                });
+            });
+        });
+
+        console.log(
+            "[KKPHIM] Streams:",
+            streams.length
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[KKPHIM ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+    }
+
+    return streams;
+}
+
+
+/* ============================================================
+   VSMOV
+   ============================================================ */
+
+async function fetchVSMov(movieName) {
+
+    const streams = [];
+
+    try {
+
+        console.log(
+            "[VSMOV] Search:",
+            movieName
+        );
+
+        /*
+         * Giữ nguyên endpoint cũ.
+         * Nếu API không còn hoạt động, log sẽ cho biết.
+         */
+
+        const searchUrl =
+            "https://vsmov.com" +
+            encodeURIComponent(movieName);
+
+        const res =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 6000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const streamUrl =
+            res.data?.stream_url ||
+            res.data?.results?.stream_url;
+
+        if (streamUrl) {
+
+            streams.push({
+
+                name:
+                    "🌟 [API] VSMov",
+
+                title:
+                    "Luong phat VSMov",
+
+                url:
+                    String(streamUrl)
+            });
+        }
+
+        console.log(
+            "[VSMOV] Streams:",
+            streams.length
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[VSMOV ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+    }
+
+    return streams;
+}
+
+
+/* ============================================================
+   1PHIM32
+   ============================================================ */
+
+async function scrapePhimLongTieng(movieName) {
+
+    const streams = [];
+
+    try {
+
+        console.log(
+            "[1PHIM32] Search:",
+            movieName
+        );
+
+        const searchSlug =
+            toSlug(movieName);
+
+        const searchUrl =
+            "https://www.1phim32.com/search/" +
+            encodeURIComponent(searchSlug) +
+            "/";
+
+        const searchRes =
+            await axios.get(
+                searchUrl,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    },
+                    timeout: 6000
+                }
+            );
+
+        const parseHtml =
+            cheerio.load(
+                searchRes.data
+            );
+
+        let firstMovieLink =
+            parseHtml(
+                ".list-films .item a"
+            )
+            .first()
+            .attr("href");
+
+        if (
+            firstMovieLink &&
+            firstMovieLink.startsWith("/")
+        ) {
+
+            firstMovieLink =
+                "https://www.1phim32.com" +
+                firstMovieLink;
+        }
+
+        if (!firstMovieLink) {
+
+            console.log(
+                "[1PHIM32] Không tìm thấy trang phim"
+            );
+
+            return streams;
+        }
+
+        console.log(
+            "[1PHIM32] Movie URL:",
+            firstMovieLink
+        );
+
+        const movieRes =
+            await axios.get(
+                firstMovieLink,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    },
+                    timeout: 6000
+                }
+            );
+
+        const parseMovie =
+            cheerio.load(
+                movieRes.data
+            );
+
+        const scripts =
+            parseMovie(
+                "script"
+            ).text();
+
+        const m3u8Match =
+            scripts.match(
+                /(https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*)/
+            );
+
+        if (m3u8Match?.[1]) {
+
+            streams.push({
+
+                name:
+                    "🔊 [Scrape] 1Phim32",
+
+                title:
+                    "Luong phat 1Phim32",
+
+                url:
+                    String(
+                        m3u8Match[1]
+                    )
+            });
+        }
+
+        console.log(
+            "[1PHIM32] Streams:",
+            streams.length
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[1PHIM32 ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+    }
+
+    return streams;
+}
+
+
+/* ============================================================
+   MOTPHIMTV
+   ============================================================ */
+
+async function scrapeMotPhimTV(movieName) {
+
+    const streams = [];
+
+    try {
+
+        console.log(
+            "[MOTPHIM] Search:",
+            movieName
+        );
+
+        const searchUrl =
+            "https://motphimtv.run/?search=" +
+            encodeURIComponent(movieName);
+
+        const searchRes =
+            await axios.get(
+                searchUrl,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    },
+                    timeout: 6000
+                }
+            );
+
+        const parseHtml =
+            cheerio.load(
+                searchRes.data
+            );
+
+        let firstMovieLink =
+            parseHtml(
+                ".list-films .item a"
+            )
+            .first()
+            .attr("href");
+
+        if (
+            firstMovieLink &&
+            firstMovieLink.startsWith("/")
+        ) {
+
+            firstMovieLink =
+                "https://motphimtv.run" +
+                firstMovieLink;
+        }
+
+        if (!firstMovieLink) {
+
+            console.log(
+                "[MOTPHIM] Không tìm thấy trang phim"
+            );
+
+            return streams;
+        }
+
+        console.log(
+            "[MOTPHIM] Movie URL:",
+            firstMovieLink
+        );
+
+        const movieRes =
+            await axios.get(
+                firstMovieLink,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    },
+                    timeout: 6000
+                }
+            );
+
+        const parseMovie =
+            cheerio.load(
+                movieRes.data
+            );
+
+        const scripts =
+            parseMovie(
+                "script"
+            ).text();
+
+        const m3u8Match =
+            scripts.match(
+                /(https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*)/
+            );
+
+        if (m3u8Match?.[1]) {
+
+            streams.push({
+
+                name:
+                    "📺 [Scrape] MotPhimTV",
+
+                title:
+                    "Luong phat MotPhimTV",
+
+                url:
+                    String(
+                        m3u8Match[1]
+                    )
+            });
+        }
+
+        console.log(
+            "[MOTPHIM] Streams:",
+            streams.length
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[MOTPHIM ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+    }
+
+    return streams;
+}
+
+
+/* ============================================================
+   STREAM HANDLER
+   ============================================================ */
+
+builder.defineStreamHandler(async (args) => {
+
+    console.log(
+        "================================================"
+    );
+
+    console.log(
+        "[STREAM] Request:",
+        JSON.stringify(args)
+    );
+
+    let movieName = "";
+
+    const rawId =
+        String(args.id || "");
+
+    /*
+     * vnwpSW:Tên phim
+     */
+
+    if (
+        rawId.startsWith("vnwpsw:")
+    ) {
+
+        movieName =
+            decodeURIComponent(
+                rawId.substring(
+                    "vnwpsw:".length
+                )
+            );
+    }
+
+    /*
+     * IMDb
+     */
+
+    else if (
+        rawId.startsWith("tt")
+    ) {
+
+        try {
+
+            const imdbId =
+                rawId.split(":")[0];
+
+            const cleanType =
+                args.type === "series"
+                    ? "series"
+                    : "movie";
+
+            const res =
+                await axios.get(
+                    "https://stremio.com/" +
+                    cleanType +
+                    "/" +
+                    imdbId +
+                    ".json",
+                    {
+                        timeout: 5000
+                    }
+                );
+
+            movieName =
+                res.data?.meta?.name || "";
+
+        } catch (e) {
+
+            console.log(
+                "[STREAM IMDB ERROR]",
+                e?.message || e
+            );
+        }
+
+    }
+
+    else {
+
+        movieName =
+            decodeURIComponent(
+                rawId
+            );
+    }
+
+
+        console.log(
+        "[STREAM] Movie:",
+        movieName
+    );
+
+    if (!movieName || movieName.toLowerCase() === "phim") {
+        console.log("[STREAM] Không có tên phim hợp lệ");
+        return {
+            streams: []
+        };
+    }
+
+    /*
+     * Phần lấy stream nên kết nối tới các nguồn mà bạn
+     * có quyền sử dụng.
+     *
+     * Ví dụ:
+     *
+     * const streams = await fetchYourAuthorizedSources(movieName);
+     *
+     * Hiện tại để tránh làm addon trả về dữ liệu không hợp lệ,
+     * ta trả về danh sách rỗng.
+     */
+
+    console.log(
+        "[STREAM] Movie name resolved:",
+        movieName
+    );
+
+    return {
+        streams: []
+    };
+});
+
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
+
+const addonInterface = builder.getInterface();
+
+const sdkRouter = getRouter(addonInterface);
+
+module.exports = async (req, res) => {
+
+    res.setHeader(
+        "Access-Control-Allow-Origin",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Headers",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Methods",
+        "GET, OPTIONS"
+    );
+
+    if (req.method === "OPTIONS") {
+        res.status(200).end();
+        return;
+    }
+
+    try {
+
+        sdkRouter(
+            req,
+            res,
+            () => {
+                res.statusCode = 404;
+                res.end();
+            }
+        );
+
+    } catch (e) {
+
+        console.error(
+            "[ROUTER ERROR]",
+            e?.message || e
+        );
+
+        if (!res.headersSent) {
+            res.statusCode = 500;
+            res.end("Internal Server Error");
+        }
     }
 };
