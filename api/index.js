@@ -460,24 +460,33 @@ async function fetchNguonC(movieName) {
 
     try {
 
+        console.log("");
         console.log("========================================");
         console.log("[NGUONC] START");
         console.log("[NGUONC] Movie:", movieName);
+        console.log("========================================");
 
         if (!movieName) {
-            console.log("[NGUONC] Movie name is empty");
+            console.log(
+                "[NGUONC] Movie name is empty"
+            );
+
             return streams;
         }
 
-        // ----------------------------------------------------
-        // 1. SEARCH
-        // ----------------------------------------------------
+
+        /* ----------------------------------------------------
+           1. SEARCH
+           ---------------------------------------------------- */
 
         const searchUrl =
             "https://phim.nguonc.com/api/films/search?keyword=" +
             encodeURIComponent(movieName);
 
-        console.log("[NGUONC] Search URL:", searchUrl);
+        console.log(
+            "[NGUONC] Search URL:",
+            searchUrl
+        );
 
         const searchRes =
             await axios.get(
@@ -503,6 +512,11 @@ async function fetchNguonC(movieName) {
             typeof searchRes.data
         );
 
+
+        /* ----------------------------------------------------
+           2. SEARCH RESULTS
+           ---------------------------------------------------- */
+
         const items =
             searchRes.data?.items ||
             searchRes.data?.data?.items ||
@@ -515,7 +529,10 @@ async function fetchNguonC(movieName) {
                 : "NOT ARRAY"
         );
 
-        if (!Array.isArray(items) || !items.length) {
+        if (
+            !Array.isArray(items) ||
+            !items.length
+        ) {
 
             console.log(
                 "[NGUONC] NO SEARCH RESULT"
@@ -524,9 +541,10 @@ async function fetchNguonC(movieName) {
             return streams;
         }
 
-        // ----------------------------------------------------
-        // 2. CHỌN PHIM
-        // ----------------------------------------------------
+
+        /* ----------------------------------------------------
+           3. CHỌN PHIM KHỚP TÊN
+           ---------------------------------------------------- */
 
         let movie =
             items.find(item => {
@@ -534,7 +552,9 @@ async function fetchNguonC(movieName) {
                 const name =
                     String(
                         item?.name || ""
-                    ).trim().toLowerCase();
+                    )
+                    .trim()
+                    .toLowerCase();
 
                 return (
                     name ===
@@ -545,10 +565,12 @@ async function fetchNguonC(movieName) {
 
             }) || items[0];
 
+
         console.log(
             "[NGUONC] Selected movie:",
             JSON.stringify(movie)
         );
+
 
         const movieSlug =
             movie?.slug;
@@ -567,9 +589,10 @@ async function fetchNguonC(movieName) {
             movieSlug
         );
 
-        // ----------------------------------------------------
-        // 3. DETAIL
-        // ----------------------------------------------------
+
+        /* ----------------------------------------------------
+           4. DETAIL
+           ---------------------------------------------------- */
 
         const detailUrl =
             "https://phim.nguonc.com/api/film/" +
@@ -599,9 +622,10 @@ async function fetchNguonC(movieName) {
             detailRes.status
         );
 
-        // ----------------------------------------------------
-        // 4. EPISODES
-        // ----------------------------------------------------
+
+        /* ----------------------------------------------------
+           5. EPISODES
+           ---------------------------------------------------- */
 
         const movieData =
             detailRes.data?.movie ||
@@ -637,9 +661,10 @@ async function fetchNguonC(movieName) {
             return streams;
         }
 
-        // ----------------------------------------------------
-        // 5. LẤY STREAM
-        // ----------------------------------------------------
+
+        /* ----------------------------------------------------
+           6. LẤY M3U8
+           ---------------------------------------------------- */
 
         episodes.forEach(
             (server, serverIndex) => {
@@ -724,6 +749,7 @@ async function fetchNguonC(movieName) {
             }
         );
 
+
         console.log(
             "[NGUONC] FINAL STREAM COUNT:",
             streams.length
@@ -768,7 +794,6 @@ async function fetchNguonC(movieName) {
 
     return streams;
 }
-
 
 
 /* ============================================================
@@ -836,13 +861,6 @@ async function fetchKKPhim(movieName) {
             "[KKPHIM] Slug:",
             movieSlug
         );
-
-        /*
-         * QUAN TRỌNG:
-         * Endpoint detail phải là:
-         *
-         * /v1/api/phim/{slug}
-         */
 
         const detailUrl =
             "https://phimapi.com/v1/api/phim/" +
@@ -934,11 +952,6 @@ async function fetchVSMov(movieName) {
             "[VSMOV] Search:",
             movieName
         );
-
-        /*
-         * Giữ nguyên endpoint cũ.
-         * Nếu API không còn hoạt động, log sẽ cho biết.
-         */
 
         const searchUrl =
             "https://vsmov.com" +
@@ -1159,89 +1172,18 @@ async function scrapeMotPhimTV(movieName) {
                 }
             );
 
-        const parseHtml =
-            cheerio.load(
-                searchRes.data
-            );
-
-        let firstMovieLink =
-            parseHtml(
-                ".list-films .item a"
-            )
-            .first()
-            .attr("href");
-
-        if (
-            firstMovieLink &&
-            firstMovieLink.startsWith("/")
-        ) {
-
-            firstMovieLink =
-                "https://motphimtv.run" +
-                firstMovieLink;
-        }
-
-        if (!firstMovieLink) {
-
-            console.log(
-                "[MOTPHIM] Không tìm thấy trang phim"
-            );
-
-            return streams;
-        }
-
         console.log(
-            "[MOTPHIM] Movie URL:",
-            firstMovieLink
+            "[MOTPHIM] HTTP:",
+            searchRes.status
         );
 
-        const movieRes =
-            await axios.get(
-                firstMovieLink,
-                {
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                    },
-                    timeout: 6000
-                }
-            );
-
-        const parseMovie =
-            cheerio.load(
-                movieRes.data
-            );
-
-        const scripts =
-            parseMovie(
-                "script"
-            ).text();
-
-        const m3u8Match =
-            scripts.match(
-                /(https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*)/
-            );
-
-        if (m3u8Match?.[1]) {
-
-            streams.push({
-
-                name:
-                    "📺 [Scrape] MotPhimTV",
-
-                title:
-                    "Luong phat MotPhimTV",
-
-                url:
-                    String(
-                        m3u8Match[1]
-                    )
-            });
-        }
+        /*
+         * Tạm thời chỉ kiểm tra request.
+         * Chưa xử lý/extract stream URL.
+         */
 
         console.log(
-            "[MOTPHIM] Streams:",
-            streams.length
+            "[MOTPHIM] Search request OK"
         );
 
     } catch (e) {
@@ -1259,7 +1201,7 @@ async function scrapeMotPhimTV(movieName) {
 
 
 /* ============================================================
-   STREAM HANDLER
+   STREAM HANDLER - DEBUG
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
@@ -1284,26 +1226,40 @@ builder.defineStreamHandler(async (args) => {
         rawId
     );
 
-    // ----------------------------------------------------
-    // MOVINA ID
-    // ----------------------------------------------------
+    /* --------------------------------------------------------
+       MOVINA ID
+       -------------------------------------------------------- */
 
     if (
         rawId.startsWith("vnwpsw:")
     ) {
 
-        movieName =
-            decodeURIComponent(
-                rawId.substring(
-                    "vnwpsw:".length
-                )
+        try {
+
+            movieName =
+                decodeURIComponent(
+                    rawId.substring(
+                        "vnwpsw:".length
+                    )
+                );
+
+        } catch (e) {
+
+            console.log(
+                "[STREAM ID ERROR]:",
+                e?.message || e
             );
 
+            movieName =
+                rawId.substring(
+                    "vnwpsw:".length
+                );
+        }
     }
 
-    // ----------------------------------------------------
-    // IMDb ID
-    // ----------------------------------------------------
+    /* --------------------------------------------------------
+       IMDb
+       -------------------------------------------------------- */
 
     else if (
         rawId.startsWith("tt")
@@ -1341,12 +1297,11 @@ builder.defineStreamHandler(async (args) => {
                 e?.message || e
             );
         }
-
     }
 
-    // ----------------------------------------------------
-    // OTHER ID
-    // ----------------------------------------------------
+    /* --------------------------------------------------------
+       OTHER ID
+       -------------------------------------------------------- */
 
     else {
 
@@ -1360,32 +1315,36 @@ builder.defineStreamHandler(async (args) => {
         } catch (e) {
 
             console.log(
-                "[STREAM ID DECODE ERROR]:",
+                "[STREAM DECODE ERROR]:",
                 e?.message || e
             );
 
-            movieName = rawId;
+            movieName =
+                rawId;
         }
-
     }
+
+    console.log(
+        "[STREAM] Type:",
+        args.type
+    );
 
     console.log(
         "[STREAM] Resolved movie:",
         movieName
     );
 
-    // ----------------------------------------------------
-    // EMPTY MOVIE NAME
-    // ----------------------------------------------------
+    /* --------------------------------------------------------
+       KIỂM TRA ID
+       -------------------------------------------------------- */
 
     if (
         !movieName ||
-        movieName.trim() === "" ||
-        movieName.toLowerCase() === "phim"
+        !movieName.trim()
     ) {
 
         console.log(
-            "[STREAM] Invalid movie name"
+            "[STREAM] ERROR: movieName is empty"
         );
 
         return {
@@ -1393,39 +1352,82 @@ builder.defineStreamHandler(async (args) => {
         };
     }
 
-    // ----------------------------------------------------
-    // CHỈ TEST NGUONC
-    // ----------------------------------------------------
+    /* --------------------------------------------------------
+       DEBUG
+       -------------------------------------------------------- */
 
-    try {
+    console.log(
+        "[STREAM] Movie name resolved successfully"
+    );
 
-        const nguonc =
-            await fetchNguonC(
-                movieName
-            );
+    console.log(
+        "[STREAM] Stream handler is working"
+    );
 
-        console.log(
-            "[STREAM] NguonC returned:",
-            nguonc.length,
-            "streams"
-        );
+    /*
+     * Tạm thời trả về rỗng để kiểm tra handler.
+     *
+     * Nếu log xuất hiện đầy đủ khi mở phim trong
+     * Stremio thì phần Catalog / Meta / Stream Handler
+     * đang kết nối đúng.
+     */
 
-        return {
-            streams: nguonc
-        };
-
-    } catch (e) {
-
-        console.error(
-            "[STREAM HANDLER ERROR]:",
-            e?.message || e
-        );
-
-        return {
-            streams: []
-        };
-    }
-
+    return {
+        streams: []
+    };
 });
 
+
+/* ============================================================
+   ADDON ROUTER
+   ============================================================ */
+
+const addonInterface =
+    builder.getInterface();
+
+const sdkRouter =
+    getRouter(addonInterface);
+
+
+/* ============================================================
+   HTTP HANDLER
+   ============================================================ */
+
+module.exports = async (req, res) => {
+
+    res.setHeader(
+        "Access-Control-Allow-Origin",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Headers",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Methods",
+        "GET, OPTIONS"
+    );
+
+    if (
+        req.method === "OPTIONS"
+    ) {
+
+        res.status(200).end();
+
+        return;
+    }
+
+    sdkRouter(
+        req,
+        res,
+        () => {
+
+            res.statusCode = 404;
+
+            res.end();
+
+        }
+    );
 };
