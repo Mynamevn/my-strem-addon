@@ -1656,7 +1656,7 @@ async function scrapeMotPhimTV(movieName) {
 
 /* ============================================================
    STREAM HANDLER
-   DIRECT STREAM + 5 EXTERNAL URL FALLBACKS
+   DIRECT STREAM + EXTERNAL URL FALLBACK
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
@@ -1677,7 +1677,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       1. LẤY TÊN PHIM TỪ ID
+       1. EXTRACT MOVIE NAME
        ======================================================== */
 
     if (
@@ -1691,16 +1691,15 @@ builder.defineStreamHandler(async (args) => {
                     rawId.indexOf(":") + 1
                 );
 
-            /*
-             * Với phim bộ, Stremio có thể gửi:
-             *
-             * vnwpsw:Tên phim:1:3
-             *
-             * => chỉ lấy "Tên phim"
-             */
-
             const parts =
                 customId.split(":");
+
+            /*
+             * Series:
+             * vnwpsw:Tên phim:1:3
+             *
+             * Chỉ lấy phần tên phim.
+             */
 
             if (
                 args.type === "series" &&
@@ -1730,12 +1729,13 @@ builder.defineStreamHandler(async (args) => {
         } catch (e) {
 
             console.log(
-                "[STREAM CUSTOM ID ERROR]",
+                "[STREAM ID ERROR]",
                 e?.message || e
             );
 
             movieName = "";
         }
+
     }
 
 
@@ -1778,14 +1778,12 @@ builder.defineStreamHandler(async (args) => {
                 "[STREAM IMDB ERROR]",
                 e?.message || e
             );
-
-            movieName = "";
         }
     }
 
 
     /* ========================================================
-       3. ID KHÁC
+       3. OTHER ID
        ======================================================== */
 
     else {
@@ -1799,11 +1797,6 @@ builder.defineStreamHandler(async (args) => {
 
         } catch (e) {
 
-            console.log(
-                "[STREAM ID DECODE ERROR]",
-                e?.message || e
-            );
-
             movieName =
                 rawId;
         }
@@ -1811,7 +1804,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       4. CHUẨN HÓA TÊN PHIM
+       4. NORMALIZE
        ======================================================== */
 
     movieName =
@@ -1825,14 +1818,9 @@ builder.defineStreamHandler(async (args) => {
         movieName
     );
 
-    console.log(
-        "[STREAM] Type:",
-        args.type
-    );
-
 
     /* ========================================================
-       5. KIỂM TRA ID KHÔNG HỢP LỆ
+       5. INVALID MOVIE
        ======================================================== */
 
     if (
@@ -1851,12 +1839,8 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       6. CHẠY 5 DIRECT RESOLVERS
+       6. RUN 5 DIRECT STREAM RESOLVERS
        ======================================================== */
-
-    console.log(
-        "[STREAM] Starting 5 direct sources..."
-    );
 
     const results =
         await Promise.allSettled([
@@ -1875,7 +1859,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       7. LẤY KẾT QUẢ TỪNG NGUỒN
+       7. GET DIRECT STREAM RESULTS
        ======================================================== */
 
     const nguonc =
@@ -1910,7 +1894,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       8. GOM DIRECT STREAMS
+       8. COMBINE DIRECT STREAMS
        ======================================================== */
 
     const directStreams = [
@@ -1929,13 +1913,13 @@ builder.defineStreamHandler(async (args) => {
 
 
     console.log(
-        "[STREAM] Direct total:",
+        "[STREAM] Direct streams:",
         directStreams.length
     );
 
 
     /* ========================================================
-       9. TẠO URL FALLBACK
+       9. CREATE EXTERNAL URL FALLBACKS
        ======================================================== */
 
     const slugQuery =
@@ -1950,9 +1934,13 @@ builder.defineStreamHandler(async (args) => {
         );
 
 
-    /* ========================================================
-       10. 5 EXTERNAL URL FALLBACKS
-       ======================================================== */
+    /*
+     * Đây là FALLBACK.
+     *
+     * Nó không thay thế direct stream.
+     *
+     * Direct stream vẫn nằm ở phía trên.
+     */
 
     const externalStreams = [
 
@@ -1965,7 +1953,7 @@ builder.defineStreamHandler(async (args) => {
                 "🌐 [Fallback] 1Phim32",
 
             title:
-                "Mở trang 1Phim32 để phát: " +
+                "Mở trang 1Phim32: " +
                 movieName,
 
             externalUrl:
@@ -1984,7 +1972,7 @@ builder.defineStreamHandler(async (args) => {
                 "🌐 [Fallback] NguồnC",
 
             title:
-                "Mở trang NguồnC để phát: " +
+                "Mở trang NguồnC: " +
                 movieName,
 
             externalUrl:
@@ -2002,7 +1990,7 @@ builder.defineStreamHandler(async (args) => {
                 "🌐 [Fallback] MotPhimTV",
 
             title:
-                "Mở trang MotPhimTV để phát: " +
+                "Mở trang MotPhimTV: " +
                 movieName,
 
             externalUrl:
@@ -2020,7 +2008,7 @@ builder.defineStreamHandler(async (args) => {
                 "🌐 [Fallback] VSmov",
 
             title:
-                "Mở trang VSmov để phát: " +
+                "Mở trang VSmov: " +
                 movieName,
 
             externalUrl:
@@ -2038,8 +2026,16 @@ builder.defineStreamHandler(async (args) => {
                 "🌐 [Fallback] KKPhim",
 
             title:
-                "Mở trang KKPhim để tìm và phát: " +
+                "Mở trang KKPhim: " +
                 movieName,
+
+            /*
+             * KKPhim/phimapi hiện đang được resolver
+             * sử dụng dưới dạng API.
+             *
+             * Không dùng API JSON làm externalUrl.
+             * Dùng trang web tìm kiếm của phimapi.
+             */
 
             externalUrl:
                 "https://phimapi.com/tim-kiem/" +
@@ -2050,7 +2046,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       11. GOM DIRECT + FALLBACK
+       10. COMBINE DIRECT + FALLBACK
        ======================================================== */
 
     const allStreams = [
@@ -2063,7 +2059,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       12. CHỈ GIỮ STREAM CÓ URL HỢP LỆ
+       11. FILTER INVALID DIRECT STREAMS
        ======================================================== */
 
     const validStreams =
@@ -2075,9 +2071,10 @@ builder.defineStreamHandler(async (args) => {
                 }
 
 
-                /* Direct stream */
+                /* Direct M3U8 */
 
                 if (
+                    stream.url &&
                     typeof stream.url === "string" &&
                     (
                         stream.url.startsWith(
@@ -2093,9 +2090,10 @@ builder.defineStreamHandler(async (args) => {
                 }
 
 
-                /* External URL */
+                /* External website */
 
                 if (
+                    stream.externalUrl &&
                     typeof stream.externalUrl === "string" &&
                     (
                         stream.externalUrl.startsWith(
@@ -2117,10 +2115,10 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       13. XÓA DIRECT URL TRÙNG
+       12. REMOVE DUPLICATE DIRECT URL
        ======================================================== */
 
-    const seenDirectUrls =
+    const seenUrls =
         new Set();
 
     const seenExternalUrls =
@@ -2130,7 +2128,6 @@ builder.defineStreamHandler(async (args) => {
     const uniqueStreams =
         validStreams.filter(
             stream => {
-
 
                 /* Direct URL */
 
@@ -2142,17 +2139,12 @@ builder.defineStreamHandler(async (args) => {
                         ).trim();
 
                     if (
-                        seenDirectUrls.has(
-                            url
-                        )
+                        seenUrls.has(url)
                     ) {
-
                         return false;
                     }
 
-                    seenDirectUrls.add(
-                        url
-                    );
+                    seenUrls.add(url);
 
                     return true;
                 }
@@ -2172,7 +2164,6 @@ builder.defineStreamHandler(async (args) => {
                             externalUrl
                         )
                     ) {
-
                         return false;
                     }
 
@@ -2190,7 +2181,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       14. LOG CHI TIẾT
+       13. LOG SOURCE RESULTS
        ======================================================== */
 
     console.log(
@@ -2219,46 +2210,23 @@ builder.defineStreamHandler(async (args) => {
     );
 
     console.log(
-        "[STREAM] Direct:",
+        "[STREAM] Direct total:",
         directStreams.length
     );
 
     console.log(
-        "[STREAM] Fallback:",
+        "[STREAM] External fallback:",
         externalStreams.length
     );
 
     console.log(
-        "[STREAM] Final:",
+        "[STREAM] Final total:",
         uniqueStreams.length
     );
 
 
     /* ========================================================
-       15. LOG TỪNG STREAM CUỐI
-       ======================================================== */
-
-    uniqueStreams.forEach(
-        (stream, index) => {
-
-            console.log(
-                "[STREAM FINAL]",
-                index + 1,
-                "|",
-                stream.name || "",
-                "|",
-                stream.title || "",
-                "|",
-                stream.url ||
-                stream.externalUrl ||
-                ""
-            );
-        }
-    );
-
-
-    /* ========================================================
-       16. TRẢ KẾT QUẢ CHO STREMIO
+       14. FINAL RESULT
        ======================================================== */
 
     return {
