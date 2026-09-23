@@ -1172,18 +1172,89 @@ async function scrapeMotPhimTV(movieName) {
                 }
             );
 
+        const parseHtml =
+            cheerio.load(
+                searchRes.data
+            );
+
+        let firstMovieLink =
+            parseHtml(
+                ".list-films .item a"
+            )
+            .first()
+            .attr("href");
+
+        if (
+            firstMovieLink &&
+            firstMovieLink.startsWith("/")
+        ) {
+
+            firstMovieLink =
+                "https://motphimtv.run" +
+                firstMovieLink;
+        }
+
+        if (!firstMovieLink) {
+
+            console.log(
+                "[MOTPHIM] Không tìm thấy trang phim"
+            );
+
+            return streams;
+        }
+
         console.log(
-            "[MOTPHIM] HTTP:",
-            searchRes.status
+            "[MOTPHIM] Movie URL:",
+            firstMovieLink
         );
 
-        /*
-         * Tạm thời chỉ kiểm tra request.
-         * Chưa xử lý/extract stream URL.
-         */
+        const movieRes =
+            await axios.get(
+                firstMovieLink,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64;
+                    },
+                    timeout: 6000
+                }
+            );
+
+        const parseMovie =
+            cheerio.load(
+                movieRes.data
+            );
+
+        const scripts =
+            parseMovie(
+                "script"
+            ).text();
+
+        const m3u8Match =
+            scripts.match(
+                /(https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*)/
+            );
+
+        if (m3u8Match?.[1]) {
+
+            streams.push({
+
+                name:
+                    "🔥 [Scrape] MotPhimTV",
+
+                title:
+                    "Luong phat MotPhimTV",
+
+                url:
+                    String(
+                        m3u8Match[1]
+                    )
+            });
+        }
 
         console.log(
-            "[MOTPHIM] Search request OK"
+            "[MOTPHIM] Streams:",
+            streams.length
         );
 
     } catch (e) {
@@ -1198,10 +1269,8 @@ async function scrapeMotPhimTV(movieName) {
 
     return streams;
 }
-
-
 /* ============================================================
-   STREAM HANDLER - DEBUG
+   STREAM HANDLER - KÍCH HOẠT GỘP NGUỒN
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
@@ -1277,7 +1346,7 @@ builder.defineStreamHandler(async (args) => {
 
             const res =
                 await axios.get(
-                    "https://stremio.com/" +
+                    "https://stremio.com" +
                     cleanType +
                     "/" +
                     imdbId +
@@ -1352,31 +1421,53 @@ builder.defineStreamHandler(async (args) => {
         };
     }
 
-    /* --------------------------------------------------------
-       DEBUG
-       -------------------------------------------------------- */
-
     console.log(
         "[STREAM] Movie name resolved successfully"
     );
 
-    console.log(
-        "[STREAM] Stream handler is working"
-    );
+    /* --------------------------------------------------------
+       GỘP 5 NGUỒN PHIM CHẠY SONG SONG
+       -------------------------------------------------------- */
+    console.log("[STREAM] Đang tìm kiếm link phim từ cả 5 nguồn...");
 
-    /*
-     * Tạm thời trả về rỗng để kiểm tra handler.
-     *
-     * Nếu log xuất hiện đầy đủ khi mở phim trong
-     * Stremio thì phần Catalog / Meta / Stream Handler
-     * đang kết nối đúng.
-     */
+    try {
+        // Thực thi gọi cả 5 hàm lấy nguồn cùng lúc để tối ưu thời gian phản hồi
+        const [
+            nguonCStreams, 
+            kkPhimStreams, 
+            vsMovStreams, 
+            phim32Streams, 
+            motPhimStreams
+        ] = await Promise.all([
+            fetchNguonC(movieName).catch(e => { console.error("[STREAM ERR NguonC]:", e.message || e); return []; }),
+            fetchKKPhim(movieName).catch(e => { console.error("[STREAM ERR KKPhim]:", e.message || e); return []; }),
+            fetchVSMov(movieName).catch(e => { console.error("[STREAM ERR VSMov]:", e.message || e); return []; }),
+            scrapePhimLongTieng(movieName).catch(e => { console.error("[STREAM ERR 1Phim32]:", e.message || e); return []; }),
+            scrapeMotPhimTV(movieName).catch(e => { console.error("[STREAM ERR MotPhimTV]:", e.message || e); return []; })
+        ]);
 
-    return {
-        streams: []
-    };
+        // Gộp tất cả kết quả thu thập được vào một danh sách duy nhất
+        const allStreams = [
+            ...nguonCStreams,
+            ...kkPhimStreams,
+            ...vsMovStreams,
+            ...phim32Streams,
+            ...motPhimStreams
+        ];
+
+        console.log(`[STREAM] Hoàn tất gộp nguồn. Tổng số luồng phát tìm thấy: ${allStreams.length}`);
+
+        return {
+            streams: allStreams
+        };
+
+    } catch (error) {
+        console.error("[STREAM GLOBAL ERROR]:", error.message || error);
+        return {
+            streams: []
+        };
+    }
 });
-
 
 /* ============================================================
    ADDON ROUTER
