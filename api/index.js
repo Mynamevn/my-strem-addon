@@ -532,454 +532,605 @@ async function fetchNguonC(movieName) {
 
     const streams = [];
 
-    try {
+    console.log("========================================");
+    console.log("[NGUONC] START");
+    console.log("[NGUONC] Movie:", movieName);
 
-        console.log("========================================");
-        console.log("[NGUONC] START");
-        console.log("[NGUONC] Movie:", movieName);
+    const variants =
+        buildTitleVariants(movieName);
 
-        if (!movieName) {
-            return streams;
+    console.log(
+        "[NGUONC] Title variants:",
+        variants
+    );
+
+    // ========================================================
+    // HELPER: tìm M3U8 trong HTML / JSON
+    // ========================================================
+
+    function collectM3U8(
+        value,
+        found = []
+    ) {
+
+        if (!value) {
+            return found;
         }
 
-        const variants =
-            buildTitleVariants(movieName);
+        if (
+            typeof value === "string"
+        ) {
 
-        console.log(
-            "[NGUONC] Variants:",
-            JSON.stringify(variants)
-        );
+            const matches =
+                value.match(
+                    /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+                ) || [];
 
-        let selectedMovie = null;
+            matches.forEach(
+                url => {
 
-        /* ====================================================
-           1. THỬ API SEARCH VỚI TỪNG TÊN
-           ==================================================== */
+                    if (
+                        !found.includes(url)
+                    ) {
+                        found.push(url);
+                    }
 
-        for (const variant of variants) {
+                }
+            );
 
-            try {
+            return found;
+        }
 
-                const searchUrl =
-                    "https://phim.nguonc.com/api/films/search?keyword=" +
-                    encodeURIComponent(variant);
+        if (
+            Array.isArray(value)
+        ) {
 
-                console.log(
-                    "[NGUONC] API SEARCH:",
+            value.forEach(
+                item =>
+                    collectM3U8(
+                        item,
+                        found
+                    )
+            );
+
+            return found;
+        }
+
+        if (
+            typeof value === "object"
+        ) {
+
+            Object.entries(
+                value
+            ).forEach(
+                ([key, val]) => {
+
+                    const lowerKey =
+                        String(key)
+                            .toLowerCase();
+
+                    if (
+                        lowerKey.includes("m3u8") ||
+                        lowerKey === "url" ||
+                        lowerKey === "link"
+                    ) {
+
+                        collectM3U8(
+                            val,
+                            found
+                        );
+
+                    } else if (
+                        typeof val === "object"
+                    ) {
+
+                        collectM3U8(
+                            val,
+                            found
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+
+        return found;
+    }
+
+    // ========================================================
+    // 1. API SEARCH
+    //
+    // API có thể bị Cloudflare 403.
+    // Vì vậy API chỉ là bước thử.
+    // ========================================================
+
+    const candidates = [];
+
+    for (
+        const variant of variants
+    ) {
+
+        try {
+
+            console.log(
+                "[NGUONC] API SEARCH:",
+                variant
+            );
+
+            const searchUrl =
+                "https://phim.nguonc.com/api/films/search?keyword=" +
+                encodeURIComponent(
                     variant
                 );
 
-                const searchRes =
-                    await axios.get(
-                        searchUrl,
-                        {
-                            timeout: 8000,
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                                "Accept":
-                                    "application/json,text/plain,*/*"
-                            }
-                        }
-                    );
+            console.log(
+                "[NGUONC] Search URL:",
+                searchUrl
+            );
 
-                const items =
-                    searchRes.data?.items ||
-                    searchRes.data?.data?.items ||
-                    [];
-
-                if (
-                    Array.isArray(items) &&
-                    items.length
-                ) {
-
-                    const normalizedVariant =
-                        variant
-                            .normalize("NFD")
-                            .replace(/[\u0300-\u036f]/g, "")
-                            .toLowerCase()
-                            .trim();
-
-                    selectedMovie =
-                        items.find(item => {
-
-                            const name =
-                                String(
-                                    item?.name || ""
-                                )
-                                .normalize("NFD")
-                                .replace(
-                                    /[\u0300-\u036f]/g,
-                                    ""
-                                )
-                                .toLowerCase()
-                                .trim();
-
-                            return (
-                                name ===
-                                normalizedVariant
-                            );
-
-                        }) || items[0];
-
-                    if (selectedMovie?.slug) {
-
-                        console.log(
-                            "[NGUONC] API MATCH:",
-                            selectedMovie.name,
-                            "=>",
-                            selectedMovie.slug
-                        );
-
-                        break;
+            const res =
+                await axios.get(
+                    searchUrl,
+                    {
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 6.3; Win64; x64)",
+                            "Accept":
+                                "application/json",
+                            "Referer":
+                                "https://phim.nguonc.com/"
+                        },
+                        timeout: 7000
                     }
-                }
+                );
 
-            } catch (e) {
+            const data =
+                res.data || {};
 
-                console.log(
-                    "[NGUONC] API SEARCH ERROR:",
-                    variant,
-                    e?.response?.status ||
-                    e?.message ||
-                    e
+            const items =
+                data?.items ||
+                data?.data?.items ||
+                data?.films ||
+                data?.data?.films ||
+                [];
+
+            console.log(
+                "[NGUONC] API RESULT:",
+                variant,
+                "=>",
+                Array.isArray(items)
+                    ? items.length
+                    : 0
+            );
+
+            if (
+                Array.isArray(items)
+            ) {
+
+                items.forEach(
+                    item => {
+
+                        if (!item) {
+                            return;
+                        }
+
+                        const slug =
+                            item.slug ||
+                            item.url_slug;
+
+                        if (
+                            !slug
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            !candidates.some(
+                                x =>
+                                    x.slug === slug
+                            )
+                        ) {
+
+                            candidates.push({
+                                ...item,
+                                slug,
+                                searchedWith:
+                                    variant
+                            });
+
+                        }
+
+                    }
+                );
+
+            }
+
+        } catch (e) {
+
+            console.log(
+                "[NGUONC API ERROR]",
+                variant,
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+        }
+
+    }
+
+    console.log(
+        "[NGUONC] API candidates:",
+        candidates.length
+    );
+
+    // ========================================================
+    // 2. TẠO SLUG CANDIDATES
+    //
+    // Đây là phần QUAN TRỌNG nhất.
+    //
+    // Với:
+    //
+    // Đội nhảy xuất sắc nhất /
+    // Đội nhảy số một
+    //
+    // sẽ tạo:
+    //
+    // doi-nhay-xuat-sac-nhat
+    // doi-nhay-so-mot
+    //
+    // thay vì ghép thành một slug dài.
+    // ========================================================
+
+    const slugCandidates = [];
+
+    // Slug API tìm được → ưu tiên
+    candidates.forEach(
+        candidate => {
+
+            if (
+                candidate.slug &&
+                !slugCandidates.includes(
+                    candidate.slug
+                )
+            ) {
+
+                slugCandidates.push(
+                    candidate.slug
                 );
 
             }
 
         }
+    );
 
-        /* ====================================================
-           2. NẾU API TÌM ĐƯỢC PHIM
-           ==================================================== */
-
-        if (
-            selectedMovie &&
-            selectedMovie.slug
-        ) {
-
-            const movieSlug =
-                String(
-                    selectedMovie.slug
-                ).trim();
-
-            const movieUrl =
-                "https://phim.nguonc.com/phim/" +
-                encodeURIComponent(movieSlug);
-
-            console.log(
-                "[NGUONC] EXACT URL:",
-                movieUrl
-            );
-
-            // Luôn cho phép mở đúng trang phim.
-            streams.push({
-                name:
-                    "🌐 [NguonC] " +
-                    (selectedMovie.name || movieName),
-                title:
-                    "Mở phim trên NguonC - " +
-                    (selectedMovie.name || movieName),
-                externalUrl:
-                    movieUrl
-            });
-
-            /* ================================================
-               Lấy detail API
-               ================================================ */
-
-            try {
-
-                const detailUrl =
-                    "https://phim.nguonc.com/api/film/" +
-                    encodeURIComponent(movieSlug);
-
-                console.log(
-                    "[NGUONC] DETAIL:",
-                    detailUrl
-                );
-
-                const detailRes =
-                    await axios.get(
-                        detailUrl,
-                        {
-                            timeout: 8000,
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                                "Accept":
-                                    "application/json,text/plain,*/*"
-                            }
-                        }
-                    );
-
-                const movieData =
-                    detailRes.data?.movie ||
-                    detailRes.data?.data?.movie ||
-                    detailRes.data ||
-                    {};
-
-                const episodes =
-                    movieData?.episodes ||
-                    detailRes.data?.episodes ||
-                    [];
-
-                if (
-                    Array.isArray(episodes)
-                ) {
-
-                    episodes.forEach(
-                        (server, serverIndex) => {
-
-                            const serverItems =
-                                server?.items ||
-                                server?.server_data ||
-                                [];
-
-                            if (
-                                !Array.isArray(
-                                    serverItems
-                                )
-                            ) {
-                                return;
-                            }
-
-                            serverItems.forEach(
-                                (
-                                    ep,
-                                    episodeIndex
-                                ) => {
-
-                                    const streamUrl =
-                                        ep?.link_m3u8 ||
-                                        ep?.m3u8_url ||
-                                        ep?.link_embed ||
-                                        ep?.url;
-
-                                    if (!streamUrl) {
-                                        return;
-                                    }
-
-                                    streams.push({
-                                        name:
-                                            "🎬 [API] NguonC",
-
-                                        title:
-                                            "Tập " +
-                                            (
-                                                ep?.name ||
-                                                ep?.slug ||
-                                                episodeIndex + 1
-                                            ) +
-                                            " - " +
-                                            (
-                                                server?.server_name ||
-                                                server?.name ||
-                                                "NguonC"
-                                            ),
-
-                                        url:
-                                            String(
-                                                streamUrl
-                                            )
-                                    });
-
-                                }
-                            );
-
-                        }
-                    );
-
-                }
-
-            } catch (e) {
-
-                console.log(
-                    "[NGUONC] DETAIL ERROR:",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
-
-            }
-
-            console.log(
-                "[NGUONC] FINAL:",
-                streams.length
-            );
-
-            return streams;
-        }
-
-        /* ====================================================
-           3. API KHÔNG HOẠT ĐỘNG
-              → THỬ URL TRỰC TIẾP TỪ TỪNG TÊN
-           ==================================================== */
-
-        console.log(
-            "[NGUONC] API không tìm thấy phim."
-        );
-
-        for (
-            const variant
-            of variants
-        ) {
+    // Slug từ từng title variant
+    variants.forEach(
+        variant => {
 
             const slug =
                 toSlug(variant);
 
-            if (!slug) continue;
+            if (
+                slug &&
+                !slugCandidates.includes(
+                    slug
+                )
+            ) {
 
-            const movieUrl =
-                "https://phim.nguonc.com/phim/" +
-                encodeURIComponent(slug);
-
-            console.log(
-                "[NGUONC] DIRECT TEST:",
-                movieUrl
-            );
-
-            try {
-
-                const pageRes =
-                    await axios.get(
-                        movieUrl,
-                        {
-                            timeout: 7000,
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                                "Accept":
-                                    "text/html,application/xhtml+xml"
-                            },
-                            validateStatus:
-                                status =>
-                                    status >= 200 &&
-                                    status < 500
-                        }
-                    );
-
-                if (
-                    pageRes.status !== 200
-                ) {
-                    continue;
-                }
-
-                const html =
-                    String(
-                        pageRes.data || ""
-                    );
-
-                const lowerHtml =
-                    html.toLowerCase();
-
-                // Kiểm tra tối thiểu để tránh
-                // nhận nhầm trang 404.
-                if (
-                    lowerHtml.includes(
-                        "<title>"
-                    ) &&
-                    (
-                        lowerHtml.includes(
-                            variant
-                                .toLowerCase()
-                        ) ||
-                        lowerHtml.includes(
-                            slug
-                        )
-                    )
-                ) {
-
-                    console.log(
-                        "[NGUONC] EXACT PAGE FOUND:",
-                        movieUrl
-                    );
-
-                    streams.push({
-                        name:
-                            "🌐 [NguonC] " +
-                            variant,
-
-                        title:
-                            "Mở phim trên NguonC - " +
-                            variant,
-
-                        externalUrl:
-                            movieUrl
-                    });
-
-                    /* ========================================
-                       Thử lấy M3U8 trực tiếp từ HTML
-                       ======================================== */
-
-                    const m3u8Matches =
-                        html.match(
-                            /https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/g
-                        );
-
-                    if (
-                        Array.isArray(
-                            m3u8Matches
-                        )
-                    ) {
-
-                        [
-                            ...new Set(
-                                m3u8Matches
-                            )
-                        ]
-                        .forEach(
-                            (url, index) => {
-
-                                streams.push({
-                                    name:
-                                        "🎬 [Scrape] NguonC",
-
-                                    title:
-                                        "Luồng " +
-                                        (index + 1) +
-                                        " - " +
-                                        variant,
-
-                                    url:
-                                        String(url)
-                                });
-
-                            }
-                        );
-
-                    }
-
-                    break;
-                }
-
-            } catch (e) {
-
-                console.log(
-                    "[NGUONC] DIRECT ERROR:",
-                    slug,
-                    e?.response?.status ||
-                    e?.message ||
-                    e
+                slugCandidates.push(
+                    slug
                 );
 
             }
 
         }
+    );
 
-        console.log(
-            "[NGUONC] FINAL:",
-            streams.length
-        );
+    console.log(
+        "[NGUONC] Slug candidates:",
+        slugCandidates
+    );
 
-    } catch (e) {
+    // ========================================================
+    // 3. DIRECT MOVIE PAGE
+    //
+    // API 403 cũng không sao.
+    // Thử thẳng:
+    //
+    // https://phim.nguonc.com/phim/doi-nhay-xuat-sac-nhat
+    // ========================================================
 
-        console.error(
-            "[NGUONC FATAL]",
-            e?.message || e
-        );
+    for (
+        const slug of slugCandidates
+    ) {
+
+        const movieUrl =
+            "https://phim.nguonc.com/phim/" +
+            encodeURIComponent(
+                slug
+            );
+
+        try {
+
+            console.log(
+                "[NGUONC] DIRECT PAGE:",
+                movieUrl
+            );
+
+            const movieRes =
+                await axios.get(
+                    movieUrl,
+                    {
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 6.3; Win64; x64)",
+                            "Accept":
+                                "text/html,application/xhtml+xml"
+                        },
+                        timeout: 8000
+                    }
+                );
+
+            const html =
+                String(
+                    movieRes.data ||
+                    ""
+                );
+
+            console.log(
+                "[NGUONC] PAGE STATUS:",
+                movieRes.status,
+                "HTML:",
+                html.length
+            );
+
+            if (
+                movieRes.status !== 200 ||
+                html.length < 1000
+            ) {
+
+                continue;
+
+            }
+
+            const parseMovie =
+                cheerio.load(
+                    html
+                );
+
+            const pageTitle =
+                parseMovie(
+                    "title"
+                )
+                .first()
+                .text()
+                .trim();
+
+            console.log(
+                "[NGUONC] PAGE TITLE:",
+                pageTitle
+            );
+
+            // =================================================
+            // Kiểm tra đây có thực sự là trang phim hay không
+            // =================================================
+
+            const normalizedHtml =
+                html
+                    .normalize("NFD")
+                    .replace(
+                        /[\u0300-\u036f]/g,
+                        ""
+                    )
+                    .toLowerCase();
+
+            const normalizedSlug =
+                String(slug)
+                    .toLowerCase();
+
+            const looksLikeMoviePage =
+                normalizedHtml.includes(
+                    normalizedSlug
+                ) ||
+                pageTitle.length > 0;
+
+            if (
+                !looksLikeMoviePage
+            ) {
+
+                console.log(
+                    "[NGUONC] Không giống trang phim:",
+                    movieUrl
+                );
+
+                continue;
+
+            }
+
+            // =================================================
+            // Tìm M3U8
+            // =================================================
+
+            const htmlM3U8 =
+                html.match(
+                    /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+                ) || [];
+
+            const scripts =
+                parseMovie(
+                    "script"
+                ).text();
+
+            const scriptM3U8 =
+                scripts.match(
+                    /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+                ) || [];
+
+            const allM3U8 = [
+                ...htmlM3U8,
+                ...scriptM3U8
+            ].filter(
+                (url, index, arr) =>
+                    arr.indexOf(url) ===
+                    index
+            );
+
+            console.log(
+                "[NGUONC] M3U8:",
+                allM3U8.length
+            );
+
+            // =================================================
+            // Nếu có M3U8 → stream trực tiếp
+            // =================================================
+
+            allM3U8.forEach(
+                (url, index) => {
+
+                    streams.push({
+
+                        name:
+                            "⚡ [Scrape] NguonC",
+
+                        title:
+                            "NguonC - " +
+                            slug +
+                            " - Stream " +
+                            (
+                                index + 1
+                            ),
+
+                        url:
+                            String(url)
+
+                    });
+
+                }
+            );
+
+            // =================================================
+            // QUAN TRỌNG:
+            // Dù chưa lấy được M3U8,
+            // vẫn trả exact externalUrl.
+            // =================================================
+
+            if (
+                streams.length === 0
+            ) {
+
+                streams.push({
+
+                    name:
+                        "🌐 [NguonC] " +
+                        slug,
+
+                    title:
+                        "Mở đúng trang phim NguonC",
+
+                    externalUrl:
+                        movieUrl
+
+                });
+
+            }
+
+            console.log(
+                "[NGUONC] SUCCESS:",
+                movieUrl
+            );
+
+            // Dừng ngay tại slug hợp lệ đầu tiên.
+            break;
+
+        } catch (e) {
+
+            console.log(
+                "[NGUONC PAGE ERROR]",
+                slug,
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+        }
 
     }
+
+    // ========================================================
+    // 4. FINAL FALLBACK
+    //
+    // Nếu tất cả direct page đều thất bại,
+    // tạo URL tìm kiếm bằng title variant.
+    // ========================================================
+
+    if (
+        streams.length === 0
+    ) {
+
+        const fallbackTitle =
+            variants[0] ||
+            movieName;
+
+        const fallbackUrl =
+            "https://phim.nguonc.com/tim-kiem?keyword=" +
+            encodeURIComponent(
+                fallbackTitle
+            );
+
+        console.log(
+            "[NGUONC] FINAL FALLBACK:",
+            fallbackUrl
+        );
+
+        streams.push({
+
+            name:
+                "🌐 [Fallback] NguonC",
+
+            title:
+                "Tìm phim trên NguonC - " +
+                fallbackTitle,
+
+            externalUrl:
+                fallbackUrl
+
+        });
+
+    }
+
+    // ========================================================
+    // FINAL
+    // ========================================================
+
+    console.log(
+        "[NGUONC] FINAL STREAMS:",
+        streams.length
+    );
+
+    console.log(
+        "[NGUONC] STREAM TYPES:",
+        streams.map(
+            stream => ({
+                name:
+                    stream.name,
+                hasUrl:
+                    Boolean(
+                        stream.url
+                    ),
+                hasExternalUrl:
+                    Boolean(
+                        stream.externalUrl
+                    )
+            })
+        )
+    );
+
+    console.log(
+        "========================================"
+    );
 
     return streams;
 }
@@ -1142,707 +1293,691 @@ async function fetchKKPhim(movieName) {
 async function fetchVSMov(movieName) {
 
     const streams = [];
+    const scrapeSlugs = [];
 
-    try {
+    console.log("========================================");
+    console.log("[VSMOV] START");
+    console.log("[VSMOV] Original title:", movieName);
 
-        console.log("========================================");
-        console.log("[VSMOV] START");
-        console.log("[VSMOV] Original title:", movieName);
+    // ========================================================
+    // TITLE VARIANTS
+    // ========================================================
 
-        if (!movieName) {
-            return streams;
+    const variants =
+        typeof buildTitleVariants === "function"
+            ? buildTitleVariants(movieName)
+            : [String(movieName || "").trim()];
+
+    console.log(
+        "[VSMOV] Title variants:",
+        variants
+    );
+
+    // ========================================================
+    // HELPER: NORMALIZE TITLE
+    // ========================================================
+
+    function normalizeTitle(value) {
+
+        return String(value || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+    }
+
+    const originalNormalized =
+        normalizeTitle(movieName);
+
+    const variantNormalized =
+        variants.map(
+            normalizeTitle
+        );
+
+    // ========================================================
+    // HELPER: TÌM M3U8 ĐỆ QUY
+    // ========================================================
+
+    function collectM3U8(
+        value,
+        found = []
+    ) {
+
+        if (!value) {
+            return found;
         }
 
-        const variants =
-            buildTitleVariants(movieName);
-
-        console.log(
-            "[VSMOV] Variants:",
-            JSON.stringify(variants)
-        );
-
-        const candidates = [];
-
-        /* ====================================================
-           1. API SEARCH
-           ==================================================== */
-
-        for (
-            const variant
-            of variants
-        ) {
-
-            try {
-
-                const searchUrl =
-                    "https://vsmov.com/api/tim-kiem?keyword=" +
-                    encodeURIComponent(variant) +
-                    "&page=1&limit=24";
-
-                console.log(
-                    "[VSMOV] API SEARCH:",
-                    variant
-                );
-
-                console.log(
-                    "[VSMOV] URL:",
-                    searchUrl
-                );
-
-                const res =
-                    await axios.get(
-                        searchUrl,
-                        {
-                            timeout: 8000,
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
-
-                const data =
-                    res.data || {};
-
-                const items =
-                    data?.data?.items ||
-                    data?.items ||
-                    data?.results ||
-                    [];
-
-                console.log(
-                    "[VSMOV] RESULT:",
-                    variant,
-                    "=>",
-                    Array.isArray(items)
-                        ? items.length
-                        : 0
-                );
-
-                if (
-                    Array.isArray(items)
-                ) {
-
-                    items.forEach(
-                        item => {
-
-                            if (
-                                item &&
-                                item.slug
-                            ) {
-
-                                candidates.push(
-                                    item
-                                );
-
-                            }
-
-                        }
-                    );
-
-                }
-
-            } catch (e) {
-
-                console.log(
-                    "[VSMOV] API ERROR:",
-                    variant,
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
-
-            }
-
-        }
-
-        /* ====================================================
-           2. UNIQUE CANDIDATES
-           ==================================================== */
-
-        const uniqueCandidates = [];
-
-        const candidateSeen =
-            new Set();
-
-        candidates.forEach(
-            item => {
-
-                const slug =
-                    String(
-                        item?.slug || ""
-                    ).trim();
-
-                if (
-                    !slug ||
-                    candidateSeen.has(slug)
-                ) {
-                    return;
-                }
-
-                candidateSeen.add(slug);
-
-                uniqueCandidates.push(
-                    item
-                );
-
-            }
-        );
-
-        console.log(
-            "[VSMOV] Unique candidates:",
-            uniqueCandidates.length
-        );
-
-        /* ====================================================
-           3. RANK API RESULTS
-           ==================================================== */
-
-        const ranked =
-            uniqueCandidates
-                .map(item => {
-
-                    const name =
-                        String(
-                            item?.name || ""
-                        );
-
-                    const normalizedName =
-                        name
-                            .normalize("NFD")
-                            .replace(
-                                /[\u0300-\u036f]/g,
-                                ""
-                            )
-                            .toLowerCase()
-                            .trim();
-
-                    let score = 0;
-
-                    variants.forEach(
-                        variant => {
-
-                            const normalizedVariant =
-                                String(
-                                    variant
-                                )
-                                .normalize("NFD")
-                                .replace(
-                                    /[\u0300-\u036f]/g,
-                                    ""
-                                )
-                                .toLowerCase()
-                                .trim();
-
-                            if (
-                                normalizedName ===
-                                normalizedVariant
-                            ) {
-                                score += 100;
-                            }
-                            else if (
-                                normalizedName.includes(
-                                    normalizedVariant
-                                )
-                            ) {
-                                score += 50;
-                            }
-                            else if (
-                                normalizedVariant.includes(
-                                    normalizedName
-                                )
-                            ) {
-                                score += 40;
-                            }
-
-                        }
-                    );
-
-                    return {
-                        item,
-                        score
-                    };
-
-                })
-                .sort(
-                    (a, b) =>
-                        b.score - a.score
-                );
-
-        console.log(
-            "[VSMOV] RANKED:",
-            JSON.stringify(
-                ranked.map(x => ({
-                    name:
-                        x.item?.name,
-                    slug:
-                        x.item?.slug,
-                    score:
-                        x.score
-                }))
-            )
-        );
-
-        /* ====================================================
-           4. NẾU API CÓ KẾT QUẢ
-           ==================================================== */
+        // ----------------------------------------------------
+        // STRING
+        // ----------------------------------------------------
 
         if (
-            ranked.length > 0
+            typeof value === "string"
         ) {
 
-            const selected =
-                ranked[0].item;
+            const matches =
+                value.match(
+                    /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+                ) || [];
 
-            const movieSlug =
-                String(
-                    selected.slug
-                ).trim();
+            matches.forEach(
+                url => {
+
+                    if (
+                        !found.includes(url)
+                    ) {
+
+                        found.push(url);
+
+                    }
+
+                }
+            );
+
+            return found;
+        }
+
+        // ----------------------------------------------------
+        // ARRAY
+        // ----------------------------------------------------
+
+        if (
+            Array.isArray(value)
+        ) {
+
+            value.forEach(
+                item =>
+                    collectM3U8(
+                        item,
+                        found
+                    )
+            );
+
+            return found;
+        }
+
+        // ----------------------------------------------------
+        // OBJECT
+        // ----------------------------------------------------
+
+        if (
+            typeof value === "object"
+        ) {
+
+            Object.entries(
+                value
+            ).forEach(
+                ([key, val]) => {
+
+                    const lowerKey =
+                        String(key)
+                            .toLowerCase();
+
+                    // Chỉ lấy các field có khả năng
+                    // chứa stream trực tiếp.
+                    if (
+                        lowerKey === "link_m3u8" ||
+                        lowerKey === "m3u8_url" ||
+                        lowerKey === "m3u8" ||
+                        lowerKey === "url" ||
+                        lowerKey === "link"
+                    ) {
+
+                        collectM3U8(
+                            val,
+                            found
+                        );
+
+                    } else if (
+                        typeof val === "object"
+                    ) {
+
+                        collectM3U8(
+                            val,
+                            found
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+
+        return found;
+    }
+
+    // ========================================================
+    // 1. API SEARCH
+    // ========================================================
+
+    const candidates = [];
+
+    for (
+        const variant of variants
+    ) {
+
+        if (!variant) continue;
+
+        try {
+
+            console.log(
+                "[VSMOV] API SEARCH:",
+                variant
+            );
+
+            const searchUrl =
+                "https://vsmov.com/api/tim-kiem?keyword=" +
+                encodeURIComponent(
+                    variant
+                ) +
+                "&page=1&limit=24";
+
+            console.log(
+                "[VSMOV] URL:",
+                searchUrl
+            );
+
+            const res =
+                await axios.get(
+                    searchUrl,
+                    {
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 6.3; Win64; x64)",
+                            "Accept":
+                                "application/json"
+                        },
+                        timeout: 7000
+                    }
+                );
+
+            const data =
+                res.data || {};
+
+            const items =
+                data?.data?.items ||
+                data?.items ||
+                [];
+
+            console.log(
+                "[VSMOV] RESULT:",
+                variant,
+                "=>",
+                items.length
+            );
+
+            if (
+                Array.isArray(items)
+            ) {
+
+                items.forEach(
+                    item => {
+
+                        if (
+                            !item ||
+                            !item.slug
+                        ) {
+                            return;
+                        }
+
+                        const exists =
+                            candidates.some(
+                                x =>
+                                    x.slug ===
+                                    item.slug
+                            );
+
+                        if (!exists) {
+
+                            candidates.push({
+                                ...item,
+                                searchedWith:
+                                    variant
+                            });
+
+                        }
+
+                    }
+                );
+
+            }
+
+        } catch (e) {
+
+            console.log(
+                "[VSMOV API ERROR]",
+                variant,
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+        }
+
+    }
+
+    console.log(
+        "[VSMOV] Unique candidates:",
+        candidates.length
+    );
+
+    // ========================================================
+    // 2. RANK CANDIDATES
+    // ========================================================
+
+    candidates.sort(
+        (a, b) => {
+
+            const aName =
+                normalizeTitle(
+                    a.name
+                );
+
+            const bName =
+                normalizeTitle(
+                    b.name
+                );
+
+            let aScore = 0;
+            let bScore = 0;
+
+            // Tên trùng hoàn toàn với tên gốc
+            if (
+                aName ===
+                originalNormalized
+            ) {
+
+                aScore += 100;
+
+            }
+
+            if (
+                bName ===
+                originalNormalized
+            ) {
+
+                bScore += 100;
+
+            }
+
+            // Tên trùng một trong các variant
+            if (
+                variantNormalized.includes(
+                    aName
+                )
+            ) {
+
+                aScore += 50;
+
+            }
+
+            if (
+                variantNormalized.includes(
+                    bName
+                )
+            ) {
+
+                bScore += 50;
+
+            }
+
+            // Có slug
+            if (a.slug) {
+                aScore += 5;
+            }
+
+            if (b.slug) {
+                bScore += 5;
+            }
+
+            return bScore - aScore;
+
+        }
+    );
+
+    console.log(
+        "[VSMOV] RANKED:",
+        candidates.map(
+            x => ({
+                name: x.name,
+                slug: x.slug
+            })
+        )
+    );
+
+    // ========================================================
+    // 3. TẠO DANH SÁCH SLUG ĐỂ SCRAPE
+    // ========================================================
+
+    candidates.forEach(
+        candidate => {
+
+            if (
+                candidate.slug &&
+                !scrapeSlugs.includes(
+                    candidate.slug
+                )
+            ) {
+
+                scrapeSlugs.push(
+                    candidate.slug
+                );
+
+            }
+
+        }
+    );
+
+    variants.forEach(
+        variant => {
+
+            const slug =
+                toSlug(variant);
+
+            if (
+                slug &&
+                !scrapeSlugs.includes(
+                    slug
+                )
+            ) {
+
+                scrapeSlugs.push(
+                    slug
+                );
+
+            }
+
+        }
+    );
+
+    console.log(
+        "[VSMOV] Scrape slugs:",
+        scrapeSlugs
+    );
+
+    // ========================================================
+    // 4. API DETAIL
+    //
+    // KHÔNG lấy link_embed.
+    // CHỈ lấy M3U8.
+    // ========================================================
+
+    for (
+        const candidate of candidates
+    ) {
+
+        const slug =
+            candidate.slug;
+
+        if (!slug) continue;
+
+        const exactPageUrl =
+            "https://vsmov.com/phim/" +
+            encodeURIComponent(
+                slug
+            );
+
+        console.log(
+            "[VSMOV] Exact page:",
+            exactPageUrl
+        );
+
+        try {
+
+            const detailUrl =
+                "https://vsmov.com/api/phim/" +
+                encodeURIComponent(
+                    slug
+                );
+
+            console.log(
+                "[VSMOV] DETAIL API:",
+                detailUrl
+            );
+
+            const detailRes =
+                await axios.get(
+                    detailUrl,
+                    {
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 6.3; Win64; x64)",
+                            "Accept":
+                                "application/json"
+                        },
+                        timeout: 7000
+                    }
+                );
+
+            const detailData =
+                detailRes.data;
+
+            const m3u8Links =
+                collectM3U8(
+                    detailData
+                );
+
+            console.log(
+                "[VSMOV] DETAIL M3U8:",
+                m3u8Links.length
+            );
+
+            m3u8Links.forEach(
+                (url, index) => {
+
+                    streams.push({
+
+                        name:
+                            "⚡ [API] VSmov",
+
+                        title:
+                            "VSmov - " +
+                            (
+                                candidate.name ||
+                                movieName
+                            ) +
+                            " - Stream " +
+                            (
+                                index + 1
+                            ),
+
+                        url:
+                            String(url)
+
+                    });
+
+                }
+            );
+
+            if (
+                m3u8Links.length > 0
+            ) {
+
+                console.log(
+                    "[VSMOV] API M3U8 SUCCESS"
+                );
+
+                break;
+
+            }
+
+        } catch (e) {
+
+            console.log(
+                "[VSMOV DETAIL ERROR]",
+                slug,
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+        }
+
+    }
+
+    // ========================================================
+    // 5. SCRAPE FALLBACK
+    //
+    // Nếu API detail không có M3U8,
+    // quay về scrape trang phim.
+    // ========================================================
+
+    if (
+        streams.length === 0
+    ) {
+
+        console.log(
+            "[VSMOV] API không có M3U8."
+        );
+
+        console.log(
+            "[VSMOV] Chuyển sang SCRAPE."
+        );
+
+        for (
+            const slug of scrapeSlugs
+        ) {
+
+            if (!slug) continue;
 
             const movieUrl =
                 "https://vsmov.com/phim/" +
                 encodeURIComponent(
-                    movieSlug
+                    slug
                 );
-
-            console.log(
-                "[VSMOV] Selected:",
-                selected.name
-            );
-
-            console.log(
-                "[VSMOV] Slug:",
-                movieSlug
-            );
-
-            console.log(
-                "[VSMOV] Movie URL:",
-                movieUrl
-            );
-
-            streams.push({
-                name:
-                    "🌐 [VSMov] " +
-                    (
-                        selected.name ||
-                        movieName
-                    ),
-
-                title:
-                    "Mở phim trên VSMov - " +
-                    (
-                        selected.name ||
-                        movieName
-                    ),
-
-                externalUrl:
-                    movieUrl
-            });
-
-            /* =================================================
-               API DETAIL
-               ================================================= */
 
             try {
 
-                const detailUrl =
-                    "https://vsmov.com/api/phim/" +
-                    encodeURIComponent(
-                        movieSlug
+                console.log(
+                    "[VSMOV] SCRAPE URL:",
+                    movieUrl
+                );
+
+                const movieRes =
+                    await axios.get(
+                        movieUrl,
+                        {
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 6.3; Win64; x64)",
+                                "Accept":
+                                    "text/html,application/xhtml+xml"
+                            },
+                            timeout: 7000
+                        }
+                    );
+
+                const html =
+                    String(
+                        movieRes.data ||
+                        ""
                     );
 
                 console.log(
-                    "[VSMOV] DETAIL:",
-                    detailUrl
+                    "[VSMOV] SCRAPE STATUS:",
+                    movieRes.status,
+                    "HTML:",
+                    html.length
                 );
 
-                const detailRes =
-                    await axios.get(
-                        detailUrl,
-                        {
-                            timeout: 8000,
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
-
-                const data =
-                    detailRes.data || {};
-
-                const root =
-                    data?.data ||
-                    data?.movie ||
-                    data;
-
-                const episodes =
-                    root?.episodes ||
-                    data?.episodes ||
-                    [];
-
-                function collectEpisodeStreams(
-                    value,
-                    result
+                if (
+                    movieRes.status !== 200 ||
+                    html.length < 1000
                 ) {
 
-                    if (
-                        !value
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        Array.isArray(
-                            value
-                        )
-                    ) {
-
-                        value.forEach(
-                            item =>
-                                collectEpisodeStreams(
-                                    item,
-                                    result
-                                )
-                        );
-
-                        return;
-                    }
-
-                    if (
-                        typeof value !==
-                        "object"
-                    ) {
-                        return;
-                    }
-
-                    const url =
-                        value?.link_m3u8 ||
-                        value?.m3u8_url;
-
-                    const embed =
-                        value?.link_embed;
-
-                    const name =
-                        value?.name ||
-                        value?.slug ||
-                        "";
-
-                    if (
-                        url
-                    ) {
-
-                        result.push({
-                            type: "m3u8",
-                            name,
-                            url:
-                                String(url)
-                        });
-
-                    }
-                    else if (
-                        embed
-                    ) {
-
-                        result.push({
-                            type: "embed",
-                            name,
-                            url:
-                                String(embed)
-                        });
-
-                    }
-
-                    Object.keys(
-                        value
-                    ).forEach(
-                        key => {
-
-                            if (
-                                key ===
-                                    "link_m3u8" ||
-                                key ===
-                                    "m3u8_url" ||
-                                key ===
-                                    "link_embed"
-                            ) {
-                                return;
-                            }
-
-                            collectEpisodeStreams(
-                                value[key],
-                                result
-                            );
-
-                        }
-                    );
+                    continue;
 
                 }
 
-                const extracted = [];
+                // ------------------------------------------------
+                // Tìm M3U8 trực tiếp trong HTML
+                // ------------------------------------------------
 
-                collectEpisodeStreams(
-                    episodes,
-                    extracted
+                const htmlM3U8 =
+                    html.match(
+                        /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+                    ) || [];
+
+                // ------------------------------------------------
+                // Tìm M3U8 trong script
+                // ------------------------------------------------
+
+                const parseMovie =
+                    cheerio.load(
+                        html
+                    );
+
+                const scripts =
+                    parseMovie(
+                        "script"
+                    ).text();
+
+                const scriptM3U8 =
+                    scripts.match(
+                        /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+                    ) || [];
+
+                // ------------------------------------------------
+                // Gộp + loại trùng
+                // ------------------------------------------------
+
+                const allM3U8 = [
+                    ...htmlM3U8,
+                    ...scriptM3U8
+                ].filter(
+                    (url, index, arr) =>
+                        arr.indexOf(url) ===
+                        index
                 );
 
-                const uniqueExtracted =
-                    [
-                        ...new Map(
-                            extracted.map(
-                                item => [
-                                    item.url,
-                                    item
-                                ]
-                            )
-                        ).values()
-                    ];
+                console.log(
+                    "[VSMOV] SCRAPE M3U8:",
+                    allM3U8.length
+                );
 
-                uniqueExtracted.forEach(
-                    item => {
+                allM3U8.forEach(
+                    (url, index) => {
 
                         streams.push({
 
                             name:
-                                item.type === "m3u8"
-                                    ? "🎬 [API] VSMov"
-                                    : "▶️ [Embed] VSMov",
+                                "🔊 [Scrape] VSmov",
 
                             title:
-                                item.name
-                                    ? String(
-                                        item.name
-                                    )
-                                    : "VSMov",
+                                "Luong phat VSmov - " +
+                                (
+                                    index + 1
+                                ),
 
-                            ...(item.type === "m3u8"
-                                ? {
-                                    url:
-                                        item.url
-                                }
-                                : {
-                                    externalUrl:
-                                        item.url
-                                })
+                            url:
+                                String(url)
 
                         });
 
                     }
                 );
 
-            } catch (e) {
-
-                console.log(
-                    "[VSMOV] DETAIL ERROR:",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
-
-            }
-
-            console.log(
-                "[VSMOV] FINAL:",
-                streams.length
-            );
-
-            return streams;
-        }
-
-        /* ====================================================
-           5. API KHÔNG TÌM THẤY
-              → THỬ URL /phim/<slug> TRỰC TIẾP
-           ==================================================== */
-
-        console.log(
-            "[VSMOV] API không tìm thấy kết quả."
-        );
-
-        const directSlugs = [];
-
-        const slugSeen =
-            new Set();
-
-        variants.forEach(
-            variant => {
-
-                const slug =
-                    toSlug(variant);
-
                 if (
-                    slug &&
-                    !slugSeen.has(slug)
+                    allM3U8.length > 0
                 ) {
 
-                    slugSeen.add(slug);
-
-                    directSlugs.push(
-                        slug
+                    console.log(
+                        "[VSMOV] SCRAPE SUCCESS:",
+                        allM3U8.length
                     );
+
+                    break;
 
                 }
-
-            }
-        );
-
-        console.log(
-            "[VSMOV] Direct slug candidates:",
-            JSON.stringify(
-                directSlugs
-            )
-        );
-
-        for (
-            const slug
-            of directSlugs
-        ) {
-
-            const movieUrl =
-                "https://vsmov.com/phim/" +
-                encodeURIComponent(slug);
-
-            console.log(
-                "[VSMOV] DIRECT TEST:",
-                movieUrl
-            );
-
-            try {
-
-                const pageRes =
-                    await axios.get(
-                        movieUrl,
-                        {
-                            timeout: 7000,
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                                "Accept":
-                                    "text/html,application/xhtml+xml"
-                            },
-                            validateStatus:
-                                status =>
-                                    status >= 200 &&
-                                    status < 500
-                        }
-                    );
-
-                if (
-                    pageRes.status !== 200
-                ) {
-                    continue;
-                }
-
-                const html =
-                    String(
-                        pageRes.data || ""
-                    );
-
-                const lowerHtml =
-                    html.toLowerCase();
-
-                /*
-                 * VSMov trang phim thật thường có
-                 * nội dung "Tập hiện tại", "Nguồn Phim",
-                 * hoặc title của phim.
-                 *
-                 * Kiểm tra để tránh nhận trang lỗi.
-                 */
-
-                const looksLikeMoviePage =
-                    lowerHtml.includes(
-                        "nguồn phim"
-                    ) ||
-                    lowerHtml.includes(
-                        "danh sách tập phim"
-                    ) ||
-                    lowerHtml.includes(
-                        "<title>"
-                    );
-
-                if (
-                    !looksLikeMoviePage
-                ) {
-                    continue;
-                }
-
-                console.log(
-                    "[VSMOV] EXACT PAGE FOUND:",
-                    movieUrl
-                );
-
-                streams.push({
-
-                    name:
-                        "🌐 [VSMov] " +
-                        movieName,
-
-                    title:
-                        "Mở phim trên VSMov - " +
-                        movieName,
-
-                    externalUrl:
-                        movieUrl
-
-                });
-
-                /*
-                 * Thử tìm M3U8 trong HTML.
-                 */
-
-                const m3u8Matches =
-                    html.match(
-                        /https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/g
-                    );
-
-                if (
-                    Array.isArray(
-                        m3u8Matches
-                    )
-                ) {
-
-                    [
-                        ...new Set(
-                            m3u8Matches
-                        )
-                    ]
-                    .forEach(
-                        (url, index) => {
-
-                            streams.push({
-
-                                name:
-                                    "🎬 [Scrape] VSMov",
-
-                                title:
-                                    "Luồng " +
-                                    (index + 1) +
-                                    " - VSMov",
-
-                                url:
-                                    String(url)
-
-                            });
-
-                        }
-                    );
-
-                }
-
-                /*
-                 * Đã tìm thấy exact page.
-                 * Không cần thử slug khác.
-                 */
-
-                break;
 
             } catch (e) {
 
                 console.log(
-                    "[VSMOV] DIRECT ERROR:",
+                    "[VSMOV SCRAPE ERROR]",
                     slug,
                     e?.response?.status ||
                     e?.message ||
@@ -1853,59 +1988,86 @@ async function fetchVSMov(movieName) {
 
         }
 
-        /* ====================================================
-           6. CUỐI CÙNG MỚI DÙNG SEARCH FALLBACK
-           ==================================================== */
+    }
 
-        if (
-            streams.length === 0
-        ) {
+    // ========================================================
+    // 6. FALLBACK CUỐI
+    //
+    // Không dùng link_embed.
+    // Chỉ mở trang phim chính xác.
+    // ========================================================
 
-            const searchTerm =
-                variants.length > 1
-                    ? variants[variants.length - 1]
-                    : movieName;
+    if (
+        streams.length === 0
+    ) {
 
-            const searchUrl =
-                "https://vsmov.com/?search=" +
+        let fallbackSlug =
+            candidates[0]?.slug ||
+            scrapeSlugs[0] ||
+            toSlug(
+                variants[0] ||
+                movieName
+            );
+
+        if (fallbackSlug) {
+
+            const fallbackUrl =
+                "https://vsmov.com/phim/" +
                 encodeURIComponent(
-                    searchTerm
+                    fallbackSlug
                 );
 
             console.log(
-                "[VSMOV] FINAL SEARCH FALLBACK:",
-                searchUrl
+                "[VSMOV] FINAL FALLBACK:",
+                fallbackUrl
             );
 
             streams.push({
 
                 name:
-                    "🔎 [Fallback Search] VSMov",
+                    "🌐 [Fallback] VSmov",
 
                 title:
-                    "Tìm phim trên VSMov - " +
-                    searchTerm,
+                    "Mở trang phim VSmov - " +
+                    movieName,
 
                 externalUrl:
-                    searchUrl
+                    fallbackUrl
 
             });
 
         }
 
-        console.log(
-            "[VSMOV] FINAL:",
-            streams.length
-        );
-
-    } catch (e) {
-
-        console.log(
-            "[VSMOV FATAL]",
-            e?.message || e
-        );
-
     }
+
+    // ========================================================
+    // FINAL
+    // ========================================================
+
+    console.log(
+        "[VSMOV] FINAL STREAMS:",
+        streams.length
+    );
+
+    console.log(
+        "[VSMOV] STREAM TYPES:",
+        streams.map(
+            stream => ({
+                name: stream.name,
+                hasUrl: Boolean(
+                    stream.url
+                ),
+                hasExternalUrl:
+                    Boolean(
+                        stream.externalUrl
+                    )
+            })
+        )
+    );
+
+    console.log(
+        "========================================"
+    );
 
     return streams;
 }
