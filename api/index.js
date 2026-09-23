@@ -460,46 +460,105 @@ async function fetchNguonC(movieName) {
 
     try {
 
-        console.log(
-            "[NGUONC] Search:",
-            movieName
-        );
+        console.log("========================================");
+        console.log("[NGUONC] START");
+        console.log("[NGUONC] Movie:", movieName);
+
+        if (!movieName) {
+            console.log("[NGUONC] Movie name is empty");
+            return streams;
+        }
+
+        // ----------------------------------------------------
+        // 1. SEARCH
+        // ----------------------------------------------------
 
         const searchUrl =
             "https://phim.nguonc.com/api/films/search?keyword=" +
             encodeURIComponent(movieName);
 
-        const res =
+        console.log("[NGUONC] Search URL:", searchUrl);
+
+        const searchRes =
             await axios.get(
                 searchUrl,
                 {
-                    timeout: 8000,
+                    timeout: 10000,
                     headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                        "Accept":
+                            "application/json,text/plain,*/*"
                     }
                 }
             );
 
-        const items =
-            res.data?.items || [];
-
         console.log(
-            "[NGUONC] Search results:",
-            items.length
+            "[NGUONC] Search HTTP:",
+            searchRes.status
         );
 
-        if (!items.length) {
+        console.log(
+            "[NGUONC] Search response type:",
+            typeof searchRes.data
+        );
+
+        const items =
+            searchRes.data?.items ||
+            searchRes.data?.data?.items ||
+            [];
+
+        console.log(
+            "[NGUONC] Search items:",
+            Array.isArray(items)
+                ? items.length
+                : "NOT ARRAY"
+        );
+
+        if (!Array.isArray(items) || !items.length) {
+
+            console.log(
+                "[NGUONC] NO SEARCH RESULT"
+            );
+
             return streams;
         }
 
-        const movie =
-            items[0];
+        // ----------------------------------------------------
+        // 2. CHỌN PHIM
+        // ----------------------------------------------------
+
+        let movie =
+            items.find(item => {
+
+                const name =
+                    String(
+                        item?.name || ""
+                    ).trim().toLowerCase();
+
+                return (
+                    name ===
+                    String(movieName)
+                        .trim()
+                        .toLowerCase()
+                );
+
+            }) || items[0];
+
+        console.log(
+            "[NGUONC] Selected movie:",
+            JSON.stringify(movie)
+        );
 
         const movieSlug =
-            movie.slug;
+            movie?.slug;
 
         if (!movieSlug) {
+
+            console.log(
+                "[NGUONC] NO SLUG"
+            );
+
             return streams;
         }
 
@@ -508,83 +567,208 @@ async function fetchNguonC(movieName) {
             movieSlug
         );
 
+        // ----------------------------------------------------
+        // 3. DETAIL
+        // ----------------------------------------------------
+
         const detailUrl =
             "https://phim.nguonc.com/api/film/" +
             encodeURIComponent(movieSlug);
 
-        const detail =
+        console.log(
+            "[NGUONC] Detail URL:",
+            detailUrl
+        );
+
+        const detailRes =
             await axios.get(
                 detailUrl,
                 {
-                    timeout: 8000,
+                    timeout: 10000,
                     headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                        "Accept":
+                            "application/json,text/plain,*/*"
                     }
                 }
             );
 
+        console.log(
+            "[NGUONC] Detail HTTP:",
+            detailRes.status
+        );
+
+        // ----------------------------------------------------
+        // 4. EPISODES
+        // ----------------------------------------------------
+
+        const movieData =
+            detailRes.data?.movie ||
+            detailRes.data?.data?.movie ||
+            detailRes.data ||
+            {};
+
         const episodes =
-            detail.data?.movie?.episodes ||
-            detail.data?.episodes ||
+            movieData?.episodes ||
+            detailRes.data?.episodes ||
             [];
 
-        episodes.forEach(server => {
-
-            const serverItems =
-                server.items ||
-                server.server_data ||
-                [];
-
-            serverItems.forEach(ep => {
-
-                const streamUrl =
-                    ep.link_m3u8 ||
-                    ep.m3u8_url;
-
-                if (!streamUrl) return;
-
-                streams.push({
-
-                    name:
-                        "🎬 [API] NguonC",
-
-                    title:
-                        "Tap " +
-                        (
-                            ep.name ||
-                            ep.slug ||
-                            ""
-                        ) +
-                        " - " +
-                        (
-                            server.server_name ||
-                            ""
-                        ),
-
-                    url:
-                        String(streamUrl)
-                });
-            });
-        });
+        console.log(
+            "[NGUONC] Episodes type:",
+            Array.isArray(episodes)
+                ? "array"
+                : typeof episodes
+        );
 
         console.log(
-            "[NGUONC] Streams:",
+            "[NGUONC] Servers:",
+            Array.isArray(episodes)
+                ? episodes.length
+                : 0
+        );
+
+        if (!Array.isArray(episodes)) {
+
+            console.log(
+                "[NGUONC] EPISODES IS NOT ARRAY"
+            );
+
+            return streams;
+        }
+
+        // ----------------------------------------------------
+        // 5. LẤY STREAM
+        // ----------------------------------------------------
+
+        episodes.forEach(
+            (server, serverIndex) => {
+
+                console.log(
+                    "[NGUONC] Server",
+                    serverIndex,
+                    ":",
+                    server?.server_name ||
+                    server?.name ||
+                    "Unknown"
+                );
+
+                const serverItems =
+                    server?.items ||
+                    server?.server_data ||
+                    [];
+
+                console.log(
+                    "[NGUONC] Server items:",
+                    Array.isArray(serverItems)
+                        ? serverItems.length
+                        : 0
+                );
+
+                if (!Array.isArray(serverItems)) {
+                    return;
+                }
+
+                serverItems.forEach(
+                    (ep, episodeIndex) => {
+
+                        const streamUrl =
+                            ep?.link_m3u8 ||
+                            ep?.m3u8_url ||
+                            ep?.link_embed ||
+                            ep?.url;
+
+                        console.log(
+                            "[NGUONC] Episode",
+                            episodeIndex,
+                            "name:",
+                            ep?.name
+                        );
+
+                        console.log(
+                            "[NGUONC] Episode URL:",
+                            streamUrl || "NONE"
+                        );
+
+                        if (!streamUrl) {
+                            return;
+                        }
+
+                        streams.push({
+
+                            name:
+                                "🎬 [API] NguonC",
+
+                            title:
+                                "Tập " +
+                                (
+                                    ep?.name ||
+                                    ep?.slug ||
+                                    episodeIndex + 1
+                                ) +
+                                " - " +
+                                (
+                                    server?.server_name ||
+                                    server?.name ||
+                                    "NguonC"
+                                ),
+
+                            url:
+                                String(streamUrl)
+
+                        });
+
+                    }
+                );
+
+            }
+        );
+
+        console.log(
+            "[NGUONC] FINAL STREAM COUNT:",
             streams.length
+        );
+
+        console.log(
+            "[NGUONC] FINAL STREAMS:",
+            JSON.stringify(streams)
         );
 
     } catch (e) {
 
-        console.log(
-            "[NGUONC ERROR]",
-            e?.response?.status ||
-            e?.message ||
-            e
+        console.error(
+            "========================================"
+        );
+
+        console.error(
+            "[NGUONC ERROR]"
+        );
+
+        console.error(
+            "Message:",
+            e?.message || e
+        );
+
+        console.error(
+            "Status:",
+            e?.response?.status || "N/A"
+        );
+
+        console.error(
+            "Response:",
+            e?.response?.data
+                ? JSON.stringify(e.response.data)
+                : "N/A"
+        );
+
+        console.error(
+            "========================================"
         );
     }
 
     return streams;
 }
+
 
 
 /* ============================================================
@@ -1080,12 +1264,13 @@ async function scrapeMotPhimTV(movieName) {
 
 builder.defineStreamHandler(async (args) => {
 
-    console.log(
-        "================================================"
-    );
+    console.log("");
+    console.log("========================================");
+    console.log("[STREAM] NEW REQUEST");
+    console.log("========================================");
 
     console.log(
-        "[STREAM] Request:",
+        "[STREAM] Args:",
         JSON.stringify(args)
     );
 
@@ -1094,9 +1279,14 @@ builder.defineStreamHandler(async (args) => {
     const rawId =
         String(args.id || "");
 
-    /*
-     * vnwpSW:Tên phim
-     */
+    console.log(
+        "[STREAM] Raw ID:",
+        rawId
+    );
+
+    // ----------------------------------------------------
+    // MOVINA ID
+    // ----------------------------------------------------
 
     if (
         rawId.startsWith("vnwpsw:")
@@ -1108,11 +1298,12 @@ builder.defineStreamHandler(async (args) => {
                     "vnwpsw:".length
                 )
             );
+
     }
 
-    /*
-     * IMDb
-     */
+    // ----------------------------------------------------
+    // IMDb ID
+    // ----------------------------------------------------
 
     else if (
         rawId.startsWith("tt")
@@ -1146,50 +1337,95 @@ builder.defineStreamHandler(async (args) => {
         } catch (e) {
 
             console.log(
-                "[STREAM IMDB ERROR]",
+                "[STREAM IMDB ERROR]:",
                 e?.message || e
             );
         }
 
     }
 
+    // ----------------------------------------------------
+    // OTHER ID
+    // ----------------------------------------------------
+
     else {
 
-        movieName =
-            decodeURIComponent(
-                rawId
+        try {
+
+            movieName =
+                decodeURIComponent(
+                    rawId
+                );
+
+        } catch (e) {
+
+            console.log(
+                "[STREAM ID DECODE ERROR]:",
+                e?.message || e
             );
+
+            movieName = rawId;
+        }
+
     }
 
+    console.log(
+        "[STREAM] Resolved movie:",
+        movieName
+    );
 
-        console.log("[STREAM] Movie:", movieName);
-    if (!movieName || movieName.toLowerCase() === "phim") {
-        return { streams: [] };
+    // ----------------------------------------------------
+    // EMPTY MOVIE NAME
+    // ----------------------------------------------------
+
+    if (
+        !movieName ||
+        movieName.trim() === "" ||
+        movieName.toLowerCase() === "phim"
+    ) {
+
+        console.log(
+            "[STREAM] Invalid movie name"
+        );
+
+        return {
+            streams: []
+        };
     }
-    const [nguonc, kkphim, vsmov, longtieng, motphim] = await Promise.all([
-        fetchNguonC(movieName),
-        fetchKKPhim(movieName),
-        fetchVSMov(movieName),
-        scrapePhimLongTieng(movieName),
-        scrapeMotPhimTV(movieName)
-    ]);
-    const orderedStreams = [...nguonc, ...kkphim, ...vsmov, ...longtieng, ...motphim];
-    return { streams: orderedStreams };
+
+    // ----------------------------------------------------
+    // CHỈ TEST NGUONC
+    // ----------------------------------------------------
+
+    try {
+
+        const nguonc =
+            await fetchNguonC(
+                movieName
+            );
+
+        console.log(
+            "[STREAM] NguonC returned:",
+            nguonc.length,
+            "streams"
+        );
+
+        return {
+            streams: nguonc
+        };
+
+    } catch (e) {
+
+        console.error(
+            "[STREAM HANDLER ERROR]:",
+            e?.message || e
+        );
+
+        return {
+            streams: []
+        };
+    }
+
 });
 
-const addonInterface = builder.getInterface();
-const sdkRouter = getRouter(addonInterface);
-
-module.exports = async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
-    sdkRouter(req, res, () => {
-        res.statusCode = 404;
-        res.end();
-    });
 };
