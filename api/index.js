@@ -1656,6 +1656,7 @@ async function scrapeMotPhimTV(movieName) {
 
 /* ============================================================
    STREAM HANDLER
+   DIRECT STREAM + 5 EXTERNAL URL FALLBACKS
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
@@ -1670,23 +1671,13 @@ builder.defineStreamHandler(async (args) => {
     );
 
     let movieName = "";
-    let season = null;
-    let episode = null;
 
     const rawId =
         String(args.id || "").trim();
 
-    console.log(
-        "[STREAM] Raw ID:",
-        rawId
-    );
-
 
     /* ========================================================
-       1. CUSTOM MOVINA ID
-       vnwpSW:<movieName>
-       hoặc
-       vnwpsw:<movieName>:<season>:<episode>
+       1. LẤY TÊN PHIM TỪ ID
        ======================================================== */
 
     if (
@@ -1695,25 +1686,24 @@ builder.defineStreamHandler(async (args) => {
 
         try {
 
-            const customId =
+            let customId =
                 rawId.substring(
                     rawId.indexOf(":") + 1
                 );
 
             /*
-             * Stremio có thể gửi series ID theo dạng:
+             * Với phim bộ, Stremio có thể gửi:
              *
              * vnwpsw:Tên phim:1:3
              *
-             * Vì tên phim có thể chứa dấu ":" nên
-             * chỉ coi 2 phần cuối là season / episode
-             * khi chúng thực sự là số.
+             * => chỉ lấy "Tên phim"
              */
 
             const parts =
                 customId.split(":");
 
             if (
+                args.type === "series" &&
                 parts.length >= 3 &&
                 /^\d+$/.test(
                     parts[parts.length - 2]
@@ -1723,39 +1713,19 @@ builder.defineStreamHandler(async (args) => {
                 )
             ) {
 
-                season =
-                    Number(
-                        parts[parts.length - 2]
-                    );
-
-                episode =
-                    Number(
-                        parts[parts.length - 1]
-                    );
-
                 parts.splice(
                     parts.length - 2,
                     2
                 );
 
-                movieName =
-                    decodeURIComponent(
-                        parts.join(":")
-                    );
-
-                console.log(
-                    "[STREAM] Series detected:",
-                    "Season =", season,
-                    "Episode =", episode
-                );
-
-            } else {
-
-                movieName =
-                    decodeURIComponent(
-                        customId
-                    );
+                customId =
+                    parts.join(":");
             }
+
+            movieName =
+                decodeURIComponent(
+                    customId
+                );
 
         } catch (e) {
 
@@ -1770,7 +1740,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       2. IMDb ID
+       2. IMDb
        ======================================================== */
 
     else if (
@@ -1786,11 +1756,6 @@ builder.defineStreamHandler(async (args) => {
                 args.type === "series"
                     ? "series"
                     : "movie";
-
-            console.log(
-                "[STREAM] IMDb:",
-                imdbId
-            );
 
             const res =
                 await axios.get(
@@ -1813,12 +1778,14 @@ builder.defineStreamHandler(async (args) => {
                 "[STREAM IMDB ERROR]",
                 e?.message || e
             );
+
+            movieName = "";
         }
     }
 
 
     /* ========================================================
-       3. OTHER ID
+       3. ID KHÁC
        ======================================================== */
 
     else {
@@ -1837,13 +1804,14 @@ builder.defineStreamHandler(async (args) => {
                 e?.message || e
             );
 
-            movieName = rawId;
+            movieName =
+                rawId;
         }
     }
 
 
     /* ========================================================
-       4. NORMALIZE MOVIE NAME
+       4. CHUẨN HÓA TÊN PHIM
        ======================================================== */
 
     movieName =
@@ -1862,19 +1830,9 @@ builder.defineStreamHandler(async (args) => {
         args.type
     );
 
-    console.log(
-        "[STREAM] Season:",
-        season
-    );
-
-    console.log(
-        "[STREAM] Episode:",
-        episode
-    );
-
 
     /* ========================================================
-       5. INVALID REQUEST
+       5. KIỂM TRA ID KHÔNG HỢP LỆ
        ======================================================== */
 
     if (
@@ -1893,13 +1851,12 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       6. CALL ALL 5 SOURCES
+       6. CHẠY 5 DIRECT RESOLVERS
        ======================================================== */
 
     console.log(
-        "[STREAM] Starting 5 sources..."
+        "[STREAM] Starting 5 direct sources..."
     );
-
 
     const results =
         await Promise.allSettled([
@@ -1918,7 +1875,7 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       7. READ RESULTS SAFELY
+       7. LẤY KẾT QUẢ TỪNG NGUỒN
        ======================================================== */
 
     const nguonc =
@@ -1953,71 +1910,10 @@ builder.defineStreamHandler(async (args) => {
 
 
     /* ========================================================
-       8. LOG EACH SOURCE
+       8. GOM DIRECT STREAMS
        ======================================================== */
 
-    console.log(
-        "[STREAM] NguonC:",
-        nguonc.length
-    );
-
-    console.log(
-        "[STREAM] KKPhim:",
-        kkphim.length
-    );
-
-    console.log(
-        "[STREAM] VSMov:",
-        vsmov.length
-    );
-
-    console.log(
-        "[STREAM] 1Phim32:",
-        longtieng.length
-    );
-
-    console.log(
-        "[STREAM] MotPhimTV:",
-        motphim.length
-    );
-
-
-    /* ========================================================
-       9. REPORT REJECTED SOURCES
-       ======================================================== */
-
-    results.forEach(
-        (result, index) => {
-
-            if (
-                result.status === "rejected"
-            ) {
-
-                const sourceNames = [
-                    "NguonC",
-                    "KKPhim",
-                    "VSMov",
-                    "1Phim32",
-                    "MotPhimTV"
-                ];
-
-                console.log(
-                    "[STREAM SOURCE ERROR]",
-                    sourceNames[index],
-                    result.reason?.message ||
-                    result.reason ||
-                    "Unknown error"
-                );
-            }
-        }
-    );
-
-
-    /* ========================================================
-       10. COMBINE STREAMS
-       ======================================================== */
-
-    const orderedStreams = [
+    const directStreams = [
 
         ...nguonc,
 
@@ -2032,88 +1928,314 @@ builder.defineStreamHandler(async (args) => {
     ];
 
 
+    console.log(
+        "[STREAM] Direct total:",
+        directStreams.length
+    );
+
+
     /* ========================================================
-       11. REMOVE INVALID STREAMS
+       9. TẠO URL FALLBACK
+       ======================================================== */
+
+    const slugQuery =
+        toSlug(movieName);
+
+    const urlQuery =
+        encodeURIComponent(
+            movieName
+        ).replace(
+            /%20/g,
+            "+"
+        );
+
+
+    /* ========================================================
+       10. 5 EXTERNAL URL FALLBACKS
+       ======================================================== */
+
+    const externalStreams = [
+
+        /* ----------------------------------------------------
+           1. 1PHIM32
+           ---------------------------------------------------- */
+
+        {
+            name:
+                "🌐 [Fallback] 1Phim32",
+
+            title:
+                "Mở trang 1Phim32 để phát: " +
+                movieName,
+
+            externalUrl:
+                "https://www.1phim32.com/search/" +
+                slugQuery +
+                "/"
+        },
+
+
+        /* ----------------------------------------------------
+           2. NGUỒNC
+           ---------------------------------------------------- */
+
+        {
+            name:
+                "🌐 [Fallback] NguồnC",
+
+            title:
+                "Mở trang NguồnC để phát: " +
+                movieName,
+
+            externalUrl:
+                "https://nguonc.com/tim-kiem?keyword=" +
+                urlQuery
+        },
+
+
+        /* ----------------------------------------------------
+           3. MOTPHIMTV
+           ---------------------------------------------------- */
+
+        {
+            name:
+                "🌐 [Fallback] MotPhimTV",
+
+            title:
+                "Mở trang MotPhimTV để phát: " +
+                movieName,
+
+            externalUrl:
+                "https://motphimtv.run/?search=" +
+                urlQuery
+        },
+
+
+        /* ----------------------------------------------------
+           4. VSMOV
+           ---------------------------------------------------- */
+
+        {
+            name:
+                "🌐 [Fallback] VSmov",
+
+            title:
+                "Mở trang VSmov để phát: " +
+                movieName,
+
+            externalUrl:
+                "https://vsmov.com/phim/" +
+                slugQuery
+        },
+
+
+        /* ----------------------------------------------------
+           5. KKPHIM
+           ---------------------------------------------------- */
+
+        {
+            name:
+                "🌐 [Fallback] KKPhim",
+
+            title:
+                "Mở trang KKPhim để tìm và phát: " +
+                movieName,
+
+            externalUrl:
+                "https://phimapi.com/tim-kiem/" +
+                slugQuery
+        }
+
+    ];
+
+
+    /* ========================================================
+       11. GOM DIRECT + FALLBACK
+       ======================================================== */
+
+    const allStreams = [
+
+        ...directStreams,
+
+        ...externalStreams
+
+    ];
+
+
+    /* ========================================================
+       12. CHỈ GIỮ STREAM CÓ URL HỢP LỆ
        ======================================================== */
 
     const validStreams =
-        orderedStreams.filter(
+        allStreams.filter(
             stream => {
 
                 if (!stream) {
                     return false;
                 }
 
+
+                /* Direct stream */
+
                 if (
-                    !stream.url ||
-                    typeof stream.url !== "string"
+                    typeof stream.url === "string" &&
+                    (
+                        stream.url.startsWith(
+                            "http://"
+                        ) ||
+                        stream.url.startsWith(
+                            "https://"
+                        )
+                    )
                 ) {
-                    return false;
+
+                    return true;
                 }
 
-                return (
-                    stream.url.startsWith(
-                        "http://"
-                    ) ||
-                    stream.url.startsWith(
-                        "https://"
+
+                /* External URL */
+
+                if (
+                    typeof stream.externalUrl === "string" &&
+                    (
+                        stream.externalUrl.startsWith(
+                            "http://"
+                        ) ||
+                        stream.externalUrl.startsWith(
+                            "https://"
+                        )
                     )
-                );
+                ) {
+
+                    return true;
+                }
+
+
+                return false;
             }
         );
 
 
     /* ========================================================
-       12. REMOVE DUPLICATE URL
+       13. XÓA DIRECT URL TRÙNG
        ======================================================== */
 
-    const seenUrls =
+    const seenDirectUrls =
         new Set();
+
+    const seenExternalUrls =
+        new Set();
+
 
     const uniqueStreams =
         validStreams.filter(
             stream => {
 
-                const url =
-                    String(
-                        stream.url
-                    ).trim();
 
-                if (
-                    seenUrls.has(url)
-                ) {
-                    return false;
+                /* Direct URL */
+
+                if (stream.url) {
+
+                    const url =
+                        String(
+                            stream.url
+                        ).trim();
+
+                    if (
+                        seenDirectUrls.has(
+                            url
+                        )
+                    ) {
+
+                        return false;
+                    }
+
+                    seenDirectUrls.add(
+                        url
+                    );
+
+                    return true;
                 }
 
-                seenUrls.add(url);
 
-                return true;
+                /* External URL */
+
+                if (stream.externalUrl) {
+
+                    const externalUrl =
+                        String(
+                            stream.externalUrl
+                        ).trim();
+
+                    if (
+                        seenExternalUrls.has(
+                            externalUrl
+                        )
+                    ) {
+
+                        return false;
+                    }
+
+                    seenExternalUrls.add(
+                        externalUrl
+                    );
+
+                    return true;
+                }
+
+
+                return false;
             }
         );
 
 
     /* ========================================================
-       13. FINAL LOG
+       14. LOG CHI TIẾT
        ======================================================== */
 
     console.log(
-        "[STREAM] Total:",
-        orderedStreams.length
+        "[STREAM] NguonC:",
+        nguonc.length
     );
 
     console.log(
-        "[STREAM] Valid:",
-        validStreams.length
+        "[STREAM] KKPhim:",
+        kkphim.length
     );
 
     console.log(
-        "[STREAM] Unique:",
+        "[STREAM] VSmov:",
+        vsmov.length
+    );
+
+    console.log(
+        "[STREAM] 1Phim32:",
+        longtieng.length
+    );
+
+    console.log(
+        "[STREAM] MotPhimTV:",
+        motphim.length
+    );
+
+    console.log(
+        "[STREAM] Direct:",
+        directStreams.length
+    );
+
+    console.log(
+        "[STREAM] Fallback:",
+        externalStreams.length
+    );
+
+    console.log(
+        "[STREAM] Final:",
         uniqueStreams.length
     );
 
 
     /* ========================================================
-       14. LOG FINAL STREAM LIST
+       15. LOG TỪNG STREAM CUỐI
        ======================================================== */
 
     uniqueStreams.forEach(
@@ -2127,73 +2249,21 @@ builder.defineStreamHandler(async (args) => {
                 "|",
                 stream.title || "",
                 "|",
-                stream.url
+                stream.url ||
+                stream.externalUrl ||
+                ""
             );
         }
     );
 
 
     /* ========================================================
-       15. RETURN TO STREMIO
+       16. TRẢ KẾT QUẢ CHO STREMIO
        ======================================================== */
 
     return {
-        streams: uniqueStreams
+        streams:
+            uniqueStreams
     };
 
 });
-
-
-/* ============================================================
-   ADDON ROUTER
-   ============================================================ */
-
-const addonInterface =
-    builder.getInterface();
-
-const sdkRouter =
-    getRouter(
-        addonInterface
-    );
-
-
-module.exports = async (
-    req,
-    res
-) => {
-
-    res.setHeader(
-        "Access-Control-Allow-Origin",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Headers",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, OPTIONS"
-    );
-
-    if (
-        req.method === "OPTIONS"
-    ) {
-
-        res.status(200).end();
-
-        return;
-    }
-
-    sdkRouter(
-        req,
-        res,
-        () => {
-
-            res.statusCode = 404;
-
-            res.end();
-        }
-    );
-};
