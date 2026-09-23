@@ -460,33 +460,24 @@ async function fetchNguonC(movieName) {
 
     try {
 
-        console.log("");
         console.log("========================================");
         console.log("[NGUONC] START");
         console.log("[NGUONC] Movie:", movieName);
-        console.log("========================================");
 
         if (!movieName) {
-            console.log(
-                "[NGUONC] Movie name is empty"
-            );
-
+            console.log("[NGUONC] Movie name is empty");
             return streams;
         }
 
-
-        /* ----------------------------------------------------
-           1. SEARCH
-           ---------------------------------------------------- */
+        // ----------------------------------------------------
+        // 1. SEARCH
+        // ----------------------------------------------------
 
         const searchUrl =
             "https://phim.nguonc.com/api/films/search?keyword=" +
             encodeURIComponent(movieName);
 
-        console.log(
-            "[NGUONC] Search URL:",
-            searchUrl
-        );
+        console.log("[NGUONC] Search URL:", searchUrl);
 
         const searchRes =
             await axios.get(
@@ -512,11 +503,6 @@ async function fetchNguonC(movieName) {
             typeof searchRes.data
         );
 
-
-        /* ----------------------------------------------------
-           2. SEARCH RESULTS
-           ---------------------------------------------------- */
-
         const items =
             searchRes.data?.items ||
             searchRes.data?.data?.items ||
@@ -529,10 +515,7 @@ async function fetchNguonC(movieName) {
                 : "NOT ARRAY"
         );
 
-        if (
-            !Array.isArray(items) ||
-            !items.length
-        ) {
+        if (!Array.isArray(items) || !items.length) {
 
             console.log(
                 "[NGUONC] NO SEARCH RESULT"
@@ -541,10 +524,9 @@ async function fetchNguonC(movieName) {
             return streams;
         }
 
-
-        /* ----------------------------------------------------
-           3. CHỌN PHIM KHỚP TÊN
-           ---------------------------------------------------- */
+        // ----------------------------------------------------
+        // 2. CHỌN PHIM
+        // ----------------------------------------------------
 
         let movie =
             items.find(item => {
@@ -552,9 +534,7 @@ async function fetchNguonC(movieName) {
                 const name =
                     String(
                         item?.name || ""
-                    )
-                    .trim()
-                    .toLowerCase();
+                    ).trim().toLowerCase();
 
                 return (
                     name ===
@@ -565,12 +545,10 @@ async function fetchNguonC(movieName) {
 
             }) || items[0];
 
-
         console.log(
             "[NGUONC] Selected movie:",
             JSON.stringify(movie)
         );
-
 
         const movieSlug =
             movie?.slug;
@@ -589,10 +567,9 @@ async function fetchNguonC(movieName) {
             movieSlug
         );
 
-
-        /* ----------------------------------------------------
-           4. DETAIL
-           ---------------------------------------------------- */
+        // ----------------------------------------------------
+        // 3. DETAIL
+        // ----------------------------------------------------
 
         const detailUrl =
             "https://phim.nguonc.com/api/film/" +
@@ -622,10 +599,9 @@ async function fetchNguonC(movieName) {
             detailRes.status
         );
 
-
-        /* ----------------------------------------------------
-           5. EPISODES
-           ---------------------------------------------------- */
+        // ----------------------------------------------------
+        // 4. EPISODES
+        // ----------------------------------------------------
 
         const movieData =
             detailRes.data?.movie ||
@@ -661,10 +637,9 @@ async function fetchNguonC(movieName) {
             return streams;
         }
 
-
-        /* ----------------------------------------------------
-           6. LẤY M3U8
-           ---------------------------------------------------- */
+        // ----------------------------------------------------
+        // 5. LẤY STREAM
+        // ----------------------------------------------------
 
         episodes.forEach(
             (server, serverIndex) => {
@@ -749,7 +724,6 @@ async function fetchNguonC(movieName) {
             }
         );
 
-
         console.log(
             "[NGUONC] FINAL STREAM COUNT:",
             streams.length
@@ -794,6 +768,7 @@ async function fetchNguonC(movieName) {
 
     return streams;
 }
+
 
 
 /* ============================================================
@@ -861,6 +836,13 @@ async function fetchKKPhim(movieName) {
             "[KKPHIM] Slug:",
             movieSlug
         );
+
+        /*
+         * QUAN TRỌNG:
+         * Endpoint detail phải là:
+         *
+         * /v1/api/phim/{slug}
+         */
 
         const detailUrl =
             "https://phimapi.com/v1/api/phim/" +
@@ -952,6 +934,11 @@ async function fetchVSMov(movieName) {
             "[VSMOV] Search:",
             movieName
         );
+
+        /*
+         * Giữ nguyên endpoint cũ.
+         * Nếu API không còn hoạt động, log sẽ cho biết.
+         */
 
         const searchUrl =
             "https://vsmov.com" +
@@ -1214,7 +1201,7 @@ async function scrapeMotPhimTV(movieName) {
                 {
                     headers: {
                         "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64;
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
                     },
                     timeout: 6000
                 }
@@ -1240,7 +1227,7 @@ async function scrapeMotPhimTV(movieName) {
             streams.push({
 
                 name:
-                    "🔥 [Scrape] MotPhimTV",
+                    "📺 [Scrape] MotPhimTV",
 
                 title:
                     "Luong phat MotPhimTV",
@@ -1269,8 +1256,10 @@ async function scrapeMotPhimTV(movieName) {
 
     return streams;
 }
+
+
 /* ============================================================
-   STREAM HANDLER - KÍCH HOẠT GỘP NGUỒN
+   STREAM HANDLER
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
@@ -1295,40 +1284,26 @@ builder.defineStreamHandler(async (args) => {
         rawId
     );
 
-    /* --------------------------------------------------------
-       MOVINA ID
-       -------------------------------------------------------- */
+    // ----------------------------------------------------
+    // MOVINA ID
+    // ----------------------------------------------------
 
     if (
         rawId.startsWith("vnwpsw:")
     ) {
 
-        try {
-
-            movieName =
-                decodeURIComponent(
-                    rawId.substring(
-                        "vnwpsw:".length
-                    )
-                );
-
-        } catch (e) {
-
-            console.log(
-                "[STREAM ID ERROR]:",
-                e?.message || e
-            );
-
-            movieName =
+        movieName =
+            decodeURIComponent(
                 rawId.substring(
                     "vnwpsw:".length
-                );
-        }
+                )
+            );
+
     }
 
-    /* --------------------------------------------------------
-       IMDb
-       -------------------------------------------------------- */
+    // ----------------------------------------------------
+    // IMDb ID
+    // ----------------------------------------------------
 
     else if (
         rawId.startsWith("tt")
@@ -1346,7 +1321,7 @@ builder.defineStreamHandler(async (args) => {
 
             const res =
                 await axios.get(
-                    "https://stremio.com" +
+                    "https://stremio.com/" +
                     cleanType +
                     "/" +
                     imdbId +
@@ -1366,11 +1341,12 @@ builder.defineStreamHandler(async (args) => {
                 e?.message || e
             );
         }
+
     }
 
-    /* --------------------------------------------------------
-       OTHER ID
-       -------------------------------------------------------- */
+    // ----------------------------------------------------
+    // OTHER ID
+    // ----------------------------------------------------
 
     else {
 
@@ -1384,36 +1360,32 @@ builder.defineStreamHandler(async (args) => {
         } catch (e) {
 
             console.log(
-                "[STREAM DECODE ERROR]:",
+                "[STREAM ID DECODE ERROR]:",
                 e?.message || e
             );
 
-            movieName =
-                rawId;
+            movieName = rawId;
         }
-    }
 
-    console.log(
-        "[STREAM] Type:",
-        args.type
-    );
+    }
 
     console.log(
         "[STREAM] Resolved movie:",
         movieName
     );
 
-    /* --------------------------------------------------------
-       KIỂM TRA ID
-       -------------------------------------------------------- */
+    // ----------------------------------------------------
+    // EMPTY MOVIE NAME
+    // ----------------------------------------------------
 
     if (
         !movieName ||
-        !movieName.trim()
+        movieName.trim() === "" ||
+        movieName.toLowerCase() === "phim"
     ) {
 
         console.log(
-            "[STREAM] ERROR: movieName is empty"
+            "[STREAM] Invalid movie name"
         );
 
         return {
@@ -1421,104 +1393,39 @@ builder.defineStreamHandler(async (args) => {
         };
     }
 
-    console.log(
-        "[STREAM] Movie name resolved successfully"
-    );
-
-    /* --------------------------------------------------------
-       GỘP 5 NGUỒN PHIM CHẠY SONG SONG
-       -------------------------------------------------------- */
-    console.log("[STREAM] Đang tìm kiếm link phim từ cả 5 nguồn...");
+    // ----------------------------------------------------
+    // CHỈ TEST NGUONC
+    // ----------------------------------------------------
 
     try {
-        // Thực thi gọi cả 5 hàm lấy nguồn cùng lúc để tối ưu thời gian phản hồi
-        const [
-            nguonCStreams, 
-            kkPhimStreams, 
-            vsMovStreams, 
-            phim32Streams, 
-            motPhimStreams
-        ] = await Promise.all([
-            fetchNguonC(movieName).catch(e => { console.error("[STREAM ERR NguonC]:", e.message || e); return []; }),
-            fetchKKPhim(movieName).catch(e => { console.error("[STREAM ERR KKPhim]:", e.message || e); return []; }),
-            fetchVSMov(movieName).catch(e => { console.error("[STREAM ERR VSMov]:", e.message || e); return []; }),
-            scrapePhimLongTieng(movieName).catch(e => { console.error("[STREAM ERR 1Phim32]:", e.message || e); return []; }),
-            scrapeMotPhimTV(movieName).catch(e => { console.error("[STREAM ERR MotPhimTV]:", e.message || e); return []; })
-        ]);
 
-        // Gộp tất cả kết quả thu thập được vào một danh sách duy nhất
-        const allStreams = [
-            ...nguonCStreams,
-            ...kkPhimStreams,
-            ...vsMovStreams,
-            ...phim32Streams,
-            ...motPhimStreams
-        ];
+        const nguonc =
+            await fetchNguonC(
+                movieName
+            );
 
-        console.log(`[STREAM] Hoàn tất gộp nguồn. Tổng số luồng phát tìm thấy: ${allStreams.length}`);
+        console.log(
+            "[STREAM] NguonC returned:",
+            nguonc.length,
+            "streams"
+        );
 
         return {
-            streams: allStreams
+            streams: nguonc
         };
 
-    } catch (error) {
-        console.error("[STREAM GLOBAL ERROR]:", error.message || error);
+    } catch (e) {
+
+        console.error(
+            "[STREAM HANDLER ERROR]:",
+            e?.message || e
+        );
+
         return {
             streams: []
         };
     }
+
 });
 
-/* ============================================================
-   ADDON ROUTER
-   ============================================================ */
-
-const addonInterface =
-    builder.getInterface();
-
-const sdkRouter =
-    getRouter(addonInterface);
-
-
-/* ============================================================
-   HTTP HANDLER
-   ============================================================ */
-
-module.exports = async (req, res) => {
-
-    res.setHeader(
-        "Access-Control-Allow-Origin",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Headers",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, OPTIONS"
-    );
-
-    if (
-        req.method === "OPTIONS"
-    ) {
-
-        res.status(200).end();
-
-        return;
-    }
-
-    sdkRouter(
-        req,
-        res,
-        () => {
-
-            res.statusCode = 404;
-
-            res.end();
-
-        }
-    );
 };
