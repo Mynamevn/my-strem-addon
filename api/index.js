@@ -591,9 +591,11 @@ async function fetchNguonC(movieName) {
                         searchUrl,
                         {
                             timeout: 10000,
+
                             headers: {
                                 "User-Agent":
                                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+
                                 "Accept":
                                     "application/json,text/plain,*/*"
                             }
@@ -705,7 +707,6 @@ async function fetchNguonC(movieName) {
                     );
 
                     break;
-
                 }
 
             } catch (searchError) {
@@ -781,9 +782,11 @@ async function fetchNguonC(movieName) {
                 detailUrl,
                 {
                     timeout: 10000,
+
                     headers: {
                         "User-Agent":
                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+
                         "Accept":
                             "application/json,text/plain,*/*"
                     }
@@ -796,18 +799,60 @@ async function fetchNguonC(movieName) {
         );
 
         // ----------------------------------------------------
-        // 6. EPISODES
+        // 6. XÁC ĐỊNH MOVIE DATA
         // ----------------------------------------------------
 
+        const detailData =
+            detailRes.data || {};
+
+        console.log(
+            "[NGUONC] Detail top-level keys:",
+            detailData &&
+            typeof detailData === "object"
+                ? Object.keys(detailData)
+                : "NOT OBJECT"
+        );
+
+        console.log(
+            "[NGUONC] Detail data keys:",
+            detailData?.data &&
+            typeof detailData.data === "object"
+                ? Object.keys(detailData.data)
+                : "NO DATA"
+        );
+
+        /*
+         * Hỗ trợ nhiều cấu trúc API:
+         *
+         * detail.data.movie
+         * detail.movie
+         * detail.data.item
+         * detail.data
+         */
+
         const movieData =
-            detailRes.data?.movie ||
-            detailRes.data?.data?.movie ||
-            detailRes.data ||
+            detailData?.data?.item ||
+            detailData?.data?.movie ||
+            detailData?.movie ||
+            detailData?.data ||
+            detailData ||
             {};
+
+        console.log(
+            "[NGUONC] Movie data name:",
+            movieData?.name ||
+            movieData?.title ||
+            "UNKNOWN"
+        );
+
+        // ----------------------------------------------------
+        // 7. EPISODES
+        // ----------------------------------------------------
 
         const episodes =
             movieData?.episodes ||
-            detailRes.data?.episodes ||
+            detailData?.data?.episodes ||
+            detailData?.episodes ||
             [];
 
         console.log(
@@ -824,17 +869,20 @@ async function fetchNguonC(movieName) {
                 : 0
         );
 
-        if (!Array.isArray(episodes)) {
+        if (
+            !Array.isArray(episodes) ||
+            !episodes.length
+        ) {
 
             console.log(
-                "[NGUONC] EPISODES IS NOT ARRAY"
+                "[NGUONC] NO EPISODES"
             );
 
             return streams;
         }
 
         // ----------------------------------------------------
-        // 7. LẤY STREAM
+        // 8. LẤY DIRECT STREAM
         // ----------------------------------------------------
 
         episodes.forEach(
@@ -852,6 +900,7 @@ async function fetchNguonC(movieName) {
                 const serverItems =
                     server?.items ||
                     server?.server_data ||
+                    server?.episodes ||
                     [];
 
                 console.log(
@@ -861,32 +910,58 @@ async function fetchNguonC(movieName) {
                         : 0
                 );
 
-                if (!Array.isArray(serverItems)) {
+                if (
+                    !Array.isArray(serverItems)
+                ) {
                     return;
                 }
 
                 serverItems.forEach(
                     (ep, episodeIndex) => {
 
+                        /*
+                         * Ưu tiên M3U8 trực tiếp.
+                         * Không coi embed là direct stream.
+                         */
+
                         const streamUrl =
                             ep?.link_m3u8 ||
                             ep?.m3u8_url ||
+                            ep?.m3u8;
+
+                        const embedUrl =
                             ep?.link_embed ||
+                            ep?.embed ||
+                            ep?.embed_url ||
                             ep?.url;
 
                         console.log(
                             "[NGUONC] Episode",
                             episodeIndex,
                             "name:",
-                            ep?.name
+                            ep?.name ||
+                            ep?.slug ||
+                            "Unknown"
                         );
 
                         console.log(
-                            "[NGUONC] Episode URL:",
-                            streamUrl || "NONE"
+                            "[NGUONC] M3U8:",
+                            streamUrl ||
+                            "NONE"
+                        );
+
+                        console.log(
+                            "[NGUONC] Embed:",
+                            embedUrl ||
+                            "NONE"
                         );
 
                         if (!streamUrl) {
+
+                            console.log(
+                                "[NGUONC] NO DIRECT M3U8"
+                            );
+
                             return;
                         }
 
@@ -910,7 +985,12 @@ async function fetchNguonC(movieName) {
                                 ),
 
                             url:
-                                String(streamUrl)
+                                String(streamUrl),
+
+                            behaviorHints: {
+                                bingeGroup:
+                                    "nguonc"
+                            }
 
                         });
 
@@ -919,6 +999,10 @@ async function fetchNguonC(movieName) {
 
             }
         );
+
+        // ----------------------------------------------------
+        // 9. KẾT QUẢ
+        // ----------------------------------------------------
 
         console.log(
             "[NGUONC] FINAL STREAM COUNT:",
@@ -930,330 +1014,8 @@ async function fetchNguonC(movieName) {
             JSON.stringify(streams)
         );
 
-    } catch (e) {
-
-        console.error(
-            "========================================"
-        );
-
-        console.error(
-            "[NGUONC ERROR]"
-        );
-
-        console.error(
-            "Message:",
-            e?.message || e
-        );
-
-        console.error(
-            "Status:",
-            e?.response?.status || "N/A"
-        );
-
-        console.error(
-            "Response:",
-            e?.response?.data
-                ? JSON.stringify(e.response.data)
-                : "N/A"
-        );
-
-        console.error(
-            "========================================"
-        );
-    }
-
-    return streams;
-}
-
-
-/* ============================================================
-   KKPHiM / PHIMAPI
-   DEBUG DETAIL RESPONSE
-   ============================================================ */
-
-async function fetchKKPhim(movieName) {
-    const streams = [];
-
-    try {
-        console.log("========================================");
-        console.log("[KKPHIM] START");
-        console.log("[KKPHIM] Search:", movieName);
-
-        const searchUrl =
-            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-            encodeURIComponent(movieName) +
-            "&limit=10";
-
         console.log(
-            "[KKPHIM] Search URL:",
-            searchUrl
-        );
-
-        const res =
-            await axios.get(
-                searchUrl,
-                {
-                    timeout: 8000,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
-                }
-            );
-
-        console.log(
-            "[KKPHIM] Search HTTP:",
-            res.status
-        );
-
-        const items =
-            res.data?.data?.items ||
-            res.data?.items ||
-            [];
-
-        console.log(
-            "[KKPHIM] Search results:",
-            Array.isArray(items)
-                ? items.length
-                : "NOT ARRAY"
-        );
-
-        if (
-            !Array.isArray(items) ||
-            !items.length
-        ) {
-            console.log(
-                "[KKPHIM] NO SEARCH RESULT"
-            );
-
-            return streams;
-        }
-
-        const normalizedSearch =
-            String(movieName)
-                .trim()
-                .toLowerCase();
-
-        const movie =
-            items.find(item => {
-
-                const name =
-                    String(
-                        item?.name || ""
-                    )
-                    .trim()
-                    .toLowerCase();
-
-                const origin =
-                    String(
-                        item?.origin_name || ""
-                    )
-                    .trim()
-                    .toLowerCase();
-
-                return (
-                    name === normalizedSearch ||
-                    origin === normalizedSearch
-                );
-
-            }) ||
-            items[0];
-
-        console.log(
-            "[KKPHIM] Selected movie:",
-            JSON.stringify({
-                name: movie?.name,
-                origin_name: movie?.origin_name,
-                slug: movie?.slug,
-                year: movie?.year,
-                type: movie?.type
-            })
-        );
-
-        const movieSlug =
-            movie?.slug;
-
-        if (!movieSlug) {
-            console.log(
-                "[KKPHIM] NO SLUG"
-            );
-
-            return streams;
-        }
-
-        console.log(
-            "[KKPHIM] Slug:",
-            movieSlug
-        );
-
-        const detailUrl =
-            "https://phimapi.com/v1/api/phim/" +
-            encodeURIComponent(movieSlug);
-
-        console.log(
-            "[KKPHIM] Detail URL:",
-            detailUrl
-        );
-
-        const detail =
-            await axios.get(
-                detailUrl,
-                {
-                    timeout: 8000,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
-                }
-            );
-
-        console.log(
-            "[KKPHIM] Detail HTTP:",
-            detail.status
-        );
-
-        /*
-         * CẤU TRÚC THỰC TẾ:
-         *
-         * detail.data
-         *   └── data
-         *       └── item
-         *           └── episodes
-         *               └── server_data
-         *                   └── link_m3u8
-         */
-
-        const movieData =
-            detail.data?.data?.item ||
-            {};
-
-        const episodes =
-            movieData?.episodes ||
-            [];
-
-        console.log(
-            "[KKPHIM] Movie data:",
-            movieData?.name ||
-            "UNKNOWN"
-        );
-
-        console.log(
-            "[KKPHIM] Episodes:",
-            Array.isArray(episodes)
-                ? episodes.length
-                : "NOT ARRAY"
-        );
-
-        if (
-            !Array.isArray(episodes) ||
-            !episodes.length
-        ) {
-            console.log(
-                "[KKPHIM] NO EPISODES"
-            );
-
-            return streams;
-        }
-
-        episodes.forEach(
-            (server, serverIndex) => {
-
-                const serverName =
-                    server?.server_name ||
-                    server?.name ||
-                    "KKPhim";
-
-                console.log(
-                    "[KKPHIM] Server",
-                    serverIndex,
-                    ":",
-                    serverName
-                );
-
-                const serverData =
-                    server?.server_data ||
-                    [];
-
-                console.log(
-                    "[KKPHIM] Server data:",
-                    Array.isArray(serverData)
-                        ? serverData.length
-                        : "NOT ARRAY"
-                );
-
-                if (
-                    !Array.isArray(serverData)
-                ) {
-                    return;
-                }
-
-                serverData.forEach(
-                    (ep, episodeIndex) => {
-
-                        const streamUrl =
-                            ep?.link_m3u8 ||
-                            ep?.m3u8_url;
-
-                        console.log(
-                            "[KKPHIM] Episode",
-                            episodeIndex,
-                            "name:",
-                            ep?.name ||
-                            ep?.slug ||
-                            "Unknown"
-                        );
-
-                        console.log(
-                            "[KKPHIM] Episode URL:",
-                            streamUrl ||
-                            "NONE"
-                        );
-
-                        if (!streamUrl) {
-                            return;
-                        }
-
-                        streams.push({
-
-                            name:
-                                "⚡ [API] KKPhim",
-
-                            title:
-                                (
-                                    ep?.name ||
-                                    "Full"
-                                ) +
-                                " - " +
-                                serverName,
-
-                            url:
-                                String(streamUrl),
-
-                            behaviorHints: {
-                                bingeGroup:
-                                    "kkphim"
-                            }
-
-                        });
-
-                    }
-                );
-
-            }
-        );
-
-        console.log(
-            "[KKPHIM] DIRECT STREAMS:",
-            streams.length
-        );
-
-        console.log(
-            "[KKPHIM] FINAL STREAMS:",
-            JSON.stringify(streams)
-        );
-
-        console.log(
-            "[KKPHIM] END"
+            "[NGUONC] END"
         );
 
         console.log(
@@ -1269,7 +1031,7 @@ async function fetchKKPhim(movieName) {
         );
 
         console.error(
-            "[KKPHIM ERROR]"
+            "[NGUONC ERROR]"
         );
 
         console.error(
@@ -1298,6 +1060,155 @@ async function fetchKKPhim(movieName) {
 
         return streams;
     }
+}
+
+
+/* ============================================================
+   KKPHIM / PHIMAPI
+   ============================================================ */
+
+async function fetchKKPhim(movieName) {
+
+    const streams = [];
+
+    try {
+
+        console.log(
+            "[KKPHIM] Search:",
+            movieName
+        );
+
+        const searchUrl =
+            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+            encodeURIComponent(movieName) +
+            "&limit=10";
+
+        const res =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const items =
+            res.data?.data?.items ||
+            res.data?.items ||
+            [];
+
+        console.log(
+            "[KKPHIM] Search results:",
+            items.length
+        );
+
+        if (!items.length) {
+            return streams;
+        }
+
+        const movie =
+            items.find(
+                x =>
+                    x?.name?.toLowerCase() ===
+                    movieName.toLowerCase()
+            ) ||
+            items[0];
+
+        const movieSlug =
+            movie?.slug;
+
+        if (!movieSlug) {
+            return streams;
+        }
+
+        console.log(
+            "[KKPHIM] Slug:",
+            movieSlug
+        );
+
+        /*
+         * QUAN TRỌNG:
+         * Endpoint detail phải là:
+         *
+         * /v1/api/phim/{slug}
+         */
+
+        const detailUrl =
+            "https://phimapi.com/v1/api/phim/" +
+            encodeURIComponent(movieSlug);
+
+        const detail =
+            await axios.get(
+                detailUrl,
+                {
+                    timeout: 8000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        const episodesData =
+            detail.data?.episodes ||
+            [];
+
+        episodesData.forEach(server => {
+
+            const serverData =
+                server.server_data ||
+                [];
+
+            serverData.forEach(ep => {
+
+                if (!ep.link_m3u8) {
+                    return;
+                }
+
+                streams.push({
+
+                    name:
+                        "⚡ [API] KKPhim",
+
+                    title:
+                        "Ban phat: " +
+                        (
+                            ep.name ||
+                            ""
+                        ) +
+                        " - " +
+                        (
+                            server.server_name ||
+                            ""
+                        ),
+
+                    url:
+                        String(
+                            ep.link_m3u8
+                        )
+                });
+            });
+        });
+
+        console.log(
+            "[KKPHIM] Streams:",
+            streams.length
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[KKPHIM ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+    }
+
+    return streams;
 }
 
 
@@ -2470,24 +2381,11 @@ builder.defineStreamHandler(async (args) => {
     );
 
     // =====================================================
-    // 1. LẤY ID + TYPE
+    // 1. Lấy ID
     // =====================================================
 
     const rawId =
         String(args?.id || "").trim();
-
-    const streamType =
-        String(args?.type || "movie").trim();
-
-    console.log(
-        "[STREAM] Type:",
-        streamType
-    );
-
-    console.log(
-        "[STREAM] Raw ID:",
-        rawId
-    );
 
     if (!rawId) {
 
@@ -2500,8 +2398,13 @@ builder.defineStreamHandler(async (args) => {
         };
     }
 
+    console.log(
+        "[STREAM] Raw ID:",
+        rawId
+    );
+
     // =====================================================
-    // 2. XÁC ĐỊNH TÊN PHIM
+    // 2. Xác định tên phim
     // =====================================================
 
     let movieName = "";
@@ -2509,7 +2412,13 @@ builder.defineStreamHandler(async (args) => {
     try {
 
         // -------------------------------------------------
-        // A. ID CỦA MOVINA
+        // ID MOVINA dạng:
+        //
+        // vnwpsw:Tên phim
+        //
+        // hoặc series:
+        //
+        // vnwpsw:Tên phim:season:1:episode:2
         // -------------------------------------------------
 
         if (
@@ -2526,317 +2435,97 @@ builder.defineStreamHandler(async (args) => {
                     encodedPart
                 );
 
-            console.log(
-                "[STREAM] MOVINA name:",
-                movieName
-            );
+        } else {
 
-        }
-
-        // -------------------------------------------------
-        // B. IMDb ID TỪ BOARD / DISCOVER
-        // -------------------------------------------------
-
-        else if (
-            rawId.startsWith("tt")
-        ) {
-
-            const imdbId =
-                rawId.split(":")[0];
-
-            console.log(
-                "[STREAM] IMDb ID:",
-                imdbId
-            );
-
-            const metadataType =
-                streamType === "series"
-                    ? "series"
-                    : "movie";
-
-            // =================================================
-            // B1. THỬ CINEMETA
-            // =================================================
-
-            const cinemetaUrl =
-                "https://v3-cinemeta.strem.io/meta/" +
-                metadataType +
-                "/" +
-                encodeURIComponent(
-                    imdbId
-                ) +
-                ".json";
-
-            console.log(
-                "[STREAM] Cinemeta URL:",
-                cinemetaUrl
-            );
-
-            try {
-
-                const metaRes =
-                    await axios.get(
-                        cinemetaUrl,
-                        {
-                            timeout: 8000,
-
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
-
-                movieName =
-                    metaRes.data?.meta?.name ||
-                    "";
-
-                console.log(
-                    "[STREAM] Cinemeta name:",
-                    movieName
-                );
-
-            } catch (e) {
-
-                console.log(
-                    "[STREAM] Cinemeta error:",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
-
-            }
-
-            // =================================================
-            // B2. NẾU CINEMETA KHÔNG CÓ → IMDb SUGGESTION
-            // =================================================
-
-            if (!movieName) {
-
-                const imdbSuggestionUrl =
-                    "https://v3.sg.media-imdb.com/suggestion/x/" +
-                    encodeURIComponent(
-                        imdbId
-                    ) +
-                    ".json";
-
-                console.log(
-                    "[STREAM] IMDb Suggestion URL:",
-                    imdbSuggestionUrl
-                );
-
-                try {
-
-                    const imdbRes =
-                        await axios.get(
-                            imdbSuggestionUrl,
-                            {
-                                timeout: 8000,
-
-                                headers: {
-                                    "User-Agent":
-                                        "Mozilla/5.0",
-                                    "Accept":
-                                        "application/json"
-                                }
-                            }
-                        );
-
-                    const imdbItems =
-                        Array.isArray(
-                            imdbRes.data?.d
-                        )
-                            ? imdbRes.data.d
-                            : [];
-
-                    const imdbMovie =
-                        imdbItems.find(
-                            item =>
-                                String(
-                                    item?.id || ""
-                                ) === imdbId
-                        ) ||
-                        imdbItems[0];
-
-                    movieName =
-                        imdbMovie?.l ||
-                        "";
-
-                    console.log(
-                        "[STREAM] IMDb Suggestion name:",
-                        movieName
-                    );
-
-                } catch (e) {
-
-                    console.log(
-                        "[STREAM] IMDb Suggestion error:",
-                        e?.response?.status ||
-                        e?.message ||
-                        e
-                    );
-
-                }
-
-            }
-
-        }
-
-        // -------------------------------------------------
-        // C. ID KHÁC
-        // -------------------------------------------------
-
-        else {
+            // -------------------------------------------------
+            // Các ID khác
+            // -------------------------------------------------
 
             movieName =
                 decodeMovieName(
                     rawId
                 );
 
-            console.log(
-                "[STREAM] Decoded name:",
-                movieName
-            );
-
         }
 
     } catch (e) {
 
         console.log(
-            "[STREAM] Resolve movie name error:",
-            e?.message ||
-            e
+            "[STREAM] Decode ID error:",
+            e?.message || e
         );
 
         movieName = "";
 
     }
 
-    // =====================================================
-    // 3. CHUẨN HÓA TÊN
-    // =====================================================
-
     movieName =
         String(movieName || "")
-            .replace(/\s+/g, " ")
             .trim();
-
-    console.log(
-        "[STREAM] Final movie name:",
-        movieName
-    );
-
-    // =====================================================
-    // 4. NẾU VẪN KHÔNG CÓ TÊN
-    // =====================================================
 
     if (!movieName) {
 
         console.log(
-            "[STREAM] KHÔNG LẤY ĐƯỢC TÊN PHIM"
+            "[STREAM] Không xác định được tên phim"
         );
 
-        /*
-         * Không thể tạo chính xác URL tìm kiếm
-         * theo tên phim nếu chưa biết tên.
-         *
-         * Trả về một fallback thông báo bằng IMDb ID
-         * để Stream Handler vẫn không hoàn toàn rỗng.
-         */
-
         return {
-            streams: [
-                {
-                    name:
-                        "⚠️ [Metadata] Không lấy được tên phim",
-
-                    title:
-                        "IMDb: " +
-                        rawId,
-
-                    externalUrl:
-                        "https://www.imdb.com/title/" +
-                        encodeURIComponent(
-                            rawId.split(":")[0]
-                        ) +
-                        "/"
-                }
-            ]
+            streams: []
         };
-
-    }
-
-    // =====================================================
-    // 5. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
-    // =====================================================
-
-    let nguonCFallbackName =
-        movieName;
-
-    const slashParts =
-        String(movieName)
-            .split("/");
-
-    if (
-        slashParts.length > 1 &&
-        String(
-            slashParts[0]
-        ).trim().length >= 3
-    ) {
-
-        nguonCFallbackName =
-            String(
-                slashParts[0]
-            )
-                .replace(/\s+/g, " ")
-                .trim();
-
     }
 
     console.log(
-        "[NGUONC FALLBACK] Original:",
+        "[STREAM] Movie:",
         movieName
     );
 
-    console.log(
-        "[NGUONC FALLBACK] Selected:",
-        nguonCFallbackName
-    );
-
     // =====================================================
-    // 6. CHẠY 5 NGUỒN SONG SONG
+    // 3. Chạy 5 nguồn song song
     // =====================================================
 
-    let results = [];
+    let results;
 
     try {
 
         results =
             await Promise.allSettled([
 
-                // 1
+                // -----------------------------------------
+                // NGUONC
+                // -----------------------------------------
+
                 fetchNguonC(
                     movieName
                 ),
 
-                // 2
+                // -----------------------------------------
+                // KKPHIM
+                // -----------------------------------------
+
                 fetchKKPhim(
                     movieName
                 ),
 
-                // 3
+                // -----------------------------------------
+                // VSMOV
+                // -----------------------------------------
+
                 fetchVSMov(
                     movieName
                 ),
 
-                // 4
+                // -----------------------------------------
+                // 1PHIM32
+                // -----------------------------------------
+
                 scrapePhimLongTieng(
                     movieName
                 ),
 
-                // 5
+                // -----------------------------------------
+                // MOTPHIMTV
+                // -----------------------------------------
+
                 scrapeMotPhimTV(
                     movieName
                 )
@@ -2847,8 +2536,7 @@ builder.defineStreamHandler(async (args) => {
 
         console.log(
             "[STREAM] Promise error:",
-            e?.message ||
-            e
+            e?.message || e
         );
 
         results = [];
@@ -2856,51 +2544,41 @@ builder.defineStreamHandler(async (args) => {
     }
 
     // =====================================================
-    // 7. LẤY KẾT QUẢ TỪ 5 NGUỒN
+    // 4. Lấy kết quả từng nguồn
     // =====================================================
 
     const nguonc =
         results[0]?.status === "fulfilled" &&
-        Array.isArray(
-            results[0].value
-        )
+        Array.isArray(results[0].value)
             ? results[0].value
             : [];
 
     const kkphim =
         results[1]?.status === "fulfilled" &&
-        Array.isArray(
-            results[1].value
-        )
+        Array.isArray(results[1].value)
             ? results[1].value
             : [];
 
     const vsmov =
         results[2]?.status === "fulfilled" &&
-        Array.isArray(
-            results[2].value
-        )
+        Array.isArray(results[2].value)
             ? results[2].value
             : [];
 
     const longtieng =
         results[3]?.status === "fulfilled" &&
-        Array.isArray(
-            results[3].value
-        )
+        Array.isArray(results[3].value)
             ? results[3].value
             : [];
 
     const motphim =
         results[4]?.status === "fulfilled" &&
-        Array.isArray(
-            results[4].value
-        )
+        Array.isArray(results[4].value)
             ? results[4].value
             : [];
 
     // =====================================================
-    // 8. LOG
+    // 5. Log kết quả
     // =====================================================
 
     console.log(
@@ -2914,7 +2592,7 @@ builder.defineStreamHandler(async (args) => {
     );
 
     console.log(
-        "[STREAM] VSMov:",
+        "[STREAM] VSmov:",
         vsmov.length
     );
 
@@ -2929,44 +2607,27 @@ builder.defineStreamHandler(async (args) => {
     );
 
     // =====================================================
-    // 9. GỘP STREAM TRỰC TIẾP
+    // 6. Gộp stream trực tiếp
     // =====================================================
 
     const directStreams = [
 
         ...nguonc,
-
         ...kkphim,
-
         ...vsmov,
-
         ...longtieng,
-
         ...motphim
 
     ];
 
     // =====================================================
-    // 10. 4 FALLBACK CHUNG
-    //
-    // VSMOV KHÔNG THÊM Ở ĐÂY
-    //
-    // fetchVSMov() đã tự tạo fallback của VSMov
-    // khi không lấy được stream.
-    //
-    // Tổng cộng:
-    //
-    // 1. 1Phim32
-    // 2. NguonC
-    // 3. MotPhimTV
-    // 4. KKPhim2
-    // 5. VSMov
+    // 7. Fallback website
     // =====================================================
 
     const externalStreams = [
 
         // -------------------------------------------------
-        // FALLBACK 1 — 1PHIM32
+        // 1PHIM32
         // -------------------------------------------------
 
         {
@@ -2984,7 +2645,7 @@ builder.defineStreamHandler(async (args) => {
         },
 
         // -------------------------------------------------
-        // FALLBACK 2 — NGUONC
+        // NGUONC
         // -------------------------------------------------
 
         {
@@ -2993,17 +2654,17 @@ builder.defineStreamHandler(async (args) => {
 
             title:
                 "Mở trang tìm kiếm NguonC - " +
-                nguonCFallbackName,
+                movieName,
 
             externalUrl:
                 "https://nguonc.com/tim-kiem?keyword=" +
                 encodeURIComponent(
-                    nguonCFallbackName
+                    movieName
                 )
         },
 
         // -------------------------------------------------
-        // FALLBACK 3 — MOTPHIMTV
+        // MOTPHIMTV
         // -------------------------------------------------
 
         {
@@ -3022,7 +2683,7 @@ builder.defineStreamHandler(async (args) => {
         },
 
         // -------------------------------------------------
-        // FALLBACK 4 — KKPHIM2
+        // KKPHIM2
         // -------------------------------------------------
 
         {
@@ -3043,7 +2704,7 @@ builder.defineStreamHandler(async (args) => {
     ];
 
     // =====================================================
-    // 11. LỌC DIRECT STREAM
+    // 8. Lọc stream trực tiếp hợp lệ
     // =====================================================
 
     const validDirectStreams =
@@ -3066,7 +2727,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 12. LỌC FALLBACK
+    // 9. Lọc fallback hợp lệ
     // =====================================================
 
     const validExternalStreams =
@@ -3088,19 +2749,18 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 13. GỘP TẤT CẢ
+    // 10. Gộp tất cả
     // =====================================================
 
     const allStreams = [
 
         ...validDirectStreams,
-
         ...validExternalStreams
 
     ];
 
     // =====================================================
-    // 14. LOẠI URL TRÙNG
+    // 11. Loại URL trùng
     // =====================================================
 
     const seen =
@@ -3132,7 +2792,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 15. LOG CUỐI
+    // 12. Log cuối
     // =====================================================
 
     console.log(
@@ -3151,18 +2811,11 @@ builder.defineStreamHandler(async (args) => {
     );
 
     console.log(
-        "[STREAM] Fallback URLs:",
-        JSON.stringify(
-            validExternalStreams
-        )
-    );
-
-    console.log(
         "========== STREAM END =========="
     );
 
     // =====================================================
-    // 16. TRẢ VỀ STREMIO
+    // 13. Trả về Stremio
     // =====================================================
 
     return {
@@ -3171,7 +2824,6 @@ builder.defineStreamHandler(async (args) => {
     };
 
 });
-
 
 /* ============================================================
    VERCEL HANDLER
@@ -3183,35 +2835,14 @@ const router =
     );
 
 module.exports = function handler(req, res) {
+    return router(req, res, function next(err) {
+        if (err) {
+            console.error("[ROUTER ERROR]", err);
 
-    return router(
-        req,
-        res,
-        function next(err) {
-
-            if (err) {
-
-                console.error(
-                    "[ROUTER ERROR]",
-                    err
-                );
-
-                if (
-                    !res.headersSent
-                ) {
-
-                    res.statusCode =
-                        500;
-
-                    res.end(
-                        "Internal Server Error"
-                    );
-
-                }
-
+            if (!res.headersSent) {
+                res.statusCode = 500;
+                res.end("Internal Server Error");
             }
-
         }
-    );
-
+    });
 };
