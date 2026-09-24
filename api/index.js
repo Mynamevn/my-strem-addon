@@ -972,27 +972,12 @@ async function fetchNguonC(movieName) {
    ============================================================ */
 
 async function fetchKKPhim(movieName) {
-
     const streams = [];
 
     try {
-
-        console.log(
-            "========================================"
-        );
-
-        console.log(
-            "[KKPHIM] START"
-        );
-
-        console.log(
-            "[KKPHIM] Search:",
-            movieName
-        );
-
-        // =====================================================
-        // 1. SEARCH
-        // =====================================================
+        console.log("========================================");
+        console.log("[KKPHIM] START");
+        console.log("[KKPHIM] Search:", movieName);
 
         const searchUrl =
             "https://phimapi.com/v1/api/tim-kiem?keyword=" +
@@ -1009,13 +994,9 @@ async function fetchKKPhim(movieName) {
                 searchUrl,
                 {
                     timeout: 8000,
-
                     headers: {
-                        "User-Agent":
-                            "Mozilla/5.0",
-
-                        "Accept":
-                            "application/json"
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
                     }
                 }
             );
@@ -1041,7 +1022,6 @@ async function fetchKKPhim(movieName) {
             !Array.isArray(items) ||
             !items.length
         ) {
-
             console.log(
                 "[KKPHIM] NO SEARCH RESULT"
             );
@@ -1049,63 +1029,44 @@ async function fetchKKPhim(movieName) {
             return streams;
         }
 
-        // =====================================================
-        // 2. CHỌN PHIM
-        // =====================================================
-
         const normalizedSearch =
             String(movieName)
                 .trim()
                 .toLowerCase();
 
         const movie =
-            items.find(
-                item => {
+            items.find(item => {
 
-                    const name =
-                        String(
-                            item?.name ||
-                            ""
-                        )
-                            .trim()
-                            .toLowerCase();
+                const name =
+                    String(
+                        item?.name || ""
+                    )
+                    .trim()
+                    .toLowerCase();
 
-                    const origin =
-                        String(
-                            item?.origin_name ||
-                            ""
-                        )
-                            .trim()
-                            .toLowerCase();
+                const origin =
+                    String(
+                        item?.origin_name || ""
+                    )
+                    .trim()
+                    .toLowerCase();
 
-                    return (
-                        name ===
-                        normalizedSearch ||
-                        origin ===
-                        normalizedSearch
-                    );
+                return (
+                    name === normalizedSearch ||
+                    origin === normalizedSearch
+                );
 
-                }
-            ) ||
+            }) ||
             items[0];
 
         console.log(
             "[KKPHIM] Selected movie:",
             JSON.stringify({
-                name:
-                    movie?.name,
-
-                origin_name:
-                    movie?.origin_name,
-
-                slug:
-                    movie?.slug,
-
-                year:
-                    movie?.year,
-
-                type:
-                    movie?.type
+                name: movie?.name,
+                origin_name: movie?.origin_name,
+                slug: movie?.slug,
+                year: movie?.year,
+                type: movie?.type
             })
         );
 
@@ -1113,7 +1074,6 @@ async function fetchKKPhim(movieName) {
             movie?.slug;
 
         if (!movieSlug) {
-
             console.log(
                 "[KKPHIM] NO SLUG"
             );
@@ -1126,15 +1086,9 @@ async function fetchKKPhim(movieName) {
             movieSlug
         );
 
-        // =====================================================
-        // 3. DETAIL API
-        // =====================================================
-
         const detailUrl =
             "https://phimapi.com/v1/api/phim/" +
-            encodeURIComponent(
-                movieSlug
-            );
+            encodeURIComponent(movieSlug);
 
         console.log(
             "[KKPHIM] Detail URL:",
@@ -1146,13 +1100,9 @@ async function fetchKKPhim(movieName) {
                 detailUrl,
                 {
                     timeout: 8000,
-
                     headers: {
-                        "User-Agent":
-                            "Mozilla/5.0",
-
-                        "Accept":
-                            "application/json"
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
                     }
                 }
             );
@@ -1162,118 +1112,144 @@ async function fetchKKPhim(movieName) {
             detail.status
         );
 
-        // =====================================================
-        // 4. DEBUG CẤU TRÚC RESPONSE
-        // =====================================================
+        /*
+         * CẤU TRÚC THỰC TẾ:
+         *
+         * detail.data
+         *   └── data
+         *       └── item
+         *           └── episodes
+         *               └── server_data
+         *                   └── link_m3u8
+         */
 
-        const detailData =
-            detail.data || {};
+        const movieData =
+            detail.data?.data?.item ||
+            {};
+
+        const episodes =
+            movieData?.episodes ||
+            [];
 
         console.log(
-            "[KKPHIM] Detail top-level keys:",
-            Object.keys(
-                detailData
-            )
+            "[KKPHIM] Movie data:",
+            movieData?.name ||
+            "UNKNOWN"
         );
 
         console.log(
-            "[KKPHIM] Detail data keys:",
-            detailData?.data &&
-            typeof detailData.data === "object"
-                ? Object.keys(
-                    detailData.data
-                )
-                : "NO DATA OBJECT"
+            "[KKPHIM] Episodes:",
+            Array.isArray(episodes)
+                ? episodes.length
+                : "NOT ARRAY"
+        );
+
+        if (
+            !Array.isArray(episodes) ||
+            !episodes.length
+        ) {
+            console.log(
+                "[KKPHIM] NO EPISODES"
+            );
+
+            return streams;
+        }
+
+        episodes.forEach(
+            (server, serverIndex) => {
+
+                const serverName =
+                    server?.server_name ||
+                    server?.name ||
+                    "KKPhim";
+
+                console.log(
+                    "[KKPHIM] Server",
+                    serverIndex,
+                    ":",
+                    serverName
+                );
+
+                const serverData =
+                    server?.server_data ||
+                    [];
+
+                console.log(
+                    "[KKPHIM] Server data:",
+                    Array.isArray(serverData)
+                        ? serverData.length
+                        : "NOT ARRAY"
+                );
+
+                if (
+                    !Array.isArray(serverData)
+                ) {
+                    return;
+                }
+
+                serverData.forEach(
+                    (ep, episodeIndex) => {
+
+                        const streamUrl =
+                            ep?.link_m3u8 ||
+                            ep?.m3u8_url;
+
+                        console.log(
+                            "[KKPHIM] Episode",
+                            episodeIndex,
+                            "name:",
+                            ep?.name ||
+                            ep?.slug ||
+                            "Unknown"
+                        );
+
+                        console.log(
+                            "[KKPHIM] Episode URL:",
+                            streamUrl ||
+                            "NONE"
+                        );
+
+                        if (!streamUrl) {
+                            return;
+                        }
+
+                        streams.push({
+
+                            name:
+                                "⚡ [API] KKPhim",
+
+                            title:
+                                (
+                                    ep?.name ||
+                                    "Full"
+                                ) +
+                                " - " +
+                                serverName,
+
+                            url:
+                                String(streamUrl),
+
+                            behaviorHints: {
+                                bingeGroup:
+                                    "kkphim"
+                            }
+
+                        });
+
+                    }
+                );
+
+            }
         );
 
         console.log(
-            "[KKPHIM] Detail movie keys:",
-            detailData?.movie &&
-            typeof detailData.movie === "object"
-                ? Object.keys(
-                    detailData.movie
-                )
-                : "NO MOVIE OBJECT"
+            "[KKPHIM] DIRECT STREAMS:",
+            streams.length
         );
 
         console.log(
-            "[KKPHIM] Detail data.movie keys:",
-            detailData?.data?.movie &&
-            typeof detailData.data.movie === "object"
-                ? Object.keys(
-                    detailData.data.movie
-                )
-                : "NO DATA.MOVIE OBJECT"
-        );
-
-        // =====================================================
-        // 5. KIỂM TRA CÁC VỊ TRÍ CÓ THỂ CHỨA EPISODES
-        // =====================================================
-
-        console.log(
-            "[KKPHIM] episodes:",
-            Array.isArray(
-                detailData?.episodes
-            )
-                ? "ARRAY " +
-                  detailData.episodes.length
-                : typeof detailData?.episodes
-        );
-
-        console.log(
-            "[KKPHIM] data.episodes:",
-            Array.isArray(
-                detailData?.data?.episodes
-            )
-                ? "ARRAY " +
-                  detailData.data.episodes.length
-                : typeof detailData?.data?.episodes
-        );
-
-        console.log(
-            "[KKPHIM] movie.episodes:",
-            Array.isArray(
-                detailData?.movie?.episodes
-            )
-                ? "ARRAY " +
-                  detailData.movie.episodes.length
-                : typeof detailData?.movie?.episodes
-        );
-
-        console.log(
-            "[KKPHIM] data.movie.episodes:",
-            Array.isArray(
-                detailData?.data?.movie?.episodes
-            )
-                ? "ARRAY " +
-                  detailData.data.movie.episodes.length
-                : typeof detailData?.data?.movie?.episodes
-        );
-
-        // =====================================================
-        // 6. IN MỘT PHẦN RESPONSE
-        //
-        // Không in toàn bộ JSON nếu quá lớn.
-        // =====================================================
-
-        console.log(
-            "[KKPHIM] Detail response preview:",
-            JSON.stringify(
-                detailData,
-                null,
-                2
-            ).substring(
-                0,
-                12000
-            )
-        );
-
-        // =====================================================
-        // 7. TẠM THỜI KHÔNG PARSE STREAM
-        // =====================================================
-
-        console.log(
-            "[KKPHIM] DEBUG ONLY - chưa parse stream"
+            "[KKPHIM] FINAL STREAMS:",
+            JSON.stringify(streams)
         );
 
         console.log(
@@ -1298,8 +1274,7 @@ async function fetchKKPhim(movieName) {
 
         console.error(
             "Message:",
-            e?.message ||
-            e
+            e?.message || e
         );
 
         console.error(
