@@ -968,7 +968,7 @@ async function fetchNguonC(movieName) {
 
 /* ============================================================
    KKPHiM / PHIMAPI
-   DIRECT STREAM
+   DEBUG DETAIL RESPONSE
    ============================================================ */
 
 async function fetchKKPhim(movieName) {
@@ -991,7 +991,7 @@ async function fetchKKPhim(movieName) {
         );
 
         // =====================================================
-        // 1. SEARCH PHIM
+        // 1. SEARCH
         // =====================================================
 
         const searchUrl =
@@ -1060,13 +1060,32 @@ async function fetchKKPhim(movieName) {
 
         const movie =
             items.find(
-                item =>
-                    String(
-                        item?.name || ""
-                    )
-                        .trim()
-                        .toLowerCase() ===
-                    normalizedSearch
+                item => {
+
+                    const name =
+                        String(
+                            item?.name ||
+                            ""
+                        )
+                            .trim()
+                            .toLowerCase();
+
+                    const origin =
+                        String(
+                            item?.origin_name ||
+                            ""
+                        )
+                            .trim()
+                            .toLowerCase();
+
+                    return (
+                        name ===
+                        normalizedSearch ||
+                        origin ===
+                        normalizedSearch
+                    );
+
+                }
             ) ||
             items[0];
 
@@ -1144,244 +1163,118 @@ async function fetchKKPhim(movieName) {
         );
 
         // =====================================================
-        // 4. LẤY EPISODES
+        // 4. DEBUG CẤU TRÚC RESPONSE
         // =====================================================
 
-        const episodesData =
-            detail.data?.episodes ||
-            detail.data?.data?.episodes ||
-            [];
+        const detailData =
+            detail.data || {};
 
         console.log(
-            "[KKPHIM] Episodes type:",
-            Array.isArray(episodesData)
-                ? "array"
-                : typeof episodesData
-        );
-
-        console.log(
-            "[KKPHIM] Server count:",
-            Array.isArray(episodesData)
-                ? episodesData.length
-                : 0
-        );
-
-        if (
-            !Array.isArray(
-                episodesData
+            "[KKPHIM] Detail top-level keys:",
+            Object.keys(
+                detailData
             )
-        ) {
-
-            console.log(
-                "[KKPHIM] EPISODES IS NOT ARRAY"
-            );
-
-            return streams;
-        }
-
-        // =====================================================
-        // 5. DUYỆT TỪNG SERVER
-        // =====================================================
-
-        episodesData.forEach(
-            (
-                server,
-                serverIndex
-            ) => {
-
-                const serverName =
-                    server?.server_name ||
-                    server?.name ||
-                    "KKPhim";
-
-                console.log(
-                    "[KKPHIM] Server",
-                    serverIndex,
-                    ":",
-                    serverName
-                );
-
-                const serverData =
-                    server?.server_data ||
-                    server?.items ||
-                    [];
-
-                console.log(
-                    "[KKPHIM] Server",
-                    serverIndex,
-                    "episode count:",
-                    Array.isArray(
-                        serverData
-                    )
-                        ? serverData.length
-                        : 0
-                );
-
-                if (
-                    !Array.isArray(
-                        serverData
-                    )
-                ) {
-                    return;
-                }
-
-                // =================================================
-                // 6. DUYỆT TỪNG EPISODE
-                // =================================================
-
-                serverData.forEach(
-                    (
-                        ep,
-                        episodeIndex
-                    ) => {
-
-                        const episodeName =
-                            ep?.name ||
-                            ep?.filename ||
-                            String(
-                                episodeIndex + 1
-                            );
-
-                        const linkM3U8 =
-                            ep?.link_m3u8 ||
-                            ep?.m3u8_url ||
-                            "";
-
-                        const linkEmbed =
-                            ep?.link_embed ||
-                            ep?.embed ||
-                            "";
-
-                        console.log(
-                            "[KKPHIM] Episode",
-                            episodeIndex,
-                            ":",
-                            JSON.stringify({
-                                name:
-                                    episodeName,
-
-                                link_m3u8:
-                                    linkM3U8 || null,
-
-                                link_embed:
-                                    linkEmbed || null
-                            })
-                        );
-
-                        // =================================================
-                        // 7. NẾU CÓ M3U8 → DIRECT STREAM
-                        // =================================================
-
-                        if (
-                            linkM3U8
-                        ) {
-
-                            console.log(
-                                "[KKPHIM] DIRECT M3U8 FOUND:",
-                                linkM3U8
-                            );
-
-                            streams.push({
-
-                                name:
-                                    "⚡ [API] KKPhim",
-
-                                title:
-                                    "Tập " +
-                                    episodeName +
-                                    " - " +
-                                    serverName,
-
-                                url:
-                                    String(
-                                        linkM3U8
-                                    ),
-
-                                behaviorHints: {
-                                    bingeGroup:
-                                        "kkphim-" +
-                                        String(
-                                            movieSlug
-                                        )
-                                }
-
-                            });
-
-                            return;
-                        }
-
-                        // =================================================
-                        // 8. KHÔNG CÓ M3U8
-                        // =================================================
-
-                        console.log(
-                            "[KKPHIM] NO DIRECT M3U8:",
-                            episodeName
-                        );
-
-                    }
-                );
-
-            }
         );
-
-        // =====================================================
-        // 9. LOẠI URL TRÙNG
-        // =====================================================
-
-        const seen =
-            new Set();
-
-        const uniqueStreams =
-            streams.filter(
-                stream => {
-
-                    const url =
-                        String(
-                            stream?.url ||
-                            ""
-                        ).trim();
-
-                    if (!url) {
-                        return false;
-                    }
-
-                    if (
-                        seen.has(url)
-                    ) {
-                        return false;
-                    }
-
-                    seen.add(url);
-
-                    return true;
-
-                }
-            );
 
         console.log(
-            "[KKPHIM] DIRECT STREAMS:",
-            uniqueStreams.length
+            "[KKPHIM] Detail data keys:",
+            detailData?.data &&
+            typeof detailData.data === "object"
+                ? Object.keys(
+                    detailData.data
+                )
+                : "NO DATA OBJECT"
         );
 
-        if (
-            uniqueStreams.length > 0
-        ) {
-
-            console.log(
-                "[KKPHIM] First stream:",
-                JSON.stringify(
-                    uniqueStreams[0]
+        console.log(
+            "[KKPHIM] Detail movie keys:",
+            detailData?.movie &&
+            typeof detailData.movie === "object"
+                ? Object.keys(
+                    detailData.movie
                 )
-            );
+                : "NO MOVIE OBJECT"
+        );
 
-        } else {
+        console.log(
+            "[KKPHIM] Detail data.movie keys:",
+            detailData?.data?.movie &&
+            typeof detailData.data.movie === "object"
+                ? Object.keys(
+                    detailData.data.movie
+                )
+                : "NO DATA.MOVIE OBJECT"
+        );
 
-            console.log(
-                "[KKPHIM] KHONG CO DIRECT M3U8"
-            );
+        // =====================================================
+        // 5. KIỂM TRA CÁC VỊ TRÍ CÓ THỂ CHỨA EPISODES
+        // =====================================================
 
-        }
+        console.log(
+            "[KKPHIM] episodes:",
+            Array.isArray(
+                detailData?.episodes
+            )
+                ? "ARRAY " +
+                  detailData.episodes.length
+                : typeof detailData?.episodes
+        );
+
+        console.log(
+            "[KKPHIM] data.episodes:",
+            Array.isArray(
+                detailData?.data?.episodes
+            )
+                ? "ARRAY " +
+                  detailData.data.episodes.length
+                : typeof detailData?.data?.episodes
+        );
+
+        console.log(
+            "[KKPHIM] movie.episodes:",
+            Array.isArray(
+                detailData?.movie?.episodes
+            )
+                ? "ARRAY " +
+                  detailData.movie.episodes.length
+                : typeof detailData?.movie?.episodes
+        );
+
+        console.log(
+            "[KKPHIM] data.movie.episodes:",
+            Array.isArray(
+                detailData?.data?.movie?.episodes
+            )
+                ? "ARRAY " +
+                  detailData.data.movie.episodes.length
+                : typeof detailData?.data?.movie?.episodes
+        );
+
+        // =====================================================
+        // 6. IN MỘT PHẦN RESPONSE
+        //
+        // Không in toàn bộ JSON nếu quá lớn.
+        // =====================================================
+
+        console.log(
+            "[KKPHIM] Detail response preview:",
+            JSON.stringify(
+                detailData,
+                null,
+                2
+            ).substring(
+                0,
+                12000
+            )
+        );
+
+        // =====================================================
+        // 7. TẠM THỜI KHÔNG PARSE STREAM
+        // =====================================================
+
+        console.log(
+            "[KKPHIM] DEBUG ONLY - chưa parse stream"
+        );
 
         console.log(
             "[KKPHIM] END"
@@ -1391,7 +1284,7 @@ async function fetchKKPhim(movieName) {
             "========================================"
         );
 
-        return uniqueStreams;
+        return streams;
 
     } catch (e) {
 
