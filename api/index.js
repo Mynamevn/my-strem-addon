@@ -2284,7 +2284,7 @@ builder.defineStreamHandler(async (args) => {
     );
 
     // =====================================================
-    // 1. LẤY ID
+    // 1. LẤY ID + TYPE
     // =====================================================
 
     const rawId =
@@ -2298,6 +2298,11 @@ builder.defineStreamHandler(async (args) => {
         streamType
     );
 
+    console.log(
+        "[STREAM] Raw ID:",
+        rawId
+    );
+
     if (!rawId) {
 
         console.log(
@@ -2309,11 +2314,6 @@ builder.defineStreamHandler(async (args) => {
         };
     }
 
-    console.log(
-        "[STREAM] Raw ID:",
-        rawId
-    );
-
     // =====================================================
     // 2. XÁC ĐỊNH TÊN PHIM
     // =====================================================
@@ -2323,13 +2323,7 @@ builder.defineStreamHandler(async (args) => {
     try {
 
         // -------------------------------------------------
-        // MOVINA ID
-        //
-        // vnwpsw:Tên phim
-        //
-        // hoặc:
-        //
-        // vnwpsw:Tên phim:season:1:episode:2
+        // A. ID CỦA MOVINA
         // -------------------------------------------------
 
         if (
@@ -2354,11 +2348,7 @@ builder.defineStreamHandler(async (args) => {
         }
 
         // -------------------------------------------------
-        // IMDb ID
-        //
-        // Ví dụ:
-        //
-        // tt1234567
+        // B. IMDb ID TỪ BOARD / DISCOVER
         // -------------------------------------------------
 
         else if (
@@ -2373,17 +2363,17 @@ builder.defineStreamHandler(async (args) => {
                 imdbId
             );
 
-            // ---------------------------------------------
-            // Xác định loại metadata
-            // ---------------------------------------------
-
             const metadataType =
                 streamType === "series"
                     ? "series"
                     : "movie";
 
-            const metadataUrl =
-                "https://stremio.com/" +
+            // =================================================
+            // B1. THỬ CINEMETA
+            // =================================================
+
+            const cinemetaUrl =
+                "https://v3-cinemeta.strem.io/meta/" +
                 metadataType +
                 "/" +
                 encodeURIComponent(
@@ -2392,21 +2382,23 @@ builder.defineStreamHandler(async (args) => {
                 ".json";
 
             console.log(
-                "[STREAM] Metadata URL:",
-                metadataUrl
+                "[STREAM] Cinemeta URL:",
+                cinemetaUrl
             );
 
             try {
 
                 const metaRes =
                     await axios.get(
-                        metadataUrl,
+                        cinemetaUrl,
                         {
                             timeout: 8000,
 
                             headers: {
                                 "User-Agent":
-                                    "Mozilla/5.0"
+                                    "Mozilla/5.0",
+                                "Accept":
+                                    "application/json"
                             }
                         }
                     );
@@ -2416,14 +2408,14 @@ builder.defineStreamHandler(async (args) => {
                     "";
 
                 console.log(
-                    "[STREAM] Metadata name:",
+                    "[STREAM] Cinemeta name:",
                     movieName
                 );
 
             } catch (e) {
 
                 console.log(
-                    "[STREAM] Metadata error:",
+                    "[STREAM] Cinemeta error:",
                     e?.response?.status ||
                     e?.message ||
                     e
@@ -2431,10 +2423,83 @@ builder.defineStreamHandler(async (args) => {
 
             }
 
+            // =================================================
+            // B2. NẾU CINEMETA KHÔNG CÓ → IMDb SUGGESTION
+            // =================================================
+
+            if (!movieName) {
+
+                const imdbSuggestionUrl =
+                    "https://v3.sg.media-imdb.com/suggestion/x/" +
+                    encodeURIComponent(
+                        imdbId
+                    ) +
+                    ".json";
+
+                console.log(
+                    "[STREAM] IMDb Suggestion URL:",
+                    imdbSuggestionUrl
+                );
+
+                try {
+
+                    const imdbRes =
+                        await axios.get(
+                            imdbSuggestionUrl,
+                            {
+                                timeout: 8000,
+
+                                headers: {
+                                    "User-Agent":
+                                        "Mozilla/5.0",
+                                    "Accept":
+                                        "application/json"
+                                }
+                            }
+                        );
+
+                    const imdbItems =
+                        Array.isArray(
+                            imdbRes.data?.d
+                        )
+                            ? imdbRes.data.d
+                            : [];
+
+                    const imdbMovie =
+                        imdbItems.find(
+                            item =>
+                                String(
+                                    item?.id || ""
+                                ) === imdbId
+                        ) ||
+                        imdbItems[0];
+
+                    movieName =
+                        imdbMovie?.l ||
+                        "";
+
+                    console.log(
+                        "[STREAM] IMDb Suggestion name:",
+                        movieName
+                    );
+
+                } catch (e) {
+
+                    console.log(
+                        "[STREAM] IMDb Suggestion error:",
+                        e?.response?.status ||
+                        e?.message ||
+                        e
+                    );
+
+                }
+
+            }
+
         }
 
         // -------------------------------------------------
-        // ID KHÁC
+        // C. ID KHÁC
         // -------------------------------------------------
 
         else {
@@ -2455,7 +2520,8 @@ builder.defineStreamHandler(async (args) => {
 
         console.log(
             "[STREAM] Resolve movie name error:",
-            e?.message || e
+            e?.message ||
+            e
         );
 
         movieName = "";
@@ -2471,32 +2537,53 @@ builder.defineStreamHandler(async (args) => {
             .replace(/\s+/g, " ")
             .trim();
 
+    console.log(
+        "[STREAM] Final movie name:",
+        movieName
+    );
+
+    // =====================================================
+    // 4. NẾU VẪN KHÔNG CÓ TÊN
+    // =====================================================
+
     if (!movieName) {
 
         console.log(
             "[STREAM] KHÔNG LẤY ĐƯỢC TÊN PHIM"
         );
 
+        /*
+         * Không thể tạo chính xác URL tìm kiếm
+         * theo tên phim nếu chưa biết tên.
+         *
+         * Trả về một fallback thông báo bằng IMDb ID
+         * để Stream Handler vẫn không hoàn toàn rỗng.
+         */
+
         return {
-            streams: []
+            streams: [
+                {
+                    name:
+                        "⚠️ [Metadata] Không lấy được tên phim",
+
+                    title:
+                        "IMDb: " +
+                        rawId,
+
+                    externalUrl:
+                        "https://www.imdb.com/title/" +
+                        encodeURIComponent(
+                            rawId.split(":")[0]
+                        ) +
+                        "/"
+                }
+            ]
         };
+
     }
 
-    console.log(
-        "[STREAM] Movie:",
-        movieName
-    );
-
     // =====================================================
-    // 4. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
-    //
-    // Ví dụ:
-    //
-    // Đội nhảy xuất sắc nhất / Đội nhảy số một
-    //
-    // =>
-    //
-    // Đội nhảy xuất sắc nhất
+    // 5. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
     // =====================================================
 
     let nguonCFallbackName =
@@ -2508,13 +2595,15 @@ builder.defineStreamHandler(async (args) => {
 
     if (
         slashParts.length > 1 &&
-        String(slashParts[0])
-            .trim()
-            .length >= 3
+        String(
+            slashParts[0]
+        ).trim().length >= 3
     ) {
 
         nguonCFallbackName =
-            String(slashParts[0])
+            String(
+                slashParts[0]
+            )
                 .replace(/\s+/g, " ")
                 .trim();
 
@@ -2531,58 +2620,37 @@ builder.defineStreamHandler(async (args) => {
     );
 
     // =====================================================
-    // 5. CHẠY 5 NGUỒN SONG SONG
+    // 6. CHẠY 5 NGUỒN SONG SONG
     // =====================================================
 
-    let results;
+    let results = [];
 
     try {
 
         results =
             await Promise.allSettled([
 
-                // -----------------------------------------
-                // NGUONC
-                // -----------------------------------------
-
+                // 1
                 fetchNguonC(
                     movieName
                 ),
 
-                // -----------------------------------------
-                // KKPHIM
-                // -----------------------------------------
-
+                // 2
                 fetchKKPhim(
                     movieName
                 ),
 
-                // -----------------------------------------
-                // VSMOV
-                //
-                // fetchVSMov TỰ tạo:
-                //
-                // - Scrape stream
-                // - Fallback đúng trang phim
-                // - Fallback search
-                // -----------------------------------------
-
+                // 3
                 fetchVSMov(
                     movieName
                 ),
 
-                // -----------------------------------------
-                // 1PHIM32
-                // -----------------------------------------
-
+                // 4
                 scrapePhimLongTieng(
                     movieName
                 ),
 
-                // -----------------------------------------
-                // MOTPHIMTV
-                // -----------------------------------------
-
+                // 5
                 scrapeMotPhimTV(
                     movieName
                 )
@@ -2593,7 +2661,8 @@ builder.defineStreamHandler(async (args) => {
 
         console.log(
             "[STREAM] Promise error:",
-            e?.message || e
+            e?.message ||
+            e
         );
 
         results = [];
@@ -2601,7 +2670,7 @@ builder.defineStreamHandler(async (args) => {
     }
 
     // =====================================================
-    // 6. LẤY KẾT QUẢ
+    // 7. LẤY KẾT QUẢ TỪ 5 NGUỒN
     // =====================================================
 
     const nguonc =
@@ -2645,7 +2714,7 @@ builder.defineStreamHandler(async (args) => {
             : [];
 
     // =====================================================
-    // 7. LOG
+    // 8. LOG
     // =====================================================
 
     console.log(
@@ -2659,7 +2728,7 @@ builder.defineStreamHandler(async (args) => {
     );
 
     console.log(
-        "[STREAM] VSmov:",
+        "[STREAM] VSMov:",
         vsmov.length
     );
 
@@ -2674,31 +2743,44 @@ builder.defineStreamHandler(async (args) => {
     );
 
     // =====================================================
-    // 8. GỘP STREAM TRỰC TIẾP
+    // 9. GỘP STREAM TRỰC TIẾP
     // =====================================================
 
     const directStreams = [
 
         ...nguonc,
+
         ...kkphim,
+
         ...vsmov,
+
         ...longtieng,
+
         ...motphim
 
     ];
 
     // =====================================================
-    // 9. 4 FALLBACK CHUNG
+    // 10. 4 FALLBACK CHUNG
     //
     // VSMOV KHÔNG THÊM Ở ĐÂY
     //
-    // Vì fetchVSMov() đã tự tạo fallback.
+    // fetchVSMov() đã tự tạo fallback của VSMov
+    // khi không lấy được stream.
+    //
+    // Tổng cộng:
+    //
+    // 1. 1Phim32
+    // 2. NguonC
+    // 3. MotPhimTV
+    // 4. KKPhim2
+    // 5. VSMov
     // =====================================================
 
     const externalStreams = [
 
         // -------------------------------------------------
-        // 1PHIM32
+        // FALLBACK 1 — 1PHIM32
         // -------------------------------------------------
 
         {
@@ -2716,7 +2798,7 @@ builder.defineStreamHandler(async (args) => {
         },
 
         // -------------------------------------------------
-        // NGUONC
+        // FALLBACK 2 — NGUONC
         // -------------------------------------------------
 
         {
@@ -2735,7 +2817,7 @@ builder.defineStreamHandler(async (args) => {
         },
 
         // -------------------------------------------------
-        // MOTPHIMTV
+        // FALLBACK 3 — MOTPHIMTV
         // -------------------------------------------------
 
         {
@@ -2754,7 +2836,7 @@ builder.defineStreamHandler(async (args) => {
         },
 
         // -------------------------------------------------
-        // KKPHIM2
+        // FALLBACK 4 — KKPHIM2
         // -------------------------------------------------
 
         {
@@ -2775,7 +2857,7 @@ builder.defineStreamHandler(async (args) => {
     ];
 
     // =====================================================
-    // 10. LỌC STREAM TRỰC TIẾP
+    // 11. LỌC DIRECT STREAM
     // =====================================================
 
     const validDirectStreams =
@@ -2798,7 +2880,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 11. LỌC FALLBACK
+    // 12. LỌC FALLBACK
     // =====================================================
 
     const validExternalStreams =
@@ -2820,18 +2902,19 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 12. GỘP TẤT CẢ
+    // 13. GỘP TẤT CẢ
     // =====================================================
 
     const allStreams = [
 
         ...validDirectStreams,
+
         ...validExternalStreams
 
     ];
 
     // =====================================================
-    // 13. LOẠI URL TRÙNG
+    // 14. LOẠI URL TRÙNG
     // =====================================================
 
     const seen =
@@ -2863,7 +2946,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 14. LOG CUỐI
+    // 15. LOG CUỐI
     // =====================================================
 
     console.log(
@@ -2882,11 +2965,18 @@ builder.defineStreamHandler(async (args) => {
     );
 
     console.log(
+        "[STREAM] Fallback URLs:",
+        JSON.stringify(
+            validExternalStreams
+        )
+    );
+
+    console.log(
         "========== STREAM END =========="
     );
 
     // =====================================================
-    // 15. TRẢ VỀ STREMIO
+    // 16. TRẢ VỀ STREMIO
     // =====================================================
 
     return {
