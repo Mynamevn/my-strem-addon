@@ -922,6 +922,9 @@ async function fetchKKPhim(movieName) {
 
 /* ============================================================
    VSMOV
+   TÌM ĐÚNG TRANG PHIM
+   KHÔNG EMBED
+   KHÔNG SCRAPE M3U8 Ở BƯỚC NÀY
    ============================================================ */
 
 async function fetchVSMov(movieName) {
@@ -929,398 +932,583 @@ async function fetchVSMov(movieName) {
     const streams = [];
 
     try {
-        console.log("[VSMOV] Search:", movieName);
+
+        console.log("========================================");
+        console.log("[VSMOV] START");
+        console.log("[VSMOV] Original title:", movieName);
 
         if (!movieName) {
-            console.log("[VSMOV] Movie name rỗng");
             return streams;
         }
 
-        // =====================================================
-        // STEP 1: Tìm phim bằng API chính thức của VSMOV
-        // =====================================================
+        // ====================================================
+        // 1. TITLE VARIANTS
+        // ====================================================
 
-        const searchUrl =
-            "https://vsmov.com/api/tim-kiem?keyword=" +
-            encodeURIComponent(movieName) +
-            "&limit=10";
+        const variants =
+            buildTitleVariants(movieName);
 
         console.log(
-            "[VSMOV] API Search URL:",
+            "[VSMOV] Variants:",
+            JSON.stringify(variants)
+        );
+
+        const candidates = [];
+
+        // ====================================================
+        // 2. API SEARCH
+        // ====================================================
+
+        for (
+            const variant
+            of variants
+        ) {
+
+            try {
+
+                const searchUrl =
+                    "https://vsmov.com/api/tim-kiem?keyword=" +
+                    encodeURIComponent(variant) +
+                    "&page=1&limit=24";
+
+                console.log(
+                    "[VSMOV] API SEARCH:",
+                    variant
+                );
+
+                console.log(
+                    "[VSMOV] URL:",
+                    searchUrl
+                );
+
+                const res =
+                    await axios.get(
+                        searchUrl,
+                        {
+                            timeout: 8000,
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                                "Accept":
+                                    "application/json"
+                            }
+                        }
+                    );
+
+                const data =
+                    res.data || {};
+
+                const items =
+                    data?.data?.items ||
+                    data?.items ||
+                    data?.results ||
+                    [];
+
+                console.log(
+                    "[VSMOV] RESULT:",
+                    variant,
+                    "=>",
+                    Array.isArray(items)
+                        ? items.length
+                        : 0
+                );
+
+                if (
+                    Array.isArray(items)
+                ) {
+
+                    items.forEach(
+                        item => {
+
+                            if (
+                                item &&
+                                item.slug
+                            ) {
+
+                                candidates.push(
+                                    item
+                                );
+
+                            }
+
+                        }
+                    );
+
+                }
+
+            } catch (e) {
+
+                console.log(
+                    "[VSMOV] API ERROR:",
+                    variant,
+                    e?.response?.status ||
+                    e?.message ||
+                    e
+                );
+
+            }
+
+        }
+
+        // ====================================================
+        // 3. UNIQUE CANDIDATES
+        // ====================================================
+
+        const uniqueCandidates = [];
+
+        const candidateSeen =
+            new Set();
+
+        candidates.forEach(
+            item => {
+
+                const slug =
+                    String(
+                        item?.slug || ""
+                    ).trim();
+
+                if (
+                    !slug ||
+                    candidateSeen.has(slug)
+                ) {
+                    return;
+                }
+
+                candidateSeen.add(slug);
+
+                uniqueCandidates.push(
+                    item
+                );
+
+            }
+        );
+
+        console.log(
+            "[VSMOV] Unique candidates:",
+            uniqueCandidates.length
+        );
+
+        // ====================================================
+        // 4. NORMALIZE
+        // ====================================================
+
+        function normalizeTitle(text) {
+
+            return String(text || "")
+                .normalize("NFD")
+                .replace(
+                    /[\u0300-\u036f]/g,
+                    ""
+                )
+                .toLowerCase()
+                .replace(/đ/g, "d")
+                .replace(
+                    /[^a-z0-9\s]/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+        }
+
+        // ====================================================
+        // 5. RANK API RESULTS
+        // ====================================================
+
+        const ranked =
+            uniqueCandidates
+                .map(item => {
+
+                    const name =
+                        String(
+                            item?.name || ""
+                        );
+
+                    const normalizedName =
+                        normalizeTitle(name);
+
+                    let score = 0;
+
+                    variants.forEach(
+                        variant => {
+
+                            const normalizedVariant =
+                                normalizeTitle(
+                                    variant
+                                );
+
+                            if (
+                                normalizedName ===
+                                normalizedVariant
+                            ) {
+
+                                score += 100;
+
+                            }
+                            else if (
+                                normalizedName.includes(
+                                    normalizedVariant
+                                )
+                            ) {
+
+                                score += 50;
+
+                            }
+                            else if (
+                                normalizedVariant.includes(
+                                    normalizedName
+                                )
+                            ) {
+
+                                score += 40;
+
+                            }
+
+                        }
+                    );
+
+                    return {
+                        item,
+                        score
+                    };
+
+                })
+                .sort(
+                    (a, b) =>
+                        b.score - a.score
+                );
+
+        console.log(
+            "[VSMOV] RANKED:",
+            JSON.stringify(
+                ranked.map(
+                    x => ({
+                        name:
+                            x.item?.name,
+                        slug:
+                            x.item?.slug,
+                        score:
+                            x.score
+                    })
+                )
+            )
+        );
+
+        // ====================================================
+        // 6. API TÌM ĐƯỢC PHIM
+        // ====================================================
+
+        if (
+            ranked.length > 0
+        ) {
+
+            const selected =
+                ranked[0].item;
+
+            const movieSlug =
+                String(
+                    selected?.slug || ""
+                ).trim();
+
+            if (movieSlug) {
+
+                const movieUrl =
+                    "https://vsmov.com/phim/" +
+                    encodeURIComponent(
+                        movieSlug
+                    );
+
+                console.log(
+                    "[VSMOV] Selected:",
+                    selected?.name ||
+                    movieName
+                );
+
+                console.log(
+                    "[VSMOV] Slug:",
+                    movieSlug
+                );
+
+                console.log(
+                    "[VSMOV] Movie URL:",
+                    movieUrl
+                );
+
+                /*
+                 * CHỈ MỞ ĐÚNG TRANG PHIM.
+                 *
+                 * KHÔNG EMBED.
+                 * KHÔNG link_embed.
+                 */
+
+                streams.push({
+
+                    name:
+                        "🌐 [VSmov] " +
+                        (
+                            selected?.name ||
+                            movieName
+                        ),
+
+                    title:
+                        "Mở phim trên VSmov - " +
+                        (
+                            selected?.name ||
+                            movieName
+                        ),
+
+                    externalUrl:
+                        movieUrl
+
+                });
+
+                return streams;
+            }
+
+        }
+
+        // ====================================================
+        // 7. API KHÔNG TÌM THẤY
+        //    → THỬ TRỰC TIẾP /phim/<slug>
+        // ====================================================
+
+        console.log(
+            "[VSMOV] API không tìm thấy kết quả."
+        );
+
+        const directSlugs = [];
+
+        const slugSeen =
+            new Set();
+
+        variants.forEach(
+            variant => {
+
+                const slug =
+                    toSlug(variant);
+
+                if (
+                    slug &&
+                    !slugSeen.has(slug)
+                ) {
+
+                    slugSeen.add(slug);
+
+                    directSlugs.push(
+                        slug
+                    );
+
+                }
+
+            }
+        );
+
+        console.log(
+            "[VSMOV] Direct slug candidates:",
+            JSON.stringify(
+                directSlugs
+            )
+        );
+
+        // ====================================================
+        // 8. KIỂM TRA TỪNG TRANG PHIM
+        // ====================================================
+
+        for (
+            const slug
+            of directSlugs
+        ) {
+
+            const movieUrl =
+                "https://vsmov.com/phim/" +
+                encodeURIComponent(slug);
+
+            console.log(
+                "[VSMOV] DIRECT TEST:",
+                movieUrl
+            );
+
+            try {
+
+                const pageRes =
+                    await axios.get(
+                        movieUrl,
+                        {
+                            timeout: 7000,
+
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+
+                                "Accept":
+                                    "text/html,application/xhtml+xml"
+                            },
+
+                            validateStatus:
+                                status =>
+                                    status >= 200 &&
+                                    status < 500
+                        }
+                    );
+
+                if (
+                    pageRes.status !== 200
+                ) {
+                    continue;
+                }
+
+                const html =
+                    String(
+                        pageRes.data || ""
+                    );
+
+                const lowerHtml =
+                    html.toLowerCase();
+
+                /*
+                 * Kiểm tra đây có thực sự là
+                 * trang phim VSmov hay không.
+                 */
+
+                const looksLikeMoviePage =
+                    lowerHtml.includes(
+                        "nguồn phim"
+                    ) ||
+                    lowerHtml.includes(
+                        "danh sách tập phim"
+                    ) ||
+                    lowerHtml.includes(
+                        "<title>"
+                    );
+
+                if (
+                    !looksLikeMoviePage
+                ) {
+                    continue;
+                }
+
+                console.log(
+                    "[VSMOV] EXACT PAGE FOUND:",
+                    movieUrl
+                );
+
+                /*
+                 * CHỈ FALLBACK TỚI ĐÚNG TRANG PHIM.
+                 *
+                 * KHÔNG EMBED.
+                 */
+
+                streams.push({
+
+                    name:
+                        "🌐 [VSmov] " +
+                        movieName,
+
+                    title:
+                        "Mở phim trên VSmov - " +
+                        movieName,
+
+                    externalUrl:
+                        movieUrl
+
+                });
+
+                return streams;
+
+            } catch (e) {
+
+                console.log(
+                    "[VSMOV] DIRECT ERROR:",
+                    slug,
+                    e?.response?.status ||
+                    e?.message ||
+                    e
+                );
+
+            }
+
+        }
+
+        // ====================================================
+        // 9. KHÔNG TÌM ĐƯỢC TRANG PHIM
+        //    → FALLBACK SEARCH
+        // ====================================================
+
+        const searchTerm =
+            variants.length > 1
+                ? variants[
+                    variants.length - 1
+                ]
+                : movieName;
+
+        const searchUrl =
+            "https://vsmov.com/?search=" +
+            encodeURIComponent(
+                searchTerm
+            );
+
+        console.log(
+            "[VSMOV] SEARCH FALLBACK:",
             searchUrl
         );
 
-        const searchRes =
-            await axios.get(searchUrl, {
-                timeout: 8000,
-                headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json"
-                }
-            });
-
-        const searchData =
-            searchRes.data || {};
-
-        // VSMOV có thể trả dữ liệu ở các cấu trúc khác nhau
-        const items =
-            searchData?.items ||
-            searchData?.data?.items ||
-            searchData?.data ||
-            [];
-
-        console.log(
-            "[VSMOV] Search results:",
-            Array.isArray(items) ? items.length : 0
-        );
-
-        if (!Array.isArray(items) || !items.length) {
-            console.log(
-                "[VSMOV] Không tìm thấy phim qua API"
-            );
-            return streams;
-        }
-
-        // =====================================================
-        // STEP 2: Tìm kết quả phù hợp nhất
-        // =====================================================
-
-        const normalizeName = text => {
-
-            return String(text || "")
-                .toLowerCase()
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .replace(/đ/g, "d")
-                .replace(/[^a-z0-9\s]/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
-
-        };
-
-        const targetName =
-            normalizeName(movieName);
-
-        let movie =
-            items.find(item => {
-
-                const name =
-                    normalizeName(
-                        item?.name
-                    );
-
-                return name === targetName;
-
-            });
-
-        // Thử origin_name nếu không tìm thấy
-        if (!movie) {
-
-            movie =
-                items.find(item => {
-
-                    const originName =
-                        normalizeName(
-                            item?.origin_name
-                        );
-
-                    return (
-                        originName &&
-                        originName === targetName
-                    );
-
-                });
-
-        }
-
-        // Thử tên chứa nhau
-        if (!movie) {
-
-            movie =
-                items.find(item => {
-
-                    const name =
-                        normalizeName(
-                            item?.name
-                        );
-
-                    const originName =
-                        normalizeName(
-                            item?.origin_name
-                        );
-
-                    return (
-                        (name && name.includes(targetName)) ||
-                        (targetName && targetName.includes(name)) ||
-                        (originName && originName.includes(targetName)) ||
-                        (targetName && originName.includes(targetName))
-                    );
-
-                });
-
-        }
-
-        // Cuối cùng mới lấy kết quả đầu tiên
-        if (!movie) {
-            movie = items[0];
-        }
-
-        if (!movie) {
-            console.log(
-                "[VSMOV] Không xác định được phim"
-            );
-            return streams;
-        }
-
-        const movieSlug =
-            movie?.slug;
-
-        const foundName =
-            movie?.name ||
-            movie?.origin_name ||
-            "";
-
-        if (!movieSlug) {
-
-            console.log(
-                "[VSMOV] Kết quả không có slug:",
-                foundName
-            );
-
-            return streams;
-        }
-
-        console.log(
-            "[VSMOV] Found:",
-            foundName
-        );
-
-        console.log(
-            "[VSMOV] Slug:",
-            movieSlug
-        );
-
-        // =====================================================
-        // STEP 3: Tạo URL trang phim thật của VSMOV
-        // =====================================================
-
-        const movieUrl =
-            "https://vsmov.com/phim/" +
-            encodeURIComponent(movieSlug);
-
-        console.log(
-            "[VSMOV] Movie URL:",
-            movieUrl
-        );
-
-        // =====================================================
-        // STEP 4: Mở trang phim thật
-        // =====================================================
-
-        const movieRes =
-            await axios.get(movieUrl, {
-                timeout: 8000,
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                    "Accept":
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-
-                    "Accept-Language":
-                        "vi,en-US;q=0.9,en;q=0.8",
-
-                    "Referer":
-                        "https://vsmov.com/"
-                }
-            });
-
-        const html =
-            String(movieRes.data || "");
-
-        console.log(
-            "[VSMOV] Page HTML:",
-            html.length
-        );
-
-        // =====================================================
-        // STEP 5: Tìm video hash
-        // =====================================================
-
-        let videoHash = "";
-
-        // Cách 1:
-        // data-hash="..."
-        const hashMatch =
-            html.match(
-                /data-hash=["']([^"']+)["']/i
-            );
-
-        if (
-            hashMatch &&
-            hashMatch[1]
-        ) {
-            videoHash =
-                hashMatch[1];
-        }
-
-        // Cách 2:
-        // videoHash = "..."
-        if (!videoHash) {
-
-            const jsMatch =
-                html.match(
-                    /videoHash\s*=\s*["']([^"']+)["']/i
-                );
-
-            if (
-                jsMatch &&
-                jsMatch[1]
-            ) {
-                videoHash =
-                    jsMatch[1];
-            }
-        }
-
-        // Cách 3:
-        // /video/HASH
-        if (!videoHash) {
-
-            const videoMatch =
-                html.match(
-                    /\/video\/([a-f0-9-]{20,})/i
-                );
-
-            if (
-                videoMatch &&
-                videoMatch[1]
-            ) {
-                videoHash =
-                    videoMatch[1];
-            }
-        }
-
-        // Cách 4:
-        // /stream/HASH/master.m3u8
-        if (!videoHash) {
-
-            const streamMatch =
-                html.match(
-                    /\/stream\/([a-f0-9-]{20,})\/master\.m3u8/i
-                );
-
-            if (
-                streamMatch &&
-                streamMatch[1]
-            ) {
-                videoHash =
-                    streamMatch[1];
-            }
-        }
-
-        if (!videoHash) {
-
-            console.log(
-                "[VSMOV] Không tìm thấy video hash"
-            );
-
-            // Vẫn trả về fallback mở đúng trang phim
-            streams.push({
-                name:
-                    "🌐 [Fallback] VSmov",
-                title:
-                    "Mở đúng trang VSmov: " +
-                    foundName,
-                externalUrl:
-                    movieUrl
-            });
-
-            return streams;
-        }
-
-        console.log(
-            "[VSMOV] Video Hash:",
-            videoHash
-        );
-
-        // =====================================================
-        // STEP 6: Tạo M3U8
-        // =====================================================
-
-        const streamUrl =
-            "https://v8.streamvsmov.com/stream/" +
-            videoHash +
-            "/master.m3u8";
-
-        console.log(
-            "[VSMOV] Stream URL:",
-            streamUrl
-        );
-
-        // =====================================================
-        // STEP 7: Stream trực tiếp
-        // =====================================================
-
         streams.push({
 
             name:
-                "🌟 [Scrape] VSmov",
+                "🔎 [Fallback Search] VSmov",
 
             title:
-                "Luồng phát VSmov - " +
-                foundName,
-
-            url:
-                String(streamUrl),
-
-            behaviorHints: {
-
-                httpReferrer:
-                    movieUrl,
-
-                bingeGroup:
-                    "vsmov"
-
-            }
-
-        });
-
-        // =====================================================
-        // STEP 8: Luôn thêm fallback mở đúng trang phim
-        // =====================================================
-
-        streams.push({
-
-            name:
-                "🌐 [Fallback] VSmov",
-
-            title:
-                "Mở đúng trang VSmov - " +
-                foundName,
+                "Tìm phim trên VSmov - " +
+                searchTerm,
 
             externalUrl:
-                movieUrl
+                searchUrl
 
         });
-
-        console.log(
-            "[VSMOV] Streams:",
-            streams.length
-        );
 
     } catch (e) {
 
         console.log(
-            "[VSMOV ERROR]",
-            e?.response?.status ||
+            "[VSMOV FATAL]",
             e?.message ||
             e
         );
 
+        /*
+         * Nếu VSmov xảy ra lỗi hoàn toàn,
+         * vẫn cho người dùng nút tìm kiếm.
+         */
+
+        streams.push({
+
+            name:
+                "🔎 [Fallback Search] VSmov",
+
+            title:
+                "Tìm phim trên VSmov - " +
+                movieName,
+
+            externalUrl:
+                "https://vsmov.com/?search=" +
+                encodeURIComponent(
+                    movieName
+                )
+
+        });
+
     }
+
+    console.log(
+        "[VSMOV] FINAL:",
+        streams.length
+    );
 
     return streams;
 }
+
 
 
 /* ============================================================
