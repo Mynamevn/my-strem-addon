@@ -2283,50 +2283,21 @@ builder.defineStreamHandler(async (args) => {
         JSON.stringify(args || {})
     );
 
-    // =====================================================
-    // 1. Lấy ID
-    // =====================================================
-
     const rawId =
         String(args?.id || "").trim();
 
     if (!rawId) {
-
-        console.log(
-            "[STREAM] Không có ID"
-        );
-
-        return {
-            streams: []
-        };
+        console.log("[STREAM] Không có ID");
+        return { streams: [] };
     }
 
-    console.log(
-        "[STREAM] Raw ID:",
-        rawId
-    );
-
-    // =====================================================
-    // 2. Xác định tên phim
-    // =====================================================
+    console.log("[STREAM] Raw ID:", rawId);
 
     let movieName = "";
 
     try {
 
-        // -------------------------------------------------
-        // ID MOVINA dạng:
-        //
-        // vnwpsw:Tên phim
-        //
-        // hoặc series:
-        //
-        // vnwpsw:Tên phim:season:1:episode:2
-        // -------------------------------------------------
-
-        if (
-            rawId.startsWith("vnwpsw:")
-        ) {
+        if (rawId.startsWith("vnwpsw:")) {
 
             const encodedPart =
                 rawId
@@ -2340,15 +2311,10 @@ builder.defineStreamHandler(async (args) => {
 
         } else {
 
-            // -------------------------------------------------
-            // Các ID khác
-            // -------------------------------------------------
-
             movieName =
                 decodeMovieName(
                     rawId
                 );
-
         }
 
     } catch (e) {
@@ -2367,24 +2333,156 @@ builder.defineStreamHandler(async (args) => {
             .trim();
 
     if (!movieName) {
-
         console.log(
             "[STREAM] Không xác định được tên phim"
         );
+        return { streams: [] };
+    }
 
-        return {
-            streams: []
-        };
+    console.log("[STREAM] Movie:", movieName);
+
+    // ----------------------------------------------------
+    // TẠO TÊN DÙNG RIÊNG CHO FALLBACK NGUONC
+    // ----------------------------------------------------
+
+    let nguonCFallbackName =
+        movieName;
+
+    const nguonCVariants = [];
+
+    function addNguonCVariant(value) {
+
+        const clean =
+            String(value || "")
+                .replace(/\s+/g, " ")
+                .trim();
+
+        if (!clean) {
+            return;
+        }
+
+        const key =
+            clean
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase();
+
+        if (
+            !nguonCVariants.some(
+                item => item.key === key
+            )
+        ) {
+            nguonCVariants.push({
+                text: clean,
+                key: key
+            });
+        }
+
+    }
+
+    // Tên đầy đủ
+    addNguonCVariant(movieName);
+
+    // Phần trước /
+    String(movieName)
+        .split("/")
+        .forEach(part => {
+
+            if (
+                String(part).trim().length >= 3
+            ) {
+                addNguonCVariant(part);
+            }
+
+        });
+
+    // Phần sau /
+    String(movieName)
+        .split("/")
+        .slice(1)
+        .forEach(part => {
+
+            if (
+                String(part).trim().length >= 3
+            ) {
+                addNguonCVariant(part);
+            }
+
+        });
+
+    // Tách theo |
+    String(movieName)
+        .split("|")
+        .forEach(part => {
+
+            if (
+                String(part).trim().length >= 3
+            ) {
+                addNguonCVariant(part);
+            }
+
+        });
+
+    // Tách theo " - "
+    String(movieName)
+        .split(/\s+-\s+/)
+        .forEach(part => {
+
+            if (
+                String(part).trim().length >= 3
+            ) {
+                addNguonCVariant(part);
+            }
+
+        });
+
+    /*
+     * Ưu tiên tên đầu tiên sau khi tách "/".
+     *
+     * Ví dụ:
+     *
+     * Đội nhảy xuất sắc nhất / Đội nhảy số một
+     *
+     * =>
+     * Đội nhảy xuất sắc nhất
+     */
+    if (
+        nguonCVariants.length > 1
+    ) {
+
+        nguonCFallbackName =
+            nguonCVariants[1].text;
+
+    } else {
+
+        nguonCFallbackName =
+            nguonCVariants[0]?.text ||
+            movieName;
+
     }
 
     console.log(
-        "[STREAM] Movie:",
+        "[NGUONC FALLBACK] Original:",
         movieName
     );
 
-    // =====================================================
-    // 3. Chạy 5 nguồn song song
-    // =====================================================
+    console.log(
+        "[NGUONC FALLBACK] Variants:",
+        JSON.stringify(
+            nguonCVariants.map(
+                item => item.text
+            )
+        )
+    );
+
+    console.log(
+        "[NGUONC FALLBACK] Selected:",
+        nguonCFallbackName
+    );
+
+    // ----------------------------------------------------
+    // GỌI TẤT CẢ NGUỒN
+    // ----------------------------------------------------
 
     let results;
 
@@ -2393,45 +2491,11 @@ builder.defineStreamHandler(async (args) => {
         results =
             await Promise.allSettled([
 
-                // -----------------------------------------
-                // NGUONC
-                // -----------------------------------------
-
-                fetchNguonC(
-                    movieName
-                ),
-
-                // -----------------------------------------
-                // KKPHIM
-                // -----------------------------------------
-
-                fetchKKPhim(
-                    movieName
-                ),
-
-                // -----------------------------------------
-                // VSMOV
-                // -----------------------------------------
-
-                fetchVSMov(
-                    movieName
-                ),
-
-                // -----------------------------------------
-                // 1PHIM32
-                // -----------------------------------------
-
-                scrapePhimLongTieng(
-                    movieName
-                ),
-
-                // -----------------------------------------
-                // MOTPHIMTV
-                // -----------------------------------------
-
-                scrapeMotPhimTV(
-                    movieName
-                )
+                fetchNguonC(movieName),
+                fetchKKPhim(movieName),
+                fetchVSMov(movieName),
+                scrapePhimLongTieng(movieName),
+                scrapeMotPhimTV(movieName)
 
             ]);
 
@@ -2445,10 +2509,6 @@ builder.defineStreamHandler(async (args) => {
         results = [];
 
     }
-
-    // =====================================================
-    // 4. Lấy kết quả từng nguồn
-    // =====================================================
 
     const nguonc =
         results[0]?.status === "fulfilled" &&
@@ -2480,58 +2540,25 @@ builder.defineStreamHandler(async (args) => {
             ? results[4].value
             : [];
 
-    // =====================================================
-    // 5. Log kết quả
-    // =====================================================
-
-    console.log(
-        "[STREAM] NguonC:",
-        nguonc.length
-    );
-
-    console.log(
-        "[STREAM] KKPhim:",
-        kkphim.length
-    );
-
-    console.log(
-        "[STREAM] VSmov:",
-        vsmov.length
-    );
-
-    console.log(
-        "[STREAM] 1Phim32:",
-        longtieng.length
-    );
-
-    console.log(
-        "[STREAM] MotPhimTV:",
-        motphim.length
-    );
-
-    // =====================================================
-    // 6. Gộp stream trực tiếp
-    // =====================================================
+    console.log("[STREAM] NguonC:", nguonc.length);
+    console.log("[STREAM] KKPhim:", kkphim.length);
+    console.log("[STREAM] VSmov:", vsmov.length);
+    console.log("[STREAM] 1Phim32:", longtieng.length);
+    console.log("[STREAM] MotPhimTV:", motphim.length);
 
     const directStreams = [
-
         ...nguonc,
         ...kkphim,
         ...vsmov,
         ...longtieng,
         ...motphim
-
     ];
 
-    // =====================================================
-    // 7. Fallback website
-    // =====================================================
+    // ----------------------------------------------------
+    // FALLBACK
+    // ----------------------------------------------------
 
     const externalStreams = [
-
-        // -------------------------------------------------
-        // 1PHIM32
-        // -------------------------------------------------
 
         {
             name:
@@ -2547,28 +2574,20 @@ builder.defineStreamHandler(async (args) => {
                 "/"
         },
 
-        // -------------------------------------------------
-        // NGUONC
-        // -------------------------------------------------
-
         {
             name:
                 "🌐 [Fallback] NguonC",
 
             title:
-                "Mở trang tìm kiếm NguonC - " +
-                movieName,
+                "Tìm trên NguonC - " +
+                nguonCFallbackName,
 
             externalUrl:
                 "https://nguonc.com/tim-kiem?keyword=" +
                 encodeURIComponent(
-                    movieName
+                    nguonCFallbackName
                 )
         },
-
-        // -------------------------------------------------
-        // MOTPHIMTV
-        // -------------------------------------------------
 
         {
             name:
@@ -2580,14 +2599,8 @@ builder.defineStreamHandler(async (args) => {
 
             externalUrl:
                 "https://motphimtv.run/?search=" +
-                encodeURIComponent(
-                    movieName
-                )
+                encodeURIComponent(movieName)
         },
-
-        // -------------------------------------------------
-        // KKPHIM2
-        // -------------------------------------------------
 
         {
             name:
@@ -2599,16 +2612,14 @@ builder.defineStreamHandler(async (args) => {
 
             externalUrl:
                 "https://www.kkphim2.com/tim-kiem?keyword=" +
-                encodeURIComponent(
-                    movieName
-                )
+                encodeURIComponent(movieName)
         }
 
     ];
 
-    // =====================================================
-    // 8. Lọc stream trực tiếp hợp lệ
-    // =====================================================
+    // ----------------------------------------------------
+    // VALIDATE DIRECT STREAMS
+    // ----------------------------------------------------
 
     const validDirectStreams =
         directStreams.filter(
@@ -2629,9 +2640,9 @@ builder.defineStreamHandler(async (args) => {
             }
         );
 
-    // =====================================================
-    // 9. Lọc fallback hợp lệ
-    // =====================================================
+    // ----------------------------------------------------
+    // VALIDATE FALLBACK STREAMS
+    // ----------------------------------------------------
 
     const validExternalStreams =
         externalStreams.filter(
@@ -2651,20 +2662,14 @@ builder.defineStreamHandler(async (args) => {
             }
         );
 
-    // =====================================================
-    // 10. Gộp tất cả
-    // =====================================================
+    // ----------------------------------------------------
+    // GỘP STREAM
+    // ----------------------------------------------------
 
     const allStreams = [
-
         ...validDirectStreams,
         ...validExternalStreams
-
     ];
-
-    // =====================================================
-    // 11. Loại URL trùng
-    // =====================================================
 
     const seen =
         new Set();
@@ -2694,10 +2699,6 @@ builder.defineStreamHandler(async (args) => {
             }
         );
 
-    // =====================================================
-    // 12. Log cuối
-    // =====================================================
-
     console.log(
         "[STREAM] Direct:",
         validDirectStreams.length
@@ -2717,10 +2718,6 @@ builder.defineStreamHandler(async (args) => {
         "========== STREAM END =========="
     );
 
-    // =====================================================
-    // 13. Trả về Stremio
-    // =====================================================
-
     return {
         streams:
             uniqueStreams
@@ -2728,24 +2725,3 @@ builder.defineStreamHandler(async (args) => {
 
 });
 
-/* ============================================================
-   VERCEL HANDLER
-   ============================================================ */
-
-const router =
-    getRouter(
-        builder.getInterface()
-    );
-
-module.exports = function handler(req, res) {
-    return router(req, res, function next(err) {
-        if (err) {
-            console.error("[ROUTER ERROR]", err);
-
-            if (!res.headersSent) {
-                res.statusCode = 500;
-                res.end("Internal Server Error");
-            }
-        }
-    });
-};
