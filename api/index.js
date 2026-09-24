@@ -929,10 +929,15 @@ async function fetchKKPhim(movieName) {
      const streams = [];
 
      try {
+
          console.log("[VSMOV] Search:", movieName);
 
          if (!movieName) {
-             console.log("[VSMOV] Movie name rỗng");
+
+             console.log(
+                 "[VSMOV] Movie name rỗng"
+             );
+
              return streams;
          }
 
@@ -964,13 +969,12 @@ async function fetchKKPhim(movieName) {
                      .replace(/[\u0300-\u036f]/g, "")
                      .toLowerCase();
 
-             const exists =
-                 titleVariants.some(
+             if (
+                 !titleVariants.some(
                      item =>
                          item.key === key
-                 );
-
-             if (!exists) {
+                 )
+             ) {
 
                  titleVariants.push({
                      text: clean,
@@ -978,6 +982,7 @@ async function fetchKKPhim(movieName) {
                  });
 
              }
+
          }
 
          // Tên đầy đủ
@@ -993,8 +998,7 @@ async function fetchKKPhim(movieName) {
              .split("|")
              .forEach(addVariant);
 
-         // Tách dạng:
-         // "Tên A - Tên B"
+         // Tách theo " - "
          original
              .split(/\s+-\s+/)
              .forEach(part => {
@@ -1004,7 +1008,9 @@ async function fetchKKPhim(movieName) {
                          .trim()
                          .length >= 3
                  ) {
+
                      addVariant(part);
+
                  }
 
              });
@@ -1019,17 +1025,8 @@ async function fetchKKPhim(movieName) {
              JSON.stringify(variants)
          );
 
-         if (!variants.length) {
-
-             console.log(
-                 "[VSMOV] Không có title variant"
-             );
-
-             return streams;
-         }
-
          // =====================================================
-         // STEP 2: NORMALIZE TÊN
+         // STEP 2: NORMALIZE
          // =====================================================
 
          const normalizeName = text => {
@@ -1046,7 +1043,7 @@ async function fetchKKPhim(movieName) {
          };
 
          // =====================================================
-         // STEP 3: TÌM PHIM BẰNG TỪNG BIẾN THỂ
+         // STEP 3: TÌM QUA API
          // =====================================================
 
          let movie = null;
@@ -1104,14 +1101,17 @@ async function fetchKKPhim(movieName) {
                      !Array.isArray(items) ||
                      !items.length
                  ) {
+
                      continue;
                  }
 
                  const targetName =
-                     normalizeName(variant);
+                     normalizeName(
+                         variant
+                     );
 
                  // ---------------------------------------------
-                 // 1. Tên chính xác
+                 // Tên chính xác
                  // ---------------------------------------------
 
                  movie =
@@ -1130,7 +1130,7 @@ async function fetchKKPhim(movieName) {
                      });
 
                  // ---------------------------------------------
-                 // 2. origin_name chính xác
+                 // origin_name chính xác
                  // ---------------------------------------------
 
                  if (!movie) {
@@ -1153,7 +1153,7 @@ async function fetchKKPhim(movieName) {
                  }
 
                  // ---------------------------------------------
-                 // 3. Tên chứa nhau
+                 // Tên chứa nhau
                  // ---------------------------------------------
 
                  if (!movie) {
@@ -1217,11 +1217,6 @@ async function fetchKKPhim(movieName) {
 
                  }
 
-                 // ---------------------------------------------
-                 // Nếu variant này tìm được phim
-                 // thì dừng vòng lặp
-                 // ---------------------------------------------
-
                  if (
                      movie &&
                      movie.slug
@@ -1250,20 +1245,168 @@ async function fetchKKPhim(movieName) {
          }
 
          // =====================================================
-         // STEP 4: KHÔNG TÌM ĐƯỢC
+         // STEP 4:
+         // NẾU API KHÔNG TÌM ĐƯỢC
+         // THỬ SLUG TRỰC TIẾP
          // =====================================================
 
          if (!movie) {
 
              console.log(
-                 "[VSMOV] Không tìm thấy phim qua các variant"
+                 "[VSMOV] API không tìm thấy phim."
              );
+
+             for (
+                 const variant
+                 of variants
+             ) {
+
+                 const directSlug =
+                     toSlug(variant);
+
+                 if (!directSlug) {
+                     continue;
+                 }
+
+                 const directUrl =
+                     "https://vsmov.com/phim/" +
+                     encodeURIComponent(
+                         directSlug
+                     );
+
+                 console.log(
+                     "[VSMOV] Direct slug test:",
+                     directUrl
+                 );
+
+                 try {
+
+                     const directRes =
+                         await axios.get(
+                             directUrl,
+                             {
+                                 timeout: 8000,
+                                 headers: {
+                                     "User-Agent":
+                                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                                     "Accept":
+                                         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+
+                                     "Accept-Language":
+                                         "vi,en-US;q=0.9,en;q=0.8",
+
+                                     "Referer":
+                                         "https://vsmov.com/"
+                                 },
+
+                                 validateStatus:
+                                     status =>
+                                         status >= 200 &&
+                                         status < 400
+
+                             }
+                         );
+
+                     const directHtml =
+                         String(
+                             directRes.data ||
+                             ""
+                         );
+
+                     console.log(
+                         "[VSMOV] Direct status:",
+                         directRes.status,
+                         "HTML:",
+                         directHtml.length
+                     );
+
+                     if (
+                         directRes.status === 200 &&
+                         directHtml.length > 5000
+                     ) {
+
+                         movie = {
+
+                             slug:
+                                 directSlug,
+
+                             name:
+                                 variant
+
+                         };
+
+                         console.log(
+                             "[VSMOV] Direct page FOUND:",
+                             directUrl
+                         );
+
+                         break;
+                     }
+
+                 } catch (e) {
+
+                     console.log(
+                         "[VSMOV] Direct slug error:",
+                         directSlug,
+                         e?.response?.status ||
+                         e?.message ||
+                         e
+                     );
+
+                 }
+
+             }
+
+         }
+
+         // =====================================================
+         // STEP 5:
+         // KHÔNG TÌM ĐƯỢC CẢ API LẪN SLUG
+         // VẪN TRẢ FALLBACK VSMOV
+         // =====================================================
+
+         if (!movie) {
+
+             const fallbackName =
+                 variants[0] ||
+                 original;
+
+             const fallbackUrl =
+                 "https://vsmov.com/tim-kiem?keyword=" +
+                 encodeURIComponent(
+                     fallbackName
+                 );
+
+             console.log(
+                 "[VSMOV] Không tìm được phim."
+             );
+
+             console.log(
+                 "[VSMOV] Fallback URL:",
+                 fallbackUrl
+             );
+
+             streams.push({
+
+                 name:
+                     "🌐 [Fallback] VSmov",
+
+                 title:
+                     "Tìm phim trên VSmov - " +
+                     fallbackName,
+
+                 externalUrl:
+                     fallbackUrl
+
+             });
 
              return streams;
          }
 
          // =====================================================
-         // STEP 5: LẤY SLUG
+         // STEP 6:
+         // LẤY SLUG
          // =====================================================
 
          const movieSlug =
@@ -1272,7 +1415,8 @@ async function fetchKKPhim(movieName) {
          const foundName =
              movie?.name ||
              movie?.origin_name ||
-             "";
+             variants[0] ||
+             original;
 
          if (!movieSlug) {
 
@@ -1280,6 +1424,23 @@ async function fetchKKPhim(movieName) {
                  "[VSMOV] Kết quả không có slug:",
                  foundName
              );
+
+             streams.push({
+
+                 name:
+                     "🌐 [Fallback] VSmov",
+
+                 title:
+                     "Tìm phim trên VSmov - " +
+                     foundName,
+
+                 externalUrl:
+                     "https://vsmov.com/tim-kiem?keyword=" +
+                     encodeURIComponent(
+                         foundName
+                     )
+
+             });
 
              return streams;
          }
@@ -1295,12 +1456,15 @@ async function fetchKKPhim(movieName) {
          );
 
          // =====================================================
-         // STEP 6: TẠO URL TRANG PHIM THẬT
+         // STEP 7:
+         // TẠO URL TRANG PHIM
          // =====================================================
 
          const movieUrl =
              "https://vsmov.com/phim/" +
-             encodeURIComponent(movieSlug);
+             encodeURIComponent(
+                 movieSlug
+             );
 
          console.log(
              "[VSMOV] Movie URL:",
@@ -1308,29 +1472,36 @@ async function fetchKKPhim(movieName) {
          );
 
          // =====================================================
-         // STEP 7: MỞ TRANG PHIM THẬT
+         // STEP 8:
+         // MỞ TRANG PHIM
          // =====================================================
 
          const movieRes =
-             await axios.get(movieUrl, {
-                 timeout: 8000,
-                 headers: {
-                     "User-Agent":
-                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+             await axios.get(
+                 movieUrl,
+                 {
+                     timeout: 8000,
+                     headers: {
+                         "User-Agent":
+                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
 
-                     "Accept":
-                         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                         "Accept":
+                             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
 
-                     "Accept-Language":
-                         "vi,en-US;q=0.9,en;q=0.8",
+                         "Accept-Language":
+                             "vi,en-US;q=0.9,en;q=0.8",
 
-                     "Referer":
-                         "https://vsmov.com/"
+                         "Referer":
+                             "https://vsmov.com/"
+                     }
                  }
-             });
+             );
 
          const html =
-             String(movieRes.data || "");
+             String(
+                 movieRes.data ||
+                 ""
+             );
 
          console.log(
              "[VSMOV] Page HTML:",
@@ -1338,7 +1509,8 @@ async function fetchKKPhim(movieName) {
          );
 
          // =====================================================
-         // STEP 8: TÌM VIDEO HASH
+         // STEP 9:
+         // TÌM VIDEO HASH
          // =====================================================
 
          let videoHash = "";
@@ -1357,6 +1529,7 @@ async function fetchKKPhim(movieName) {
 
              videoHash =
                  hashMatch[1];
+
          }
 
          // Cách 2:
@@ -1375,7 +1548,9 @@ async function fetchKKPhim(movieName) {
 
                  videoHash =
                      jsMatch[1];
+
              }
+
          }
 
          // Cách 3:
@@ -1394,7 +1569,9 @@ async function fetchKKPhim(movieName) {
 
                  videoHash =
                      videoMatch[1];
+
              }
+
          }
 
          // Cách 4:
@@ -1413,11 +1590,14 @@ async function fetchKKPhim(movieName) {
 
                  videoHash =
                      streamMatch[1];
+
              }
+
          }
 
          // =====================================================
-         // STEP 9: KHÔNG CÓ HASH
+         // STEP 10:
+         // KHÔNG CÓ HASH -> FALLBACK
          // =====================================================
 
          if (!videoHash) {
@@ -1449,7 +1629,8 @@ async function fetchKKPhim(movieName) {
          );
 
          // =====================================================
-         // STEP 10: TẠO M3U8
+         // STEP 11:
+         // M3U8
          // =====================================================
 
          const streamUrl =
@@ -1463,7 +1644,8 @@ async function fetchKKPhim(movieName) {
          );
 
          // =====================================================
-         // STEP 11: STREAM TRỰC TIẾP
+         // STEP 12:
+         // SCRAPE STREAM
          // =====================================================
 
          streams.push({
@@ -1491,7 +1673,8 @@ async function fetchKKPhim(movieName) {
          });
 
          // =====================================================
-         // STEP 12: FALLBACK
+         // STEP 13:
+         // FALLBACK ĐÚNG TRANG PHIM
          // =====================================================
 
          streams.push({
@@ -1521,6 +1704,37 @@ async function fetchKKPhim(movieName) {
              e?.message ||
              e
          );
+
+         // =====================================================
+         // QUAN TRỌNG:
+         // Nếu VSmov gặp lỗi hoàn toàn,
+         // vẫn trả fallback search.
+         // =====================================================
+
+         const fallbackName =
+             String(movieName || "")
+                 .trim();
+
+         if (fallbackName) {
+
+             streams.push({
+
+                 name:
+                     "🌐 [Fallback] VSmov",
+
+                 title:
+                     "Tìm phim trên VSmov - " +
+                     fallbackName,
+
+                 externalUrl:
+                     "https://vsmov.com/tim-kiem?keyword=" +
+                     encodeURIComponent(
+                         fallbackName
+                     )
+
+             });
+
+         }
 
      }
 
