@@ -5253,61 +5253,70 @@ app.get(
                ================================================= */
 
             const png =
-                await axios.get(
-                    pngUrl,
-                    {
+    await axios.get(
+        pngUrl,
+        {
+            headers,
+            timeout: 15000,
+            responseType:
+                "arraybuffer",
+            validateStatus:
+                () => true
+        }
+    );
 
-                        headers,
+const firstBytes =
+    Buffer.from(png.data)
+        .subarray(0, 32)
+        .toString("hex");
 
-                        timeout: 15000,
+const firstAscii =
+    Buffer.from(png.data)
+        .subarray(0, 32)
+        .toString("ascii");
 
-                        responseType:
-                            "arraybuffer",
+result.png = {
+    status:
+        png.status,
 
-                        validateStatus:
-                            () => true
+    contentType:
+        png.headers[
+            "content-type"
+        ] || null,
 
-                    }
-                );
+    contentLength:
+        png.headers[
+            "content-length"
+        ] || null,
 
-            result.png = {
+    contentEncoding:
+        png.headers[
+            "content-encoding"
+        ] || null,
 
-                status:
-                    png.status,
+    acceptRanges:
+        png.headers[
+            "accept-ranges"
+        ] || null,
 
-                contentType:
-                    png.headers[
-                        "content-type"
-                    ] || null,
+    contentRange:
+        png.headers[
+            "content-range"
+        ] || null,
 
-                contentLength:
-                    png.headers[
-                        "content-length"
-                    ] || null,
+    bytesReceived:
+        png.data
+            ? Buffer.byteLength(
+                png.data
+            )
+            : 0,
 
-                contentEncoding:
-                    png.headers[
-                        "content-encoding"
-                    ] || null,
+    firstBytes:
+        firstBytes,
 
-                acceptRanges:
-                    png.headers[
-                        "accept-ranges"
-                    ] || null,
-
-                contentRange:
-                    png.headers[
-                        "content-range"
-                    ] || null,
-
-                bytesReceived:
-                    png.data
-                        ? Buffer.byteLength(
-                            png.data
-                        )
-                        : 0
-
-            };
+    firstAscii:
+        firstAscii
+};
 
             console.log("");
             console.log(
