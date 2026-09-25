@@ -5,7 +5,7 @@
   "main": "api/index.js",
   "dependencies": {
     "stremio-addon-sdk": "^1.2.1",
-    "axios": "^1.6.0",
+    "axios": "^1.13.2",
     "cheerio": "^1.0.0-rc.12"
   }
 }
