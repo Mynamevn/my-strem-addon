@@ -5151,6 +5151,120 @@ app.use(
     }
 );
 
+/* ============================================================
+   VSMOV HLS TEST ROUTE
+   ============================================================ */
+
+app.get("/vsmov-test", async (req, res) => {
+
+    const masterUrl =
+        "https://v9.streamvsmov.com/stream/a672c032-832c-4395-ba2b-ec64ead7c9d5/master.m3u8";
+
+    const pngUrl =
+        "https://p25.streamvsmov.com/file/ZnVja3lvdWZ1Y2t5b3U/tiktok/a672c032-832c-4395-ba2b-ec64ead7c9d5/file-tiktok_1.png";
+
+    const headers = {
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+        "Accept":
+            "*/*",
+
+        "Referer":
+            "https://v9.streamvsmov.com/"
+    };
+
+    const result = {
+        master: {},
+        png: {}
+    };
+
+    try {
+
+        /* ----------------------------------------------------
+           MASTER M3U8
+           ---------------------------------------------------- */
+
+        const master = await axios.get(masterUrl, {
+            headers,
+            timeout: 15000,
+            responseType: "text",
+            validateStatus: () => true
+        });
+
+        result.master = {
+            status: master.status,
+            contentType: master.headers["content-type"] || null,
+            contentLength: master.headers["content-length"] || null,
+            contentEncoding: master.headers["content-encoding"] || null,
+            acceptRanges: master.headers["accept-ranges"] || null,
+            contentRange: master.headers["content-range"] || null,
+            bodyLength:
+                typeof master.data === "string"
+                    ? master.data.length
+                    : null
+        };
+
+        /* ----------------------------------------------------
+           FIRST PNG
+           ---------------------------------------------------- */
+
+        const png = await axios.get(pngUrl, {
+            headers,
+            timeout: 15000,
+            responseType: "arraybuffer",
+            validateStatus: () => true
+        });
+
+        result.png = {
+            status: png.status,
+            contentType: png.headers["content-type"] || null,
+            contentLength: png.headers["content-length"] || null,
+            contentEncoding: png.headers["content-encoding"] || null,
+            acceptRanges: png.headers["accept-ranges"] || null,
+            contentRange: png.headers["content-range"] || null,
+            bytesReceived:
+                png.data
+                    ? Buffer.byteLength(png.data)
+                    : 0
+        };
+
+        console.log("");
+        console.log("============================================================");
+        console.log("[VSMOV TEST] MASTER");
+        console.log(JSON.stringify(result.master, null, 2));
+
+        console.log("");
+        console.log("[VSMOV TEST] PNG");
+        console.log(JSON.stringify(result.png, null, 2));
+
+        console.log("============================================================");
+        console.log("");
+
+        res.json({
+            success: true,
+            ...result
+        });
+
+    } catch (error) {
+
+        console.error(
+            "[VSMOV TEST] ERROR:",
+            error.message
+        );
+
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            response: error.response
+                ? {
+                    status: error.response.status,
+                    headers: error.response.headers
+                }
+                : null
+        });
+    }
+});
 
 /* ============================================================
    NGUONC PLAYLIST
