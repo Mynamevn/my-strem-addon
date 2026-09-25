@@ -1485,6 +1485,153 @@ async function fetchKKPhim(movieName) {
 
 
 /* ============================================================
+   TEST VSMOV HLS / PNG
+   ============================================================ */
+
+async function testVsmovHls() {
+
+    const masterUrl =
+        "https://v9.streamvsmov.com/stream/a672c032-832c-4395-ba2b-ec64ead7c9d5/master.m3u8";
+
+    const pngUrl =
+        "https://p25.streamvsmov.com/file/ZnVja3lvdWZ1Y2t5b3U/tiktok/a672c032-832c-4395-ba2b-ec64ead7c9d5/file-tiktok_1.png";
+
+    const headers = {
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+        "Accept":
+            "*/*",
+
+        "Referer":
+            "https://v9.streamvsmov.com/"
+    };
+
+    try {
+
+        console.log("");
+        console.log("============================================================");
+        console.log("[VSMOV TEST] MASTER M3U8");
+        console.log("============================================================");
+
+        const master = await axios.get(masterUrl, {
+            headers,
+            timeout: 15000,
+            responseType: "text",
+            validateStatus: () => true
+        });
+
+        console.log("[VSMOV TEST] Status:", master.status);
+
+        console.log(
+            "[VSMOV TEST] Content-Type:",
+            master.headers["content-type"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Content-Length:",
+            master.headers["content-length"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Content-Encoding:",
+            master.headers["content-encoding"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Accept-Ranges:",
+            master.headers["accept-ranges"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Content-Range:",
+            master.headers["content-range"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Body length:",
+            typeof master.data === "string"
+                ? master.data.length
+                : "NOT_STRING"
+        );
+
+        console.log("");
+        console.log("============================================================");
+        console.log("[VSMOV TEST] FIRST PNG SEGMENT");
+        console.log("============================================================");
+
+        const png = await axios.get(pngUrl, {
+            headers,
+            timeout: 15000,
+            responseType: "arraybuffer",
+            validateStatus: () => true
+        });
+
+        console.log("[VSMOV TEST] Status:", png.status);
+
+        console.log(
+            "[VSMOV TEST] Content-Type:",
+            png.headers["content-type"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Content-Length:",
+            png.headers["content-length"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Content-Encoding:",
+            png.headers["content-encoding"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Accept-Ranges:",
+            png.headers["accept-ranges"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Content-Range:",
+            png.headers["content-range"]
+        );
+
+        console.log(
+            "[VSMOV TEST] Bytes received:",
+            png.data
+                ? Buffer.byteLength(png.data)
+                : 0
+        );
+
+        console.log("");
+        console.log("============================================================");
+        console.log("[VSMOV TEST] DONE");
+        console.log("============================================================");
+        console.log("");
+
+    } catch (error) {
+
+        console.error(
+            "[VSMOV TEST] ERROR:",
+            error.message
+        );
+
+        if (error.response) {
+
+            console.error(
+                "[VSMOV TEST] HTTP STATUS:",
+                error.response.status
+            );
+
+            console.error(
+                "[VSMOV TEST] HEADERS:",
+                error.response.headers
+            );
+        }
+    }
+}
+
+testVsmovHls();
+
+/* ============================================================
    VSMOV API
    SEARCH API
    DETAIL API
