@@ -567,7 +567,7 @@ async function fetchNguonC(
         );
 
     /* --------------------------------------------------------
-   NGUONC DETAIL API TEST
+   NGUONC PAGE TEST
    -------------------------------------------------------- */
 
 try {
@@ -577,11 +577,11 @@ try {
 
     const testUrl =
         NGUONC_API +
-        "/api/film/" +
+        "/phim/" +
         testSlug;
 
     console.log(
-        "[NGUONC DETAIL TEST] URL:",
+        "[NGUONC PAGE TEST] URL:",
         testUrl
     );
 
@@ -595,17 +595,24 @@ try {
         );
 
     console.log(
-        "[NGUONC DETAIL TEST] HTTP:",
+        "[NGUONC PAGE TEST] HTTP:",
         testResponse.status
     );
 
     console.log(
-        "[NGUONC DETAIL TEST] Content-Type:",
+        "[NGUONC PAGE TEST] Content-Type:",
         testResponse.headers?.["content-type"]
     );
 
     console.log(
-        "[NGUONC DETAIL TEST] Response:",
+        "[NGUONC PAGE TEST] HTML LENGTH:",
+        typeof testResponse.data === "string"
+            ? testResponse.data.length
+            : 0
+    );
+
+    console.log(
+        "[NGUONC PAGE TEST] HTML:",
         typeof testResponse.data === "string"
             ? testResponse.data.slice(0, 5000)
             : JSON.stringify(
@@ -616,17 +623,17 @@ try {
 } catch (e) {
 
     console.log(
-        "[NGUONC DETAIL TEST] ERROR:",
+        "[NGUONC PAGE TEST] ERROR:",
         e?.message || e
     );
 
     console.log(
-        "[NGUONC DETAIL TEST] STATUS:",
+        "[NGUONC PAGE TEST] STATUS:",
         e?.response?.status || "N/A"
     );
 
     console.log(
-        "[NGUONC DETAIL TEST] RESPONSE:",
+        "[NGUONC PAGE TEST] RESPONSE:",
         typeof e?.response?.data === "string"
             ? e.response.data.slice(0, 3000)
             : JSON.stringify(
@@ -635,7 +642,7 @@ try {
     );
 
     console.log(
-        "[NGUONC DETAIL TEST] HEADERS:",
+        "[NGUONC PAGE TEST] HEADERS:",
         JSON.stringify(
             e?.response?.headers || {}
         )
