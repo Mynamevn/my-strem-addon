@@ -2,6 +2,10 @@ const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+const crypto = require('crypto');
+const http2 = require('http2');
+const express = require('express');
+
 const manifest = {
     id: "community.paproplayer.multisource.v2000",
     version: "0.1.0",
@@ -449,503 +453,579 @@ builder.defineMetaHandler(async (args) => {
 
 
 /* ============================================================
-   NGUONC
-   API:
-   https://phim.nguonc.com/api
+   FETCH NGUONC
    ============================================================ */
 
-async function fetchNguonC(movieName) {
+async function fetchNguonC(
+    movieName
+) {
 
     const streams = [];
 
-    try {
+    const headers = {
 
-        console.log("========================================");
-        console.log("[NGUONC] START");
-        console.log("[NGUONC] Movie:", movieName);
+        "User-Agent":
+            NGUONC_UA,
 
-        if (!movieName) {
-            console.log("[NGUONC] Movie name is empty");
-            return streams;
+        "Accept":
+            "application/json, text/plain, */*",
+
+        "Referer":
+            "https://nguonc.com/",
+
+        "Origin":
+            "https://nguonc.com"
+
+    };
+
+    function normalizeTitle(
+        value
+    ) {
+
+        return String(
+            value || ""
+        )
+            .normalize("NFD")
+            .replace(
+                /[\u0300-\u036f]/g,
+                ""
+            )
+            .toLowerCase()
+            .replace(
+                /[^a-z0-9]+/g,
+                " "
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+
+    }
+
+    /* --------------------------------------------------------
+       TITLE VARIANTS
+       -------------------------------------------------------- */
+
+    const variants = [];
+
+    function addVariant(
+        value
+    ) {
+
+        value =
+            String(
+                value || ""
+            ).trim();
+
+        if (!value) {
+            return;
         }
 
-        // ----------------------------------------------------
-        // 1. CHUẨN HÓA TÊN
-        // ----------------------------------------------------
-
-        function normalizeTitle(value) {
-
-            return String(value || "")
-                .replace(/\s+/g, " ")
-                .trim()
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .toLowerCase();
-
-        }
-
-        function buildTitleVariants(title) {
-
-            const original =
-                String(title || "")
-                    .replace(/\s+/g, " ")
-                    .trim();
-
-            if (!original) {
-                return [];
-            }
-
-            const result = [];
-
-            function add(value) {
-
-                const clean =
-                    String(value || "")
-                        .replace(/\s+/g, " ")
-                        .trim();
-
-                if (!clean) {
-                    return;
-                }
-
-                const key =
-                    normalizeTitle(clean);
-
-                if (
-                    !result.some(
-                        x => x.key === key
-                    )
-                ) {
-                    result.push({
-                        text: clean,
-                        key
-                    });
-                }
-
-            }
-
-            add(original);
-
-            original
-                .split("/")
-                .forEach(add);
-
-            original
-                .split("|")
-                .forEach(add);
-
-            original
-                .split(/\s+-\s+/)
-                .forEach(add);
-
-            return result.map(
-                x => x.text
+        const normalized =
+            normalizeTitle(
+                value
             );
 
-        }
-
-        const titleVariants =
-            buildTitleVariants(
-                movieName
-            );
-
-        console.log(
-            "[NGUONC] Title variants:",
-            JSON.stringify(titleVariants)
-        );
-
-        // ----------------------------------------------------
-        // 2. SEARCH
-        // ----------------------------------------------------
-
-        let movie = null;
-
-        for (
-            const searchTerm
-            of titleVariants
+        if (
+            !variants.some(
+                x =>
+                    normalizeTitle(
+                        x
+                    ) === normalized
+            )
         ) {
 
-            const searchUrl =
-                "https://phim.nguonc.com/api/films/search?keyword=" +
+            variants.push(
+                value
+            );
+
+        }
+
+    }
+
+    addVariant(
+        movieName
+    );
+
+    String(movieName)
+        .split("/")
+        .forEach(
+            addVariant
+        );
+
+    String(movieName)
+        .split("|")
+        .forEach(
+            addVariant
+        );
+
+    String(movieName)
+        .split(/\s+-\s+/)
+        .forEach(
+            addVariant
+        );
+
+    /* --------------------------------------------------------
+       SEARCH
+       -------------------------------------------------------- */
+
+    let searchItems = [];
+
+    for (
+        const keyword
+        of variants
+    ) {
+
+        try {
+
+            const url =
+                NGUONC_API +
+                "/films/search?keyword=" +
                 encodeURIComponent(
-                    searchTerm
+                    keyword
                 );
+
+            const response =
+                await axios.get(
+                    url,
+                    {
+
+                        timeout:
+                            15000,
+
+                        headers
+
+                    }
+                );
+
+            const data =
+                response.data;
+
+            const items =
+                data?.items ||
+                data?.data?.items ||
+                data?.data ||
+                [];
+
+            if (
+                Array.isArray(items) &&
+                items.length
+            ) {
+
+                searchItems =
+                    items;
+
+                break;
+
+            }
+
+        } catch (e) {
 
             console.log(
-                "[NGUONC] Search:",
-                searchUrl
+                "[NGUONC] Search error:",
+                e?.message ||
+                e
             );
 
-            try {
+        }
 
-                const searchRes =
-                    await axios.get(
-                        searchUrl,
-                        {
-                            timeout: 10000,
+    }
 
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
-                                "Accept":
-                                    "application/json",
-                                "Referer":
-                                    "https://phim.nguonc.com/",
-                                "Origin":
-                                    "https://phim.nguonc.com"
-                            }
-                        }
+    if (
+        !searchItems.length
+    ) {
+
+        console.log(
+            "[NGUONC] Không tìm thấy:",
+            movieName
+        );
+
+        return [];
+
+    }
+
+    /* --------------------------------------------------------
+       MATCH
+       -------------------------------------------------------- */
+
+    const wanted =
+        normalizeTitle(
+            movieName
+        );
+
+    function getScore(
+        item
+    ) {
+
+        const names = [
+
+            item?.name,
+
+            item?.original_name,
+
+            item?.origin_name,
+
+            item?.title
+
+        ]
+            .filter(Boolean)
+            .map(
+                normalizeTitle
+            );
+
+        let score =
+            0;
+
+        for (
+            const name
+            of names
+        ) {
+
+            if (
+                name === wanted
+            ) {
+
+                score =
+                    Math.max(
+                        score,
+                        100
                     );
 
-                const items =
-                    searchRes.data?.items ||
-                    searchRes.data?.data?.items ||
-                    [];
+            } else if (
+                name.includes(
+                    wanted
+                ) ||
+                wanted.includes(
+                    name
+                )
+            ) {
 
-                console.log(
-                    "[NGUONC] Search HTTP:",
-                    searchRes.status
-                );
-
-                console.log(
-                    "[NGUONC] Search items:",
-                    Array.isArray(items)
-                        ? items.length
-                        : 0
-                );
-
-                if (
-                    !Array.isArray(items) ||
-                    !items.length
-                ) {
-                    continue;
-                }
-
-                const wanted =
-                    normalizeTitle(
-                        movieName
+                score =
+                    Math.max(
+                        score,
+                        80
                     );
 
-                // ------------------------------------------------
-                // ƯU TIÊN TÊN CHÍNH XÁC
-                // ------------------------------------------------
-
-                movie =
-                    items.find(
-                        item =>
-                            normalizeTitle(
-                                item?.name
-                            ) === wanted
-                    );
-
-                // ------------------------------------------------
-                // SAU ĐÓ SO ORIGINAL NAME
-                // ------------------------------------------------
-
-                if (!movie) {
-
-                    movie =
-                        items.find(
-                            item =>
-                                normalizeTitle(
-                                    item?.original_name
-                                ) === wanted
-                        );
-
-                }
-
-                // ------------------------------------------------
-                // CUỐI CÙNG MỚI LẤY RESULT ĐẦU
-                // ------------------------------------------------
-
-                if (!movie) {
-
-                    movie =
-                        items.find(
-                            item =>
-                                item?.slug
-                        ) ||
-                        null;
-
-                }
-
-                if (
-                    movie?.slug
-                ) {
-
-                    console.log(
-                        "[NGUONC] MATCH:",
-                        JSON.stringify({
-                            name:
-                                movie.name,
-                            original_name:
-                                movie.original_name,
-                            slug:
-                                movie.slug,
-                            year:
-                                movie.year
-                        })
-                    );
-
-                    break;
-                }
-
-            } catch (e) {
-
-                console.log(
-                    "[NGUONC] Search error:",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
-
-                continue;
             }
 
         }
 
-        // ----------------------------------------------------
-        // 3. KHÔNG TÌM THẤY
-        // ----------------------------------------------------
+        return score;
 
-        if (!movie?.slug) {
+    }
 
-            console.log(
-                "[NGUONC] NO MOVIE / NO SLUG"
-            );
+    searchItems.sort(
+        (a, b) =>
+            getScore(b) -
+            getScore(a)
+    );
 
-            return streams;
-        }
+    const selected =
+        searchItems.find(
+            item =>
+                item?.slug
+        );
 
-        // ----------------------------------------------------
-        // 4. DETAIL
-        // ----------------------------------------------------
+    if (
+        !selected
+    ) {
 
-        const movieSlug =
-            String(movie.slug);
+        console.log(
+            "[NGUONC] Không có phim phù hợp:",
+            movieName
+        );
 
-        const detailUrl =
-            "https://phim.nguonc.com/api/film/" +
+        return [];
+
+    }
+
+    const slug =
+        selected.slug;
+
+    console.log(
+        "[NGUONC] Selected:",
+        selected.name,
+        "|",
+        slug
+    );
+
+    /* --------------------------------------------------------
+       DETAIL
+       -------------------------------------------------------- */
+
+    let detail;
+
+    try {
+
+        const url =
+            NGUONC_API +
+            "/film/" +
             encodeURIComponent(
-                movieSlug
+                slug
             );
 
-        console.log(
-            "[NGUONC] Detail URL:",
-            detailUrl
-        );
-
-        const detailRes =
+        const response =
             await axios.get(
-                detailUrl,
+                url,
                 {
-                    timeout: 10000,
 
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0",
-                        "Accept":
-                            "application/json",
-                        "Referer":
-                            "https://phim.nguonc.com/",
-                        "Origin":
-                            "https://phim.nguonc.com"
-                    }
+                    timeout:
+                        15000,
+
+                    headers
+
                 }
             );
 
-        console.log(
-            "[NGUONC] Detail HTTP:",
-            detailRes.status
-        );
-
-        // ----------------------------------------------------
-        // 5. MOVIE DATA
-        // ----------------------------------------------------
-
-        const movieData =
-            detailRes.data?.movie ||
-            detailRes.data?.data?.movie ||
-            {};
-
-        console.log(
-            "[NGUONC] Detail movie:",
-            JSON.stringify({
-                name:
-                    movieData?.name,
-                original_name:
-                    movieData?.original_name,
-                slug:
-                    movieData?.slug,
-                year:
-                    movieData?.year,
-                total_episodes:
-                    movieData?.total_episodes
-            })
-        );
-
-        // ----------------------------------------------------
-        // 6. EPISODES
-        // ----------------------------------------------------
-
-        const episodes =
-            Array.isArray(
-                movieData?.episodes
-            )
-                ? movieData.episodes
-                : [];
-
-        console.log(
-            "[NGUONC] Servers:",
-            episodes.length
-        );
-
-        if (!episodes.length) {
-
-            console.log(
-                "[NGUONC] NO EPISODES"
-            );
-
-            return streams;
-        }
-
-        // ----------------------------------------------------
-        // 7. LẤY EMBED
-        // ----------------------------------------------------
-
-        episodes.forEach(
-            (server, serverIndex) => {
-
-                const serverName =
-                    server?.server_name ||
-                    server?.name ||
-                    "NguonC";
-
-                const items =
-                    Array.isArray(
-                        server?.items
-                    )
-                        ? server.items
-                        : [];
-
-                console.log(
-                    "[NGUONC] Server",
-                    serverIndex,
-                    ":",
-                    serverName
-                );
-
-                console.log(
-                    "[NGUONC] Items:",
-                    items.length
-                );
-
-                items.forEach(
-                    (ep, episodeIndex) => {
-
-                        const embedUrl =
-                            ep?.embed ||
-                            "";
-
-                        console.log(
-                            "[NGUONC] Episode:",
-                            ep?.name ||
-                            ep?.slug ||
-                            episodeIndex + 1
-                        );
-
-                        console.log(
-                            "[NGUONC] Embed:",
-                            embedUrl ||
-                            "NONE"
-                        );
-
-                        if (!embedUrl) {
-                            return;
-                        }
-
-                        /*
-                         * NguonC hiện trả embed StreamC.
-                         *
-                         * Đây không phải HLS URL chuẩn.
-                         * Không đưa embed vào `url` vì Stremio
-                         * sẽ coi nó là media URL và cố phát
-                         * trực tiếp.
-                         *
-                         * Ta chỉ giữ nó như externalUrl.
-                         */
-
-                        streams.push({
-
-                            name:
-                                "🌐 [NguonC] " +
-                                serverName,
-
-                            title:
-                                (
-                                    ep?.name ||
-                                    ep?.slug ||
-                                    "Full"
-                                ) +
-                                " - Mở player NguonC",
-
-                            externalUrl:
-                                String(
-                                    embedUrl
-                                )
-
-                        });
-
-                    }
-                );
-
-            }
-        );
-
-        console.log(
-            "[NGUONC] FINAL:",
-            streams.length
-        );
-
-        return streams;
+        detail =
+            response.data;
 
     } catch (e) {
 
-        console.error(
-            "========================================"
-        );
-
-        console.error(
-            "[NGUONC ERROR]"
-        );
-
-        console.error(
-            "Message:",
+        console.log(
+            "[NGUONC] Detail error:",
             e?.message ||
             e
         );
 
-        console.error(
-            "Status:",
-            e?.response?.status ||
-            "N/A"
-        );
+        return [];
 
-        console.error(
-            "Response:",
-            e?.response?.data
-                ? JSON.stringify(
-                    e.response.data
-                )
-                : "N/A"
-        );
-
-        console.error(
-            "========================================"
-        );
-
-        return streams;
     }
+
+    const movie =
+        detail?.movie ||
+        detail?.data?.movie ||
+        {};
+
+    const episodes =
+        detail?.episodes ||
+        detail?.data?.episodes ||
+        movie?.episodes ||
+        [];
+
+    if (
+        !Array.isArray(
+            episodes
+        )
+    ) {
+
+        return [];
+
+    }
+
+    /* --------------------------------------------------------
+       EPISODES
+       -------------------------------------------------------- */
+
+    for (
+        const server
+        of episodes
+    ) {
+
+        const serverName =
+            server?.server_name ||
+            server?.name ||
+            "NguonC";
+
+        const episodeList =
+            server?.server_data ||
+            server?.items ||
+            server?.list ||
+            [];
+
+        if (
+            !Array.isArray(
+                episodeList
+            )
+        ) {
+
+            continue;
+
+        }
+
+        for (
+            const ep
+            of episodeList
+        ) {
+
+            const episodeName =
+                ep?.name ||
+                ep?.slug ||
+                "Full";
+
+            const embed =
+                ep?.link_embed ||
+                ep?.embed ||
+                "";
+
+            const directM3u8 =
+                ep?.link_m3u8 ||
+                ep?.m3u8 ||
+                "";
+
+            if (
+                !embed &&
+                !directM3u8
+            ) {
+
+                continue;
+
+            }
+
+            /*
+             * --------------------------------------------------
+             * DIRECT M3U8
+             * --------------------------------------------------
+             */
+
+            if (
+                directM3u8
+            ) {
+
+                streams.push({
+
+                    name:
+                        "🌐 [NguonC] " +
+                        serverName,
+
+                    title:
+                        episodeName +
+                        " - NguonC",
+
+                    url:
+                        directM3u8,
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "nguonc-" +
+                            slug
+
+                    }
+
+                });
+
+                continue;
+
+            }
+
+            /*
+             * --------------------------------------------------
+             * EMBED → RESOLVE
+             * --------------------------------------------------
+             */
+
+            try {
+
+    /*
+     * Vercel Serverless:
+     * Không lưu playlist vào Map/session RAM.
+     *
+     * Thay vào đó token chứa:
+     * - embedUrl
+     * - movieUrl
+     * - created
+     *
+     * Route /nguonc/playlist/:token sẽ tự resolve lại
+     * khi Stremio yêu cầu playlist.
+     */
+
+    const movieUrl =
+        NGUONC_API +
+        "/phim/" +
+        slug;
+
+    const tokenPayload = {
+        embedUrl: embed,
+        movieUrl: movieUrl,
+        created: Date.now()
+    };
+
+    const token =
+        Buffer
+            .from(
+                JSON.stringify(tokenPayload),
+                "utf8"
+            )
+            .toString("base64url");
+
+    const publicBase =
+        process.env.ADDON_PUBLIC_URL ||
+        "";
+
+    if (!publicBase) {
+        throw new Error(
+            "Thiếu ADDON_PUBLIC_URL"
+        );
+    }
+
+    const streamUrl =
+        publicBase.replace(/\/+$/, "") +
+        "/nguonc/playlist/" +
+        token;
+
+    streams.push({
+        name:
+            "🌐 [NguonC] " +
+            serverName,
+
+        title:
+            episodeName +
+            " - NguonC",
+
+        url:
+            streamUrl,
+
+        behaviorHints: {
+            bingeGroup:
+                "nguonc-" +
+                slug
+        }
+    });
+
+    console.log(
+        "[NGUONC] READY:",
+        episodeName,
+        streamUrl
+    );
+
+} catch (e) {
+
+    console.log(
+        "[NGUONC] Resolve failed:",
+        episodeName,
+        e?.message || e
+    );
+
+    /*
+     * Chỉ dùng externalUrl nếu không tạo được
+     * direct stream URL.
+     */
+    streams.push({
+        name:
+            "🌐 [NguonC] " +
+            serverName,
+
+        title:
+            episodeName +
+            " - Mở NguonC",
+
+        externalUrl:
+            embed
+    });
+}
+
+        }
+
+    }
+
+    console.log(
+        "[NGUONC] Streams:",
+        streams.length
+    );
+
+    return streams;
 }
 
 
@@ -2436,6 +2516,1209 @@ async function scrapeMotPhimTV(movieName) {
     return streams;
 }
 
+/* ============================================================
+   NGUONC DIRECT STREAM / PROXY
+   ============================================================ */
+
+const NGUONC_UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "Chrome/131.0.0.0 Safari/537.36";
+
+const NGUONC_API =
+    "https://phim.nguonc.com";
+
+/* ============================================================
+   HTTP/2 REQUEST
+   NguonC embed hiện có thể yêu cầu HTTP/2
+   ============================================================ */
+
+function nguoncHttp2Request(
+    targetUrl,
+    options = {}
+) {
+
+    return new Promise(
+        (resolve, reject) => {
+
+            let parsed;
+
+            try {
+                parsed =
+                    new URL(targetUrl);
+            } catch (e) {
+                reject(e);
+                return;
+            }
+
+            if (
+                parsed.protocol !== "https:"
+            ) {
+                reject(
+                    new Error(
+                        "NguonC HTTP/2 chỉ hỗ trợ HTTPS"
+                    )
+                );
+                return;
+            }
+
+            const client =
+                http2.connect(
+                    parsed.origin
+                );
+
+            let settled = false;
+
+            const finishError =
+                err => {
+
+                    if (settled) return;
+
+                    settled = true;
+
+                    try {
+                        client.close();
+                    } catch (_) {}
+
+                    reject(err);
+                };
+
+            client.on(
+                "error",
+                finishError
+            );
+
+            const headers = {
+
+                ":method":
+                    options.method || "GET",
+
+                ":path":
+                    parsed.pathname +
+                    parsed.search,
+
+                ":authority":
+                    parsed.host,
+
+                "user-agent":
+                    NGUONC_UA,
+
+                "accept":
+                    options.accept ||
+                    "*/*",
+
+                ...(options.headers || {})
+            };
+
+            if (
+                options.referer
+            ) {
+                headers[
+                    "referer"
+                ] =
+                    options.referer;
+            }
+
+            const req =
+                client.request(
+                    headers
+                );
+
+            const chunks = [];
+
+            let responseHeaders = {};
+
+            req.on(
+                "response",
+                h => {
+
+                    responseHeaders =
+                        h;
+
+                }
+            );
+
+            req.on(
+                "data",
+                chunk => {
+
+                    chunks.push(
+                        Buffer.from(
+                            chunk
+                        )
+                    );
+
+                }
+            );
+
+            req.on(
+                "end",
+                () => {
+
+                    if (settled) {
+                        return;
+                    }
+
+                    settled = true;
+
+                    const body =
+                        Buffer.concat(
+                            chunks
+                        );
+
+                    const status =
+                        Number(
+                            responseHeaders[
+                                ":status"
+                            ] || 0
+                        );
+
+                    try {
+                        client.close();
+                    } catch (_) {}
+
+                    resolve({
+                        status,
+                        headers:
+                            responseHeaders,
+                        body
+                    });
+
+                }
+            );
+
+            req.on(
+                "error",
+                finishError
+            );
+
+            if (
+                options.body
+            ) {
+
+                req.write(
+                    options.body
+                );
+
+            }
+
+            req.end();
+
+        }
+    );
+}
+
+
+/* ============================================================
+   DECRYPT BOOTSTRAP AES-GCM
+   ============================================================ */
+
+function nguoncDecryptBootstrap(
+    envelope,
+    apiHref
+) {
+
+    if (
+        envelope?.format !==
+        "aesgcm-v1"
+    ) {
+
+        return envelope;
+
+    }
+
+    const ivHex =
+        String(
+            envelope?.iv || ""
+        );
+
+    const dataB64 =
+        String(
+            envelope?.data || ""
+        );
+
+    if (
+        !/^[0-9a-fA-F]{24}$/.test(
+            ivHex
+        ) ||
+        !dataB64
+    ) {
+
+        throw new Error(
+            "NguonC bootstrap envelope không hợp lệ"
+        );
+
+    }
+
+    const aad =
+        Buffer.from(
+            "stream-bootstrap-v1\n" +
+            apiHref,
+            "utf8"
+        );
+
+    const key =
+        crypto
+            .createHash("sha256")
+            .update(aad)
+            .digest();
+
+    const iv =
+        Buffer.from(
+            ivHex,
+            "hex"
+        );
+
+    const encrypted =
+        Buffer.from(
+            dataB64,
+            "base64"
+        );
+
+    /*
+     * AES-GCM trong Node:
+     *
+     * ciphertext + 16-byte authentication tag
+     */
+
+    if (
+        encrypted.length < 17
+    ) {
+
+        throw new Error(
+            "Bootstrap AES-GCM data quá ngắn"
+        );
+
+    }
+
+    const tag =
+        encrypted.subarray(
+            encrypted.length - 16
+        );
+
+    const ciphertext =
+        encrypted.subarray(
+            0,
+            encrypted.length - 16
+        );
+
+    const decipher =
+        crypto.createDecipheriv(
+            "aes-256-gcm",
+            key,
+            iv
+        );
+
+    decipher.setAAD(
+        aad
+    );
+
+    decipher.setAuthTag(
+        tag
+    );
+
+    const plaintext =
+        Buffer.concat([
+            decipher.update(
+                ciphertext
+            ),
+            decipher.final()
+        ]);
+
+    return JSON.parse(
+        plaintext.toString("utf8")
+    );
+}
+
+
+/* ============================================================
+   DECRYPT ENCRYPTED M3U8
+   #ENC-AESGCM
+   ============================================================ */
+
+function nguoncDecryptM3U8(
+    encryptedContent,
+    videoHash
+) {
+
+    const lines =
+        String(
+            encryptedContent
+        )
+            .trim()
+            .split(/\r?\n/);
+
+    let ivHex = "";
+    let dataLine = "";
+
+    for (
+        const line of lines
+    ) {
+
+        if (
+            line.includes(
+                "#ENC-AESGCM"
+            )
+        ) {
+
+            const match =
+                line.match(
+                    /iv=([0-9a-fA-F]+)/
+                );
+
+            if (match) {
+                ivHex =
+                    match[1];
+            }
+
+        } else if (
+            !line.startsWith("#") &&
+            line.trim()
+        ) {
+
+            dataLine =
+                line.trim();
+
+        }
+
+    }
+
+    if (
+        !ivHex ||
+        !dataLine
+    ) {
+
+        throw new Error(
+            "Không đọc được encrypted NguonC m3u8"
+        );
+
+    }
+
+    /*
+     * key =
+     *
+     * HMAC-SHA256(
+     *     "stream-derive-v1",
+     *     videoHash
+     * )
+     */
+
+    const key =
+        crypto
+            .createHmac(
+                "sha256",
+                Buffer.from(
+                    "stream-derive-v1",
+                    "utf8"
+                )
+            )
+            .update(
+                String(
+                    videoHash
+                ),
+                "utf8"
+            )
+            .digest();
+
+    const iv =
+        Buffer.from(
+            ivHex,
+            "hex"
+        );
+
+    const encrypted =
+        Buffer.from(
+            dataLine,
+            "base64"
+        );
+
+    if (
+        encrypted.length < 17
+    ) {
+
+        throw new Error(
+            "Encrypted m3u8 quá ngắn"
+        );
+
+    }
+
+    const tag =
+        encrypted.subarray(
+            encrypted.length - 16
+        );
+
+    const ciphertext =
+        encrypted.subarray(
+            0,
+            encrypted.length - 16
+        );
+
+    const decipher =
+        crypto.createDecipheriv(
+            "aes-256-gcm",
+            key,
+            iv
+        );
+
+    decipher.setAuthTag(
+        tag
+    );
+
+    const plaintext =
+        Buffer.concat([
+            decipher.update(
+                ciphertext
+            ),
+            decipher.final()
+        ]);
+
+    return plaintext.toString(
+        "utf8"
+    );
+}
+
+
+/* ============================================================
+   RESOLVE NguonC EMBED
+   ============================================================ */
+
+async function resolveNguonCEmbed(
+    embedUrl,
+    movieUrl = ""
+) {
+
+    const embed =
+        new URL(
+            embedUrl
+        );
+
+    const origin =
+        embed.origin;
+
+    /*
+     * ----------------------------------------------------------
+     * 1. LẤY EMBED PAGE BẰNG HTTP/2
+     * ----------------------------------------------------------
+     */
+
+    const page =
+        await nguoncHttp2Request(
+            embedUrl,
+            {
+                method: "GET",
+
+                referer:
+                    movieUrl ||
+                    NGUONC_API,
+
+                accept:
+                    "text/html,application/xhtml+xml"
+            }
+        );
+
+    if (
+        page.status !== 200
+    ) {
+
+        throw new Error(
+            `NguonC embed HTTP ${page.status}`
+        );
+
+    }
+
+    const html =
+        page.body.toString(
+            "utf8"
+        );
+
+    /*
+     * ----------------------------------------------------------
+     * 2. STREAM-BOOTSTRAP
+     * ----------------------------------------------------------
+     */
+
+    const bootstrapMatch =
+        html.match(
+            /<script\s+id=["']stream-bootstrap["'][^>]*>([\s\S]*?)<\/script>/i
+        );
+
+    if (
+        bootstrapMatch
+    ) {
+
+        let bootstrap;
+
+        try {
+
+            bootstrap =
+                JSON.parse(
+                    bootstrapMatch[1]
+                );
+
+        } catch (e) {
+
+            throw new Error(
+                "Không parse được stream-bootstrap"
+            );
+
+        }
+
+        const apiHref =
+            bootstrap?.api;
+
+        if (!apiHref) {
+
+            throw new Error(
+                "NguonC bootstrap không có api"
+            );
+
+        }
+
+        const api =
+            new URL(
+                apiHref,
+                embedUrl
+            );
+
+        if (
+            api.host !==
+            embed.host
+        ) {
+
+            throw new Error(
+                "NguonC bootstrap API khác host"
+            );
+
+        }
+
+        /*
+         * ------------------------------------------------------
+         * 3. VIDEO HASH
+         * ------------------------------------------------------
+         */
+
+        let videoHash = "";
+
+        try {
+
+            videoHash =
+                new URL(
+                    embedUrl
+                ).searchParams.get(
+                    "hash"
+                ) || "";
+
+        } catch (_) {}
+
+        /*
+         * ------------------------------------------------------
+         * 4. MOVIE ORIGIN
+         * ------------------------------------------------------
+         */
+
+        let movieOrigin =
+            "";
+
+        if (
+            movieUrl
+        ) {
+
+            try {
+
+                movieOrigin =
+                    new URL(
+                        movieUrl
+                    ).origin;
+
+            } catch (_) {}
+
+        }
+
+        /*
+         * ------------------------------------------------------
+         * 5. BOOTSTRAP BODY
+         * ------------------------------------------------------
+         */
+
+        const body =
+            JSON.stringify({
+
+                action:
+                    "bootstrap",
+
+                referrer:
+                    String(
+                        movieUrl || ""
+                    ).slice(
+                        0,
+                        4096
+                    ),
+
+                frame_origins:
+                    movieOrigin
+                        ? [
+                            movieOrigin
+                        ]
+                        : [],
+
+                request_grant:
+                    true,
+
+                playlist_format:
+                    "aesgcm-v2",
+
+                pretty_url:
+                    true,
+
+                path_chunks:
+                    true,
+
+                bootstrap_format:
+                    "aesgcm-v1"
+
+            });
+
+        /*
+         * ------------------------------------------------------
+         * 6. POST BOOTSTRAP
+         * ------------------------------------------------------
+         */
+
+        const bootstrapResponse =
+            await nguoncHttp2Request(
+                api.href,
+                {
+
+                    method:
+                        "POST",
+
+                    referer:
+                        embedUrl,
+
+                    headers: {
+
+                        "content-type":
+                            "application/json",
+
+                        "origin":
+                            origin
+
+                    },
+
+                    body
+
+                }
+            );
+
+        if (
+            bootstrapResponse.status !==
+            200
+        ) {
+
+            throw new Error(
+                `NguonC bootstrap HTTP ${bootstrapResponse.status}`
+            );
+
+        }
+
+        let envelope;
+
+        try {
+
+            envelope =
+                JSON.parse(
+                    bootstrapResponse.body.toString(
+                        "utf8"
+                    )
+                );
+
+        } catch (e) {
+
+            throw new Error(
+                "NguonC bootstrap không trả JSON"
+            );
+
+        }
+
+        /*
+         * ------------------------------------------------------
+         * 7. GIẢI MÃ BOOTSTRAP
+         * ------------------------------------------------------
+         */
+
+        const opened =
+            nguoncDecryptBootstrap(
+                envelope,
+                api.href
+            );
+
+        videoHash =
+            opened?.video ||
+            videoHash;
+
+        /*
+         * ------------------------------------------------------
+         * 8. PREISSUED PLAYLIST
+         * ------------------------------------------------------
+         */
+
+        const playlistUrl =
+            opened?.preissued?.playlist;
+
+        if (
+            !playlistUrl
+        ) {
+
+            if (
+                opened?.turnstileEnabled
+            ) {
+
+                throw new Error(
+                    "NguonC yêu cầu Turnstile"
+                );
+
+            }
+
+            throw new Error(
+                "NguonC bootstrap không có playlist"
+            );
+
+        }
+
+        const playlist =
+            new URL(
+                playlistUrl
+            );
+
+        if (
+            playlist.host !==
+            embed.host
+        ) {
+
+            throw new Error(
+                "NguonC playlist khác host"
+            );
+
+        }
+
+        /*
+         * ------------------------------------------------------
+         * 9. LẤY PLAYLIST
+         * ------------------------------------------------------
+         */
+
+        const playlistResponse =
+            await nguoncHttp2Request(
+                playlist.href,
+                {
+
+                    method:
+                        "GET",
+
+                    referer:
+                        embedUrl
+
+                }
+            );
+
+        if (
+            playlistResponse.status !==
+            200
+        ) {
+
+            throw new Error(
+                `NguonC playlist HTTP ${playlistResponse.status}`
+            );
+
+        }
+
+        let playlistText =
+            playlistResponse.body.toString(
+                "utf8"
+            );
+
+        /*
+         * ------------------------------------------------------
+         * 10. AES-GCM PLAYLIST
+         * ------------------------------------------------------
+         */
+
+        if (
+            playlistText.includes(
+                "#ENC-AESGCM"
+            )
+        ) {
+
+            playlistText =
+                nguoncDecryptM3U8(
+                    playlistText,
+                    videoHash
+                );
+
+        }
+
+        return {
+            playlist:
+                playlistText,
+
+            sourceUrl:
+                playlist.href,
+
+            referer:
+                embedUrl,
+
+            videoHash
+        };
+
+    }
+
+    /*
+     * ==========================================================
+     * LEGACY NguonC
+     * data-obf
+     * ==========================================================
+     */
+
+    const obf =
+        html.match(
+            /data-obf=["']([^"']+)["']/i
+        );
+
+    if (
+        !obf?.[1]
+    ) {
+
+        throw new Error(
+            "NguonC không có stream-bootstrap hoặc data-obf"
+        );
+
+    }
+
+    let streamData;
+
+    try {
+
+        streamData =
+            JSON.parse(
+                Buffer.from(
+                    obf[1],
+                    "base64"
+                ).toString(
+                    "utf8"
+                )
+            );
+
+    } catch (e) {
+
+        throw new Error(
+            "Không decode được NguonC data-obf"
+        );
+
+    }
+
+    const sub =
+        streamData?.sUb;
+
+    const videoHash =
+        streamData?.hD ||
+        "";
+
+    if (
+        !sub
+    ) {
+
+        throw new Error(
+            "NguonC data-obf không có sUb"
+        );
+
+    }
+
+    const playlistUrl =
+        origin +
+        "/" +
+        sub +
+        ".m3u8";
+
+    const playlistResponse =
+        await nguoncHttp2Request(
+            playlistUrl,
+            {
+
+                method:
+                    "GET",
+
+                referer:
+                    embedUrl
+
+            }
+        );
+
+    if (
+        playlistResponse.status !==
+        200
+    ) {
+
+        throw new Error(
+            `NguonC legacy playlist HTTP ${playlistResponse.status}`
+        );
+
+    }
+
+    let playlistText =
+        playlistResponse.body.toString(
+            "utf8"
+        );
+
+    if (
+        playlistText.includes(
+            "#ENC-AESGCM"
+        )
+    ) {
+
+        playlistText =
+            nguoncDecryptM3U8(
+                playlistText,
+                videoHash
+            );
+
+    }
+
+    return {
+
+        playlist:
+            playlistText,
+
+        sourceUrl:
+            playlistUrl,
+
+        referer:
+            embedUrl,
+
+        videoHash
+
+    };
+}
+
+
+/* ============================================================
+   NGUONC HLS PROXY
+   ============================================================ */
+
+function encodeProxyUrl(
+    url,
+    referer
+) {
+
+    const payload =
+        JSON.stringify({
+            url,
+            referer
+        });
+
+    return Buffer
+        .from(payload)
+        .toString("base64url");
+}
+
+
+function decodeProxyUrl(
+    value
+) {
+
+    const json =
+        Buffer
+            .from(
+                value,
+                "base64url"
+            )
+            .toString("utf8");
+
+    return JSON.parse(
+        json
+    );
+}
+
+
+/* ============================================================
+   PROXY PLAYLIST / SEGMENT
+   ============================================================ */
+
+async function proxyNguonCRequest(
+    targetUrl,
+    referer
+) {
+
+    const parsed =
+        new URL(
+            targetUrl
+        );
+
+    /*
+     * NguonC CDN có thể dùng HTTP/2.
+     */
+
+    if (
+        parsed.protocol ===
+        "https:"
+    ) {
+
+        return nguoncHttp2Request(
+            targetUrl,
+            {
+                method:
+                    "GET",
+
+                referer:
+                    referer ||
+
+                    NGUONC_API
+            }
+        );
+
+    }
+
+    const response =
+        await axios.get(
+            targetUrl,
+            {
+
+                responseType:
+                    "arraybuffer",
+
+                timeout:
+                    30000,
+
+                headers: {
+
+                    "User-Agent":
+                        NGUONC_UA,
+
+                    "Referer":
+                        referer ||
+                        NGUONC_API
+
+                }
+
+            }
+        );
+
+    return {
+
+        status:
+            response.status,
+
+        headers:
+            response.headers,
+
+        body:
+            Buffer.from(
+                response.data
+            )
+
+    };
+}
+
+
+/* ============================================================
+   REWRITE M3U8
+   ============================================================ */
+
+function rewriteNguonCPlaylist(
+    playlist,
+    playlistUrl,
+    referer
+) {
+
+    const lines =
+        String(
+            playlist
+        )
+            .split(/\r?\n/);
+
+    const rewritten =
+        lines.map(
+            line => {
+
+                const trimmed =
+                    line.trim();
+
+                if (
+                    !trimmed ||
+                    trimmed.startsWith("#")
+                ) {
+
+                    /*
+                     * Xử lý URI trong:
+                     *
+                     * #EXT-X-KEY:URI="..."
+                     *
+                     * hoặc các tag tương tự.
+                     */
+
+                    return line.replace(
+                        /URI="([^"]+)"/g,
+                        (_, uri) => {
+
+                            try {
+
+                                const absolute =
+                                    new URL(
+                                        uri,
+                                        playlistUrl
+                                    ).href;
+
+                                const token =
+                                    encodeProxyUrl(
+                                        absolute,
+                                        referer
+                                    );
+
+                                return `URI="/nguonc/hls/${token}"`;
+
+                            } catch (_) {
+
+                                return `URI="${uri}"`;
+
+                            }
+
+                        }
+                    );
+
+                }
+
+                try {
+
+                    const absolute =
+                        new URL(
+                            trimmed,
+                            playlistUrl
+                        ).href;
+
+                    const token =
+                        encodeProxyUrl(
+                            absolute,
+                            referer
+                        );
+
+                    return (
+                        "/nguonc/hls/" +
+                        token
+                    );
+
+                } catch (_) {
+
+                    return line;
+
+                }
+
+            }
+        );
+
+    return rewritten.join(
+        "\n"
+    );
+}
+
 
 /* ============================================================
    STREAM HANDLER
@@ -3157,44 +4440,444 @@ builder.defineStreamHandler(async (args) => {
 
 
 /* ============================================================
-   VERCEL HANDLER
+   EXPRESS ROUTER
    ============================================================ */
 
-const router =
+const addonRouter =
     getRouter(
         builder.getInterface()
     );
 
-module.exports = function handler(req, res) {
+const app =
+    express();
 
-    return router(
-        req,
-        res,
-        function next(err) {
+/* ============================================================
+   CORS
+   ============================================================ */
 
-            if (err) {
+app.use(
+    (req, res, next) => {
 
-                console.error(
-                    "[ROUTER ERROR]",
-                    err
+        res.setHeader(
+            "Access-Control-Allow-Origin",
+            "*"
+        );
+
+        res.setHeader(
+            "Access-Control-Allow-Headers",
+            "*"
+        );
+
+        next();
+
+    }
+);
+
+
+/* ============================================================
+   NGUONC PLAYLIST
+   ============================================================ */
+
+app.get(
+    "/nguonc/playlist/:token",
+    async (req, res) => {
+
+        try {
+
+            const token =
+                String(
+                    req.params.token || ""
                 );
 
-                if (
-                    !res.headersSent
-                ) {
+            if (!token) {
+                res
+                    .status(400)
+                    .send(
+                        "Missing NguonC token"
+                    );
+                return;
+            }
 
-                    res.statusCode =
-                        500;
+            /*
+             * Decode token
+             */
+            let payload;
 
-                    res.end(
-                        "Internal Server Error"
+            try {
+
+                payload =
+                    JSON.parse(
+                        Buffer
+                            .from(
+                                token,
+                                "base64url"
+                            )
+                            .toString("utf8")
                     );
 
-                }
+            } catch (e) {
+
+                res
+                    .status(400)
+                    .send(
+                        "Invalid NguonC token"
+                    );
+
+                return;
+            }
+
+            const embedUrl =
+                String(
+                    payload?.embedUrl || ""
+                );
+
+            const movieUrl =
+                String(
+                    payload?.movieUrl || ""
+                );
+
+            const created =
+                Number(
+                    payload?.created || 0
+                );
+
+            if (
+                !embedUrl ||
+                !created
+            ) {
+
+                res
+                    .status(400)
+                    .send(
+                        "Invalid NguonC payload"
+                    );
+
+                return;
+            }
+
+            /*
+             * Token lifetime: 30 minutes
+             */
+            if (
+                Date.now() - created >
+                30 * 60 * 1000
+            ) {
+
+                res
+                    .status(410)
+                    .send(
+                        "NguonC token expired"
+                    );
+
+                return;
+            }
+
+            console.log(
+                "[NGUONC PLAYLIST] resolving:",
+                embedUrl
+            );
+
+            /*
+             * Resolve embed -> real playlist
+             */
+            const resolved =
+                await resolveNguonCEmbed(
+                    embedUrl,
+                    movieUrl
+                );
+
+            if (
+                !resolved ||
+                !resolved.playlist
+            ) {
+
+                throw new Error(
+                    "NguonC resolver returned empty playlist"
+                );
+            }
+
+            /*
+             * Rewrite all HLS URLs so that
+             * Stremio can access them through
+             * our Vercel proxy.
+             */
+            const rewritten =
+                rewriteNguonCPlaylist(
+                    resolved.playlist,
+                    resolved.sourceUrl,
+                    resolved.referer
+                );
+
+            res.setHeader(
+                "Content-Type",
+                "application/vnd.apple.mpegurl"
+            );
+
+            res.setHeader(
+                "Cache-Control",
+                "no-store, no-cache, must-revalidate"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+            res.send(
+                rewritten
+            );
+
+        } catch (e) {
+
+            console.error(
+                "[NGUONC PLAYLIST ERROR]",
+                e?.message || e
+            );
+
+            if (!res.headersSent) {
+
+                res
+                    .status(500)
+                    .send(
+                        "NguonC playlist error: " +
+                        (
+                            e?.message ||
+                            "unknown error"
+                        )
+                    );
+            }
+        }
+    }
+);
+
+
+/* ============================================================
+   NGUONC HLS SEGMENT / KEY / PLAYLIST
+   ============================================================ */
+
+app.get(
+    "/nguonc/hls/:token",
+    async (req, res) => {
+
+        try {
+
+            const payload =
+                decodeProxyUrl(
+                    req.params.token
+                );
+
+            const targetUrl =
+                payload?.url;
+
+            const referer =
+                payload?.referer ||
+                NGUONC_API;
+
+            if (
+                !targetUrl
+            ) {
+
+                res.status(
+                    400
+                ).send(
+                    "Missing target URL"
+                );
+
+                return;
+
+            }
+
+            /*
+             * Chỉ cho proxy HTTPS.
+             */
+
+            const parsed =
+                new URL(
+                    targetUrl
+                );
+
+            if (
+                parsed.protocol !==
+                "https:"
+            ) {
+
+                res.status(
+                    400
+                ).send(
+                    "Invalid protocol"
+                );
+
+                return;
+
+            }
+
+            const response =
+                await proxyNguonCRequest(
+                    targetUrl,
+                    referer
+                );
+
+            if (
+                response.status < 200 ||
+                response.status >= 400
+            ) {
+
+                res.status(
+                    response.status ||
+                    502
+                ).send(
+                    "NguonC upstream error"
+                );
+
+                return;
+
+            }
+
+            /*
+             * Nếu upstream trả m3u8,
+             * tiếp tục rewrite.
+             */
+
+            const contentType =
+                String(
+                    response.headers?.[
+                        "content-type"
+                    ] ||
+                    response.headers?.[
+                        "Content-Type"
+                    ] ||
+                    ""
+                ).toLowerCase();
+
+            const body =
+                response.body;
+
+            const looksLikeM3U8 =
+                contentType.includes(
+                    "mpegurl"
+                ) ||
+                contentType.includes(
+                    "m3u8"
+                ) ||
+                body
+                    .toString(
+                        "utf8",
+                        0,
+                        Math.min(
+                            body.length,
+                            32
+                        )
+                    )
+                    .includes(
+                        "#EXTM3U"
+                    );
+
+            if (
+                looksLikeM3U8
+            ) {
+
+                const playlistText =
+                    body.toString(
+                        "utf8"
+                    );
+
+                const rewritten =
+                    rewriteNguonCPlaylist(
+                        playlistText,
+                        targetUrl,
+                        referer
+                    );
+
+                res.setHeader(
+                    "Content-Type",
+                    "application/vnd.apple.mpegurl"
+                );
+
+                res.setHeader(
+                    "Cache-Control",
+                    "no-store"
+                );
+
+                res.send(
+                    rewritten
+                );
+
+                return;
+
+            }
+
+            /*
+             * Segment / key / binary
+             */
+
+            if (
+                contentType
+            ) {
+
+                res.setHeader(
+                    "Content-Type",
+                    contentType
+                );
+
+            }
+
+            res.setHeader(
+                "Cache-Control",
+                "no-store"
+            );
+
+            res.send(
+                body
+            );
+
+        } catch (e) {
+
+            console.error(
+                "[NGUONC HLS ERROR]",
+                e
+            );
+
+            if (
+                !res.headersSent
+            ) {
+
+                res.status(
+                    500
+                ).send(
+                    "NguonC HLS proxy error"
+                );
 
             }
 
         }
-    );
 
-};
+    }
+);
+
+
+/* ============================================================
+   STREMIO ADDON ROUTES
+   ============================================================ */
+
+app.use(
+    "/",
+    addonRouter
+);
+
+
+/* ============================================================
+   EXPORT
+   ============================================================ */
+
+module.exports =
+    function handler(
+        req,
+        res
+    ) {
+
+        return app(
+            req,
+            res
+        );
+
+    };
