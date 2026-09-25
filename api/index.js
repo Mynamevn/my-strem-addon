@@ -5380,6 +5380,315 @@ app.get(
 );
 
 /* ============================================================
+   VSMOV MASTER PLAYLIST INSPECT
+   KIỂM TRA:
+   - EXT-X-MEDIA
+   - AUDIO
+   - VIDEO
+   - SUBTITLES
+   - PNG
+   - MP4
+   - CODECS
+   ============================================================ */
+
+app.get(
+    "/nguonc/vsmov-master-inspect",
+    async (req, res) => {
+
+        try {
+
+            const masterUrl =
+                String(
+                    req.query.url || ""
+                ).trim();
+
+            if (
+                !masterUrl ||
+                !/^https?:\/\//i.test(masterUrl)
+            ) {
+
+                return res.status(400).json({
+                    success: false,
+                    error:
+                        "Thiếu ?url=https://..."
+                });
+
+            }
+
+            console.log(
+                "[VSMOV MASTER INSPECT] URL:",
+                masterUrl
+            );
+
+            const response =
+                await axios.get(
+                    masterUrl,
+                    {
+                        timeout: 15000,
+
+                        headers: {
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "application/vnd.apple.mpegurl,application/x-mpegURL,*/*",
+
+                            "Referer":
+                                "https://vsmov.com/"
+
+                        },
+
+                        validateStatus:
+                            () => true
+
+                    }
+                );
+
+            const playlist =
+                String(
+                    response.data || ""
+                );
+
+            const lines =
+                playlist
+                    .split(/\r?\n/)
+                    .map(
+                        line => line.trim()
+                    )
+                    .filter(
+                        line => line.length > 0
+                    );
+
+            const mediaLines =
+                lines.filter(
+                    line =>
+                        line.startsWith(
+                            "#EXT-X-MEDIA:"
+                        )
+                );
+
+            const streamInfLines =
+                lines.filter(
+                    line =>
+                        line.startsWith(
+                            "#EXT-X-STREAM-INF:"
+                        )
+                );
+
+            const segmentLines =
+                lines.filter(
+                    line =>
+                        !line.startsWith("#")
+                );
+
+            const audioLines =
+                mediaLines.filter(
+                    line =>
+                        /TYPE=AUDIO/i.test(
+                            line
+                        )
+                );
+
+            const subtitleLines =
+                mediaLines.filter(
+                    line =>
+                        /TYPE=SUBTITLES/i.test(
+                            line
+                        )
+                );
+
+            const videoLines =
+                streamInfLines.filter(
+                    line =>
+                        /VIDEO|RESOLUTION|BANDWIDTH|CODECS/i.test(
+                            line
+                        )
+                );
+
+            const pngSegments =
+                segmentLines.filter(
+                    line =>
+                        /\.png(?:\?|$)/i.test(
+                            line
+                        )
+                );
+
+            const mp4Segments =
+                segmentLines.filter(
+                    line =>
+                        /\.mp4(?:\?|$)/i.test(
+                            line
+                        )
+                );
+
+            const m4aSegments =
+                segmentLines.filter(
+                    line =>
+                        /\.m4a(?:\?|$)/i.test(
+                            line
+                        )
+                );
+
+            const aacSegments =
+                segmentLines.filter(
+                    line =>
+                        /\.aac(?:\?|$)/i.test(
+                            line
+                        )
+                );
+
+            const tsSegments =
+                segmentLines.filter(
+                    line =>
+                        /\.ts(?:\?|$)/i.test(
+                            line
+                        )
+                );
+
+            const mpegSegments =
+                segmentLines.filter(
+                    line =>
+                        /\.m3u8(?:\?|$)/i.test(
+                            line
+                        )
+                );
+
+            const result = {
+
+                success: true,
+
+                status:
+                    response.status,
+
+                contentType:
+                    response.headers[
+                        "content-type"
+                    ] || null,
+
+                playlistLength:
+                    playlist.length,
+
+                totalLines:
+                    lines.length,
+
+                hasExtXMedia:
+                    mediaLines.length > 0,
+
+                hasAudio:
+                    audioLines.length > 0,
+
+                hasSubtitles:
+                    subtitleLines.length > 0,
+
+                hasVideoVariants:
+                    streamInfLines.length > 0,
+
+                mediaLines:
+                    mediaLines.slice(
+                        0,
+                        100
+                    ),
+
+                audioLines:
+                    audioLines.slice(
+                        0,
+                        100
+                    ),
+
+                subtitleLines:
+                    subtitleLines.slice(
+                        0,
+                        100
+                    ),
+
+                streamInfLines:
+                    streamInfLines.slice(
+                        0,
+                        100
+                    ),
+
+                videoLines:
+                    videoLines.slice(
+                        0,
+                        100
+                    ),
+
+                segmentStats: {
+
+                    total:
+                        segmentLines.length,
+
+                    png:
+                        pngSegments.length,
+
+                    mp4:
+                        mp4Segments.length,
+
+                    m4a:
+                        m4aSegments.length,
+
+                    aac:
+                        aacSegments.length,
+
+                    ts:
+                        tsSegments.length,
+
+                    m3u8:
+                        mpegSegments.length
+
+                },
+
+                firstSegments:
+                    segmentLines.slice(
+                        0,
+                        10
+                    ),
+
+                lastSegments:
+                    segmentLines.slice(
+                        -10
+                    )
+
+            };
+
+            console.log(
+                "[VSMOV MASTER INSPECT] RESULT:",
+                JSON.stringify(
+                    result
+                )
+            );
+
+            return res.json(
+                result
+            );
+
+        } catch (error) {
+
+            console.log(
+                "[VSMOV MASTER INSPECT ERROR]",
+                error?.message ||
+                error
+            );
+
+            return res.status(
+                500
+            ).json({
+
+                success: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            });
+
+        }
+
+    }
+);
+
+/* ============================================================
    STREMIO ADDON ROUTES
    ============================================================ */
 
