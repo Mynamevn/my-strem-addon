@@ -464,17 +464,17 @@ async function fetchNguonC(
 
     const headers = {
 
-        "User-Agent":
-            NGUONC_UA,
+    "User-Agent":
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
 
-        "Accept":
-            "application/json, text/plain, */*",
+    "Accept":
+        "application/json, text/plain, */*",
 
-        "Referer":
-            "https://nguonc.com/",
+    "Referer":
+        "https://nguonc.com/",
 
-        "Origin":
-            "https://nguonc.com"
+    "Origin":
+        "https://nguonc.com"
 
     };
 
