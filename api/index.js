@@ -567,52 +567,56 @@ async function fetchNguonC(
         );
 
     /* --------------------------------------------------------
-   NGUONC PAGE TEST
+   NGUONC EMBED ACCESS TEST
    -------------------------------------------------------- */
 
 try {
 
-    const testSlug =
-        "am-anh-2026";
-
-    const testUrl =
-        NGUONC_API +
-        "/phim/" +
-        testSlug;
+    const testEmbed =
+        "https://embed14.streamc.xyz/embed.php?hash=4681d86705ffd80ed1e5a5d636d06faf";
 
     console.log(
-        "[NGUONC PAGE TEST] URL:",
-        testUrl
+        "[NGUONC EMBED TEST] URL:",
+        testEmbed
     );
 
     const testResponse =
         await axios.get(
-            testUrl,
+            testEmbed,
             {
                 timeout: 15000,
-                headers
+                headers: {
+                    "User-Agent":
+                        NGUONC_UA,
+                    "Accept":
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Referer":
+                        "https://phim.nguonc.com/",
+                    "Origin":
+                        "https://phim.nguonc.com"
+                }
             }
         );
 
     console.log(
-        "[NGUONC PAGE TEST] HTTP:",
+        "[NGUONC EMBED TEST] HTTP:",
         testResponse.status
     );
 
     console.log(
-        "[NGUONC PAGE TEST] Content-Type:",
+        "[NGUONC EMBED TEST] Content-Type:",
         testResponse.headers?.["content-type"]
     );
 
     console.log(
-        "[NGUONC PAGE TEST] HTML LENGTH:",
+        "[NGUONC EMBED TEST] HTML LENGTH:",
         typeof testResponse.data === "string"
             ? testResponse.data.length
             : 0
     );
 
     console.log(
-        "[NGUONC PAGE TEST] HTML:",
+        "[NGUONC EMBED TEST] HTML:",
         typeof testResponse.data === "string"
             ? testResponse.data.slice(0, 5000)
             : JSON.stringify(
@@ -623,17 +627,17 @@ try {
 } catch (e) {
 
     console.log(
-        "[NGUONC PAGE TEST] ERROR:",
+        "[NGUONC EMBED TEST] ERROR:",
         e?.message || e
     );
 
     console.log(
-        "[NGUONC PAGE TEST] STATUS:",
+        "[NGUONC EMBED TEST] STATUS:",
         e?.response?.status || "N/A"
     );
 
     console.log(
-        "[NGUONC PAGE TEST] RESPONSE:",
+        "[NGUONC EMBED TEST] RESPONSE:",
         typeof e?.response?.data === "string"
             ? e.response.data.slice(0, 3000)
             : JSON.stringify(
@@ -642,7 +646,7 @@ try {
     );
 
     console.log(
-        "[NGUONC PAGE TEST] HEADERS:",
+        "[NGUONC EMBED TEST] HEADERS:",
         JSON.stringify(
             e?.response?.headers || {}
         )
