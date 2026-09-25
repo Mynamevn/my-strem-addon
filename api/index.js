@@ -2022,53 +2022,58 @@ async function fetchVSMov(movieName) {
                 }
 
                 // =================================================
-                // B. EMBED FALLBACK
-                // =================================================
+// B. EMBED FALLBACK
+// =================================================
 
-                const embed =
-                    String(
-                        ep?.link_embed ||
-                        ep?.embed ||
-                        ""
-                    ).trim();
+const embed =
+    String(
+        ep?.link_embed ||
+        ep?.embed ||
+        ""
+    ).trim();
 
-                if (
-                    embed &&
-                    /^https?:\/\//i.test(embed)
-                ) {
+if (
+    embed &&
+    /^https?:\/\//i.test(embed)
+) {
 
-                    console.log(
-                        "[VSMOV] EMBED FALLBACK:",
-                        serverName,
-                        episodeName
-                    );
+    console.log(
+        "[VSMOV] EMBED FALLBACK:",
+        serverName,
+        episodeName
+    );
 
-                    console.log(
-                        "[VSMOV] EMBED:",
-                        embed
-                    );
+    console.log(
+        "[VSMOV] EMBED:",
+        embed
+    );
 
-                    streams.push({
+    const widgetUrl =
+        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
+        encodeURIComponent(embed);
 
-                        name:
-                            "🌐 [VSMov Embed] " +
-                            serverName,
+    console.log(
+        "[VSMOV] WIDGET:",
+        widgetUrl
+    );
 
-                        title:
-                            episodeName +
-                            " - " +
-                            serverName,
+    streams.push({
+        name:
+            "▶️ [VSMov] " +
+            serverName,
 
-                        externalUrl:
-                            embed
+        title:
+            episodeName ||
+            "Full",
 
-                    });
+        widgetPlayer:
+            widgetUrl,
 
-                }
-
-            }
-
-        }
+        widgetPlayerStates: [
+            "replaceplayer"
+        ]
+    });
+}
 
         // ====================================================
         // 10. FALLBACK ĐÚNG TRANG PHIM
@@ -5692,11 +5697,169 @@ app.get(
    STREMIO ADDON ROUTES
    ============================================================ */
 
+app.get("/vsmov-player", (req, res) => {
+    const targetUrl = req.query.url;
+
+    if (!targetUrl) {
+        return res.status(400).send("Missing VSMov URL");
+    }
+
+    let parsedUrl;
+
+    try {
+        parsedUrl = new URL(targetUrl);
+    } catch (error) {
+        return res.status(400).send("Invalid URL");
+    }
+
+    // Chỉ cho phép nhúng player VSMov
+    if (parsedUrl.hostname !== "v1.streamvsmov.com") {
+        return res.status(403).send("Host not allowed");
+    }
+
+    const iframeUrl = parsedUrl.href;
+
+    console.log(
+        "[VSMOV PLAYER] iframe:",
+        iframeUrl
+    );
+
+    res.setHeader(
+        "Content-Type",
+        "text/html; charset=utf-8"
+    );
+
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>VSMov Player</title>
+
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+<iframe
+    src="${iframeUrl}"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+    referrerpolicy="no-referrer">
+</iframe>
+
+</body>
+</html>
+    `);
+});
+
 app.use(
     "/",
     addonRouter
 );
 
+// ================================
+// VSMOV INTERNAL PLAYER
+// ================================
+
+app.get("/vsmov-player", (req, res) => {
+    const targetUrl = req.query.url;
+
+    if (!targetUrl) {
+        return res.status(400).send("Missing VSMov URL");
+    }
+
+    let parsedUrl;
+
+    try {
+        parsedUrl = new URL(targetUrl);
+    } catch (error) {
+        return res.status(400).send("Invalid URL");
+    }
+
+    if (parsedUrl.hostname !== "v1.streamvsmov.com") {
+        return res.status(403).send("Host not allowed");
+    }
+
+    const iframeUrl = parsedUrl.href;
+
+    res.setHeader(
+        "Content-Type",
+        "text/html; charset=utf-8"
+    );
+
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>VSMov Player</title>
+
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+<iframe
+    src="${iframeUrl}"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+    referrerpolicy="no-referrer">
+</iframe>
+
+</body>
+</html>
+    `);
+});
+
+app.use(
+    "/",
+    addonRouter
+);
 
 /* ============================================================
    EXPORT
