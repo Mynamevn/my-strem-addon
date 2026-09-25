@@ -5119,6 +5119,267 @@ app.get(
 );
 
 /* ============================================================
+   VSMOV ORIGIN.JS INSPECT
+   ============================================================ */
+
+app.get(
+    "/nguonc/vsmov-origin-inspect",
+    async (req, res) => {
+
+        try {
+
+            const jsUrl =
+                String(
+                    req.query.url || ""
+                ).trim();
+
+            if (
+                !jsUrl ||
+                !/^https?:\/\//i.test(jsUrl)
+            ) {
+
+                return res.status(400).json({
+                    success: false,
+                    error:
+                        "Thiếu ?url=https://..."
+                });
+
+            }
+
+            console.log(
+                "[VSMOV ORIGIN INSPECT] URL:",
+                jsUrl
+            );
+
+            const response =
+                await axios.get(
+                    jsUrl,
+                    {
+                        timeout: 15000,
+
+                        headers: {
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "*/*",
+
+                            "Referer":
+                                "https://vsmov.com/"
+
+                        },
+
+                        validateStatus:
+                            () => true
+
+                    }
+                );
+
+            const js =
+                String(
+                    response.data || ""
+                );
+
+            /*
+             * Tìm tất cả URL xuất hiện trong JS
+             */
+
+            const allUrls = [];
+
+            const urlRegex =
+                /https?:\/\/[^\s"'`<>\\]+/gi;
+
+            const matches =
+                js.match(
+                    urlRegex
+                ) || [];
+
+            matches.forEach(
+                url => {
+
+                    const clean =
+                        url
+                            .replace(
+                                /[),;]+$/,
+                                ""
+                            );
+
+                    if (
+                        !allUrls.includes(
+                            clean
+                        )
+                    ) {
+
+                        allUrls.push(
+                            clean
+                        );
+
+                    }
+
+                }
+            );
+
+            /*
+             * Tìm những dòng đáng chú ý
+             */
+
+            const interestingLines =
+                js
+                    .split(/\r?\n/)
+                    .filter(
+                        line =>
+                            /audio|sound|mp3|m4a|aac|m3u8|mp4|media|video|source|stream|playlist|hls|jwplayer|fetch\(|axios|XMLHttpRequest|ajax|segment|png/i.test(
+                                line
+                            )
+                    )
+                    .slice(
+                        0,
+                        300
+                    );
+
+            /*
+             * Tìm đường dẫn tương đối
+             */
+
+            const relativeUrls = [];
+
+            const relativeRegex =
+                /["'`](\/[^"'`]+)["'`]/g;
+
+            let match;
+
+            while (
+                (
+                    match =
+                        relativeRegex.exec(js)
+                ) !== null
+            ) {
+
+                const path =
+                    match[1];
+
+                if (
+                    !relativeUrls.includes(
+                        path
+                    )
+                ) {
+
+                    relativeUrls.push(
+                        path
+                    );
+
+                }
+
+            }
+
+            /*
+             * Tìm tên file JS khác
+             */
+
+            const jsFiles = [];
+
+            const jsRegex =
+                /["'`]([^"'`]+\.js(?:\?[^"'`]*)?)["'`]/gi;
+
+            while (
+                (
+                    match =
+                        jsRegex.exec(js)
+                ) !== null
+            ) {
+
+                const file =
+                    match[1];
+
+                if (
+                    !jsFiles.includes(
+                        file
+                    )
+                ) {
+
+                    jsFiles.push(
+                        file
+                    );
+
+                }
+
+            }
+
+            const result = {
+
+                success: true,
+
+                status:
+                    response.status,
+
+                contentType:
+                    response.headers[
+                        "content-type"
+                    ] || null,
+
+                jsLength:
+                    js.length,
+
+                jsUrl:
+
+                    jsUrl,
+
+                allUrls:
+
+                    allUrls,
+
+                relativeUrls:
+
+                    relativeUrls,
+
+                jsFiles:
+
+                    jsFiles,
+
+                interestingLines:
+
+                    interestingLines
+
+            };
+
+            console.log(
+                "[VSMOV ORIGIN INSPECT] RESULT:",
+                JSON.stringify(
+                    result
+                )
+            );
+
+            return res.json(
+                result
+            );
+
+        } catch (error) {
+
+            console.log(
+                "[VSMOV ORIGIN INSPECT ERROR]",
+                error?.message ||
+                error
+            );
+
+            return res.status(
+                500
+            ).json({
+
+                success: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            });
+
+        }
+
+    }
+);
+
+/* ============================================================
    STREMIO ADDON ROUTES
    ============================================================ */
 
