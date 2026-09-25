@@ -1485,159 +1485,12 @@ async function fetchKKPhim(movieName) {
 
 
 /* ============================================================
-   TEST VSMOV HLS / PNG
-   ============================================================ */
-
-async function testVsmovHls() {
-
-    const masterUrl =
-        "https://v9.streamvsmov.com/stream/a672c032-832c-4395-ba2b-ec64ead7c9d5/master.m3u8";
-
-    const pngUrl =
-        "https://p25.streamvsmov.com/file/ZnVja3lvdWZ1Y2t5b3U/tiktok/a672c032-832c-4395-ba2b-ec64ead7c9d5/file-tiktok_1.png";
-
-    const headers = {
-        "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-        "Accept":
-            "*/*",
-
-        "Referer":
-            "https://v9.streamvsmov.com/"
-    };
-
-    try {
-
-        console.log("");
-        console.log("============================================================");
-        console.log("[VSMOV TEST] MASTER M3U8");
-        console.log("============================================================");
-
-        const master = await axios.get(masterUrl, {
-            headers,
-            timeout: 15000,
-            responseType: "text",
-            validateStatus: () => true
-        });
-
-        console.log("[VSMOV TEST] Status:", master.status);
-
-        console.log(
-            "[VSMOV TEST] Content-Type:",
-            master.headers["content-type"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Content-Length:",
-            master.headers["content-length"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Content-Encoding:",
-            master.headers["content-encoding"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Accept-Ranges:",
-            master.headers["accept-ranges"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Content-Range:",
-            master.headers["content-range"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Body length:",
-            typeof master.data === "string"
-                ? master.data.length
-                : "NOT_STRING"
-        );
-
-        console.log("");
-        console.log("============================================================");
-        console.log("[VSMOV TEST] FIRST PNG SEGMENT");
-        console.log("============================================================");
-
-        const png = await axios.get(pngUrl, {
-            headers,
-            timeout: 15000,
-            responseType: "arraybuffer",
-            validateStatus: () => true
-        });
-
-        console.log("[VSMOV TEST] Status:", png.status);
-
-        console.log(
-            "[VSMOV TEST] Content-Type:",
-            png.headers["content-type"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Content-Length:",
-            png.headers["content-length"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Content-Encoding:",
-            png.headers["content-encoding"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Accept-Ranges:",
-            png.headers["accept-ranges"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Content-Range:",
-            png.headers["content-range"]
-        );
-
-        console.log(
-            "[VSMOV TEST] Bytes received:",
-            png.data
-                ? Buffer.byteLength(png.data)
-                : 0
-        );
-
-        console.log("");
-        console.log("============================================================");
-        console.log("[VSMOV TEST] DONE");
-        console.log("============================================================");
-        console.log("");
-
-    } catch (error) {
-
-        console.error(
-            "[VSMOV TEST] ERROR:",
-            error.message
-        );
-
-        if (error.response) {
-
-            console.error(
-                "[VSMOV TEST] HTTP STATUS:",
-                error.response.status
-            );
-
-            console.error(
-                "[VSMOV TEST] HEADERS:",
-                error.response.headers
-            );
-        }
-    }
-}
-
-testVsmovHls();
-
-/* ============================================================
    VSMOV API
    SEARCH API
    DETAIL API
-   DIRECT M3U8
-   EMBED -> RESOLVE M3U8
-   SIGNED / UNSIGNED STREAM
+   ƯU TIÊN LINK_EMBED
+   GIỮ CẢ VIETSUB / 4K
+   FALLBACK M3U8 NẾU KHÔNG CÓ EMBED
    FALLBACK ĐÚNG TRANG PHIM
    ============================================================ */
 
@@ -1652,17 +1505,22 @@ async function fetchVSMov(movieName) {
         console.log("[VSMOV] Search:", movieName);
 
         if (!movieName) {
-            console.log("[VSMOV] Movie name rỗng");
-            return streams;
-        }
 
+            console.log(
+                "[VSMOV] Movie name rỗng"
+            );
+
+            return streams;
+
+        }
 
         // ====================================================
         // 1. TITLE VARIANTS
         // ====================================================
 
         const original =
-            String(movieName || "").trim();
+            String(movieName || "")
+                .trim();
 
         const variants = [];
 
@@ -1678,7 +1536,10 @@ async function fetchVSMov(movieName) {
             const key =
                 clean
                     .normalize("NFD")
-                    .replace(/[\u0300-\u036f]/g, "")
+                    .replace(
+                        /[\u0300-\u036f]/g,
+                        ""
+                    )
                     .toLowerCase();
 
             if (
@@ -1689,26 +1550,22 @@ async function fetchVSMov(movieName) {
 
                 variants.push({
                     text: clean,
-                    key
+                    key: key
                 });
 
             }
 
         }
 
-
         addVariant(original);
-
 
         original
             .split("/")
             .forEach(addVariant);
 
-
         original
             .split("|")
             .forEach(addVariant);
-
 
         original
             .split(/\s+-\s+/)
@@ -1724,18 +1581,17 @@ async function fetchVSMov(movieName) {
 
             });
 
-
         const titleVariants =
             variants.map(
                 x => x.text
             );
 
-
         console.log(
             "[VSMOV] Title variants:",
-            JSON.stringify(titleVariants)
+            JSON.stringify(
+                titleVariants
+            )
         );
-
 
         // ====================================================
         // 2. NORMALIZE TITLE
@@ -1766,13 +1622,11 @@ async function fetchVSMov(movieName) {
 
         }
 
-
         // ====================================================
         // 3. API SEARCH
         // ====================================================
 
         const candidates = [];
-
 
         for (
             const variant
@@ -1786,18 +1640,16 @@ async function fetchVSMov(movieName) {
                     encodeURIComponent(variant) +
                     "&page=1&limit=24";
 
-
                 console.log(
                     "[VSMOV] API Search:",
                     variant
                 );
 
-
                 const res =
                     await axios.get(
                         searchUrl,
                         {
-                            timeout: 10000,
+                            timeout: 8000,
 
                             headers: {
 
@@ -1805,124 +1657,24 @@ async function fetchVSMov(movieName) {
                                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
 
                                 "Accept":
-                                    "application/json, text/plain, */*",
+                                    "application/json",
 
                                 "Accept-Language":
-                                    "vi,en-US;q=0.9,en;q=0.8",
-
-                                "Referer":
-                                    "https://vsmov.com/"
+                                    "vi,en-US;q=0.9,en;q=0.8"
 
                             }
 
                         }
                     );
 
-
                 const data =
                     res.data || {};
 
-
-                /*
-                 * VSMov có thể trả kết quả ở nhiều
-                 * cấu trúc khác nhau.
-                 *
-                 * Thử lần lượt tất cả các dạng thường gặp.
-                 */
-
-                let items = [];
-
-
-                if (
-                    Array.isArray(data)
-                ) {
-
-                    items = data;
-
-                }
-
-
-                else if (
-                    Array.isArray(data?.data)
-                ) {
-
-                    items = data.data;
-
-                }
-
-
-                else if (
-                    Array.isArray(data?.items)
-                ) {
-
-                    items = data.items;
-
-                }
-
-
-                else if (
-                    Array.isArray(data?.results)
-                ) {
-
-                    items = data.results;
-
-                }
-
-
-                else if (
-                    Array.isArray(data?.data?.items)
-                ) {
-
-                    items = data.data.items;
-
-                }
-
-
-                else if (
-                    Array.isArray(data?.data?.results)
-                ) {
-
-                    items = data.data.results;
-
-                }
-
-
-                else if (
-                    Array.isArray(data?.data?.data)
-                ) {
-
-                    items = data.data.data;
-
-                }
-
-
-                /*
-                 * Một số API có thể bọc trong `movies`
-                 */
-
-                else if (
-                    Array.isArray(data?.movies)
-                ) {
-
-                    items = data.movies;
-
-                }
-
-
-                else if (
-                    Array.isArray(data?.data?.movies)
-                ) {
-
-                    items = data.data.movies;
-
-                }
-
-
-                console.log(
-                    "[VSMOV] Search HTTP:",
-                    res.status
-                );
-
+                const items =
+                    data?.data?.items ||
+                    data?.items ||
+                    data?.results ||
+                    [];
 
                 console.log(
                     "[VSMOV] Search results:",
@@ -1933,26 +1685,6 @@ async function fetchVSMov(movieName) {
                         : 0
                 );
 
-
-                /*
-                 * Nếu vẫn không tìm thấy,
-                 * log cấu trúc response để lần sau
-                 * biết chính xác API đang trả gì.
-                 */
-
-                if (
-                    !Array.isArray(items) ||
-                    items.length === 0
-                ) {
-
-                    console.log(
-                        "[VSMOV] Search response keys:",
-                        Object.keys(data || {})
-                    );
-
-                }
-
-
                 if (
                     Array.isArray(items)
                 ) {
@@ -1962,11 +1694,7 @@ async function fetchVSMov(movieName) {
 
                             if (
                                 item &&
-                                (
-                                    item.slug ||
-                                    item._id ||
-                                    item.id
-                                )
+                                item.slug
                             ) {
 
                                 candidates.push(
@@ -1979,7 +1707,6 @@ async function fetchVSMov(movieName) {
                     );
 
                 }
-
 
             } catch (e) {
 
@@ -1995,7 +1722,6 @@ async function fetchVSMov(movieName) {
 
         }
 
-
         // ====================================================
         // 4. UNIQUE CANDIDATES
         // ====================================================
@@ -2005,18 +1731,13 @@ async function fetchVSMov(movieName) {
         const candidateSeen =
             new Set();
 
-
         candidates.forEach(
             item => {
 
                 const slug =
                     String(
-                        item?.slug ||
-                        item?._id ||
-                        item?.id ||
-                        ""
+                        item?.slug || ""
                     ).trim();
-
 
                 if (
                     !slug ||
@@ -2027,7 +1748,6 @@ async function fetchVSMov(movieName) {
 
                 }
 
-
                 candidateSeen.add(slug);
 
                 uniqueCandidates.push(
@@ -2037,12 +1757,10 @@ async function fetchVSMov(movieName) {
             }
         );
 
-
         console.log(
             "[VSMOV] Unique candidates:",
             uniqueCandidates.length
         );
-
 
         // ====================================================
         // 5. RANK SEARCH RESULTS
@@ -2054,34 +1772,15 @@ async function fetchVSMov(movieName) {
 
                     const name =
                         String(
-                            item?.name ||
-                            item?.title ||
-                            ""
+                            item?.name || ""
                         );
-
-
-                    const originName =
-                        String(
-                            item?.origin_name ||
-                            item?.originName ||
-                            ""
-                        );
-
 
                     const normalizedName =
                         normalizeTitle(
                             name
                         );
 
-
-                    const normalizedOrigin =
-                        normalizeTitle(
-                            originName
-                        );
-
-
                     let score = 0;
-
 
                     titleVariants.forEach(
                         variant => {
@@ -2091,7 +1790,6 @@ async function fetchVSMov(movieName) {
                                     variant
                                 );
 
-
                             if (
                                 normalizedName ===
                                 normalizedVariant
@@ -2100,18 +1798,6 @@ async function fetchVSMov(movieName) {
                                 score += 100;
 
                             }
-
-
-                            else if (
-                                normalizedOrigin ===
-                                normalizedVariant
-                            ) {
-
-                                score += 100;
-
-                            }
-
-
                             else if (
                                 normalizedName.includes(
                                     normalizedVariant
@@ -2121,39 +1807,22 @@ async function fetchVSMov(movieName) {
                                 score += 50;
 
                             }
-
-
                             else if (
                                 normalizedVariant.includes(
                                     normalizedName
-                                ) &&
-                                normalizedName
+                                )
                             ) {
 
                                 score += 40;
 
                             }
 
-
-                            else if (
-                                normalizedOrigin.includes(
-                                    normalizedVariant
-                                )
-                            ) {
-
-                                score += 45;
-
-                            }
-
                         }
                     );
 
-
                     return {
-
                         item,
                         score
-
                     };
 
                 })
@@ -2162,30 +1831,23 @@ async function fetchVSMov(movieName) {
                         b.score - a.score
                 );
 
-
         console.log(
             "[VSMOV] RANKED:",
             JSON.stringify(
                 ranked.map(
                     x => ({
-
                         name:
                             x.item?.name,
-
-                        origin_name:
-                            x.item?.origin_name,
 
                         slug:
                             x.item?.slug,
 
                         score:
                             x.score
-
                     })
                 )
             )
         );
-
 
         // ====================================================
         // 6. KHÔNG TÌM THẤY
@@ -2199,14 +1861,12 @@ async function fetchVSMov(movieName) {
                 "[VSMOV] API không tìm thấy phim."
             );
 
-
             const searchTerm =
                 titleVariants.length > 1
                     ? titleVariants[
                         titleVariants.length - 1
                     ]
                     : movieName;
-
 
             streams.push({
 
@@ -2225,11 +1885,9 @@ async function fetchVSMov(movieName) {
 
             });
 
-
             return streams;
 
         }
-
 
         // ====================================================
         // 7. CHỌN PHIM
@@ -2238,20 +1896,14 @@ async function fetchVSMov(movieName) {
         const selected =
             ranked[0].item;
 
-
         const movieSlug =
             String(
-                selected?.slug ||
-                selected?._id ||
-                selected?.id ||
-                ""
+                selected?.slug || ""
             ).trim();
-
 
         const foundName =
             selected?.name ||
             movieName;
-
 
         if (!movieSlug) {
 
@@ -2263,18 +1915,15 @@ async function fetchVSMov(movieName) {
 
         }
 
-
         console.log(
             "[VSMOV] Selected:",
             foundName
         );
 
-
         console.log(
             "[VSMOV] Slug:",
             movieSlug
         );
-
 
         // ====================================================
         // 8. API DETAIL
@@ -2286,15 +1935,12 @@ async function fetchVSMov(movieName) {
                 movieSlug
             );
 
-
         console.log(
             "[VSMOV] Detail API:",
             detailUrl
         );
 
-
         let detailRes;
-
 
         try {
 
@@ -2302,7 +1948,7 @@ async function fetchVSMov(movieName) {
                 await axios.get(
                     detailUrl,
                     {
-                        timeout: 10000,
+                        timeout: 8000,
 
                         headers: {
 
@@ -2310,18 +1956,15 @@ async function fetchVSMov(movieName) {
                                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
 
                             "Accept":
-                                "application/json, text/plain, */*",
+                                "application/json",
 
                             "Accept-Language":
-                                "vi,en-US;q=0.9,en;q=0.8",
-
-                            "Referer":
-                                "https://vsmov.com/"
+                                "vi,en-US;q=0.9,en;q=0.8"
 
                         }
+
                     }
                 );
-
 
         } catch (e) {
 
@@ -2332,11 +1975,9 @@ async function fetchVSMov(movieName) {
                 e
             );
 
-
             detailRes = null;
 
         }
-
 
         // ====================================================
         // 9. ĐỌC EPISODES
@@ -2345,12 +1986,10 @@ async function fetchVSMov(movieName) {
         const detailData =
             detailRes?.data || {};
 
-
         const movieData =
             detailData?.movie ||
             detailData?.data ||
             detailData;
-
 
         const episodes =
             Array.isArray(
@@ -2363,12 +2002,10 @@ async function fetchVSMov(movieName) {
                     ? movieData.episodes
                     : [];
 
-
         console.log(
             "[VSMOV] Servers:",
             episodes.length
         );
-
 
         // ====================================================
         // 10. LẤY STREAM
@@ -2384,10 +2021,7 @@ async function fetchVSMov(movieName) {
                     server?.server_name ||
                     server?.name ||
                     "VSMov"
-                )
-                .replace(/\s+/g, " ")
-                .trim();
-
+                );
 
             const serverData =
                 Array.isArray(
@@ -2396,14 +2030,12 @@ async function fetchVSMov(movieName) {
                     ? server.server_data
                     : [];
 
-
             console.log(
                 "[VSMOV] Server:",
                 serverName,
                 "Episodes:",
                 serverData.length
             );
-
 
             for (
                 const ep
@@ -2416,13 +2048,66 @@ async function fetchVSMov(movieName) {
                         ep?.filename ||
                         ep?.slug ||
                         "Full"
-                    )
-                    .replace(/\s+/g, " ")
-                    .trim();
-
+                    );
 
                 // =================================================
-                // 10A. API CÓ LINK_M3U8
+                // 10A. ƯU TIÊN EMBED
+                // =================================================
+
+                const embed =
+                    String(
+                        ep?.link_embed ||
+                        ep?.embed ||
+                        ""
+                    ).trim();
+
+                if (
+                    embed &&
+                    /^https?:\/\//i.test(
+                        embed
+                    )
+                ) {
+
+                    console.log(
+                        "[VSMOV] EMBED FOUND:",
+                        serverName,
+                        episodeName
+                    );
+
+                    console.log(
+                        "[VSMOV] EMBED URL:",
+                        embed
+                    );
+
+                    streams.push({
+
+                        name:
+                            "🌐 [VSMov Embed] " +
+                            serverName,
+
+                        title:
+                            episodeName +
+                            " - " +
+                            serverName,
+
+                        externalUrl:
+                            embed
+
+                    });
+
+                    // ---------------------------------------------
+                    // QUAN TRỌNG:
+                    // Có Embed thì KHÔNG lấy M3U8 của episode này.
+                    // Mục đích test lần này là chạy Embed.
+                    // ---------------------------------------------
+
+                    continue;
+
+                }
+
+                // =================================================
+                // 10B. KHÔNG CÓ EMBED
+                // FALLBACK M3U8
                 // =================================================
 
                 const m3u8 =
@@ -2433,24 +2118,28 @@ async function fetchVSMov(movieName) {
                         ""
                     ).trim();
 
-
                 if (
                     m3u8 &&
-                    /^https?:\/\//i.test(m3u8)
+                    /^https?:\/\//i.test(
+                        m3u8
+                    )
                 ) {
 
                     console.log(
-                        "[VSMOV] DIRECT M3U8:",
+                        "[VSMOV] NO EMBED - DIRECT M3U8:",
                         serverName,
-                        episodeName,
-                        m3u8
+                        episodeName
                     );
 
+                    console.log(
+                        "[VSMOV] M3U8 URL:",
+                        m3u8
+                    );
 
                     streams.push({
 
                         name:
-                            "⚡ [API] VSMov",
+                            "⚡ [API M3U8] VSmov",
 
                         title:
                             episodeName +
@@ -2463,368 +2152,12 @@ async function fetchVSMov(movieName) {
                         behaviorHints: {
 
                             bingeGroup:
-                                "vsmov-" +
+                                "vsmov-m3u8-" +
                                 normalizeTitle(
                                     serverName
                                 )
 
                         }
-
-                    });
-
-
-                    continue;
-
-                }
-
-
-                // =================================================
-                // 10B. LINK_EMBED
-                // =================================================
-
-                const embed =
-                    String(
-                        ep?.link_embed ||
-                        ep?.embed ||
-                        ""
-                    ).trim();
-
-
-                if (!embed) {
-
-                    continue;
-
-                }
-
-
-                console.log(
-                    "[VSMOV] EMBED GET:",
-                    serverName,
-                    episodeName,
-                    embed
-                );
-
-
-                // =================================================
-                // 10C. GET EMBED HTML
-                // =================================================
-
-                let embedRes;
-
-
-                try {
-
-                    embedRes =
-                        await axios.get(
-                            embed,
-                            {
-                                timeout: 10000,
-
-                                maxRedirects: 5,
-
-                                headers: {
-
-                                    "User-Agent":
-                                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                                    "Accept":
-                                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-
-                                    "Accept-Language":
-                                        "vi,en-US;q=0.9,en;q=0.8",
-
-                                    "Referer":
-                                        "https://vsmov.com/"
-
-                                }
-
-                            }
-                        );
-
-
-                } catch (e) {
-
-                    console.log(
-                        "[VSMOV] EMBED ERROR:",
-                        e?.response?.status ||
-                        e?.message ||
-                        e
-                    );
-
-
-                    continue;
-
-                }
-
-
-                const html =
-                    String(
-                        embedRes?.data || ""
-                    );
-
-
-                if (!html) {
-
-                    console.log(
-                        "[VSMOV] EMBED EMPTY"
-                    );
-
-                    continue;
-
-                }
-
-
-                // =================================================
-                // 10D. LẤY VIDEO HASH
-                // =================================================
-
-                let videoHash = "";
-
-
-                const dataHashMatch =
-                    html.match(
-                        /id=["']rp-player["'][^>]*data-hash=["']([^"']+)["']/i
-                    );
-
-
-                if (
-                    dataHashMatch
-                ) {
-
-                    videoHash =
-                        dataHashMatch[1];
-
-                }
-
-
-                if (!videoHash) {
-
-                    const videoHashMatch =
-                        html.match(
-                            /const\s+videoHash\s*=\s*["']([^"']+)["']/i
-                        );
-
-
-                    if (
-                        videoHashMatch
-                    ) {
-
-                        videoHash =
-                            videoHashMatch[1];
-
-                    }
-
-                }
-
-
-                // =================================================
-                // 10E. LẤY SIGNED SETTINGS
-                // =================================================
-
-                let enableSignedUrl =
-                    false;
-
-
-                let signedMasterUrl =
-                    "";
-
-
-                const signedEnabledMatch =
-                    html.match(
-                        /enableSignedUrl\s*:\s*(true|false)/i
-                    );
-
-
-                if (
-                    signedEnabledMatch
-                ) {
-
-                    enableSignedUrl =
-                        signedEnabledMatch[1]
-                            .toLowerCase() ===
-                        "true";
-
-                }
-
-
-                const signedUrlMatch =
-                    html.match(
-                        /signedMasterUrl\s*:\s*"([^"]*)"/i
-                    );
-
-
-                if (
-                    signedUrlMatch
-                ) {
-
-                    signedMasterUrl =
-                        signedUrlMatch[1];
-
-                }
-
-
-                console.log(
-                    "[VSMOV] Hash:",
-                    videoHash || "NOT FOUND"
-                );
-
-
-                console.log(
-                    "[VSMOV] Signed:",
-                    enableSignedUrl
-                );
-
-
-                if (
-                    signedMasterUrl
-                ) {
-
-                    console.log(
-                        "[VSMOV] Signed M3U8:",
-                        signedMasterUrl
-                    );
-
-                }
-
-
-                // =================================================
-                // 10F. QUYẾT ĐỊNH STREAM URL
-                // =================================================
-
-                let streamUrl =
-                    "";
-
-
-                /*
-                 * CASE 1
-                 * SIGNED URL
-                 */
-
-                if (
-                    enableSignedUrl &&
-                    signedMasterUrl
-                ) {
-
-                    streamUrl =
-                        signedMasterUrl;
-
-
-                    console.log(
-                        "[VSMOV] USING SIGNED M3U8"
-                    );
-
-                }
-
-
-                /*
-                 * CASE 2
-                 * UNSIGNED URL
-                 */
-
-                else if (
-                    videoHash
-                ) {
-
-                    try {
-
-                        const embedOrigin =
-                            new URL(
-                                embed
-                            ).origin;
-
-
-                        streamUrl =
-                            embedOrigin +
-                            "/stream/" +
-                            videoHash +
-                            "/master.m3u8";
-
-
-                        console.log(
-                            "[VSMOV] USING UNSIGNED M3U8:",
-                            streamUrl
-                        );
-
-
-                    } catch (e) {
-
-                        console.log(
-                            "[VSMOV] INVALID EMBED URL:",
-                            embed
-                        );
-
-                    }
-
-                }
-
-
-                // =================================================
-                // 10G. ADD DIRECT STREAM
-                // =================================================
-
-                if (
-                    streamUrl
-                ) {
-
-                    streams.push({
-
-                        name:
-                            "⚡ [VSMov] " +
-                            serverName,
-
-                        title:
-                            episodeName +
-                            " - " +
-                            serverName,
-
-                        url:
-                            streamUrl,
-
-                        behaviorHints: {
-
-                            bingeGroup:
-                                "vsmov-" +
-                                normalizeTitle(
-                                    serverName
-                                )
-
-                        }
-
-                    });
-
-
-                    console.log(
-                        "[VSMOV] STREAM ADDED:",
-                        streamUrl
-                    );
-
-                }
-
-
-                else {
-
-                    /*
-                     * Chỉ khi không lấy được M3U8
-                     * mới đưa embed ra externalUrl.
-                     */
-
-                    console.log(
-                        "[VSMOV] Không resolve được M3U8, dùng EMBED fallback"
-                    );
-
-
-                    streams.push({
-
-                        name:
-                            "🌐 [VSMov Embed] " +
-                            serverName,
-
-                        title:
-                            episodeName +
-                            " - Mở VSMov",
-
-                        externalUrl:
-                            embed
 
                     });
 
@@ -2833,7 +2166,6 @@ async function fetchVSMov(movieName) {
             }
 
         }
-
 
         // ====================================================
         // 11. FALLBACK ĐÚNG TRANG PHIM
@@ -2845,15 +2177,13 @@ async function fetchVSMov(movieName) {
                 movieSlug
             );
 
-
         if (
             streams.length === 0
         ) {
 
             console.log(
-                "[VSMOV] API không trả stream."
+                "[VSMOV] API không trả Embed hoặc M3U8."
             );
-
 
             streams.push({
 
@@ -2871,10 +2201,14 @@ async function fetchVSMov(movieName) {
 
         }
 
-
         // ====================================================
         // 12. FINAL
         // ====================================================
+
+        console.log(
+            "[VSMOV] FINAL STREAM COUNT:",
+            streams.length
+        );
 
         console.log(
             "[VSMOV] FINAL STREAMS:",
@@ -2883,14 +2217,7 @@ async function fetchVSMov(movieName) {
             )
         );
 
-
-        console.log(
-            "[VSMOV] END"
-        );
-
-
         return streams;
-
 
     } catch (e) {
 
@@ -2901,13 +2228,11 @@ async function fetchVSMov(movieName) {
             e
         );
 
-
         const searchUrl =
             "https://vsmov.com/?search=" +
             encodeURIComponent(
                 movieName
             );
-
 
         streams.push({
 
@@ -2922,7 +2247,6 @@ async function fetchVSMov(movieName) {
                 searchUrl
 
         });
-
 
         return streams;
 
@@ -5151,251 +4475,6 @@ app.use(
     }
 );
 
-/* ============================================================
-   VSMOV HLS TEST
-   ============================================================ */
-
-app.get(
-    "/nguonc/vsmov-test",
-    async (req, res) => {
-
-        const masterUrl =
-            "https://v9.streamvsmov.com/stream/a672c032-832c-4395-ba2b-ec64ead7c9d5/master.m3u8";
-
-        const pngUrl =
-            "https://p25.streamvsmov.com/file/ZnVja3lvdWZ1Y2t5b3U/tiktok/a672c032-832c-4395-ba2b-ec64ead7c9d5/file-tiktok_1.png";
-
-        const headers = {
-
-            "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-            "Accept":
-                "*/*",
-
-            "Referer":
-                "https://v9.streamvsmov.com/"
-
-        };
-
-        const result = {
-
-            master: {},
-
-            png: {}
-
-        };
-
-        try {
-
-            /* =================================================
-               MASTER M3U8
-               ================================================= */
-
-            const master =
-                await axios.get(
-                    masterUrl,
-                    {
-
-                        headers,
-
-                        timeout: 15000,
-
-                        responseType:
-                            "text",
-
-                        validateStatus:
-                            () => true
-
-                    }
-                );
-
-            result.master = {
-
-                status:
-                    master.status,
-
-                contentType:
-                    master.headers[
-                        "content-type"
-                    ] || null,
-
-                contentLength:
-                    master.headers[
-                        "content-length"
-                    ] || null,
-
-                contentEncoding:
-                    master.headers[
-                        "content-encoding"
-                    ] || null,
-
-                acceptRanges:
-                    master.headers[
-                        "accept-ranges"
-                    ] || null,
-
-                contentRange:
-                    master.headers[
-                        "content-range"
-                    ] || null,
-
-                bodyLength:
-                    typeof master.data ===
-                    "string"
-                        ? master.data.length
-                        : null
-
-            };
-
-            /* =================================================
-               FIRST PNG
-               ================================================= */
-
-            const png =
-    await axios.get(
-        pngUrl,
-        {
-            headers,
-            timeout: 15000,
-            responseType:
-                "arraybuffer",
-            validateStatus:
-                () => true
-        }
-    );
-
-const firstBytes =
-    Buffer.from(png.data)
-        .subarray(0, 32)
-        .toString("hex");
-
-const firstAscii =
-    Buffer.from(png.data)
-        .subarray(0, 32)
-        .toString("ascii");
-
-result.png = {
-    status:
-        png.status,
-
-    contentType:
-        png.headers[
-            "content-type"
-        ] || null,
-
-    contentLength:
-        png.headers[
-            "content-length"
-        ] || null,
-
-    contentEncoding:
-        png.headers[
-            "content-encoding"
-        ] || null,
-
-    acceptRanges:
-        png.headers[
-            "accept-ranges"
-        ] || null,
-
-    contentRange:
-        png.headers[
-            "content-range"
-        ] || null,
-
-    bytesReceived:
-        png.data
-            ? Buffer.byteLength(
-                png.data
-            )
-            : 0,
-
-    firstBytes:
-        firstBytes,
-
-    firstAscii:
-        firstAscii
-};
-
-            console.log("");
-            console.log(
-                "============================================================"
-            );
-
-            console.log(
-                "[VSMOV TEST] MASTER"
-            );
-
-            console.log(
-                JSON.stringify(
-                    result.master,
-                    null,
-                    2
-                )
-            );
-
-            console.log(
-                "[VSMOV TEST] PNG"
-            );
-
-            console.log(
-                JSON.stringify(
-                    result.png,
-                    null,
-                    2
-                )
-            );
-
-            console.log(
-                "============================================================"
-            );
-
-            console.log("");
-
-            res.json({
-
-                success: true,
-
-                ...result
-
-            });
-
-        } catch (error) {
-
-            console.error(
-                "[VSMOV TEST] ERROR:",
-                error.message
-            );
-
-            res.status(
-                500
-            ).json({
-
-                success: false,
-
-                error:
-                    error.message,
-
-                response:
-                    error.response
-                        ? {
-
-                            status:
-                                error.response.status,
-
-                            headers:
-                                error.response.headers
-
-                        }
-                        : null
-
-            });
-
-        }
-
-    }
-);
 
 /* ============================================================
    NGUONC PLAYLIST
