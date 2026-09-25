@@ -567,101 +567,78 @@ async function fetchNguonC(
         );
 
     /* --------------------------------------------------------
-       SEARCH
-       -------------------------------------------------------- */
+   NGUONC API TEST
+   -------------------------------------------------------- */
 
-    let searchItems = [];
+try {
 
-    for (
-        const keyword
-        of variants
-    ) {
-
-        try {
-
-            const url =
-                NGUONC_API +
-                "/api/films/search?keyword=" +
-                encodeURIComponent(
-                    keyword
-                );
-
-            const response =
-                await axios.get(
-                    url,
-                    {
-
-                        timeout:
-                            15000,
-
-                        headers
-
-                    }
-                );
-
-            const data =
-                response.data;
-
-            const items =
-                data?.items ||
-                data?.data?.items ||
-                data?.data ||
-                [];
-
-            if (
-                Array.isArray(items) &&
-                items.length
-            ) {
-
-                searchItems =
-                    items;
-
-                break;
-
-            }
-
-        } catch (e) {
+    const testUrl =
+        NGUONC_API +
+        "/api/films/phim-moi-cap-nhat?page=1";
 
     console.log(
-        "[NGUONC] Search error:",
+        "[NGUONC TEST] URL:",
+        testUrl
+    );
+
+    const testResponse =
+        await axios.get(
+            testUrl,
+            {
+                timeout: 15000,
+                headers
+            }
+        );
+
+    console.log(
+        "[NGUONC TEST] HTTP:",
+        testResponse.status
+    );
+
+    console.log(
+        "[NGUONC TEST] Content-Type:",
+        testResponse.headers?.["content-type"]
+    );
+
+    console.log(
+        "[NGUONC TEST] Response:",
+        typeof testResponse.data === "string"
+            ? testResponse.data.slice(0, 2000)
+            : JSON.stringify(
+                testResponse.data
+            ).slice(0, 2000)
+    );
+
+} catch (e) {
+
+    console.log(
+        "[NGUONC TEST] ERROR:",
         e?.message || e
     );
 
     console.log(
-        "[NGUONC] Search status:",
+        "[NGUONC TEST] STATUS:",
         e?.response?.status || "N/A"
     );
 
     console.log(
-        "[NGUONC] Search response:",
+        "[NGUONC TEST] RESPONSE:",
         typeof e?.response?.data === "string"
-            ? e.response.data.slice(0, 1000)
+            ? e.response.data.slice(0, 2000)
             : JSON.stringify(
                 e?.response?.data || {}
-            ).slice(0, 1000)
+            ).slice(0, 2000)
     );
 
     console.log(
-        "[NGUONC] Search headers:",
+        "[NGUONC TEST] HEADERS:",
         JSON.stringify(
             e?.response?.headers || {}
         )
     );
-    }
 }
 
-    if (
-        !searchItems.length
-    ) {
-
-        console.log(
-            "[NGUONC] Không tìm thấy:",
-            movieName
-        );
-
-        return [];
-
-    }
+return [];
 
     /* --------------------------------------------------------
        MATCH
