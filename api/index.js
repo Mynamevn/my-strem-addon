@@ -4756,6 +4756,367 @@ app.get(
     }
 );
 
+/* ============================================================
+   VSMOV EMBED INSPECT
+   ĐỌC HTML PLAYER VÀ TÌM:
+   - enableSignedUrl
+   - signedMasterUrl
+   - videoHash
+   - segmentCdnHosts
+   - audio
+   - m3u8
+   - mp4
+   - source
+   ============================================================ */
+
+app.get(
+    "/nguonc/vsmov-inspect",
+    async (req, res) => {
+
+        try {
+
+            const embedUrl =
+                String(
+                    req.query.url || ""
+                ).trim();
+
+            if (
+                !embedUrl ||
+                !/^https?:\/\//i.test(embedUrl)
+            ) {
+
+                return res.status(400).json({
+                    success: false,
+                    error:
+                        "Thiếu ?url=https://..."
+                });
+
+            }
+
+            console.log(
+                "[VSMOV INSPECT] URL:",
+                embedUrl
+            );
+
+            const response =
+                await axios.get(
+                    embedUrl,
+                    {
+                        timeout: 15000,
+
+                        headers: {
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                            "Accept-Language":
+                                "vi,en-US;q=0.9,en;q=0.8",
+
+                            "Referer":
+                                "https://vsmov.com/"
+
+                        },
+
+                        validateStatus:
+                            () => true
+
+                    }
+                );
+
+            const html =
+                String(
+                    response.data || ""
+                );
+
+            // =================================================
+            // HELPER
+            // =================================================
+
+            function extract(
+                pattern
+            ) {
+
+                const match =
+                    html.match(pattern);
+
+                return match
+                    ? match[1]
+                    : null;
+
+            }
+
+            // =================================================
+            // ENABLE SIGNED URL
+            // =================================================
+
+            const enableSignedUrl =
+                extract(
+                    /enableSignedUrl\s*:\s*(true|false)/i
+                );
+
+            // =================================================
+            // SIGNED MASTER URL
+            // =================================================
+
+            const signedMasterUrl =
+                extract(
+                    /signedMasterUrl\s*:\s*["']([^"']+)["']/i
+                );
+
+            // =================================================
+            // VIDEO HASH
+            // =================================================
+
+            const videoHash =
+                extract(
+                    /videoHash\s*:\s*["']([^"']+)["']/i
+                );
+
+            // =================================================
+            // BASE URL
+            // =================================================
+
+            const baseUrl =
+                extract(
+                    /baseUrl\s*=\s*["']([^"']+)["']/i
+                ) ||
+                extract(
+                    /baseUrl\s*:\s*["']([^"']+)["']/i
+                );
+
+            // =================================================
+            // SEGMENT CDN HOSTS
+            // =================================================
+
+            const segmentCdnHostsMatch =
+                html.match(
+                    /segmentCdnHosts\s*:\s*\[([\s\S]*?)\]/i
+                );
+
+            let segmentCdnHosts = [];
+
+            if (
+                segmentCdnHostsMatch
+            ) {
+
+                const block =
+                    segmentCdnHostsMatch[1];
+
+                segmentCdnHosts =
+                    [
+                        ...block.matchAll(
+                            /["']([^"']+)["']/g
+                        )
+                    ]
+                    .map(
+                        x => x[1]
+                    );
+
+            }
+
+            // =================================================
+            // TÌM CÁC URL MEDIA TRONG HTML
+            // =================================================
+
+            const allUrls = [];
+
+            const urlRegex =
+                /https?:\/\/[^\s"'<>\\]+/gi;
+
+            const urlMatches =
+                html.match(
+                    urlRegex
+                ) || [];
+
+            urlMatches.forEach(
+                url => {
+
+                    const clean =
+                        url
+                            .replace(
+                                /[),;]+$/,
+                                ""
+                            );
+
+                    if (
+                        !allUrls.includes(
+                            clean
+                        )
+                    ) {
+
+                        allUrls.push(
+                            clean
+                        );
+
+                    }
+
+                }
+            );
+
+            // =================================================
+            // CHỈ LẤY MEDIA-RELATED URL
+            // =================================================
+
+            const mediaUrls =
+                allUrls.filter(
+                    url => {
+
+                        const lower =
+                            url.toLowerCase();
+
+                        return (
+                            lower.includes(
+                                ".m3u8"
+                            ) ||
+                            lower.includes(
+                                ".mp4"
+                            ) ||
+                            lower.includes(
+                                ".mp3"
+                            ) ||
+                            lower.includes(
+                                ".aac"
+                            ) ||
+                            lower.includes(
+                                ".m4a"
+                            ) ||
+                            lower.includes(
+                                "audio"
+                            ) ||
+                            lower.includes(
+                                "stream"
+                            ) ||
+                            lower.includes(
+                                "video"
+                            )
+                        );
+
+                    }
+                );
+
+            // =================================================
+            // TÌM CÁC DÒNG CÓ TỪ KHÓA AUDIO
+            // =================================================
+
+            const audioLines =
+                html
+                    .split(/\r?\n/)
+                    .filter(
+                        line =>
+                            /audio|sound|mp3|m4a|aac/i.test(
+                                line
+                            )
+                    )
+                    .slice(
+                        0,
+                        100
+                    );
+
+            // =================================================
+            // TÌM CÁC DÒNG CÓ TỪ KHÓA PLAYER
+            // =================================================
+
+            const playerLines =
+                html
+                    .split(/\r?\n/)
+                    .filter(
+                        line =>
+                            /playerSource|videoSrc|source|masterUrl|signedMasterUrl|videoHash|segmentCdnHosts/i.test(
+                                line
+                            )
+                    )
+                    .slice(
+                        0,
+                        150
+                    );
+
+            const result = {
+
+                success: true,
+
+                status:
+                    response.status,
+
+                contentType:
+                    response.headers[
+                        "content-type"
+                    ] || null,
+
+                htmlLength:
+                    html.length,
+
+                embedUrl:
+
+                    embedUrl,
+
+                player: {
+
+                    enableSignedUrl:
+                        enableSignedUrl,
+
+                    signedMasterUrl:
+                        signedMasterUrl,
+
+                    videoHash:
+                        videoHash,
+
+                    baseUrl:
+                        baseUrl,
+
+                    segmentCdnHosts:
+                        segmentCdnHosts
+
+                },
+
+                mediaUrls:
+                    mediaUrls,
+
+                audioLines:
+                    audioLines,
+
+                playerLines:
+                    playerLines
+
+            };
+
+            console.log(
+                "[VSMOV INSPECT] RESULT:",
+                JSON.stringify(
+                    result
+                )
+            );
+
+            return res.json(
+                result
+            );
+
+        } catch (error) {
+
+            console.log(
+                "[VSMOV INSPECT ERROR]",
+                error?.message ||
+                error
+            );
+
+            return res.status(
+                500
+            ).json({
+
+                success: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            });
+
+        }
+
+    }
+);
 
 /* ============================================================
    STREMIO ADDON ROUTES
