@@ -567,17 +567,21 @@ async function fetchNguonC(
         );
 
     /* --------------------------------------------------------
-   NGUONC API TEST
+   NGUONC DETAIL API TEST
    -------------------------------------------------------- */
 
 try {
 
+    const testSlug =
+        "am-anh-2026";
+
     const testUrl =
         NGUONC_API +
-        "/api/films/phim-moi-cap-nhat?page=1";
+        "/api/film/" +
+        testSlug;
 
     console.log(
-        "[NGUONC TEST] URL:",
+        "[NGUONC DETAIL TEST] URL:",
         testUrl
     );
 
@@ -591,47 +595,47 @@ try {
         );
 
     console.log(
-        "[NGUONC TEST] HTTP:",
+        "[NGUONC DETAIL TEST] HTTP:",
         testResponse.status
     );
 
     console.log(
-        "[NGUONC TEST] Content-Type:",
+        "[NGUONC DETAIL TEST] Content-Type:",
         testResponse.headers?.["content-type"]
     );
 
     console.log(
-        "[NGUONC TEST] Response:",
+        "[NGUONC DETAIL TEST] Response:",
         typeof testResponse.data === "string"
-            ? testResponse.data.slice(0, 2000)
+            ? testResponse.data.slice(0, 5000)
             : JSON.stringify(
                 testResponse.data
-            ).slice(0, 2000)
+            ).slice(0, 5000)
     );
 
 } catch (e) {
 
     console.log(
-        "[NGUONC TEST] ERROR:",
+        "[NGUONC DETAIL TEST] ERROR:",
         e?.message || e
     );
 
     console.log(
-        "[NGUONC TEST] STATUS:",
+        "[NGUONC DETAIL TEST] STATUS:",
         e?.response?.status || "N/A"
     );
 
     console.log(
-        "[NGUONC TEST] RESPONSE:",
+        "[NGUONC DETAIL TEST] RESPONSE:",
         typeof e?.response?.data === "string"
-            ? e.response.data.slice(0, 2000)
+            ? e.response.data.slice(0, 3000)
             : JSON.stringify(
                 e?.response?.data || {}
-            ).slice(0, 2000)
+            ).slice(0, 3000)
     );
 
     console.log(
-        "[NGUONC TEST] HEADERS:",
+        "[NGUONC DETAIL TEST] HEADERS:",
         JSON.stringify(
             e?.response?.headers || {}
         )
