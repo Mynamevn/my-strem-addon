@@ -581,7 +581,7 @@ async function fetchNguonC(
 
             const url =
                 NGUONC_API +
-                "/films/search?keyword=" +
+                "/api/films/search?keyword=" +
                 encodeURIComponent(
                     keyword
                 );
@@ -622,15 +622,33 @@ async function fetchNguonC(
 
         } catch (e) {
 
-            console.log(
-                "[NGUONC] Search error:",
-                e?.message ||
-                e
-            );
+    console.log(
+        "[NGUONC] Search error:",
+        e?.message || e
+    );
 
-        }
+    console.log(
+        "[NGUONC] Search status:",
+        e?.response?.status || "N/A"
+    );
 
-    }
+    console.log(
+        "[NGUONC] Search response:",
+        typeof e?.response?.data === "string"
+            ? e.response.data.slice(0, 1000)
+            : JSON.stringify(
+                e?.response?.data || {}
+            ).slice(0, 1000)
+    );
+
+    console.log(
+        "[NGUONC] Search headers:",
+        JSON.stringify(
+            e?.response?.headers || {}
+        )
+    );
+
+}
 
     if (
         !searchItems.length
@@ -760,7 +778,7 @@ async function fetchNguonC(
 
         const url =
             NGUONC_API +
-            "/film/" +
+            "/api/film/" +
             encodeURIComponent(
                 slug
             );
