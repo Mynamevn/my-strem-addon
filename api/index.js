@@ -2058,21 +2058,24 @@ if (
     );
 
     streams.push({
-        name:
-            "▶️ [VSMov] " +
-            serverName,
+    name:
+        "▶️ [VSMov] " +
+        serverName,
 
-        title:
-            episodeName ||
-            "Full",
+    title:
+        episodeName ||
+        "Full",
 
-        widgetPlayer:
-            widgetUrl,
+    externalUrl:
+        widgetUrl,
 
-        widgetPlayerStates: [
-            "replaceplayer"
-        ]
-    });
+    widgetPlayer:
+        widgetUrl,
+
+    widgetPlayerStates: [
+        "replaceplayer"
+    ]
+});
 }
 }
 }
