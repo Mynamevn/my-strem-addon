@@ -3839,35 +3839,8 @@ console.log(
 
 
 // =====================================================
-// 6. CHẠY KKPHIM TRƯỚC ĐỂ LẤY SLUG
-// =====================================================
-
-let kkphim = [];
-
-try {
-
-    kkphim =
-        await fetchKKPhim(
-            movieName
-        );
-
-} catch (e) {
-
-    console.log(
-        "[KKPHIM PRELOAD ERROR]:",
-        e?.message ||
-        e
-    );
-
-    kkphim = [];
-
-}
-
-// =====================================================
 // 6. CHẠY KKPHIM TRƯỚC ĐỂ LẤY SLUG CHO NGUONC
 // =====================================================
-
-let kkphim = [];
 
 try {
 
