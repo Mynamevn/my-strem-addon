@@ -452,567 +452,100 @@ builder.defineMetaHandler(async (args) => {
 });
 
 
-/* ============================================================
-   FETCH NGUONC QUA MOTPHIMTV
-   ============================================================ */
+// =====================================================
+// FETCH NGUONC - BROWSER PLAYER MODE
+// Vercel KHÔNG truy cập NguonC.
+// Stremio/browser tự mở trang NguonC.
+// =====================================================
 
-async function fetchNguonC(movieName, nguoncSlug = "") {
+async function fetchNguonC(
+    movieName,
+    nguoncSlug
+) {
 
-    const streams = [];
+    console.log(
+        "[NGUONC BROWSER] ================================="
+    );
 
-    try {
+    console.log(
+        "[NGUONC BROWSER] Movie:",
+        movieName
+    );
 
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] ================================="
-        );
+    console.log(
+        "[NGUONC BROWSER] Slug:",
+        nguoncSlug
+    );
 
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Movie:",
-            movieName
-        );
+    const slug =
+        String(
+            nguoncSlug ||
+            ""
+        ).trim();
 
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Slug:",
-            nguoncSlug
-        );
-
-
-        // =================================================
-        // 1. TẠO SLUG
-        // =================================================
-
-        const slugify = (text) => {
-
-            return String(text || "")
-                .normalize("NFD")
-                .replace(
-                    /[\u0300-\u036f]/g,
-                    ""
-                )
-                .toLowerCase()
-                .replace(
-                    /đ/g,
-                    "d"
-                )
-                .replace(
-                    /[^a-z0-9]+/g,
-                    "-"
-                )
-                .replace(
-                    /^-+|-+$/g,
-                    "");
-
-        };
-
-
-        const slug =
-            String(
-                nguoncSlug || ""
-            ).trim() ||
-            slugify(movieName);
-
+    if (!slug) {
 
         console.log(
-            "[NGUONC VIA MOTPHIMTV] Final slug:",
-            slug
+            "[NGUONC BROWSER] Không có slug"
         );
 
-
-        // =================================================
-        // 2. TÌM TRANG MOTPHIMTV
-        // =================================================
-
-        const searchUrl =
-            "https://motphimtv.run/tim-kiem?keyword=" +
-            encodeURIComponent(
-                movieName
-            );
-
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Search URL:",
-            searchUrl
-        );
-
-
-        const searchResponse =
-            await axios.get(
-                searchUrl,
-                {
-                    timeout:
-                        15000,
-
-                    headers: {
-
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-                        "Accept-Language":
-                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-                        "Referer":
-                            "https://motphimtv.run/",
-
-                        "DNT":
-                            "1"
-                    }
-                }
-            );
-
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Search HTTP:",
-            searchResponse.status
-        );
-
-
-        const $ =
-            cheerio.load(
-                searchResponse.data || ""
-            );
-
-
-        // =================================================
-        // 3. TÌM PHIM PHÙ HỢP
-        // =================================================
-
-        let detailUrl = "";
-
-
-        $("a").each(
-            (
-                index,
-                element
-            ) => {
-
-                if (detailUrl) {
-                    return;
-                }
-
-
-                const href =
-                    String(
-                        $(element).attr("href") ||
-                        ""
-                    ).trim();
-
-
-                const text =
-                    String(
-                        $(element).text() ||
-                        ""
-                    )
-                        .replace(
-                            /\s+/g,
-                            " "
-                        )
-                        .trim();
-
-
-                if (!href) {
-                    return;
-                }
-
-
-                const normalizedHref =
-                    href.toLowerCase();
-
-
-                const normalizedSlug =
-                    slug.toLowerCase();
-
-
-                if (
-                    normalizedHref.includes(
-                        normalizedSlug
-                    )
-                ) {
-
-                    detailUrl =
-                        href;
-
-                    return;
-
-                }
-
-
-                if (
-                    text &&
-                    text.toLowerCase()
-                        .includes(
-                            String(
-                                movieName
-                            )
-                                .toLowerCase()
-                        )
-                ) {
-
-                    detailUrl =
-                        href;
-
-                }
-
-            }
-        );
-
-
-        if (!detailUrl) {
-
-            console.log(
-                "[NGUONC VIA MOTPHIMTV] ❌ Không tìm thấy phim"
-            );
-
-            return streams;
-
-        }
-
-
-        if (
-            detailUrl.startsWith("/")
-        ) {
-
-            detailUrl =
-                "https://motphimtv.run" +
-                detailUrl;
-
-        }
-
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Detail URL:",
-            detailUrl
-        );
-
-
-        // =================================================
-        // 4. GỌI TRANG CHI TIẾT
-        // =================================================
-
-        const detailResponse =
-            await axios.get(
-                detailUrl,
-                {
-                    timeout:
-                        15000,
-
-                    headers: {
-
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-                        "Accept-Language":
-                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-                        "Referer":
-                            searchUrl,
-
-                        "DNT":
-                            "1"
-                    }
-                }
-            );
-
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Detail HTTP:",
-            detailResponse.status
-        );
-
-
-        const $$ =
-            cheerio.load(
-                detailResponse.data || ""
-            );
-
-
-        // =================================================
-        // 5. TÌM DANH SÁCH TẬP NC
-        // =================================================
-
-        let ncEpisodeUrl = "";
-
-
-        $$("a").each(
-            (
-                index,
-                element
-            ) => {
-
-                if (ncEpisodeUrl) {
-                    return;
-                }
-
-
-                const href =
-                    String(
-                        $$(element).attr("href") ||
-                        ""
-                    ).trim();
-
-
-                const text =
-                    String(
-                        $$(element).text() ||
-                        ""
-                    )
-                        .replace(
-                            /\s+/g,
-                            " "
-                        )
-                        .trim();
-
-
-                if (!href) {
-                    return;
-                }
-
-
-                const combined =
-                    (
-                        text +
-                        " " +
-                        href
-                    )
-                        .toLowerCase();
-
-
-                /*
-                 * MotPhimTV có nhiều nhóm:
-                 *
-                 * KK
-                 * NC
-                 * OP
-                 *
-                 * Chúng ta chỉ lấy link NC.
-                 */
-
-                if (
-                    combined.includes("nc") &&
-                    (
-                        combined.includes("full") ||
-                        combined.includes("tap")
-                    )
-                ) {
-
-                    ncEpisodeUrl =
-                        href;
-
-                }
-
-            }
-        );
-
-
-        if (!ncEpisodeUrl) {
-
-            console.log(
-                "[NGUONC VIA MOTPHIMTV] ❌ Không tìm thấy tập NC"
-            );
-
-            return streams;
-
-        }
-
-
-        if (
-            ncEpisodeUrl.startsWith("/")
-        ) {
-
-            ncEpisodeUrl =
-                "https://motphimtv.run" +
-                ncEpisodeUrl;
-
-        }
-
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] NC Episode URL:",
-            ncEpisodeUrl
-        );
-
-
-        // =================================================
-        // 6. GỌI TRANG PLAY NC
-        // =================================================
-
-        const playResponse =
-            await axios.get(
-                ncEpisodeUrl,
-                {
-                    timeout:
-                        15000,
-
-                    headers: {
-
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-                        "Accept-Language":
-                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-                        "Referer":
-                            detailUrl,
-
-                        "DNT":
-                            "1"
-                    }
-                }
-            );
-
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Play HTTP:",
-            playResponse.status
-        );
-
-
-        const $$$ =
-            cheerio.load(
-                playResponse.data || ""
-            );
-
-
-        // =================================================
-        // 7. LẤY DATA-LINK CỦA NC
-        // =================================================
-
-        let embedUrl = "";
-
-
-        $$$(
-            'a[data-type="embed"][data-link]'
-        ).each(
-            (
-                index,
-                element
-            ) => {
-
-                if (embedUrl) {
-                    return;
-                }
-
-
-                const link =
-                    String(
-                        $$$(
-                            element
-                        ).attr(
-                            "data-link"
-                        ) ||
-                        ""
-                    ).trim();
-
-
-                if (!link) {
-                    return;
-                }
-
-
-                if (
-                    link.includes(
-                        "embed"
-                    )
-                ) {
-
-                    embedUrl =
-                        link;
-
-                }
-
-            }
-        );
-
-
-        if (!embedUrl) {
-
-            console.log(
-                "[NGUONC VIA MOTPHIMTV] ❌ Không tìm thấy data-link embed"
-            );
-
-            return streams;
-
-        }
-
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] Embed:",
-            embedUrl
-        );
-
-
-        // =================================================
-        // 8. TẠO PLAYER TRUNG GIAN
-        // =================================================
-
-        const widgetUrl =
-            "https://my-strem-addon.vercel.app/nguonc-player?url=" +
-            encodeURIComponent(
-                embedUrl
-            );
-
-
-        // =================================================
-        // 9. TẠO STREAM
-        // =================================================
-
-        streams.push({
-
-            name:
-                "▶️ [NguonC] MotPhimTV",
-
-            title:
-                "Full - Vietsub",
-
-            externalUrl:
-                widgetUrl,
-
-            widgetPlayer:
-                widgetUrl,
-
-            widgetPlayerStates:
-                [
-                    "replaceplayer"
-                ]
-
-        });
-
-
-        // =================================================
-        // 10. KẾT QUẢ
-        // =================================================
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] FINAL STREAMS:",
-            JSON.stringify(
-                streams
-            )
-        );
-
-
-        return streams;
-
-    } catch (e) {
-
-        console.log(
-            "[NGUONC VIA MOTPHIMTV] ERROR:",
-            e?.response?.status ||
-            e?.message ||
-            e
-        );
-
-        return streams;
+        return [];
 
     }
 
+    const nguoncPage =
+        "https://phim.nguonc.com/phim/" +
+        encodeURIComponent(
+            slug
+        );
+
+    console.log(
+        "[NGUONC BROWSER] Page:",
+        nguoncPage
+    );
+
+    const stream = {
+
+        name:
+            "▶️ [NguonC] Browser Player",
+
+        title:
+            movieName ||
+            "NguonC",
+
+        externalUrl:
+            nguoncPage,
+
+        widgetPlayer:
+            nguoncPage,
+
+        widgetPlayerStates: [
+            "replaceplayer"
+        ],
+
+        behaviorHints: {
+
+            bingeGroup:
+                "nguonc-browser"
+
+        }
+
+    };
+
+    console.log(
+        "[NGUONC BROWSER] STREAM:",
+        JSON.stringify(
+            stream
+        )
+    );
+
+    console.log(
+        "[NGUONC BROWSER] ================================="
+    );
+
+    return [
+        stream
+    ];
 }
 
 
