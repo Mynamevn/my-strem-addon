@@ -453,7 +453,7 @@ builder.defineMetaHandler(async (args) => {
 
 
 /* ============================================================
-   FETCH NGUONC
+   FETCH NGUONC QUA MOTPHIMTV
    ============================================================ */
 
 async function fetchNguonC(movieName, nguoncSlug = "") {
@@ -463,16 +463,16 @@ async function fetchNguonC(movieName, nguoncSlug = "") {
     try {
 
         console.log(
-            "[NGUONC API] ================================="
+            "[NGUONC VIA MOTPHIMTV] ================================="
         );
 
         console.log(
-            "[NGUONC API] Movie:",
+            "[NGUONC VIA MOTPHIMTV] Movie:",
             movieName
         );
 
         console.log(
-            "[NGUONC API] Provided slug:",
+            "[NGUONC VIA MOTPHIMTV] Slug:",
             nguoncSlug
         );
 
@@ -504,40 +504,40 @@ async function fetchNguonC(movieName, nguoncSlug = "") {
 
         };
 
+
         const slug =
             String(
                 nguoncSlug || ""
             ).trim() ||
             slugify(movieName);
 
+
         console.log(
-            "[NGUONC API] Final slug:",
+            "[NGUONC VIA MOTPHIMTV] Final slug:",
             slug
         );
 
 
         // =================================================
-        // 2. TẠO ENDPOINT EPISODES
+        // 2. TÌM TRANG MOTPHIMTV
         // =================================================
 
-        const episodesUrl =
-            "https://phim.nguonc.com/phim/" +
-            encodeURIComponent(slug) +
-            "/episodes";
+        const searchUrl =
+            "https://motphimtv.run/tim-kiem?keyword=" +
+            encodeURIComponent(
+                movieName
+            );
+
 
         console.log(
-            "[NGUONC API] Episodes URL:",
-            episodesUrl
+            "[NGUONC VIA MOTPHIMTV] Search URL:",
+            searchUrl
         );
 
 
-        // =================================================
-        // 3. GỌI ENDPOINT
-        // =================================================
-
-        const response =
+        const searchResponse =
             await axios.get(
-                episodesUrl,
+                searchUrl,
                 {
                     timeout:
                         15000,
@@ -545,22 +545,18 @@ async function fetchNguonC(movieName, nguoncSlug = "") {
                     headers: {
 
                         "User-Agent":
-                            "Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
 
                         "Accept":
-                            "application/json",
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 
                         "Accept-Language":
-                            "en-US,en;q=0.5",
+                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
 
                         "Referer":
-                            "https://phim.nguonc.com/phim/" +
-                            slug,
+                            "https://motphimtv.run/",
 
                         "DNT":
-                            "1",
-
-                        "Sec-GPC":
                             "1"
                     }
                 }
@@ -568,156 +564,434 @@ async function fetchNguonC(movieName, nguoncSlug = "") {
 
 
         console.log(
-            "[NGUONC API] HTTP:",
-            response.status
+            "[NGUONC VIA MOTPHIMTV] Search HTTP:",
+            searchResponse.status
         );
 
 
-        // =================================================
-        // 4. LẤY JSON
-        // =================================================
-
-        const data =
-            response.data || {};
-
-        console.log(
-            "[NGUONC API] Servers:",
-            Array.isArray(
-                data.servers
-            )
-                ? data.servers.length
-                : 0
-        );
-
-
-        if (
-            !Array.isArray(
-                data.servers
-            )
-        ) {
-
-            console.log(
-                "[NGUONC API] ❌ Không có servers"
-            );
-
-            return streams;
-        }
-
-
-        // =================================================
-        // 5. DUYỆT TẤT CẢ SERVER
-        // =================================================
-
-        for (
-            const server
-            of data.servers
-        ) {
-
-            const serverName =
-                String(
-                    server?.name ||
-                    "NguonC"
-                ).trim();
-
-            const list =
-                Array.isArray(
-                    server?.list
-                )
-                    ? server.list
-                    : [];
-
-            console.log(
-                "[NGUONC API] Server:",
-                serverName,
-                "| Episodes:",
-                list.length
+        const $ =
+            cheerio.load(
+                searchResponse.data || ""
             );
 
 
-            // =================================================
-            // 6. DUYỆT TẤT CẢ EPISODE
-            // =================================================
+        // =================================================
+        // 3. TÌM PHIM PHÙ HỢP
+        // =================================================
 
-            for (
-                const episode
-                of list
-            ) {
+        let detailUrl = "";
 
-                const embed =
+
+        $("a").each(
+            (
+                index,
+                element
+            ) => {
+
+                if (detailUrl) {
+                    return;
+                }
+
+
+                const href =
                     String(
-                        episode?.embed ||
+                        $(element).attr("href") ||
                         ""
                     ).trim();
 
-                if (!embed) {
 
-                    continue;
+                const text =
+                    String(
+                        $(element).text() ||
+                        ""
+                    )
+                        .replace(
+                            /\s+/g,
+                            " "
+                        )
+                        .trim();
+
+
+                if (!href) {
+                    return;
+                }
+
+
+                const normalizedHref =
+                    href.toLowerCase();
+
+
+                const normalizedSlug =
+                    slug.toLowerCase();
+
+
+                if (
+                    normalizedHref.includes(
+                        normalizedSlug
+                    )
+                ) {
+
+                    detailUrl =
+                        href;
+
+                    return;
 
                 }
 
 
-                console.log(
-                    "[NGUONC API] Embed:",
-                    embed
-                );
+                if (
+                    text &&
+                    text.toLowerCase()
+                        .includes(
+                            String(
+                                movieName
+                            )
+                                .toLowerCase()
+                        )
+                ) {
 
+                    detailUrl =
+                        href;
 
-                const episodeName =
-                    String(
-                        episode?.name ||
-                        episode?.slug ||
-                        "Full"
-                    ).trim();
-
-
-                // =================================================
-                // 7. TẠO PLAYER TRUNG GIAN
-                // =================================================
-
-                const widgetUrl =
-                    "https://my-strem-addon.vercel.app/nguonc-player?url=" +
-                    encodeURIComponent(
-                        embed
-                    );
-
-
-                // =================================================
-                // 8. TẠO STREAM
-                // =================================================
-
-                streams.push({
-
-                    name:
-                        "▶️ [NguonC] " +
-                        serverName,
-
-                    title:
-                        episodeName,
-
-                    externalUrl:
-                        widgetUrl,
-
-                    widgetPlayer:
-                        widgetUrl,
-
-                    widgetPlayerStates:
-                        [
-                            "replaceplayer"
-                        ]
-
-                });
+                }
 
             }
+        );
+
+
+        if (!detailUrl) {
+
+            console.log(
+                "[NGUONC VIA MOTPHIMTV] ❌ Không tìm thấy phim"
+            );
+
+            return streams;
 
         }
 
 
+        if (
+            detailUrl.startsWith("/")
+        ) {
+
+            detailUrl =
+                "https://motphimtv.run" +
+                detailUrl;
+
+        }
+
+
+        console.log(
+            "[NGUONC VIA MOTPHIMTV] Detail URL:",
+            detailUrl
+        );
+
+
         // =================================================
-        // 9. KẾT QUẢ
+        // 4. GỌI TRANG CHI TIẾT
+        // =================================================
+
+        const detailResponse =
+            await axios.get(
+                detailUrl,
+                {
+                    timeout:
+                        15000,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                        "Accept-Language":
+                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                        "Referer":
+                            searchUrl,
+
+                        "DNT":
+                            "1"
+                    }
+                }
+            );
+
+
+        console.log(
+            "[NGUONC VIA MOTPHIMTV] Detail HTTP:",
+            detailResponse.status
+        );
+
+
+        const $$ =
+            cheerio.load(
+                detailResponse.data || ""
+            );
+
+
+        // =================================================
+        // 5. TÌM DANH SÁCH TẬP NC
+        // =================================================
+
+        let ncEpisodeUrl = "";
+
+
+        $$("a").each(
+            (
+                index,
+                element
+            ) => {
+
+                if (ncEpisodeUrl) {
+                    return;
+                }
+
+
+                const href =
+                    String(
+                        $$(element).attr("href") ||
+                        ""
+                    ).trim();
+
+
+                const text =
+                    String(
+                        $$(element).text() ||
+                        ""
+                    )
+                        .replace(
+                            /\s+/g,
+                            " "
+                        )
+                        .trim();
+
+
+                if (!href) {
+                    return;
+                }
+
+
+                const combined =
+                    (
+                        text +
+                        " " +
+                        href
+                    )
+                        .toLowerCase();
+
+
+                /*
+                 * MotPhimTV có nhiều nhóm:
+                 *
+                 * KK
+                 * NC
+                 * OP
+                 *
+                 * Chúng ta chỉ lấy link NC.
+                 */
+
+                if (
+                    combined.includes("nc") &&
+                    (
+                        combined.includes("full") ||
+                        combined.includes("tap")
+                    )
+                ) {
+
+                    ncEpisodeUrl =
+                        href;
+
+                }
+
+            }
+        );
+
+
+        if (!ncEpisodeUrl) {
+
+            console.log(
+                "[NGUONC VIA MOTPHIMTV] ❌ Không tìm thấy tập NC"
+            );
+
+            return streams;
+
+        }
+
+
+        if (
+            ncEpisodeUrl.startsWith("/")
+        ) {
+
+            ncEpisodeUrl =
+                "https://motphimtv.run" +
+                ncEpisodeUrl;
+
+        }
+
+
+        console.log(
+            "[NGUONC VIA MOTPHIMTV] NC Episode URL:",
+            ncEpisodeUrl
+        );
+
+
+        // =================================================
+        // 6. GỌI TRANG PLAY NC
+        // =================================================
+
+        const playResponse =
+            await axios.get(
+                ncEpisodeUrl,
+                {
+                    timeout:
+                        15000,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                        "Accept-Language":
+                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                        "Referer":
+                            detailUrl,
+
+                        "DNT":
+                            "1"
+                    }
+                }
+            );
+
+
+        console.log(
+            "[NGUONC VIA MOTPHIMTV] Play HTTP:",
+            playResponse.status
+        );
+
+
+        const $$$ =
+            cheerio.load(
+                playResponse.data || ""
+            );
+
+
+        // =================================================
+        // 7. LẤY DATA-LINK CỦA NC
+        // =================================================
+
+        let embedUrl = "";
+
+
+        $$$(
+            'a[data-type="embed"][data-link]'
+        ).each(
+            (
+                index,
+                element
+            ) => {
+
+                if (embedUrl) {
+                    return;
+                }
+
+
+                const link =
+                    String(
+                        $$$(
+                            element
+                        ).attr(
+                            "data-link"
+                        ) ||
+                        ""
+                    ).trim();
+
+
+                if (!link) {
+                    return;
+                }
+
+
+                if (
+                    link.includes(
+                        "embed"
+                    )
+                ) {
+
+                    embedUrl =
+                        link;
+
+                }
+
+            }
+        );
+
+
+        if (!embedUrl) {
+
+            console.log(
+                "[NGUONC VIA MOTPHIMTV] ❌ Không tìm thấy data-link embed"
+            );
+
+            return streams;
+
+        }
+
+
+        console.log(
+            "[NGUONC VIA MOTPHIMTV] Embed:",
+            embedUrl
+        );
+
+
+        // =================================================
+        // 8. TẠO PLAYER TRUNG GIAN
+        // =================================================
+
+        const widgetUrl =
+            "https://my-strem-addon.vercel.app/nguonc-player?url=" +
+            encodeURIComponent(
+                embedUrl
+            );
+
+
+        // =================================================
+        // 9. TẠO STREAM
+        // =================================================
+
+        streams.push({
+
+            name:
+                "▶️ [NguonC] MotPhimTV",
+
+            title:
+                "Full - Vietsub",
+
+            externalUrl:
+                widgetUrl,
+
+            widgetPlayer:
+                widgetUrl,
+
+            widgetPlayerStates:
+                [
+                    "replaceplayer"
+                ]
+
+        });
+
+
+        // =================================================
+        // 10. KẾT QUẢ
         // =================================================
 
         console.log(
-            "[NGUONC API] FINAL STREAMS:",
+            "[NGUONC VIA MOTPHIMTV] FINAL STREAMS:",
             JSON.stringify(
                 streams
             )
@@ -729,7 +1003,7 @@ async function fetchNguonC(movieName, nguoncSlug = "") {
     } catch (e) {
 
         console.log(
-            "[NGUONC API] ERROR:",
+            "[NGUONC VIA MOTPHIMTV] ERROR:",
             e?.response?.status ||
             e?.message ||
             e
