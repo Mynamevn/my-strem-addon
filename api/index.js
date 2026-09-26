@@ -481,57 +481,30 @@ async function fetchNguonC(
     const embedUrl =
         "https://embed14.streamc.xyz/embed.php?hash=4681d86705ffd80ed1e5a5d636d06faf";
 
-
-    // =====================================================
-    // NGUONC EMBED PLAYER
-    // Stremio mở route Vercel
-    // Route này iframe trực tiếp embed14
-    // =====================================================
-
-    const playerUrl =
-        "https://my-strem-addon.vercel.app/nguonc-embed-player?url=" +
-        encodeURIComponent(
-            embedUrl
-        );
-
-
     const stream = {
 
         name:
-            "▶️ [NguonC] Embed14",
+            "▶️ [NguonC TEST] Direct Embed",
 
         title:
             movieName ||
-            "Full",
+            "NguonC Test",
 
-        externalUrl:
-            playerUrl,
-
-        widgetPlayer:
-            playerUrl,
-
-        widgetPlayerStates: [
-            "replaceplayer"
-        ],
+        url:
+            embedUrl,
 
         behaviorHints: {
 
             bingeGroup:
-                "nguonc"
+                "nguonc-test"
 
         }
 
     };
 
-
     console.log(
         "[NGUONC TEST] Embed:",
         embedUrl
-    );
-
-    console.log(
-        "[NGUONC TEST] Player:",
-        playerUrl
     );
 
     console.log(
@@ -5293,8 +5266,8 @@ app.get(
 
 // =====================================================
 // NGUONC PLAYER
-// Vercel chỉ nhúng trực tiếp trang NguonC.
-// NguonC tự xử lý /episodes và player.
+// Mở đúng phim NguonC theo slug
+// NguonC tự xử lý /episodes và chọn episode
 // =====================================================
 
 app.get(
@@ -5307,6 +5280,11 @@ app.get(
                 ""
             ).trim();
 
+
+        // =====================================================
+        // KIỂM TRA SLUG
+        // =====================================================
+
         if (!slug) {
 
             return res
@@ -5317,26 +5295,59 @@ app.get(
 
         }
 
+
+        if (
+            !/^[a-z0-9-]+$/i.test(
+                slug
+            )
+        ) {
+
+            return res
+                .status(400)
+                .send(
+                    "Invalid NguonC slug"
+                );
+
+        }
+
+
+        // =====================================================
+        // TẠO URL NGUONC
+        // =====================================================
+
         const nguoncUrl =
             "https://phim.nguonc.com/phim/" +
             encodeURIComponent(
                 slug
             );
 
+
+        console.log(
+            "[NGUONC PLAYER] Slug:",
+            slug
+        );
+
         console.log(
             "[NGUONC PLAYER] Page:",
             nguoncUrl
         );
+
 
         const safeUrl =
             JSON.stringify(
                 nguoncUrl
             );
 
+
+        // =====================================================
+        // HTML PLAYER
+        // =====================================================
+
         res.setHeader(
             "Content-Type",
             "text/html; charset=utf-8"
         );
+
 
         res.send(`
 <!DOCTYPE html>
@@ -5405,142 +5416,6 @@ console.log(
 );
 
 </script>
-
-</body>
-
-</html>
-        `);
-
-    }
-);
-
-// =====================================================
-// NGUONC EMBED14 PLAYER
-// Mở trực tiếp embed14 trong iframe
-// =====================================================
-
-app.get(
-    "/nguonc-embed-player",
-    (req, res) => {
-
-        const targetUrl =
-            String(
-                req.query.url ||
-                ""
-            ).trim();
-
-        if (!targetUrl) {
-
-            return res
-                .status(400)
-                .send(
-                    "Missing NguonC Embed URL"
-                );
-
-        }
-
-        let parsedUrl;
-
-        try {
-
-            parsedUrl =
-                new URL(
-                    targetUrl
-                );
-
-        } catch (error) {
-
-            return res
-                .status(400)
-                .send(
-                    "Invalid URL"
-                );
-
-        }
-
-        if (
-            parsedUrl.hostname !==
-            "embed14.streamc.xyz"
-        ) {
-
-            return res
-                .status(403)
-                .send(
-                    "Host not allowed"
-                );
-
-        }
-
-        const iframeUrl =
-            parsedUrl.href;
-
-        console.log(
-            "[NGUONC EMBED PLAYER] iframe:",
-            iframeUrl
-        );
-
-        res.setHeader(
-            "Content-Type",
-            "text/html; charset=utf-8"
-        );
-
-        res.send(`
-<!DOCTYPE html>
-
-<html>
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
-
-<title>NguonC Embed Player</title>
-
-<style>
-
-html,
-body {
-
-    width: 100%;
-    height: 100%;
-
-    margin: 0;
-    padding: 0;
-
-    background: #000;
-
-    overflow: hidden;
-
-}
-
-iframe {
-
-    width: 100%;
-    height: 100%;
-
-    border: 0;
-
-    display: block;
-
-}
-
-</style>
-
-</head>
-
-<body>
-
-<iframe
-    src="${iframeUrl}"
-    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-    allowfullscreen
-    webkitallowfullscreen
-    referrerpolicy="no-referrer">
-</iframe>
 
 </body>
 
