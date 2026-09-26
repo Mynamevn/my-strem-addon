@@ -456,31 +456,29 @@ builder.defineMetaHandler(async (args) => {
    FETCH NGUONC
    ============================================================ */
 
-async function fetchNguonC(
-    movieName,
-    nguoncSlug = ""
-) {
+async function fetchNguonC(movieName, nguoncSlug = "") {
 
     const streams = [];
 
     try {
 
         console.log(
-            "[NGUONC PAGE] ================================="
+            "[NGUONC API] ================================="
         );
 
         console.log(
-            "[NGUONC PAGE] Movie:",
+            "[NGUONC API] Movie:",
             movieName
         );
 
         console.log(
-            "[NGUONC PAGE] Provided slug:",
+            "[NGUONC API] Provided slug:",
             nguoncSlug
         );
 
+
         // =================================================
-        // 1. TẠO SLUG FALLBACK
+        // 1. TẠO SLUG
         // =================================================
 
         const slugify = (text) => {
@@ -506,478 +504,241 @@ async function fetchNguonC(
 
         };
 
-        // =================================================
-        // ƯU TIÊN SLUG ĐƯỢC TRUYỀN VÀO
-        // NẾU KHÔNG CÓ → TỰ TẠO
-        // =================================================
-
         const slug =
             String(
                 nguoncSlug || ""
             ).trim() ||
             slugify(movieName);
 
-        const movieUrl =
-            "https://phim.nguonc.com/phim/" +
-            slug;
-
         console.log(
-            "[NGUONC PAGE] Final slug:",
+            "[NGUONC API] Final slug:",
             slug
         );
 
-        console.log(
-            "[NGUONC PAGE] URL:",
-            movieUrl
-        );
 
         // =================================================
-        // 2. TẢI TRANG PHIM
+        // 2. TẠO ENDPOINT EPISODES
+        // =================================================
+
+        const episodesUrl =
+            "https://phim.nguonc.com/phim/" +
+            encodeURIComponent(slug) +
+            "/episodes";
+
+        console.log(
+            "[NGUONC API] Episodes URL:",
+            episodesUrl
+        );
+
+
+        // =================================================
+        // 3. GỌI ENDPOINT
         // =================================================
 
         const response =
             await axios.get(
-                movieUrl,
+                episodesUrl,
                 {
-                    timeout: 15000,
+                    timeout:
+                        15000,
 
                     headers: {
 
                         "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                            "AppleWebKit/537.36 " +
-                            "(KHTML, like Gecko) " +
-                            "Chrome/131.0.0.0 Safari/537.36",
+                            "Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
 
                         "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                            "application/json",
 
                         "Accept-Language":
-                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+                            "en-US,en;q=0.5",
 
                         "Referer":
-                            "https://phim.nguonc.com/"
+                            "https://phim.nguonc.com/phim/" +
+                            slug,
+
+                        "DNT":
+                            "1",
+
+                        "Sec-GPC":
+                            "1"
                     }
                 }
             );
 
+
         console.log(
-            "[NGUONC PAGE] HTTP:",
+            "[NGUONC API] HTTP:",
             response.status
         );
 
-        const html =
-            String(
-                response.data || ""
-            );
+
+        // =================================================
+        // 4. LẤY JSON
+        // =================================================
+
+        const data =
+            response.data || {};
 
         console.log(
-            "[NGUONC PAGE] HTML length:",
-            html.length
-        );
-
-        if (!html) {
-
-            console.log(
-                "[NGUONC PAGE] Empty HTML"
-            );
-
-            return streams;
-        }
-
-        // =================================================
-        // 3. CHEERIO
-        // =================================================
-
-        const $ =
-            cheerio.load(html);
-
-        const candidates = [];
-
-        // =================================================
-        // 4. TÌM TẤT CẢ IFRAME
-        // =================================================
-
-        $("iframe").each(
-            (index, element) => {
-
-                const src =
-                    String(
-                        $(element).attr("src") ||
-                        $(element).attr("data-src") ||
-                        ""
-                    ).trim();
-
-                if (src) {
-
-                    candidates.push({
-                        source:
-                            "iframe",
-
-                        url:
-                            src
-                    });
-
-                }
-
-            }
-        );
-
-        // =================================================
-        // 5. TÌM VIDEO SOURCE
-        // =================================================
-
-        $("video").each(
-            (index, element) => {
-
-                const src =
-                    String(
-                        $(element).attr("src") ||
-                        $(element).attr("data-src") ||
-                        ""
-                    ).trim();
-
-                if (src) {
-
-                    candidates.push({
-                        source:
-                            "video",
-
-                        url:
-                            src
-                    });
-
-                }
-
-            }
-        );
-
-        $("source").each(
-            (index, element) => {
-
-                const src =
-                    String(
-                        $(element).attr("src") ||
-                        $(element).attr("data-src") ||
-                        ""
-                    ).trim();
-
-                if (src) {
-
-                    candidates.push({
-                        source:
-                            "source",
-
-                        url:
-                            src
-                    });
-
-                }
-
-            }
-        );
-
-        // =================================================
-        // 6. TÌM URL TRONG HTML / JAVASCRIPT
-        // =================================================
-
-        const urlRegex =
-            /https?:\/\/[^"'\\\s<>]+/gi;
-
-        const rawUrls =
-            html.match(
-                urlRegex
-            ) || [];
-
-        for (
-            const rawUrl
-            of rawUrls
-        ) {
-
-            const cleanUrl =
-                rawUrl
-                    .replace(
-                        /&amp;/g,
-                        "&"
-                    )
-                    .replace(
-                        /\\\//g,
-                        "/"
-                    )
-                    .replace(
-                        /[),;]+$/,
-                        ""
-                    );
-
-            candidates.push({
-
-                source:
-                    "html",
-
-                url:
-                    cleanUrl
-
-            });
-
-        }
-
-        // =================================================
-        // 7. TÌM CÁC DẤU HIỆU EMBED
-        // =================================================
-
-        const lowerHtml =
-            html.toLowerCase();
-
-        console.log(
-            "[NGUONC PAGE] Contains embed:",
-            lowerHtml.includes(
-                "embed"
+            "[NGUONC API] Servers:",
+            Array.isArray(
+                data.servers
             )
+                ? data.servers.length
+                : 0
         );
 
-        console.log(
-            "[NGUONC PAGE] Contains Trình phát:",
-            lowerHtml.includes(
-                "trình phát trực tiếp"
-            )
-        );
-
-        console.log(
-            "[NGUONC PAGE] iframe count:",
-            $("iframe").length
-        );
-
-        // =================================================
-        // 8. CHUẨN HÓA URL
-        // =================================================
-
-        const normalized =
-            candidates
-                .map(
-                    item => {
-
-                        let url =
-                            String(
-                                item.url || ""
-                            ).trim();
-
-                        if (!url)
-                            return null;
-
-                        if (
-                            url.startsWith("//")
-                        ) {
-
-                            url =
-                                "https:" +
-                                url;
-
-                        }
-
-                        else if (
-                            url.startsWith("/")
-                        ) {
-
-                            url =
-                                "https://phim.nguonc.com" +
-                                url;
-
-                        }
-
-                        return {
-
-                            source:
-                                item.source,
-
-                            url:
-                                url
-
-                        };
-
-                    }
-                )
-                .filter(Boolean);
-
-        // =================================================
-        // 9. LOẠI TRÙNG
-        // =================================================
-
-        const unique = [];
-
-        const seen =
-            new Set();
-
-        for (
-            const item
-            of normalized
-        ) {
-
-            if (
-                !/^https?:\/\//i.test(
-                    item.url
-                )
-            ) {
-                continue;
-            }
-
-            if (
-                seen.has(
-                    item.url
-                )
-            ) {
-                continue;
-            }
-
-            seen.add(
-                item.url
-            );
-
-            unique.push(
-                item
-            );
-
-        }
-
-        console.log(
-            "[NGUONC PAGE] Candidate URLs:",
-            JSON.stringify(
-                unique
-            )
-        );
-
-        // =================================================
-        // 10. ƯU TIÊN LINK EMBED / PLAYER
-        // =================================================
-
-        const embedCandidates =
-            unique.filter(
-                item => {
-
-                    const url =
-                        item.url.toLowerCase();
-
-                    return (
-
-                        url.includes(
-                            "embed"
-                        ) ||
-
-                        url.includes(
-                            "player"
-                        ) ||
-
-                        url.includes(
-                            "stream"
-                        ) ||
-
-                        url.includes(
-                            "video"
-                        ) ||
-
-                        url.includes(
-                            "play"
-                        )
-
-                    );
-
-                }
-            );
-
-        console.log(
-            "[NGUONC PAGE] Embed candidates:",
-            JSON.stringify(
-                embedCandidates
-            )
-        );
-
-        // =================================================
-        // 11. CHỌN LINK
-        // =================================================
-
-        const selected =
-            embedCandidates[0] ||
-            unique.find(
-                item =>
-                    item.source ===
-                    "iframe"
-            );
 
         if (
-            !selected
+            !Array.isArray(
+                data.servers
+            )
         ) {
 
             console.log(
-                "[NGUONC PAGE] ❌ Không tìm thấy embed"
+                "[NGUONC API] ❌ Không có servers"
             );
 
             return streams;
         }
 
-        console.log(
-            "[NGUONC PAGE] ✅ Selected:",
-            selected.url
-        );
 
         // =================================================
-        // 12. TẠO PLAYER TRUNG GIAN
+        // 5. DUYỆT TẤT CẢ SERVER
         // =================================================
 
-        const widgetUrl =
-            "https://my-strem-addon.vercel.app/nguonc-player?url=" +
-            encodeURIComponent(
-                selected.url
+        for (
+            const server
+            of data.servers
+        ) {
+
+            const serverName =
+                String(
+                    server?.name ||
+                    "NguonC"
+                ).trim();
+
+            const list =
+                Array.isArray(
+                    server?.list
+                )
+                    ? server.list
+                    : [];
+
+            console.log(
+                "[NGUONC API] Server:",
+                serverName,
+                "| Episodes:",
+                list.length
             );
 
-        console.log(
-            "[NGUONC PAGE] WIDGET:",
-            widgetUrl
-        );
+
+            // =================================================
+            // 6. DUYỆT TẤT CẢ EPISODE
+            // =================================================
+
+            for (
+                const episode
+                of list
+            ) {
+
+                const embed =
+                    String(
+                        episode?.embed ||
+                        ""
+                    ).trim();
+
+                if (!embed) {
+
+                    continue;
+
+                }
+
+
+                console.log(
+                    "[NGUONC API] Embed:",
+                    embed
+                );
+
+
+                const episodeName =
+                    String(
+                        episode?.name ||
+                        episode?.slug ||
+                        "Full"
+                    ).trim();
+
+
+                // =================================================
+                // 7. TẠO PLAYER TRUNG GIAN
+                // =================================================
+
+                const widgetUrl =
+                    "https://my-strem-addon.vercel.app/nguonc-player?url=" +
+                    encodeURIComponent(
+                        embed
+                    );
+
+
+                // =================================================
+                // 8. TẠO STREAM
+                // =================================================
+
+                streams.push({
+
+                    name:
+                        "▶️ [NguonC] " +
+                        serverName,
+
+                    title:
+                        episodeName,
+
+                    externalUrl:
+                        widgetUrl,
+
+                    widgetPlayer:
+                        widgetUrl,
+
+                    widgetPlayerStates:
+                        [
+                            "replaceplayer"
+                        ]
+
+                });
+
+            }
+
+        }
+
 
         // =================================================
-        // 13. STREAM
+        // 9. KẾT QUẢ
         // =================================================
 
-        streams.push({
-
-            name:
-                "▶️ [NguonC] Embed",
-
-            title:
-                "Full - NguonC",
-
-            externalUrl:
-                widgetUrl,
-
-            widgetPlayer:
-                widgetUrl,
-
-            widgetPlayerStates:
-                [
-                    "replaceplayer"
-                ]
-
-        });
-
         console.log(
-            "[NGUONC PAGE] FINAL STREAMS:",
+            "[NGUONC API] FINAL STREAMS:",
             JSON.stringify(
                 streams
             )
         );
+
 
         return streams;
 
     } catch (e) {
 
         console.log(
-            "[NGUONC PAGE] ERROR:",
+            "[NGUONC API] ERROR:",
             e?.response?.status ||
             e?.message ||
             e
         );
 
         return streams;
+
     }
+
 }
 
 
