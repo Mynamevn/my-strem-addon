@@ -1095,6 +1095,15 @@ if (!movieSlug) {
 
     return streams;
 }
+streams.nguoncSlug =
+    String(
+        movieSlug
+    ).trim();
+
+console.log(
+    "[KKPHIM] Slug for NguonC:",
+    streams.nguoncSlug
+);
 
 // =================================================
 // LƯU SLUG ĐỂ NGUONC CÓ THỂ DÙNG
@@ -3854,87 +3863,8 @@ try {
 
 }
 
-
 // =====================================================
-// 7. LẤY SLUG KKPHIM CHO NGUONC
-// =====================================================
-
-let nguoncSlug =
-    "";
-
-
-// -----------------------------------------------------
-// Tìm slug từ stream của KKPhim nếu fetchKKPhim
-// đã trả về metadata trong stream.
-// -----------------------------------------------------
-
-for (
-    const stream
-    of kkphim
-) {
-
-    if (
-        stream?.nguoncSlug
-    ) {
-
-        nguoncSlug =
-            String(
-                stream.nguoncSlug
-            ).trim();
-
-        break;
-
-    }
-
-}
-
-
-// -----------------------------------------------------
-// Nếu fetchKKPhim hiện tại chưa trả nguoncSlug,
-// ta sẽ thử lấy từ title/name metadata nếu có.
-// -----------------------------------------------------
-
-if (
-    !nguoncSlug
-) {
-
-    for (
-        const stream
-        of kkphim
-    ) {
-
-        const candidate =
-            stream?.slug ||
-            stream?.movieSlug ||
-            stream?.metadata?.slug;
-
-        if (
-            candidate
-        ) {
-
-            nguoncSlug =
-                String(
-                    candidate
-                ).trim();
-
-            break;
-
-        }
-
-    }
-
-}
-
-
-console.log(
-    "[NGUONC] Slug from KKPhim:",
-    nguoncSlug ||
-    "(none)"
-);
-
-
-// =====================================================
-// 6. CHẠY KKPHiM TRƯỚC ĐỂ LẤY SLUG CHO NGUONC
+// 6. CHẠY KKPHIM TRƯỚC ĐỂ LẤY SLUG CHO NGUONC
 // =====================================================
 
 let kkphim = [];
