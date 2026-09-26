@@ -456,7 +456,10 @@ builder.defineMetaHandler(async (args) => {
    FETCH NGUONC
    ============================================================ */
 
-async function fetchNguonC(movieName) {
+async function fetchNguonC(
+    movieName,
+    nguoncSlug = ""
+) {
 
     const streams = [];
 
@@ -471,28 +474,57 @@ async function fetchNguonC(movieName) {
             movieName
         );
 
+        console.log(
+            "[NGUONC PAGE] Provided slug:",
+            nguoncSlug
+        );
+
         // =================================================
-        // 1. TẠO SLUG
+        // 1. TẠO SLUG FALLBACK
         // =================================================
 
         const slugify = (text) => {
 
             return String(text || "")
                 .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
+                .replace(
+                    /[\u0300-\u036f]/g,
+                    ""
+                )
                 .toLowerCase()
-                .replace(/đ/g, "d")
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/^-+|-+$/g, "");
+                .replace(
+                    /đ/g,
+                    "d"
+                )
+                .replace(
+                    /[^a-z0-9]+/g,
+                    "-"
+                )
+                .replace(
+                    /^-+|-+$/g,
+                    "");
 
         };
 
+        // =================================================
+        // ƯU TIÊN SLUG ĐƯỢC TRUYỀN VÀO
+        // NẾU KHÔNG CÓ → TỰ TẠO
+        // =================================================
+
         const slug =
+            String(
+                nguoncSlug || ""
+            ).trim() ||
             slugify(movieName);
 
         const movieUrl =
             "https://phim.nguonc.com/phim/" +
             slug;
+
+        console.log(
+            "[NGUONC PAGE] Final slug:",
+            slug
+        );
 
         console.log(
             "[NGUONC PAGE] URL:",
@@ -581,6 +613,7 @@ async function fetchNguonC(movieName) {
                     candidates.push({
                         source:
                             "iframe",
+
                         url:
                             src
                     });
@@ -609,6 +642,7 @@ async function fetchNguonC(movieName) {
                     candidates.push({
                         source:
                             "video",
+
                         url:
                             src
                     });
@@ -633,6 +667,7 @@ async function fetchNguonC(movieName) {
                     candidates.push({
                         source:
                             "source",
+
                         url:
                             src
                     });
@@ -675,10 +710,13 @@ async function fetchNguonC(movieName) {
                     );
 
             candidates.push({
+
                 source:
                     "html",
+
                 url:
                     cleanUrl
+
             });
 
         }
@@ -692,7 +730,9 @@ async function fetchNguonC(movieName) {
 
         console.log(
             "[NGUONC PAGE] Contains embed:",
-            lowerHtml.includes("embed")
+            lowerHtml.includes(
+                "embed"
+            )
         );
 
         console.log(
@@ -724,7 +764,6 @@ async function fetchNguonC(movieName) {
                         if (!url)
                             return null;
 
-                        // //example.com
                         if (
                             url.startsWith("//")
                         ) {
@@ -735,7 +774,6 @@ async function fetchNguonC(movieName) {
 
                         }
 
-                        // /embed/...
                         else if (
                             url.startsWith("/")
                         ) {
@@ -747,10 +785,13 @@ async function fetchNguonC(movieName) {
                         }
 
                         return {
+
                             source:
                                 item.source,
+
                             url:
                                 url
+
                         };
 
                     }
@@ -761,8 +802,7 @@ async function fetchNguonC(movieName) {
         // 9. LOẠI TRÙNG
         // =================================================
 
-        const unique =
-            [];
+        const unique = [];
 
         const seen =
             new Set();
@@ -817,11 +857,27 @@ async function fetchNguonC(movieName) {
                         item.url.toLowerCase();
 
                     return (
-                        url.includes("embed") ||
-                        url.includes("player") ||
-                        url.includes("stream") ||
-                        url.includes("video") ||
-                        url.includes("play")
+
+                        url.includes(
+                            "embed"
+                        ) ||
+
+                        url.includes(
+                            "player"
+                        ) ||
+
+                        url.includes(
+                            "stream"
+                        ) ||
+
+                        url.includes(
+                            "video"
+                        ) ||
+
+                        url.includes(
+                            "play"
+                        )
+
                     );
 
                 }
@@ -1030,15 +1086,29 @@ async function fetchKKPhim(movieName) {
         );
 
         const movieSlug =
-            movie?.slug;
+    movie?.slug;
 
-        if (!movieSlug) {
-            console.log(
-                "[KKPHIM] NO SLUG"
-            );
+if (!movieSlug) {
+    console.log(
+        "[KKPHIM] NO SLUG"
+    );
 
-            return streams;
-        }
+    return streams;
+}
+
+// =================================================
+// LƯU SLUG ĐỂ NGUONC CÓ THỂ DÙNG
+// =================================================
+
+streams.nguoncSlug =
+    String(
+        movieSlug
+    ).trim();
+
+console.log(
+    "[KKPHIM] Slug for NguonC:",
+    streams.nguoncSlug
+);
 
         console.log(
             "[KKPHIM] Slug:",
@@ -3722,185 +3792,330 @@ builder.defineStreamHandler(async (args) => {
     }
 
     // =====================================================
-    // 5. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
-    // =====================================================
+// 5. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
+// =====================================================
 
-    let nguonCFallbackName =
-        movieName;
+let nguonCFallbackName =
+    movieName;
 
-    const slashParts =
-        String(movieName)
-            .split("/");
+const slashParts =
+    String(movieName)
+        .split("/");
 
-    if (
-        slashParts.length > 1 &&
+if (
+    slashParts.length > 1 &&
+    String(
+        slashParts[0]
+    ).trim().length >= 3
+) {
+
+    nguonCFallbackName =
         String(
             slashParts[0]
-        ).trim().length >= 3
-    ) {
+        )
+            .replace(/\s+/g, " ")
+            .trim();
 
-        nguonCFallbackName =
-            String(
-                slashParts[0]
-            )
-                .replace(/\s+/g, " ")
-                .trim();
+}
 
-    }
+console.log(
+    "[NGUONC FALLBACK] Original:",
+    movieName
+);
 
-    console.log(
-        "[NGUONC FALLBACK] Original:",
-        movieName
-    );
+console.log(
+    "[NGUONC FALLBACK] Selected:",
+    nguonCFallbackName
+);
 
-    console.log(
-        "[NGUONC FALLBACK] Selected:",
-        nguonCFallbackName
-    );
 
-    // =====================================================
-    // 6. CHẠY 5 NGUỒN SONG SONG
-    // =====================================================
+// =====================================================
+// 6. CHẠY KKPHIM TRƯỚC ĐỂ LẤY SLUG
+// =====================================================
 
-    let results = [];
+let kkphim = [];
 
-    try {
+try {
 
-        results =
-            await Promise.allSettled([
-
-                // 1
-                fetchNguonC(
-                    movieName
-                ),
-
-                // 2
-                fetchKKPhim(
-                    movieName
-                ),
-
-                // 3
-                fetchVSMov(
-                    movieName
-                ),
-
-                // 4
-                scrapePhimLongTieng(
-                    movieName
-                ),
-
-                // 5
-                scrapeMotPhimTV(
-                    movieName
-                )
-
-            ]);
-
-    } catch (e) {
-
-        console.log(
-            "[STREAM] Promise error:",
-            e?.message ||
-            e
+    kkphim =
+        await fetchKKPhim(
+            movieName
         );
 
-        results = [];
+} catch (e) {
+
+    console.log(
+        "[KKPHIM PRELOAD ERROR]:",
+        e?.message ||
+        e
+    );
+
+    kkphim = [];
+
+}
+
+
+// =====================================================
+// 7. LẤY SLUG KKPHIM CHO NGUONC
+// =====================================================
+
+let nguoncSlug =
+    "";
+
+
+// -----------------------------------------------------
+// Tìm slug từ stream của KKPhim nếu fetchKKPhim
+// đã trả về metadata trong stream.
+// -----------------------------------------------------
+
+for (
+    const stream
+    of kkphim
+) {
+
+    if (
+        stream?.nguoncSlug
+    ) {
+
+        nguoncSlug =
+            String(
+                stream.nguoncSlug
+            ).trim();
+
+        break;
 
     }
 
-    // =====================================================
-    // 7. LẤY KẾT QUẢ TỪ 5 NGUỒN
-    // =====================================================
+}
 
-    const nguonc =
-        results[0]?.status === "fulfilled" &&
-        Array.isArray(
-            results[0].value
-        )
-            ? results[0].value
-            : [];
 
-    const kkphim =
-        results[1]?.status === "fulfilled" &&
-        Array.isArray(
-            results[1].value
-        )
-            ? results[1].value
-            : [];
+// -----------------------------------------------------
+// Nếu fetchKKPhim hiện tại chưa trả nguoncSlug,
+// ta sẽ thử lấy từ title/name metadata nếu có.
+// -----------------------------------------------------
 
-    const vsmov =
-        results[2]?.status === "fulfilled" &&
-        Array.isArray(
-            results[2].value
-        )
-            ? results[2].value
-            : [];
+if (
+    !nguoncSlug
+) {
 
-    const longtieng =
-        results[3]?.status === "fulfilled" &&
-        Array.isArray(
-            results[3].value
-        )
-            ? results[3].value
-            : [];
+    for (
+        const stream
+        of kkphim
+    ) {
 
-    const motphim =
-        results[4]?.status === "fulfilled" &&
-        Array.isArray(
-            results[4].value
-        )
-            ? results[4].value
-            : [];
+        const candidate =
+            stream?.slug ||
+            stream?.movieSlug ||
+            stream?.metadata?.slug;
 
-    // =====================================================
-    // 8. LOG
-    // =====================================================
+        if (
+            candidate
+        ) {
 
-    console.log(
-        "[STREAM] NguonC:",
-        nguonc.length
-    );
+            nguoncSlug =
+                String(
+                    candidate
+                ).trim();
 
-    console.log(
-        "[STREAM] KKPhim:",
-        kkphim.length
-    );
+            break;
 
-    console.log(
-        "[STREAM] VSMov:",
-        vsmov.length
-    );
+        }
 
-    console.log(
-        "[STREAM] 1Phim32:",
-        longtieng.length
-    );
+    }
+
+}
+
+
+console.log(
+    "[NGUONC] Slug from KKPhim:",
+    nguoncSlug ||
+    "(none)"
+);
+
+
+// =====================================================
+// 6. CHẠY KKPHiM TRƯỚC ĐỂ LẤY SLUG CHO NGUONC
+// =====================================================
+
+let kkphim = [];
+
+try {
+
+    kkphim =
+        await fetchKKPhim(
+            movieName
+        );
+
+} catch (e) {
 
     console.log(
-        "[STREAM] MotPhimTV:",
-        motphim.length
+        "[KKPHIM PRELOAD ERROR]:",
+        e?.message ||
+        e
     );
 
+    kkphim = [];
+
+}
+
+
+// =====================================================
+// 7. LẤY SLUG KKPHiM CHO NGUONC
+// =====================================================
+
+const nguoncSlug =
+    String(
+        kkphim?.nguoncSlug ||
+        ""
+    ).trim();
+
+console.log(
+    "[NGUONC] Slug from KKPhim:",
+    nguoncSlug ||
+    "(none)"
+);
+
+
+// =====================================================
+// 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
+// =====================================================
+
+let results = [];
+
+try {
+
+    results =
+        await Promise.allSettled([
+
+            // 0
+            fetchNguonC(
+                nguonCFallbackName,
+                nguoncSlug
+            ),
+
+            // 1
+            fetchVSMov(
+                movieName
+            ),
+
+            // 2
+            scrapePhimLongTieng(
+                movieName
+            ),
+
+            // 3
+            scrapeMotPhimTV(
+                movieName
+            )
+
+        ]);
+
+} catch (e) {
+
+    console.log(
+        "[STREAM] Promise error:",
+        e?.message ||
+        e
+    );
+
+    results = [];
+
+}
+
+
+// =====================================================
+// 9. LẤY KẾT QUẢ TỪ CÁC NGUỒN
+// =====================================================
+
+const nguonc =
+    results[0]?.status === "fulfilled" &&
+    Array.isArray(
+        results[0].value
+    )
+        ? results[0].value
+        : [];
+
+const vsmov =
+    results[1]?.status === "fulfilled" &&
+    Array.isArray(
+        results[1].value
+    )
+        ? results[1].value
+        : [];
+
+const longtieng =
+    results[2]?.status === "fulfilled" &&
+    Array.isArray(
+        results[2].value
+    )
+        ? results[2].value
+        : [];
+
+const motphim =
+    results[3]?.status === "fulfilled" &&
+    Array.isArray(
+        results[3].value
+    )
+        ? results[3].value
+        : [];
+
+
+// =====================================================
+// 10. LOG
+// =====================================================
+
+console.log(
+    "[STREAM] NguonC streams:",
+    nguonc.length
+);
+
+console.log(
+    "[STREAM] KKPhim streams:",
+    kkphim.length
+);
+
+console.log(
+    "[STREAM] VSMov streams:",
+    vsmov.length
+);
+
+console.log(
+    "[STREAM] 1Phim32 streams:",
+    longtieng.length
+);
+
+console.log(
+    "[STREAM] MotPhimTV streams:",
+    motphim.length
+);
+
+console.log(
+    "[STREAM] NguonC slug:",
+    nguoncSlug ||
+    "(none)"
+);
+
+
+// =====================================================
+// 11. GỘP STREAM TRỰC TIẾP
+// =====================================================
+
+const directStreams = [
+
+    ...nguonc,
+
+    ...kkphim,
+
+    ...vsmov,
+
+    ...longtieng,
+
+    ...motphim
+
+];
+
     // =====================================================
-    // 9. GỘP STREAM TRỰC TIẾP
-    // =====================================================
-
-    const directStreams = [
-
-        ...nguonc,
-
-        ...kkphim,
-
-        ...vsmov,
-
-        ...longtieng,
-
-        ...motphim
-
-    ];
-
-    // =====================================================
-    // 10. 4 FALLBACK CHUNG
+    // 12. 4 FALLBACK CHUNG
     //
     // VSMOV KHÔNG THÊM Ở ĐÂY
     //
@@ -3996,7 +4211,7 @@ builder.defineStreamHandler(async (args) => {
     ];
 
     // =====================================================
-    // 11. LỌC DIRECT STREAM
+    // 13. LỌC DIRECT STREAM
     // =====================================================
 
     const validDirectStreams =
@@ -4019,7 +4234,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 12. LỌC FALLBACK
+    // 14. LỌC FALLBACK
     // =====================================================
 
     const validExternalStreams =
@@ -4041,7 +4256,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 13. GỘP TẤT CẢ
+    // 15. GỘP TẤT CẢ
     // =====================================================
 
     const allStreams = [
@@ -4053,7 +4268,7 @@ builder.defineStreamHandler(async (args) => {
     ];
 
     // =====================================================
-    // 14. LOẠI URL TRÙNG
+    // 16. LOẠI URL TRÙNG
     // =====================================================
 
     const seen =
@@ -4085,7 +4300,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 15. LOG CUỐI
+    // 17. LOG CUỐI
     // =====================================================
 
     console.log(
@@ -4115,7 +4330,7 @@ builder.defineStreamHandler(async (args) => {
     );
 
     // =====================================================
-    // 16. TRẢ VỀ STREMIO
+    // 18. TRẢ VỀ STREMIO
     // =====================================================
 
     return {
