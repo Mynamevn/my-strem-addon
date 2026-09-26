@@ -5244,9 +5244,9 @@ app.get("/vsmov-player", (req, res) => {
 });
 
 // =====================================================
-// NGUONC CLIENT PLAYER
-// Browser tự gọi NguonC /episodes
-// Vercel KHÔNG gọi NguonC
+// NGUONC PLAYER
+// Vercel chỉ nhúng trực tiếp trang NguonC.
+// NguonC tự xử lý /episodes và player.
 // =====================================================
 
 app.get(
@@ -5269,9 +5269,20 @@ app.get(
 
         }
 
-        const safeSlug =
-            JSON.stringify(
+        const nguoncUrl =
+            "https://phim.nguonc.com/phim/" +
+            encodeURIComponent(
                 slug
+            );
+
+        console.log(
+            "[NGUONC PLAYER] Page:",
+            nguoncUrl
+        );
+
+        const safeUrl =
+            JSON.stringify(
+                nguoncUrl
             );
 
         res.setHeader(
@@ -5312,35 +5323,6 @@ body {
 
 }
 
-#player {
-
-    width: 100%;
-    height: 100%;
-
-}
-
-#loading {
-
-    position: fixed;
-
-    inset: 0;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    background: #000;
-
-    color: #fff;
-
-    font-family: Arial, sans-serif;
-
-    z-index: 10;
-
-}
-
 iframe {
 
     width: 100%;
@@ -5358,164 +5340,21 @@ iframe {
 
 <body>
 
-<div id="loading">
-    Loading NguonC...
-</div>
-
-<div id="player"></div>
+<iframe
+    id="nguonc-frame"
+    src="${nguoncUrl}"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+    webkitallowfullscreen
+    referrerpolicy="origin">
+</iframe>
 
 <script>
 
-(async function () {
-
-    const slug =
-        ${safeSlug};
-
-    try {
-
-        console.log(
-            "[NGUONC CLIENT] Slug:",
-            slug
-        );
-
-        const response =
-            await fetch(
-                "https://phim.nguonc.com/phim/" +
-                encodeURIComponent(slug) +
-                "/episodes"
-            );
-
-        if (!response.ok) {
-
-            throw new Error(
-                "NguonC HTTP " +
-                response.status
-            );
-
-        }
-
-        const data =
-            await response.json();
-
-        console.log(
-            "[NGUONC CLIENT] Episodes:",
-            data
-        );
-
-        let embed = "";
-
-        if (
-            Array.isArray(
-                data.servers
-            )
-        ) {
-
-            for (
-                const server
-                of data.servers
-            ) {
-
-                if (
-                    !Array.isArray(
-                        server.list
-                    )
-                ) {
-
-                    continue;
-
-                }
-
-                for (
-                    const episode
-                    of server.list
-                ) {
-
-                    if (
-                        episode.embed
-                    ) {
-
-                        embed =
-                            episode.embed;
-
-                        break;
-
-                    }
-
-                }
-
-                if (embed) {
-
-                    break;
-
-                }
-
-            }
-
-        }
-
-        if (!embed) {
-
-            throw new Error(
-                "Không tìm thấy embed"
-            );
-
-        }
-
-        console.log(
-            "[NGUONC CLIENT] Embed:",
-            embed
-        );
-
-        const iframe =
-            document.createElement(
-                "iframe"
-            );
-
-        iframe.src =
-            embed;
-
-        iframe.allow =
-            "autoplay; fullscreen; encrypted-media; picture-in-picture";
-
-        iframe.allowFullscreen =
-            true;
-
-        iframe.referrerPolicy =
-            "origin";
-
-        document
-            .getElementById(
-                "player"
-            )
-            .appendChild(
-                iframe
-            );
-
-        document
-            .getElementById(
-                "loading"
-            )
-            .style.display =
-            "none";
-
-    } catch (error) {
-
-        console.error(
-            "[NGUONC CLIENT] ERROR:",
-            error
-        );
-
-        document
-            .getElementById(
-                "loading"
-            )
-            .textContent =
-            "NguonC Player Error: " +
-            error.message;
-
-    }
-
-})();
+console.log(
+    "[NGUONC PLAYER] iframe:",
+    ${safeUrl}
+);
 
 </script>
 
@@ -5526,6 +5365,11 @@ iframe {
 
     }
 );
+
+
+// =====================================================
+// STREMIO ADDON ROUTER
+// =====================================================
 
 app.use(
     "/",
