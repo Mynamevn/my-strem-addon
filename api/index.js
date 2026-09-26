@@ -452,700 +452,100 @@ builder.defineMetaHandler(async (args) => {
 });
 
 
-/* ============================================================
-   FETCH NGUONC
-   ============================================================ */
+// =====================================================
+// FETCH NGUONC - BROWSER PLAYER MODE
+// Vercel KHÔNG truy cập NguonC.
+// Stremio/browser tự mở trang NguonC.
+// =====================================================
 
 async function fetchNguonC(
-    movieName
+    movieName,
+    nguoncSlug
 ) {
 
-    const streams = [];
+    console.log(
+        "[NGUONC BROWSER] ================================="
+    );
 
-    const headers = {
-
-        "User-Agent":
-            NGUONC_UA,
-
-        "Accept":
-            "application/json, text/plain, */*",
-
-        "Referer":
-            "https://nguonc.com/",
-
-        "Origin":
-            "https://nguonc.com"
-
-    };
-
-    /* --------------------------------------------------------
-       NORMALIZE TITLE
-       -------------------------------------------------------- */
-
-    function normalizeTitle(
-        value
-    ) {
-
-        return String(
-            value || ""
-        )
-            .normalize("NFD")
-            .replace(
-                /[\u0300-\u036f]/g,
-                ""
-            )
-            .toLowerCase()
-            .replace(
-                /[^a-z0-9]+/g,
-                " "
-            )
-            .replace(
-                /\s+/g,
-                " "
-            )
-            .trim();
-
-    }
-
-    /* --------------------------------------------------------
-       TITLE VARIANTS
-       -------------------------------------------------------- */
-
-    const variants = [];
-
-    function addVariant(
-        value
-    ) {
-
-        value =
-            String(
-                value || ""
-            ).trim();
-
-        if (!value) {
-            return;
-        }
-
-        const normalized =
-            normalizeTitle(
-                value
-            );
-
-        if (
-            !variants.some(
-                x =>
-                    normalizeTitle(
-                        x
-                    ) === normalized
-            )
-        ) {
-
-            variants.push(
-                value
-            );
-
-        }
-
-    }
-
-    addVariant(
+    console.log(
+        "[NGUONC BROWSER] Movie:",
         movieName
     );
 
-    String(movieName)
-        .split("/")
-        .forEach(
-            addVariant
-        );
-
-    String(movieName)
-        .split("|")
-        .forEach(
-            addVariant
-        );
-
-    String(movieName)
-        .split(/\s+-\s+/)
-        .forEach(
-            addVariant
-        );
-
-    /* --------------------------------------------------------
-       SEARCH NGUONC
-       -------------------------------------------------------- */
-
-    let searchItems = [];
-
-    for (
-        const keyword
-        of variants
-    ) {
-
-        try {
-
-            const searchUrl =
-                NGUONC_API +
-                "/api/films/search?keyword=" +
-                encodeURIComponent(
-                    keyword
-                );
-
-            console.log(
-                "[NGUONC] Search URL:",
-                searchUrl
-            );
-
-            const response =
-                await axios.get(
-                    searchUrl,
-                    {
-                        timeout:
-                            15000,
-
-                        headers,
-
-                        validateStatus:
-                            () => true
-                    }
-                );
-
-            console.log(
-                "[NGUONC] Search HTTP:",
-                response.status
-            );
-
-            /*
-             * Nếu Cloudflare / server trả 403
-             * thì bỏ qua keyword này và thử variant tiếp theo.
-             */
-
-            if (
-                response.status !== 200
-            ) {
-
-                console.log(
-                    "[NGUONC] Search blocked/status:",
-                    response.status
-                );
-
-                continue;
-            }
-
-            const data =
-                response.data || {};
-
-            const items =
-                data?.items ||
-                data?.data?.items ||
-                data?.data ||
-                [];
-
-            if (
-                Array.isArray(
-                    items
-                ) &&
-                items.length
-            ) {
-
-                searchItems.push(
-                    ...items
-                );
-
-            }
-
-        } catch (e) {
-
-            console.log(
-                "[NGUONC] Search error:",
-                e?.message ||
-                e
-            );
-
-        }
-
-    }
-
-    /* --------------------------------------------------------
-       REMOVE DUPLICATES
-       -------------------------------------------------------- */
-
-    searchItems =
-        searchItems.filter(
-            (item, index, arr) => {
-
-                const slug =
-                    String(
-                        item?.slug ||
-                        ""
-                    );
-
-                if (!slug) {
-                    return false;
-                }
-
-                return (
-                    index ===
-                    arr.findIndex(
-                        x =>
-                            String(
-                                x?.slug ||
-                                ""
-                            ) === slug
-                    )
-                );
-
-            }
-        );
-
-    if (
-        !searchItems.length
-    ) {
-
-        console.log(
-            "[NGUONC] Không tìm thấy:",
-            movieName
-        );
-
-        return [];
-
-    }
-
-    /* --------------------------------------------------------
-       MATCH
-       -------------------------------------------------------- */
-
-    const wanted =
-        normalizeTitle(
-            movieName
-        );
-
-    function getScore(
-        item
-    ) {
-
-        const names = [
-
-            item?.name,
-
-            item?.original_name,
-
-            item?.origin_name,
-
-            item?.title,
-
-            item?.slug
-
-        ]
-            .filter(Boolean)
-            .map(
-                normalizeTitle
-            );
-
-        let score =
-            0;
-
-        for (
-            const name
-            of names
-        ) {
-
-            if (
-                name === wanted
-            ) {
-
-                score =
-                    Math.max(
-                        score,
-                        100
-                    );
-
-            } else if (
-                name.includes(
-                    wanted
-                ) ||
-                wanted.includes(
-                    name
-                )
-            ) {
-
-                score =
-                    Math.max(
-                        score,
-                        80
-                    );
-
-            }
-
-        }
-
-        return score;
-
-    }
-
-    searchItems.sort(
-        (a, b) =>
-            getScore(b) -
-            getScore(a)
+    console.log(
+        "[NGUONC BROWSER] Slug:",
+        nguoncSlug
     );
-
-    const selected =
-        searchItems.find(
-            item =>
-                item?.slug
-        );
-
-    if (
-        !selected
-    ) {
-
-        console.log(
-            "[NGUONC] Không có phim phù hợp:",
-            movieName
-        );
-
-        return [];
-
-    }
 
     const slug =
         String(
-            selected.slug
+            nguoncSlug ||
+            ""
         ).trim();
 
-    console.log(
-        "[NGUONC] Selected:",
-        selected.name,
-        "|",
-        slug
-    );
-
-    /* --------------------------------------------------------
-       DETAIL
-       -------------------------------------------------------- */
-
-    let detail;
-
-    try {
-
-        const url =
-            NGUONC_API +
-            "/api/film/" +
-            encodeURIComponent(
-                slug
-            );
+    if (!slug) {
 
         console.log(
-            "[NGUONC] Detail URL:",
-            url
-        );
-
-        const response =
-            await axios.get(
-                url,
-                {
-                    timeout:
-                        15000,
-
-                    headers,
-
-                    validateStatus:
-                        () => true
-                }
-            );
-
-        console.log(
-            "[NGUONC] Detail HTTP:",
-            response.status
-        );
-
-        if (
-            response.status !== 200
-        ) {
-
-            console.log(
-                "[NGUONC] Detail blocked/status:",
-                response.status
-            );
-
-            return [];
-
-        }
-
-        detail =
-            response.data;
-
-    } catch (e) {
-
-        console.log(
-            "[NGUONC] Detail error:",
-            e?.message ||
-            e
+            "[NGUONC BROWSER] Không có slug"
         );
 
         return [];
 
     }
 
-    const movie =
-        detail?.movie ||
-        detail?.data?.movie ||
-        {};
+    const nguoncPage =
+        "https://phim.nguonc.com/phim/" +
+        encodeURIComponent(
+            slug
+        );
 
-    const episodes =
-        movie?.episodes ||
-        detail?.episodes ||
-        detail?.data?.episodes ||
-        [];
+    console.log(
+        "[NGUONC BROWSER] Page:",
+        nguoncPage
+    );
 
-    if (
-        !Array.isArray(
-            episodes
+    const stream = {
+
+        name:
+            "▶️ [NguonC] Browser Player",
+
+        title:
+            movieName ||
+            "NguonC",
+
+        externalUrl:
+            nguoncPage,
+
+        widgetPlayer:
+            nguoncPage,
+
+        widgetPlayerStates: [
+            "replaceplayer"
+        ],
+
+        behaviorHints: {
+
+            bingeGroup:
+                "nguonc-browser"
+
+        }
+
+    };
+
+    console.log(
+        "[NGUONC BROWSER] STREAM:",
+        JSON.stringify(
+            stream
         )
-    ) {
-
-        console.log(
-            "[NGUONC] Episodes không hợp lệ"
-        );
-
-        return [];
-
-    }
-
-    console.log(
-        "[NGUONC] Servers:",
-        episodes.length
     );
 
-    /* --------------------------------------------------------
-       MOVIE REFERER
-       -------------------------------------------------------- */
-
-    const movieUrl =
-        NGUONC_API +
-        "/phim/" +
-        slug;
-
-    /* --------------------------------------------------------
-       EPISODES
-       -------------------------------------------------------- */
-
-    for (
-        const server
-        of episodes
-    ) {
-
-        const serverName =
-            server?.server_name ||
-            server?.name ||
-            "NguonC";
-
-        const episodeList =
-            server?.items ||
-            server?.server_data ||
-            server?.list ||
-            [];
-
-        if (
-            !Array.isArray(
-                episodeList
-            )
-        ) {
-
-            continue;
-
-        }
-
-        for (
-            const ep
-            of episodeList
-        ) {
-
-            const episodeName =
-                ep?.name ||
-                ep?.slug ||
-                "FULL";
-
-            const embed =
-                String(
-                    ep?.embed ||
-                    ep?.link_embed ||
-                    ""
-                ).trim();
-
-            const directM3u8 =
-                String(
-                    ep?.link_m3u8 ||
-                    ep?.m3u8 ||
-                    ""
-                ).trim();
-
-            if (
-                !embed &&
-                !directM3u8
-            ) {
-
-                console.log(
-                    "[NGUONC] Không có link:",
-                    episodeName
-                );
-
-                continue;
-
-            }
-
-            /* ------------------------------------------------
-               DIRECT M3U8
-               ------------------------------------------------ */
-
-            if (
-                directM3u8
-            ) {
-
-                streams.push({
-
-                    name:
-                        "🌐 [NguonC] " +
-                        serverName,
-
-                    title:
-                        episodeName +
-                        " - NguonC",
-
-                    url:
-                        directM3u8,
-
-                    behaviorHints: {
-
-                        bingeGroup:
-                            "nguonc-" +
-                            slug
-
-                    }
-
-                });
-
-                console.log(
-                    "[NGUONC] DIRECT:",
-                    episodeName,
-                    directM3u8
-                );
-
-                continue;
-
-            }
-
-            /* ------------------------------------------------
-               EMBED → STATELESS PLAYLIST TOKEN
-               ------------------------------------------------ */
-
-            try {
-
-                const tokenPayload = {
-
-                    embedUrl:
-                        embed,
-
-                    movieUrl:
-                        movieUrl,
-
-                    created:
-                        Date.now()
-
-                };
-
-                const token =
-                    Buffer
-                        .from(
-                            JSON.stringify(
-                                tokenPayload
-                            ),
-                            "utf8"
-                        )
-                        .toString(
-                            "base64url"
-                        );
-
-                const publicBase =
-                    process.env.ADDON_PUBLIC_URL ||
-                    "";
-
-                if (
-                    !publicBase
-                ) {
-
-                    throw new Error(
-                        "Thiếu ADDON_PUBLIC_URL"
-                    );
-
-                }
-
-                const streamUrl =
-                    publicBase
-                        .replace(
-                            /\/+$/,
-                            ""
-                        ) +
-                    "/nguonc/playlist/" +
-                    token;
-
-                streams.push({
-
-                    name:
-                        "🌐 [NguonC] " +
-                        serverName,
-
-                    title:
-                        episodeName +
-                        " - NguonC",
-
-                    url:
-                        streamUrl,
-
-                    behaviorHints: {
-
-                        bingeGroup:
-                            "nguonc-" +
-                            slug
-
-                    }
-
-                });
-
-                console.log(
-                    "[NGUONC] READY:",
-                    episodeName,
-                    streamUrl
-                );
-
-            } catch (e) {
-
-                console.log(
-                    "[NGUONC] Token error:",
-                    episodeName,
-                    e?.message ||
-                    e
-                );
-
-                /*
-                 * Không để một episode lỗi
-                 * làm hỏng các episode còn lại.
-                 */
-
-                continue;
-
-            }
-
-        }
-
-    }
-
     console.log(
-        "[NGUONC] Streams:",
-        streams.length
+        "[NGUONC BROWSER] ================================="
     );
 
-    return streams;
-
+    return [
+        stream
+    ];
 }
 
 
@@ -1254,15 +654,38 @@ async function fetchKKPhim(movieName) {
         );
 
         const movieSlug =
-            movie?.slug;
+    movie?.slug;
 
-        if (!movieSlug) {
-            console.log(
-                "[KKPHIM] NO SLUG"
-            );
+if (!movieSlug) {
+    console.log(
+        "[KKPHIM] NO SLUG"
+    );
 
-            return streams;
-        }
+    return streams;
+}
+streams.nguoncSlug =
+    String(
+        movieSlug
+    ).trim();
+
+console.log(
+    "[KKPHIM] Slug for NguonC:",
+    streams.nguoncSlug
+);
+
+// =================================================
+// LƯU SLUG ĐỂ NGUONC CÓ THỂ DÙNG
+// =================================================
+
+streams.nguoncSlug =
+    String(
+        movieSlug
+    ).trim();
+
+console.log(
+    "[KKPHIM] Slug for NguonC:",
+    streams.nguoncSlug
+);
 
         console.log(
             "[KKPHIM] Slug:",
@@ -3946,185 +3369,224 @@ builder.defineStreamHandler(async (args) => {
     }
 
     // =====================================================
-    // 5. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
-    // =====================================================
+// 5. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
+// =====================================================
 
-    let nguonCFallbackName =
-        movieName;
+let nguonCFallbackName =
+    movieName;
 
-    const slashParts =
-        String(movieName)
-            .split("/");
+const slashParts =
+    String(movieName)
+        .split("/");
 
-    if (
-        slashParts.length > 1 &&
+if (
+    slashParts.length > 1 &&
+    String(
+        slashParts[0]
+    ).trim().length >= 3
+) {
+
+    nguonCFallbackName =
         String(
             slashParts[0]
-        ).trim().length >= 3
-    ) {
+        )
+            .replace(/\s+/g, " ")
+            .trim();
 
-        nguonCFallbackName =
-            String(
-                slashParts[0]
-            )
-                .replace(/\s+/g, " ")
-                .trim();
+}
 
-    }
+console.log(
+    "[NGUONC FALLBACK] Original:",
+    movieName
+);
 
-    console.log(
-        "[NGUONC FALLBACK] Original:",
-        movieName
-    );
+console.log(
+    "[NGUONC FALLBACK] Selected:",
+    nguonCFallbackName
+);
 
-    console.log(
-        "[NGUONC FALLBACK] Selected:",
-        nguonCFallbackName
-    );
 
-    // =====================================================
-    // 6. CHẠY 5 NGUỒN SONG SONG
-    // =====================================================
+// =====================================================
+// 6. CHẠY KKPHIM TRƯỚC ĐỂ LẤY SLUG CHO NGUONC
+// =====================================================
 
-    let results = [];
+try {
 
-    try {
-
-        results =
-            await Promise.allSettled([
-
-                // 1
-                fetchNguonC(
-                    movieName
-                ),
-
-                // 2
-                fetchKKPhim(
-                    movieName
-                ),
-
-                // 3
-                fetchVSMov(
-                    movieName
-                ),
-
-                // 4
-                scrapePhimLongTieng(
-                    movieName
-                ),
-
-                // 5
-                scrapeMotPhimTV(
-                    movieName
-                )
-
-            ]);
-
-    } catch (e) {
-
-        console.log(
-            "[STREAM] Promise error:",
-            e?.message ||
-            e
+    kkphim =
+        await fetchKKPhim(
+            movieName
         );
 
-        results = [];
-
-    }
-
-    // =====================================================
-    // 7. LẤY KẾT QUẢ TỪ 5 NGUỒN
-    // =====================================================
-
-    const nguonc =
-        results[0]?.status === "fulfilled" &&
-        Array.isArray(
-            results[0].value
-        )
-            ? results[0].value
-            : [];
-
-    const kkphim =
-        results[1]?.status === "fulfilled" &&
-        Array.isArray(
-            results[1].value
-        )
-            ? results[1].value
-            : [];
-
-    const vsmov =
-        results[2]?.status === "fulfilled" &&
-        Array.isArray(
-            results[2].value
-        )
-            ? results[2].value
-            : [];
-
-    const longtieng =
-        results[3]?.status === "fulfilled" &&
-        Array.isArray(
-            results[3].value
-        )
-            ? results[3].value
-            : [];
-
-    const motphim =
-        results[4]?.status === "fulfilled" &&
-        Array.isArray(
-            results[4].value
-        )
-            ? results[4].value
-            : [];
-
-    // =====================================================
-    // 8. LOG
-    // =====================================================
+} catch (e) {
 
     console.log(
-        "[STREAM] NguonC:",
-        nguonc.length
+        "[KKPHIM PRELOAD ERROR]:",
+        e?.message ||
+        e
     );
 
-    console.log(
-        "[STREAM] KKPhim:",
-        kkphim.length
-    );
+    kkphim = [];
+
+}
+
+
+// =====================================================
+// 7. LẤY SLUG KKPHiM CHO NGUONC
+// =====================================================
+
+const nguoncSlug =
+    String(
+        kkphim?.nguoncSlug ||
+        ""
+    ).trim();
+
+console.log(
+    "[NGUONC] Slug from KKPhim:",
+    nguoncSlug ||
+    "(none)"
+);
+
+
+// =====================================================
+// 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
+// =====================================================
+
+let results = [];
+
+try {
+
+    results =
+        await Promise.allSettled([
+
+            // 0
+            fetchNguonC(
+                nguonCFallbackName,
+                nguoncSlug
+            ),
+
+            // 1
+            fetchVSMov(
+                movieName
+            ),
+
+            // 2
+            scrapePhimLongTieng(
+                movieName
+            ),
+
+            // 3
+            scrapeMotPhimTV(
+                movieName
+            )
+
+        ]);
+
+} catch (e) {
 
     console.log(
-        "[STREAM] VSMov:",
-        vsmov.length
+        "[STREAM] Promise error:",
+        e?.message ||
+        e
     );
 
-    console.log(
-        "[STREAM] 1Phim32:",
-        longtieng.length
-    );
+    results = [];
 
-    console.log(
-        "[STREAM] MotPhimTV:",
-        motphim.length
-    );
+}
+
+
+// =====================================================
+// 9. LẤY KẾT QUẢ TỪ CÁC NGUỒN
+// =====================================================
+
+const nguonc =
+    results[0]?.status === "fulfilled" &&
+    Array.isArray(
+        results[0].value
+    )
+        ? results[0].value
+        : [];
+
+const vsmov =
+    results[1]?.status === "fulfilled" &&
+    Array.isArray(
+        results[1].value
+    )
+        ? results[1].value
+        : [];
+
+const longtieng =
+    results[2]?.status === "fulfilled" &&
+    Array.isArray(
+        results[2].value
+    )
+        ? results[2].value
+        : [];
+
+const motphim =
+    results[3]?.status === "fulfilled" &&
+    Array.isArray(
+        results[3].value
+    )
+        ? results[3].value
+        : [];
+
+
+// =====================================================
+// 10. LOG
+// =====================================================
+
+console.log(
+    "[STREAM] NguonC streams:",
+    nguonc.length
+);
+
+console.log(
+    "[STREAM] KKPhim streams:",
+    kkphim.length
+);
+
+console.log(
+    "[STREAM] VSMov streams:",
+    vsmov.length
+);
+
+console.log(
+    "[STREAM] 1Phim32 streams:",
+    longtieng.length
+);
+
+console.log(
+    "[STREAM] MotPhimTV streams:",
+    motphim.length
+);
+
+console.log(
+    "[STREAM] NguonC slug:",
+    nguoncSlug ||
+    "(none)"
+);
+
+
+// =====================================================
+// 11. GỘP STREAM TRỰC TIẾP
+// =====================================================
+
+const directStreams = [
+
+    ...nguonc,
+
+    ...kkphim,
+
+    ...vsmov,
+
+    ...longtieng,
+
+    ...motphim
+
+];
 
     // =====================================================
-    // 9. GỘP STREAM TRỰC TIẾP
-    // =====================================================
-
-    const directStreams = [
-
-        ...nguonc,
-
-        ...kkphim,
-
-        ...vsmov,
-
-        ...longtieng,
-
-        ...motphim
-
-    ];
-
-    // =====================================================
-    // 10. 4 FALLBACK CHUNG
+    // 12. 4 FALLBACK CHUNG
     //
     // VSMOV KHÔNG THÊM Ở ĐÂY
     //
@@ -4220,7 +3682,7 @@ builder.defineStreamHandler(async (args) => {
     ];
 
     // =====================================================
-    // 11. LỌC DIRECT STREAM
+    // 13. LỌC DIRECT STREAM
     // =====================================================
 
     const validDirectStreams =
@@ -4243,7 +3705,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 12. LỌC FALLBACK
+    // 14. LỌC FALLBACK
     // =====================================================
 
     const validExternalStreams =
@@ -4265,7 +3727,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 13. GỘP TẤT CẢ
+    // 15. GỘP TẤT CẢ
     // =====================================================
 
     const allStreams = [
@@ -4277,7 +3739,7 @@ builder.defineStreamHandler(async (args) => {
     ];
 
     // =====================================================
-    // 14. LOẠI URL TRÙNG
+    // 16. LOẠI URL TRÙNG
     // =====================================================
 
     const seen =
@@ -4309,7 +3771,7 @@ builder.defineStreamHandler(async (args) => {
         );
 
     // =====================================================
-    // 15. LOG CUỐI
+    // 17. LOG CUỐI
     // =====================================================
 
     console.log(
@@ -4339,7 +3801,7 @@ builder.defineStreamHandler(async (args) => {
     );
 
     // =====================================================
-    // 16. TRẢ VỀ STREMIO
+    // 18. TRẢ VỀ STREMIO
     // =====================================================
 
     return {
@@ -5771,6 +5233,107 @@ app.get("/vsmov-player", (req, res) => {
 <iframe
     src="${iframeUrl}"
     allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+    referrerpolicy="no-referrer">
+</iframe>
+
+</body>
+</html>
+    `);
+});
+
+app.get("/nguonc-player", (req, res) => {
+
+    const targetUrl =
+        req.query.url;
+
+    if (!targetUrl) {
+        return res
+            .status(400)
+            .send("Missing NguonC URL");
+    }
+
+    let parsedUrl;
+
+    try {
+
+        parsedUrl =
+            new URL(targetUrl);
+
+    } catch (error) {
+
+        return res
+            .status(400)
+            .send("Invalid URL");
+
+    }
+
+    console.log(
+        "[NGUONC PLAYER] iframe:",
+        parsedUrl.href
+    );
+
+    res.setHeader(
+        "Content-Type",
+        "text/html; charset=utf-8"
+    );
+
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>NguonC Player</title>
+
+<style>
+
+html,
+body {
+
+    width: 100%;
+    height: 100%;
+
+    margin: 0;
+    padding: 0;
+
+    background: #000;
+
+    overflow: hidden;
+
+}
+
+iframe {
+
+    width: 100%;
+    height: 100%;
+
+    border: 0;
+
+    display: block;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<iframe
+    src="${parsedUrl.href}"
+    allow="
+        autoplay;
+        fullscreen;
+        encrypted-media;
+        picture-in-picture
+    "
     allowfullscreen
     referrerpolicy="no-referrer">
 </iframe>
