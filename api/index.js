@@ -453,10 +453,9 @@ builder.defineMetaHandler(async (args) => {
 
 
 // =====================================================
-// FETCH NGUONC - TEST DIRECT EMBED
-// TEST TẠM THỜI VỚI ÁM ẢNH
-// Không gọi NguonC.
-// Không dùng /nguonc-player.
+// FETCH NGUONC - DYNAMIC SLUG PLAYER
+// Không hard-code embed
+// Không hard-code Ám Ảnh
 // =====================================================
 
 async function fetchNguonC(
@@ -465,58 +464,102 @@ async function fetchNguonC(
 ) {
 
     console.log(
-        "[NGUONC TEST] ================================="
+        "[NGUONC] ================================="
     );
 
     console.log(
-        "[NGUONC TEST] Movie:",
+        "[NGUONC] Movie:",
         movieName
     );
 
     console.log(
-        "[NGUONC TEST] Slug:",
+        "[NGUONC] Slug:",
         nguoncSlug
     );
 
-    const embedUrl =
-        "https://embed14.streamc.xyz/embed.php?hash=4681d86705ffd80ed1e5a5d636d06faf";
+
+    // =====================================================
+    // KIỂM TRA SLUG
+    // =====================================================
+
+    const slug =
+        String(
+            nguoncSlug ||
+            ""
+        ).trim();
+
+
+    if (!slug) {
+
+        console.log(
+            "[NGUONC] No slug - skip"
+        );
+
+        return [];
+
+    }
+
+
+    // =====================================================
+    // TẠO NGUONC PLAYER URL
+    // =====================================================
+
+    const playerUrl =
+        "https://my-strem-addon.vercel.app/nguonc-player?slug=" +
+        encodeURIComponent(
+            slug
+        );
+
+
+    console.log(
+        "[NGUONC] Player:",
+        playerUrl
+    );
+
+
+    // =====================================================
+    // STREAM
+    // =====================================================
 
     const stream = {
 
         name:
-            "▶️ [NguonC TEST] Direct Embed",
+            "▶️ [NguonC] Vietsub",
 
         title:
-            movieName ||
-            "NguonC Test",
+            "Full",
 
-        url:
-            embedUrl,
+        externalUrl:
+            playerUrl,
+
+        widgetPlayer:
+            playerUrl,
+
+        widgetPlayerStates: [
+            "replaceplayer"
+        ],
 
         behaviorHints: {
 
             bingeGroup:
-                "nguonc-test"
+                "nguonc"
 
         }
 
     };
 
-    console.log(
-        "[NGUONC TEST] Embed:",
-        embedUrl
-    );
 
     console.log(
-        "[NGUONC TEST] STREAM:",
+        "[NGUONC] STREAM:",
         JSON.stringify(
             stream
         )
     );
 
     console.log(
-        "[NGUONC TEST] ================================="
+        "[NGUONC] ================================="
     );
+
 
     return [
         stream
@@ -5267,7 +5310,6 @@ app.get(
 // =====================================================
 // NGUONC PLAYER
 // Mở đúng phim NguonC theo slug
-// NguonC tự xử lý /episodes và chọn episode
 // =====================================================
 
 app.get(
@@ -5280,10 +5322,6 @@ app.get(
                 ""
             ).trim();
 
-
-        // =====================================================
-        // KIỂM TRA SLUG
-        // =====================================================
 
         if (!slug) {
 
@@ -5311,10 +5349,6 @@ app.get(
         }
 
 
-        // =====================================================
-        // TẠO URL NGUONC
-        // =====================================================
-
         const nguoncUrl =
             "https://phim.nguonc.com/phim/" +
             encodeURIComponent(
@@ -5338,10 +5372,6 @@ app.get(
                 nguoncUrl
             );
 
-
-        // =====================================================
-        // HTML PLAYER
-        // =====================================================
 
         res.setHeader(
             "Content-Type",
