@@ -453,9 +453,10 @@ builder.defineMetaHandler(async (args) => {
 
 
 // =====================================================
-// FETCH NGUONC - BROWSER PLAYER MODE
-// Vercel KHÔNG truy cập NguonC.
-// Stremio/browser tự mở trang NguonC.
+// FETCH NGUONC - TEST DIRECT EMBED
+// TEST TẠM THỜI VỚI ÁM ẢNH
+// Không gọi NguonC.
+// Không dùng /nguonc-player.
 // =====================================================
 
 async function fetchNguonC(
@@ -464,83 +465,57 @@ async function fetchNguonC(
 ) {
 
     console.log(
-        "[NGUONC BROWSER] ================================="
+        "[NGUONC TEST] ================================="
     );
 
     console.log(
-        "[NGUONC BROWSER] Movie:",
+        "[NGUONC TEST] Movie:",
         movieName
     );
 
     console.log(
-        "[NGUONC BROWSER] Slug:",
+        "[NGUONC TEST] Slug:",
         nguoncSlug
     );
 
-    const slug =
-        String(
-            nguoncSlug ||
-            ""
-        ).trim();
-
-    if (!slug) {
-
-        console.log(
-            "[NGUONC BROWSER] Không có slug"
-        );
-
-        return [];
-
-    }
-
-    const nguoncPage =
-        "https://phim.nguonc.com/phim/" +
-        encodeURIComponent(
-            slug
-        );
-
-    console.log(
-        "[NGUONC BROWSER] Page:",
-        nguoncPage
-    );
+    const embedUrl =
+        "https://embed14.streamc.xyz/embed.php?hash=4681d86705ffd80ed1e5a5d636d06faf";
 
     const stream = {
 
         name:
-            "▶️ [NguonC] Browser Player",
+            "▶️ [NguonC TEST] Direct Embed",
 
         title:
             movieName ||
-            "NguonC",
+            "NguonC Test",
 
-        externalUrl:
-            nguoncPage,
-
-        widgetPlayer:
-            nguoncPage,
-
-        widgetPlayerStates: [
-            "replaceplayer"
-        ],
+        url:
+            embedUrl,
 
         behaviorHints: {
 
             bingeGroup:
-                "nguonc-browser"
+                "nguonc-test"
 
         }
 
     };
 
     console.log(
-        "[NGUONC BROWSER] STREAM:",
+        "[NGUONC TEST] Embed:",
+        embedUrl
+    );
+
+    console.log(
+        "[NGUONC TEST] STREAM:",
         JSON.stringify(
             stream
         )
     );
 
     console.log(
-        "[NGUONC BROWSER] ================================="
+        "[NGUONC TEST] ================================="
     );
 
     return [
@@ -5163,39 +5138,84 @@ app.get(
    STREMIO ADDON ROUTES
    ============================================================ */
 
-app.get("/vsmov-player", (req, res) => {
-    const targetUrl = req.query.url;
+// =====================================================
+// VSMOV PLAYER
+// =====================================================
 
-    if (!targetUrl) {
-        return res.status(400).send("Missing VSMov URL");
-    }
+app.get(
+    "/vsmov-player",
+    (req, res) => {
 
-    let parsedUrl;
+        const targetUrl =
+            String(
+                req.query.url ||
+                ""
+            ).trim();
 
-    try {
-        parsedUrl = new URL(targetUrl);
-    } catch (error) {
-        return res.status(400).send("Invalid URL");
-    }
+        if (!targetUrl) {
+            return res
+                .status(400)
+                .send("Missing VSMov URL");
+        }
 
-    // Chỉ cho phép nhúng player VSMov
-    if (parsedUrl.hostname !== "v1.streamvsmov.com") {
-        return res.status(403).send("Host not allowed");
-    }
+        let parsedUrl;
 
-    const iframeUrl = parsedUrl.href;
+        try {
 
-    console.log(
-        "[VSMOV PLAYER] iframe:",
-        iframeUrl
-    );
+            parsedUrl =
+                new URL(
+                    targetUrl
+                );
 
-    res.setHeader(
-        "Content-Type",
-        "text/html; charset=utf-8"
-    );
+        } catch (error) {
 
-    res.send(`
+            return res
+                .status(400)
+                .send("Invalid URL");
+        }
+
+        // -------------------------------------------------
+        // Cho phép các host VSMov dạng:
+        // v1.streamvsmov.com
+        // v2.streamvsmov.com
+        // v3.streamvsmov.com
+        // v4.streamvsmov.com
+        // v5.streamvsmov.com
+        // ...
+        // -------------------------------------------------
+
+        const validVsmovHost =
+            /^v\d+\.streamvsmov\.com$/i
+                .test(
+                    parsedUrl.hostname
+                );
+
+        if (!validVsmovHost) {
+
+            console.log(
+                "[VSMOV PLAYER] Host blocked:",
+                parsedUrl.hostname
+            );
+
+            return res
+                .status(403)
+                .send("Host not allowed");
+        }
+
+        const iframeUrl =
+            parsedUrl.href;
+
+        console.log(
+            "[VSMOV PLAYER] iframe:",
+            iframeUrl
+        );
+
+        res.setHeader(
+            "Content-Type",
+            "text/html; charset=utf-8"
+        );
+
+        res.send(`
 <!DOCTYPE html>
 <html>
 <head>
@@ -5234,53 +5254,68 @@ app.get("/vsmov-player", (req, res) => {
     src="${iframeUrl}"
     allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
     allowfullscreen
+    webkitallowfullscreen
     referrerpolicy="no-referrer">
 </iframe>
 
 </body>
 </html>
-    `);
-});
-
-app.get("/nguonc-player", (req, res) => {
-
-    const targetUrl =
-        req.query.url;
-
-    if (!targetUrl) {
-        return res
-            .status(400)
-            .send("Missing NguonC URL");
+        `);
     }
+);
 
-    let parsedUrl;
+// =====================================================
+// NGUONC PLAYER
+// Vercel chỉ nhúng trực tiếp trang NguonC.
+// NguonC tự xử lý /episodes và player.
+// =====================================================
 
-    try {
+app.get(
+    "/nguonc-player",
+    (req, res) => {
 
-        parsedUrl =
-            new URL(targetUrl);
+        const slug =
+            String(
+                req.query.slug ||
+                ""
+            ).trim();
 
-    } catch (error) {
+        if (!slug) {
 
-        return res
-            .status(400)
-            .send("Invalid URL");
+            return res
+                .status(400)
+                .send(
+                    "Missing NguonC slug"
+                );
 
-    }
+        }
 
-    console.log(
-        "[NGUONC PLAYER] iframe:",
-        parsedUrl.href
-    );
+        const nguoncUrl =
+            "https://phim.nguonc.com/phim/" +
+            encodeURIComponent(
+                slug
+            );
 
-    res.setHeader(
-        "Content-Type",
-        "text/html; charset=utf-8"
-    );
+        console.log(
+            "[NGUONC PLAYER] Page:",
+            nguoncUrl
+        );
 
-    res.send(`
+        const safeUrl =
+            JSON.stringify(
+                nguoncUrl
+            );
+
+        res.setHeader(
+            "Content-Type",
+            "text/html; charset=utf-8"
+        );
+
+        res.send(`
 <!DOCTYPE html>
+
 <html>
+
 <head>
 
 <meta charset="UTF-8">
@@ -5327,21 +5362,35 @@ iframe {
 <body>
 
 <iframe
-    src="${parsedUrl.href}"
-    allow="
-        autoplay;
-        fullscreen;
-        encrypted-media;
-        picture-in-picture
-    "
+    id="nguonc-frame"
+    src="${nguoncUrl}"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
     allowfullscreen
-    referrerpolicy="no-referrer">
+    webkitallowfullscreen
+    referrerpolicy="origin">
 </iframe>
 
+<script>
+
+console.log(
+    "[NGUONC PLAYER] iframe:",
+    ${safeUrl}
+);
+
+</script>
+
 </body>
+
 </html>
-    `);
-});
+        `);
+
+    }
+);
+
+
+// =====================================================
+// STREMIO ADDON ROUTER
+// =====================================================
 
 app.use(
     "/",
