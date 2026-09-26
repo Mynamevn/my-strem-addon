@@ -453,9 +453,10 @@ builder.defineMetaHandler(async (args) => {
 
 
 // =====================================================
-// FETCH NGUONC - CLIENT SIDE PLAYER
-// Vercel KHÔNG truy cập NguonC.
-// Browser/Stremio tự gọi NguonC và lấy embed.
+// FETCH NGUONC - TEST DIRECT EMBED
+// TEST TẠM THỜI VỚI ÁM ẢNH
+// Không gọi NguonC.
+// Không dùng /nguonc-player.
 // =====================================================
 
 async function fetchNguonC(
@@ -464,84 +465,57 @@ async function fetchNguonC(
 ) {
 
     console.log(
-        "[NGUONC CLIENT] ================================="
+        "[NGUONC TEST] ================================="
     );
 
     console.log(
-        "[NGUONC CLIENT] Movie:",
+        "[NGUONC TEST] Movie:",
         movieName
     );
 
     console.log(
-        "[NGUONC CLIENT] Slug:",
+        "[NGUONC TEST] Slug:",
         nguoncSlug
     );
 
-    const slug =
-        String(
-            nguoncSlug ||
-            ""
-        ).trim();
-
-    if (!slug) {
-
-        console.log(
-            "[NGUONC CLIENT] Không có slug"
-        );
-
-        return [];
-
-    }
-
-    const playerUrl =
-        "https://my-strem-addon.vercel.app/nguonc-player" +
-        "?slug=" +
-        encodeURIComponent(
-            slug
-        );
+    const embedUrl =
+        "https://embed14.streamc.xyz/embed.php?hash=4681d86705ffd80ed1e5a5d636d06faf";
 
     const stream = {
 
         name:
-            "▶️ [NguonC] Browser Player",
+            "▶️ [NguonC TEST] Direct Embed",
 
         title:
             movieName ||
-            "NguonC",
+            "NguonC Test",
 
-        externalUrl:
-            playerUrl,
-
-        widgetPlayer:
-            playerUrl,
-
-        widgetPlayerStates: [
-            "replaceplayer"
-        ],
+        url:
+            embedUrl,
 
         behaviorHints: {
 
             bingeGroup:
-                "nguonc-browser"
+                "nguonc-test"
 
         }
 
     };
 
     console.log(
-        "[NGUONC CLIENT] Player:",
-        playerUrl
+        "[NGUONC TEST] Embed:",
+        embedUrl
     );
 
     console.log(
-        "[NGUONC CLIENT] STREAM:",
+        "[NGUONC TEST] STREAM:",
         JSON.stringify(
             stream
         )
     );
 
     console.log(
-        "[NGUONC CLIENT] ================================="
+        "[NGUONC TEST] ================================="
     );
 
     return [
