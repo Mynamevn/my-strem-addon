@@ -5322,32 +5322,25 @@ app.get(
                 ""
             ).trim();
 
-
         if (!slug) {
-
             return res
                 .status(400)
                 .send(
                     "Missing NguonC slug"
                 );
-
         }
-
 
         if (
             !/^[a-z0-9-]+$/i.test(
                 slug
             )
         ) {
-
             return res
                 .status(400)
                 .send(
                     "Invalid NguonC slug"
                 );
-
         }
-
 
         const nguoncUrl =
             "https://phim.nguonc.com/phim/" +
@@ -5355,76 +5348,47 @@ app.get(
                 slug
             );
 
-
         console.log(
-            "[NGUONC PLAYER] Slug:",
-            slug
-        );
-
-        console.log(
-            "[NGUONC PLAYER] Page:",
+            "[NGUONC PLAYER] Opening:",
             nguoncUrl
         );
-
-
-        const safeUrl =
-            JSON.stringify(
-                nguoncUrl
-            );
-
 
         res.setHeader(
             "Content-Type",
             "text/html; charset=utf-8"
         );
 
-
         res.send(`
 <!DOCTYPE html>
-
 <html>
-
 <head>
+    <meta charset="UTF-8">
 
-<meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
+    <title>NguonC Player</title>
 
-<title>NguonC Player</title>
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
 
-<style>
-
-html,
-body {
-
-    width: 100%;
-    height: 100%;
-
-    margin: 0;
-    padding: 0;
-
-    background: #000;
-
-    overflow: hidden;
-
-}
-
-iframe {
-
-    width: 100%;
-    height: 100%;
-
-    border: 0;
-
-    display: block;
-
-}
-
-</style>
-
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            display: block;
+        }
+    </style>
 </head>
 
 <body>
@@ -5438,20 +5402,9 @@ iframe {
     referrerpolicy="origin">
 </iframe>
 
-<script>
-
-console.log(
-    "[NGUONC PLAYER] iframe:",
-    ${safeUrl}
-);
-
-</script>
-
 </body>
-
 </html>
         `);
-
     }
 );
 
