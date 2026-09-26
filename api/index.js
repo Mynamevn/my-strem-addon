@@ -959,43 +959,25 @@ async function fetchKKPhim(movieName) {
         );
 
         const movieSlug =
-    movie?.slug;
+    String(
+        movie?.slug ||
+        ""
+    ).trim();
 
 if (!movieSlug) {
+
     console.log(
         "[KKPHIM] NO SLUG"
     );
 
     return streams;
+
 }
-streams.nguoncSlug =
-    String(
-        movieSlug
-    ).trim();
 
 console.log(
-    "[KKPHIM] Slug for NguonC:",
-    streams.nguoncSlug
+    "[KKPHIM] Slug:",
+    movieSlug
 );
-
-// =================================================
-// LƯU SLUG ĐỂ NGUONC CÓ THỂ DÙNG
-// =================================================
-
-streams.nguoncSlug =
-    String(
-        movieSlug
-    ).trim();
-
-console.log(
-    "[KKPHIM] Slug for NguonC:",
-    streams.nguoncSlug
-);
-
-        console.log(
-            "[KKPHIM] Slug:",
-            movieSlug
-        );
 
         const detailUrl =
             "https://phimapi.com/v1/api/phim/" +
@@ -3712,8 +3694,13 @@ console.log(
 
 
 // =====================================================
-// 6. CHẠY KKPHIM TRƯỚC ĐỂ LẤY SLUG CHO NGUONC
+// 6. CHẠY KKPHIM TRƯỚC
 // =====================================================
+// KKPhim tự xử lý slug của chính nó.
+// Không truyền slug KKPhim sang NguonC.
+// =====================================================
+
+let kkphim = [];
 
 try {
 
@@ -3845,12 +3832,6 @@ console.log(
 console.log(
     "[STREAM] MotPhimTV streams:",
     motphim.length
-);
-
-console.log(
-    "[STREAM] NguonC slug:",
-    nguoncSlug ||
-    "(none)"
 );
 
 
