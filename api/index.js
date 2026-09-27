@@ -4065,12 +4065,9 @@ const nguoncClientStream = {
         "NguonC - " +
         movieName,
 
-    // Cần externalUrl để stream không bị
-    // loại khỏi danh sách Direct ở bước filter phía sau.
     externalUrl:
         nguoncClientUrl,
 
-    // Widget player
     widgetPlayer:
         nguoncClientUrl,
 
@@ -5805,6 +5802,19 @@ app.get(
 // =====================================================
 // NGUONC CLIENT PLAYER
 // =====================================================
+// Client-side NguonC resolver.
+//
+// Vercel KHÔNG gọi NguonC.
+// Browser của người dùng sẽ gọi trực tiếp NguonC API.
+//
+// Luồng:
+// title
+//   -> search
+//   -> chọn phim
+//   -> detail
+//   -> lấy embed / m3u8
+//   -> tự phát
+// =====================================================
 
 app.get(
     "/nguonc-player",
@@ -5816,12 +5826,6 @@ app.get(
                 ""
             ).trim();
 
-        const searchUrl =
-            "https://nguonc.com/tim-kiem?keyword=" +
-            encodeURIComponent(
-                title
-            );
-
         res.setHeader(
             "Content-Type",
             "text/html; charset=utf-8"
@@ -5832,9 +5836,16 @@ app.get(
             "no-store"
         );
 
+        const safeTitle =
+            title
+                .replace(/\\/g, "\\\\")
+                .replace(/`/g, "\\`")
+                .replace(/\$/g, "\\$");
+
         res.send(`
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
 
 <meta charset="UTF-8">
@@ -5844,11 +5855,7 @@ app.get(
     content="width=device-width, initial-scale=1.0"
 >
 
-<title>NguonC - ${title
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-}</title>
+<title>NguonC Client</title>
 
 <style>
 
@@ -5863,16 +5870,92 @@ body {
 
     background: #000;
 
+    color: #fff;
+
+    font-family:
+        Arial,
+        sans-serif;
+
     overflow: hidden;
 
 }
 
-iframe {
+#status {
+
+    position: absolute;
+
+    inset: 0;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    text-align: center;
+
+    padding: 30px;
+
+    box-sizing: border-box;
+
+    background: #000;
+
+    z-index: 10;
+
+}
+
+#video {
 
     width: 100%;
     height: 100%;
 
+    display: none;
+
     border: 0;
+
+    background: #000;
+
+}
+
+#fallback {
+
+    display: none;
+
+    position: absolute;
+
+    left: 50%;
+    top: 50%;
+
+    transform:
+        translate(
+            -50%,
+            -50%
+        );
+
+    text-align: center;
+
+    padding: 20px;
+
+    width: 90%;
+
+    max-width: 600px;
+
+}
+
+button {
+
+    margin-top: 15px;
+
+    padding:
+        12px 20px;
+
+    border: 0;
+
+    border-radius: 8px;
+
+    cursor: pointer;
+
+    font-size: 16px;
 
 }
 
@@ -5882,11 +5965,692 @@ iframe {
 
 <body>
 
-<iframe
-    src="${searchUrl}"
-    allowfullscreen
-    allow="autoplay; fullscreen; encrypted-media"
-></iframe>
+<div id="status">
+    Đang tìm phim trên NguonC...
+</div>
+
+<video
+    id="video"
+    controls
+    autoplay
+    playsinline
+    webkit-playsinline
+></video>
+
+<div id="fallback">
+
+    <div id="errorText"></div>
+
+    <button
+        id="openNguonC"
+    >
+        Mở NguonC
+    </button>
+
+</div>
+
+<script>
+
+const MOVIE_TITLE =
+    \`${safeTitle}\`;
+
+const API_BASE =
+    "https://phim.nguonc.com/api";
+
+const statusEl =
+    document.getElementById(
+        "status"
+    );
+
+const videoEl =
+    document.getElementById(
+        "video"
+    );
+
+const fallbackEl =
+    document.getElementById(
+        "fallback"
+    );
+
+const errorTextEl =
+    document.getElementById(
+        "errorText"
+    );
+
+const openNguonC =
+    document.getElementById(
+        "openNguonC"
+    );
+
+
+// =====================================================
+// NORMALIZE TITLE
+// =====================================================
+
+function normalizeTitle(
+    value
+) {
+
+    return String(
+        value ||
+        ""
+    )
+        .normalize("NFD")
+        .replace(
+            /[\\\\u0300-\\\\u036f]/g,
+            ""
+        )
+        .toLowerCase()
+        .replace(
+            /[^a-z0-9]+/g,
+            " "
+        )
+        .replace(
+            /\\\\s+/g,
+            " "
+        )
+        .trim();
+
+}
+
+
+// =====================================================
+// TITLE SCORE
+// =====================================================
+
+function scoreMovie(
+    item
+) {
+
+    const target =
+        normalizeTitle(
+            MOVIE_TITLE
+        );
+
+    const name =
+        normalizeTitle(
+            item?.name
+        );
+
+    const origin =
+        normalizeTitle(
+            item?.original_name
+        );
+
+    let score = 0;
+
+    if (
+        name === target
+    ) {
+
+        score += 100;
+
+    }
+
+    if (
+        origin === target
+    ) {
+
+        score += 100;
+
+    }
+
+    if (
+        name.includes(
+            target
+        )
+    ) {
+
+        score += 60;
+
+    }
+
+    if (
+        target.includes(
+            name
+        ) &&
+        name.length >= 4
+    ) {
+
+        score += 50;
+
+    }
+
+    if (
+        origin.includes(
+            target
+        )
+    ) {
+
+        score += 50;
+
+    }
+
+    if (
+        target.includes(
+            origin
+        ) &&
+        origin.length >= 4
+    ) {
+
+        score += 40;
+
+    }
+
+    return score;
+
+}
+
+
+// =====================================================
+// SHOW ERROR
+// =====================================================
+
+function showError(
+    message
+) {
+
+    statusEl.style.display =
+        "none";
+
+    fallbackEl.style.display =
+        "block";
+
+    errorTextEl.textContent =
+        message;
+
+}
+
+
+// =====================================================
+// OPEN FALLBACK
+// =====================================================
+
+openNguonC.onclick =
+    function () {
+
+        const url =
+            "https://nguonc.com/tim-kiem?keyword=" +
+            encodeURIComponent(
+                MOVIE_TITLE
+            );
+
+        window.location.href =
+            url;
+
+    };
+
+
+// =====================================================
+// FIND EMBED / M3U8
+// =====================================================
+
+function findVideoUrl(
+    detail
+) {
+
+    const movie =
+        detail?.movie ||
+        detail?.data?.movie ||
+        detail?.data?.item ||
+        detail?.data ||
+        {};
+
+    const episodes =
+        movie?.episodes ||
+        detail?.episodes ||
+        detail?.data?.episodes ||
+        [];
+
+    for (
+        const server
+        of episodes
+    ) {
+
+        const items =
+            server?.items ||
+            server?.server_data ||
+            [];
+
+        for (
+            const episode
+            of items
+        ) {
+
+            const m3u8 =
+                episode?.m3u8 ||
+                episode?.link_m3u8 ||
+                "";
+
+            if (
+                m3u8
+            ) {
+
+                return {
+
+                    type:
+                        "m3u8",
+
+                    url:
+                        m3u8
+
+                };
+
+            }
+
+            const embed =
+                episode?.embed ||
+                episode?.link_embed ||
+                "";
+
+            if (
+                embed
+            ) {
+
+                return {
+
+                    type:
+                        "embed",
+
+                    url:
+                        embed
+
+                };
+
+            }
+
+        }
+
+    }
+
+    return null;
+
+}
+
+
+// =====================================================
+// PLAY EMBED
+// =====================================================
+
+function playEmbed(
+    url
+) {
+
+    statusEl.style.display =
+        "none";
+
+    videoEl.style.display =
+        "none";
+
+    const iframe =
+        document.createElement(
+            "iframe"
+        );
+
+    iframe.src =
+        url;
+
+    iframe.allow =
+        "autoplay; fullscreen; encrypted-media; picture-in-picture";
+
+    iframe.allowFullscreen =
+        true;
+
+    iframe.style.position =
+        "absolute";
+
+    iframe.style.inset =
+        "0";
+
+    iframe.style.width =
+        "100%";
+
+    iframe.style.height =
+        "100%";
+
+    iframe.style.border =
+        "0";
+
+    iframe.style.background =
+        "#000";
+
+    document.body.appendChild(
+        iframe
+    );
+
+}
+
+
+// =====================================================
+// PLAY M3U8
+// =====================================================
+
+function playM3U8(
+    url
+) {
+
+    statusEl.style.display =
+        "none";
+
+    videoEl.style.display =
+        "block";
+
+    videoEl.src =
+        url;
+
+    videoEl.play()
+        .catch(
+            function () {
+
+                // Một số thiết bị
+                // chặn autoplay.
+                // Controls vẫn hiện.
+
+            }
+        );
+
+}
+
+
+// =====================================================
+// SEARCH NGUONC
+// =====================================================
+
+async function searchNguonC() {
+
+    const searchUrl =
+        API_BASE +
+        "/films/search?keyword=" +
+        encodeURIComponent(
+            MOVIE_TITLE
+        ) +
+        "&page=1";
+
+    const response =
+        await fetch(
+            searchUrl,
+            {
+                method:
+                    "GET",
+
+                headers: {
+
+                    "Accept":
+                        "application/json"
+
+                },
+
+                cache:
+                    "no-store"
+
+            }
+        );
+
+    if (
+        !response.ok
+    ) {
+
+        throw new Error(
+            "NguonC search HTTP " +
+            response.status
+        );
+
+    }
+
+    const data =
+        await response.json();
+
+    let items = [];
+
+    if (
+        Array.isArray(
+            data?.items
+        )
+    ) {
+
+        items =
+            data.items;
+
+    }
+    else if (
+        Array.isArray(
+            data?.data
+        )
+    ) {
+
+        items =
+            data.data;
+
+    }
+    else if (
+        Array.isArray(
+            data?.data?.items
+        )
+    ) {
+
+        items =
+            data.data.items;
+
+    }
+
+    return items;
+
+}
+
+
+// =====================================================
+// LOAD DETAIL
+// =====================================================
+
+async function loadDetail(
+    slug
+) {
+
+    const detailUrl =
+        API_BASE +
+        "/film/" +
+        encodeURIComponent(
+            slug
+        );
+
+    const response =
+        await fetch(
+            detailUrl,
+            {
+                method:
+                    "GET",
+
+                headers: {
+
+                    "Accept":
+                        "application/json"
+
+                },
+
+                cache:
+                    "no-store"
+
+            }
+        );
+
+    if (
+        !response.ok
+    ) {
+
+        throw new Error(
+            "NguonC detail HTTP " +
+            response.status
+        );
+
+    }
+
+    return await response.json();
+
+}
+
+
+// =====================================================
+// MAIN
+// =====================================================
+
+async function startNguonC() {
+
+    if (
+        !MOVIE_TITLE
+    ) {
+
+        throw new Error(
+            "Thiếu tên phim."
+        );
+
+    }
+
+    statusEl.textContent =
+        "Đang tìm: " +
+        MOVIE_TITLE;
+
+    const items =
+        await searchNguonC();
+
+    if (
+        !items.length
+    ) {
+
+        throw new Error(
+            "NguonC không trả về kết quả."
+        );
+
+    }
+
+    const ranked =
+        items
+            .map(
+                function (item) {
+
+                    return {
+
+                        item:
+                            item,
+
+                        score:
+                            scoreMovie(
+                                item
+                            )
+
+                    };
+
+                }
+            )
+            .sort(
+                function (a, b) {
+
+                    return (
+                        b.score -
+                        a.score
+                    );
+
+                }
+            );
+
+    const selected =
+        ranked[0]?.item;
+
+    if (
+        !selected?.slug
+    ) {
+
+        throw new Error(
+            "Không tìm được slug phim trên NguonC."
+        );
+
+    }
+
+    statusEl.textContent =
+        "Đã tìm thấy: " +
+        (
+            selected.name ||
+            MOVIE_TITLE
+        ) +
+        "\\\\nĐang tải video...";
+
+    const detail =
+        await loadDetail(
+            selected.slug
+        );
+
+    const video =
+        findVideoUrl(
+            detail
+        );
+
+    if (
+        !video
+    ) {
+
+        throw new Error(
+            "Phim có trên NguonC nhưng không tìm thấy link phát."
+        );
+
+    }
+
+    if (
+        video.type ===
+        "m3u8"
+    ) {
+
+        playM3U8(
+            video.url
+        );
+
+        return;
+
+    }
+
+    if (
+        video.type ===
+        "embed"
+    ) {
+
+        playEmbed(
+            video.url
+        );
+
+        return;
+
+    }
+
+    throw new Error(
+        "Không xác định được loại video."
+    );
+
+}
+
+
+// =====================================================
+// START
+// =====================================================
+
+startNguonC()
+    .catch(
+        function (error) {
+
+            console.error(
+                "[NGUONC CLIENT]",
+                error
+            );
+
+            showError(
+                "Không thể tự phát NguonC.\\n\\n" +
+                (
+                    error?.message ||
+                    "Lỗi không xác định."
+                )
+            );
+
+        }
+    );
+
+</script>
 
 </body>
 </html>
