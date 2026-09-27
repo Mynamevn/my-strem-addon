@@ -1219,7 +1219,7 @@ async function fetchNguonC(
 
                 if (
                     m3u8Url &&
-                    /^https?:\/\//i.test(
+                    /^https?:\\/\//i.test(
                         m3u8Url
                     )
                 ) {
@@ -1253,7 +1253,7 @@ async function fetchNguonC(
 
                 if (
                     embedUrl &&
-                    /^https?:\/\//i.test(
+                    /^https?:\\/\//i.test(
                         embedUrl
                     )
                 ) {
