@@ -453,49 +453,36 @@ builder.defineMetaHandler(async (args) => {
 
 
 // =====================================================
-// NGUONC
-// Tìm phim độc lập trên NguonC
-// Không sử dụng slug từ KKPhim
+// NGUONC - API SEARCH + API DETAIL
 // =====================================================
 
-async function fetchNguonC(
-    movieName
-) {
+async function fetchNguonC(movieName) {
+
+    const streams = [];
 
     try {
 
-        const name =
-            String(
-                movieName ||
-                ""
-            )
-                .replace(/\s+/g, " ")
-                .trim();
-
-        if (!name) {
-
-            console.log(
-                "[NGUONC] Empty movie name."
-            );
-
-            return [];
-
-        }
-
         console.log(
-            "[NGUONC] Searching independently:",
-            name
+            "========================================"
         );
 
+        console.log(
+            "[NGUONC] START"
+        );
 
-        // =====================================================
-        // 1. TÌM PHIM TRÊN NGUONC
-        // =====================================================
+        console.log(
+            "[NGUONC] Searching via API:",
+            movieName
+        );
+
+        // =================================================
+        // 1. SEARCH API
+        // =================================================
 
         const searchUrl =
-            "https://phim.nguonc.com/tim-kiem?keyword=" +
+            "https://phim.nguonc.com/api/films/search?keyword=" +
             encodeURIComponent(
-                name
+                String(movieName || "").trim()
             );
 
         console.log(
@@ -503,297 +490,500 @@ async function fetchNguonC(
             searchUrl
         );
 
-
         const searchResponse =
             await axios.get(
                 searchUrl,
                 {
                     timeout: 15000,
+
                     headers: {
                         "User-Agent":
-                            "Mozilla/5.0",
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+
                         "Accept":
-                            "text/html,application/xhtml+xml"
+                            "application/json,text/plain,*/*",
+
+                        "Referer":
+                            "https://phim.nguonc.com/"
                     }
                 }
             );
 
+        console.log(
+            "[NGUONC] Search HTTP:",
+            searchResponse.status
+        );
 
-        const html =
-            String(
-                searchResponse.data ||
-                ""
-            );
+        const searchData =
+            searchResponse.data;
 
+        // =================================================
+        // 2. LẤY DANH SÁCH KẾT QUẢ
+        // =================================================
 
-        if (!html) {
+        let candidates = [];
 
-            console.log(
-                "[NGUONC] Search returned empty HTML."
-            );
+        if (
+            Array.isArray(
+                searchData?.data
+            )
+        ) {
 
-            return [];
+            candidates =
+                searchData.data;
+
+        } else if (
+            Array.isArray(
+                searchData?.items
+            )
+        ) {
+
+            candidates =
+                searchData.items;
+
+        } else if (
+            Array.isArray(
+                searchData?.data?.items
+            )
+        ) {
+
+            candidates =
+                searchData.data.items;
 
         }
 
-
-        const $ =
-            cheerio.load(
-                html
-            );
-
-
-        const candidates = [];
-
-
-        // =====================================================
-        // 2. LẤY CÁC KẾT QUẢ TÌM KIẾM
-        // =====================================================
-
-        $("a[href*='/phim/']").each(
-            function () {
-
-                const href =
-                    String(
-                        $(this).attr("href") ||
-                        ""
-                    ).trim();
-
-                const title =
-                    String(
-                        $(this).text() ||
-                        ""
-                    )
-                        .replace(/\s+/g, " ")
-                        .trim();
-
-
-                if (!href) {
-                    return;
-                }
-
-
-                const match =
-                    href.match(
-                        /\/phim\/([^/?#]+)/i
-                    );
-
-
-                if (!match) {
-                    return;
-                }
-
-
-                const slug =
-                    String(
-                        match[1] ||
-                        ""
-                    ).trim();
-
-
-                if (!slug) {
-                    return;
-                }
-
-
-                if (
-                    candidates.some(
-                        item =>
-                            item.slug === slug
-                    )
-                ) {
-                    return;
-                }
-
-
-                candidates.push({
-
-                    title:
-                        title ||
-                        slug
-                            .replace(/-/g, " "),
-
-                    slug
-
-                });
-
-            }
-        );
-
-
         console.log(
-            "[NGUONC] Search candidates:",
+            "[NGUONC] Search results:",
             candidates.length
         );
 
-
-        if (!candidates.length) {
+        if (
+            candidates.length === 0
+        ) {
 
             console.log(
-                "[NGUONC] No search result."
+                "[NGUONC] No search results"
             );
 
-            return [];
+            return streams;
 
         }
 
+        // =================================================
+        // 3. NORMALIZE TITLE
+        // =================================================
 
-        // =====================================================
-        // 3. CHỌN KẾT QUẢ ĐẦU TIÊN
-        //
-        // KHÔNG lấy slug từ KKPHIM.
-        // =====================================================
+        const normalizeTitle =
+            function (value) {
 
-        const selected =
-            candidates[0];
+                return String(
+                    value || ""
+                )
+                    .toLowerCase()
+                    .normalize("NFD")
+                    .replace(
+                        /[\u0300-\u036f]/g,
+                        ""
+                    )
+                    .replace(
+                        /[^a-z0-9]+/g,
+                        " "
+                    )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
 
+            };
+
+        const wantedTitle =
+            normalizeTitle(
+                movieName
+            );
+
+        // =================================================
+        // 4. CHỌN PHIM
+        // =================================================
+
+        let selectedMovie =
+            null;
+
+        // Exact normalized match
+        selectedMovie =
+            candidates.find(
+                function (item) {
+
+                    return (
+                        normalizeTitle(
+                            item?.name
+                        ) ===
+                        wantedTitle
+                    );
+
+                }
+            );
+
+        // Nếu không có exact match,
+        // thử title chứa nhau
+        if (
+            !selectedMovie
+        ) {
+
+            selectedMovie =
+                candidates.find(
+                    function (item) {
+
+                        const candidateTitle =
+                            normalizeTitle(
+                                item?.name
+                            );
+
+                        return (
+                            candidateTitle &&
+                            (
+                                candidateTitle.includes(
+                                    wantedTitle
+                                ) ||
+                                wantedTitle.includes(
+                                    candidateTitle
+                                )
+                            )
+                        );
+
+                    }
+                );
+
+        }
+
+        // Cuối cùng dùng kết quả đầu tiên
+        if (
+            !selectedMovie
+        ) {
+
+            selectedMovie =
+                candidates[0];
+
+        }
 
         console.log(
             "[NGUONC] Selected:",
-            selected
+            JSON.stringify(
+                {
+                    name:
+                        selectedMovie?.name,
+
+                    slug:
+                        selectedMovie?.slug,
+
+                    year:
+                        selectedMovie?.year
+                }
+            )
         );
 
+        const movieSlug =
+            String(
+                selectedMovie?.slug ||
+                ""
+            ).trim();
 
-        // =====================================================
-        // 4. LẤY EPISODE DATA
-        // =====================================================
+        if (
+            !movieSlug
+        ) {
 
-        const episodesUrl =
-            "https://phim.nguonc.com/phim/" +
+            console.log(
+                "[NGUONC] NO SLUG"
+            );
+
+            return streams;
+
+        }
+
+        // =================================================
+        // 5. DETAIL API
+        // =================================================
+
+        const detailUrl =
+            "https://phim.nguonc.com/api/film/" +
             encodeURIComponent(
-                selected.slug
-            ) +
-            "/episodes";
-
+                movieSlug
+            );
 
         console.log(
-            "[NGUONC] Episodes URL:",
-            episodesUrl
+            "[NGUONC] Detail URL:",
+            detailUrl
         );
 
-
-        const episodeResponse =
+        const detailResponse =
             await axios.get(
-                episodesUrl,
+                detailUrl,
                 {
                     timeout: 15000,
+
                     headers: {
                         "User-Agent":
-                            "Mozilla/5.0",
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+
                         "Accept":
                             "application/json,text/plain,*/*",
+
                         "Referer":
-                            "https://phim.nguonc.com/phim/" +
-                            selected.slug
+                            "https://phim.nguonc.com/"
                     }
                 }
             );
 
+        console.log(
+            "[NGUONC] Detail HTTP:",
+            detailResponse.status
+        );
 
-        const data =
-            episodeResponse.data;
+        const detailData =
+            detailResponse.data;
 
+        // =================================================
+        // 6. CHUẨN HÓA MOVIE
+        // =================================================
 
-        const servers =
-            Array.isArray(
-                data?.servers
-            )
-                ? data.servers
-                : [];
+        const movie =
+            detailData?.movie ||
+            detailData?.data?.item ||
+            detailData?.data ||
+            {};
 
+        const rawEpisodes =
+            movie?.episodes ||
+            detailData?.episodes ||
+            detailData?.data?.item?.episodes ||
+            [];
 
         console.log(
             "[NGUONC] Servers:",
-            servers.length
+            Array.isArray(
+                rawEpisodes
+            )
+                ? rawEpisodes.length
+                : 0
         );
 
-
-        if (!servers.length) {
+        if (
+            !Array.isArray(
+                rawEpisodes
+            )
+        ) {
 
             console.log(
-                "[NGUONC] No servers."
+                "[NGUONC] Invalid episodes structure"
             );
 
-            return [];
+            return streams;
 
         }
 
-
-        // =====================================================
-        // 5. LẤY CÁC EMBED
-        // =====================================================
-
-        const streams = [];
-
+        // =================================================
+        // 7. DUYỆT SERVER
+        // =================================================
 
         for (
             let serverIndex = 0;
-            serverIndex < servers.length;
+            serverIndex <
+            rawEpisodes.length;
             serverIndex++
         ) {
 
             const server =
-                servers[
+                rawEpisodes[
                     serverIndex
                 ];
 
+            const serverName =
+                String(
+                    server?.server_name ||
+                    server?.name ||
+                    "NguonC"
+                ).trim();
 
-            const list =
-                Array.isArray(
-                    server?.list
+            const episodes =
+                server?.items ||
+                server?.server_data ||
+                [];
+
+            if (
+                !Array.isArray(
+                    episodes
                 )
-                    ? server.list
-                    : [];
+            ) {
 
+                continue;
+
+            }
+
+            console.log(
+                "[NGUONC] Server:",
+                serverName,
+                "Episodes:",
+                episodes.length
+            );
+
+            // =================================================
+            // 8. DUYỆT EPISODE
+            // =================================================
 
             for (
                 let episodeIndex = 0;
-                episodeIndex < list.length;
+                episodeIndex <
+                episodes.length;
                 episodeIndex++
             ) {
 
                 const episode =
-                    list[
+                    episodes[
                         episodeIndex
                     ];
-
-
-                const embed =
-                    String(
-                        episode?.embed ||
-                        ""
-                    ).trim();
-
-
-                if (
-                    !embed ||
-                    !/^https?:\/\//i.test(
-                        embed
-                    )
-                ) {
-                    continue;
-                }
-
-
-                const serverName =
-                    String(
-                        server?.name ||
-                        "NguonC"
-                    ).trim();
-
 
                 const episodeName =
                     String(
                         episode?.name ||
+                        episode?.episode_name ||
+                        episode?.slug ||
+                        "Full"
+                    ).trim();
+
+                const embedUrl =
+                    String(
+                        episode?.embed ||
+                        episode?.link_embed ||
                         ""
                     ).trim();
 
+                const m3u8Url =
+                    String(
+                        episode?.m3u8 ||
+                        episode?.link_m3u8 ||
+                        ""
+                    ).trim();
+
+                console.log(
+                    "[NGUONC] Episode:",
+                    episodeName
+                );
 
                 console.log(
                     "[NGUONC] Embed:",
-                    embed
+                    embedUrl ||
+                    "(none)"
                 );
 
+                console.log(
+                    "[NGUONC] M3U8:",
+                    m3u8Url ||
+                    "(none)"
+                );
+
+                // =================================================
+                // 9. ƯU TIÊN M3U8 TRỰC TIẾP
+                // =================================================
+
+                if (
+                    m3u8Url
+                ) {
+
+                    streams.push({
+
+                        name:
+                            "⚡ [API] NguonC " +
+                            serverName,
+
+                        title:
+                            episodeName,
+
+                        url:
+                            m3u8Url,
+
+                        behaviorHints: {
+                            bingeGroup:
+                                "nguonc"
+                        }
+
+                    });
+
+                    continue;
+
+                }
+
+                // =================================================
+                // 10. EMBED
+                // =================================================
+
+                if (
+                    !embedUrl
+                ) {
+
+                    continue;
+
+                }
+
+                // =================================================
+                // 11. THỬ RESOLVE EMBED BẰNG
+                //     RESOLVER NGUONC HIỆN CÓ
+                // =================================================
+
+                try {
+
+                    console.log(
+                        "[NGUONC] Resolving embed..."
+                    );
+
+                    const resolved =
+                        await resolveNguonCEmbed(
+                            embedUrl,
+                            "https://phim.nguonc.com/phim/" +
+                            movieSlug
+                        );
+
+                    if (
+                        resolved &&
+                        resolved.playlist
+                    ) {
+
+                        console.log(
+                            "[NGUONC] Embed resolved successfully"
+                        );
+
+                        /*
+                         * Ở đây KHÔNG tự tạo URL HLS mới.
+                         *
+                         * Resolver/proxy NguonC hiện tại
+                         * của bạn sẽ tiếp tục xử lý playlist
+                         * thông qua phần proxy đã có.
+                         *
+                         * Tạm thời giữ embed như fallback
+                         * nếu proxy route hiện tại không được
+                         * expose trực tiếp từ fetch function.
+                         */
+
+                    } else {
+
+                        console.log(
+                            "[NGUONC] Embed resolver returned no playlist"
+                        );
+
+                    }
+
+                } catch (resolveError) {
+
+                    console.log(
+                        "[NGUONC] Embed resolve error:",
+                        resolveError?.message ||
+                        resolveError
+                    );
+
+                }
+
+                // =================================================
+                // 12. FALLBACK EMBED
+                // =================================================
 
                 streams.push({
 
@@ -802,25 +992,15 @@ async function fetchNguonC(
                         serverName,
 
                     title:
-                        episodeName ||
-                        "Full",
+                        episodeName,
 
                     externalUrl:
-                        "https://my-strem-addon.vercel.app/nguonc-player?url=" +
-                        encodeURIComponent(
-                            embed
-                        ),
+                        embedUrl,
 
-                    widgetPlayer:
-                        "https://my-strem-addon.vercel.app/nguonc-player?url=" +
-                        encodeURIComponent(
-                            embed
-                        ),
-
-                    widgetPlayerStates:
-                        [
-                            "replaceplayer"
-                        ]
+                    behaviorHints: {
+                        bingeGroup:
+                            "nguonc"
+                    }
 
                 });
 
@@ -828,26 +1008,55 @@ async function fetchNguonC(
 
         }
 
-
         console.log(
-            "[NGUONC] Streams:",
+            "[NGUONC] FINAL STREAM COUNT:",
             streams.length
         );
 
+        console.log(
+            "[NGUONC] FINAL STREAMS:",
+            JSON.stringify(
+                streams
+            )
+        );
+
+        console.log(
+            "========================================"
+        );
 
         return streams;
 
-
-    } catch (e) {
+    } catch (error) {
 
         console.log(
             "[NGUONC ERROR]:",
-            e?.response?.status ||
-            e?.message ||
-            e
+            error?.response?.status ||
+            error?.message ||
+            error
         );
 
-        return [];
+        if (
+            error?.response?.data
+        ) {
+
+            console.log(
+                "[NGUONC ERROR DATA]:",
+                typeof error.response.data === "string"
+                    ? error.response.data.slice(
+                        0,
+                        500
+                    )
+                    : JSON.stringify(
+                        error.response.data
+                    ).slice(
+                        0,
+                        500
+                    )
+            );
+
+        }
+
+        return streams;
 
     }
 
