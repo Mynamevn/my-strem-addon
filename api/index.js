@@ -8756,159 +8756,296 @@ async function startNguonC() {
 
     }
 
+
+    // =====================================================
+    // RANK SEARCH RESULTS
+    // =====================================================
+
     const ranked =
-    items
-        .map(
-            function (item) {
+        items
+            .map(
+                function (item) {
 
-                return {
+                    return {
 
-                    item:
-                        item,
+                        item:
+                            item,
 
-                    score:
-                        scoreMovie(
-                            item
-                        )
+                        score:
+                            scoreMovie(
+                                item
+                            )
 
-                };
+                    };
 
-            }
-        )
-        .sort(
-            function (a, b) {
+                }
+            )
+            .sort(
+                function (a, b) {
 
-                return (
-                    b.score -
-                    a.score
+                    return (
+                        b.score -
+                        a.score
+                    );
+
+                }
+            );
+
+
+    console.log(
+        "[NGUONC CLIENT] Ranked:",
+        ranked
+    );
+
+
+    // =====================================================
+    // EXACT YEAR AVAILABLE DIRECTLY IN SEARCH
+    // =====================================================
+
+    if (
+        MOVIE_YEAR > 0
+    ) {
+
+        const exactYearCandidates =
+            ranked.filter(
+                function (entry) {
+
+                    const year =
+                        Number(
+                            entry.item?.year ||
+                            entry.item?.release_year ||
+                            entry.item?.releaseYear ||
+                            0
+                        );
+
+                    return (
+                        year === MOVIE_YEAR
+                    );
+
+                }
+            );
+
+
+        console.log(
+            "[NGUONC CLIENT] Exact year candidates:",
+            exactYearCandidates
+        );
+
+
+        if (
+            exactYearCandidates.length
+        ) {
+
+            const selected =
+                exactYearCandidates[0].item;
+
+            if (
+                !selected?.slug
+            ) {
+
+                throw new Error(
+                    "NguonC tìm thấy phim đúng năm nhưng thiếu slug."
                 );
 
             }
-        );
 
-console.log(
-    "[NGUONC CLIENT] Ranked:",
-    ranked.map(
-        function (entry) {
+            await resolveSelectedNguonC(
+                selected
+            );
 
-            return {
-
-                name:
-                    entry.item?.name ||
-                    "",
-
-                origin:
-                    entry.item?.origin_name ||
-                    entry.item?.original_name ||
-                    "",
-
-                year:
-                    entry.item?.year ||
-                    0,
-
-                slug:
-                    entry.item?.slug ||
-                    "",
-
-                score:
-                    entry.score
-
-            };
+            return;
 
         }
-    )
-);
+
+    }
 
 
-// =====================================================
-// EXACT YEAR MATCH
-// =====================================================
+    // =====================================================
+    // YEAR KHÔNG CÓ TRỰC TIẾP TRONG SEARCH
+    // =====================================================
+    // Không chọn bừa kết quả đầu tiên.
+    //
+    // Kiểm tra các ứng viên có điểm tên cao bằng DETAIL.
+    // Detail có thể chứa year chính xác hơn search result.
+    // =====================================================
 
-let selected =
-    null;
+    if (
+        MOVIE_YEAR > 0
+    ) {
 
-if (
-    MOVIE_YEAR > 0
-) {
+        statusEl.textContent =
+            "Đang kiểm tra phiên bản " +
+            MOVIE_YEAR +
+            "...";
 
-    const exactYear =
-        ranked.filter(
-            function (entry) {
 
-                const year =
+        const candidates =
+            ranked
+                .filter(
+                    function (entry) {
+
+                        return (
+                            entry.item?.slug &&
+                            entry.score >= 100
+                        );
+
+                    }
+                )
+                .slice(
+                    0,
+                    10
+                );
+
+
+        console.log(
+            "[NGUONC CLIENT] Checking detail candidates:",
+            candidates
+        );
+
+
+        for (
+            const entry
+            of candidates
+        ) {
+
+            const candidate =
+                entry.item;
+
+            try {
+
+                console.log(
+                    "[NGUONC CLIENT] Checking:",
+                    candidate.name,
+                    candidate.origin_name,
+                    candidate.slug
+                );
+
+
+                const detail =
+                    await loadDetail(
+                        candidate.slug
+                    );
+
+
+                const detailMovie =
+                    detail?.movie ||
+                    detail?.data?.movie ||
+                    detail?.data?.item ||
+                    detail?.data ||
+                    {};
+
+
+                const detailYear =
                     Number(
-                        entry.item?.year ||
-                        entry.item?.release_year ||
-                        entry.item?.releaseYear ||
+                        detailMovie?.year ||
+                        detailMovie?.release_year ||
+                        detailMovie?.releaseYear ||
+                        candidate?.year ||
+                        candidate?.release_year ||
+                        candidate?.releaseYear ||
                         0
                     );
 
-                return (
-                    year ===
-                    MOVIE_YEAR
+
+                console.log(
+                    "[NGUONC CLIENT] Detail year:",
+                    detailYear,
+                    candidate.slug
+                );
+
+
+                if (
+                    detailYear === MOVIE_YEAR
+                ) {
+
+                    console.log(
+                        "[NGUONC CLIENT] EXACT DETAIL YEAR MATCH:",
+                        candidate
+                    );
+
+
+                    await resolveSelectedNguonC(
+                        candidate,
+                        detail
+                    );
+
+                    return;
+
+                }
+
+            }
+            catch (
+                error
+            ) {
+
+                console.warn(
+                    "[NGUONC CLIENT] Detail check failed:",
+                    candidate?.slug,
+                    error
                 );
 
             }
+
+        }
+
+
+        throw new Error(
+            "Không tìm thấy " +
+            MOVIE_TITLE +
+            " đúng năm " +
+            MOVIE_YEAR +
+            " trên NguonC."
         );
-
-    console.log(
-        "[NGUONC CLIENT] Exact year candidates:",
-        exactYear
-    );
-
-    if (
-        exactYear.length
-    ) {
-
-        selected =
-            exactYear[0].item;
 
     }
 
-}
-else {
 
-    selected =
+    // =====================================================
+    // KHÔNG CÓ YEAR
+    // =====================================================
+
+    const selected =
         ranked[0]?.item ||
         null;
 
-}
+
+    if (
+        !selected?.slug
+    ) {
+
+        throw new Error(
+            "Không tìm được slug phim trên NguonC."
+        );
+
+    }
 
 
-if (
-    !selected?.slug
-) {
-
-    throw new Error(
-        MOVIE_YEAR
-            ? (
-                "Không tìm thấy " +
-                MOVIE_TITLE +
-                " đúng năm " +
-                MOVIE_YEAR +
-                " trên NguonC."
-            )
-            : "Không tìm được slug phim trên NguonC."
+    await resolveSelectedNguonC(
+        selected
     );
 
 }
 
-console.log(
-    "[NGUONC CLIENT] SELECTED:",
-    {
-        name:
-            selected?.name,
 
-        origin:
-            selected?.origin_name,
+// =====================================================
+// RESOLVE SELECTED NGUONC MOVIE
+// =====================================================
 
-        year:
-            selected?.year,
+async function resolveSelectedNguonC(
+    selected,
+    existingDetail = null
+) {
 
-        slug:
-            selected?.slug
+    if (
+        !selected?.slug
+    ) {
+
+        throw new Error(
+            "Thiếu slug NguonC."
+        );
+
     }
-);
+
 
     statusEl.textContent =
         "Đã tìm thấy: " +
@@ -8916,27 +9053,40 @@ console.log(
             selected.name ||
             MOVIE_TITLE
         ) +
-        "\\\\nĐang tải video...";
+        "\\nĐang tải video...";
+
 
     const detail =
+        existingDetail ||
         await loadDetail(
             selected.slug
         );
 
+
     const video =
-        findVideoUrl(
-            detail
+        findVideoUrlForEpisode(
+            detail,
+            SEASON_NUMBER,
+            EPISODE_NUMBER,
+            STREAM_TYPE
         );
+
 
     if (
         !video
     ) {
 
         throw new Error(
-            "Phim có trên NguonC nhưng không tìm thấy link phát."
+            "Phim có trên NguonC nhưng không tìm thấy link phát cho tập " +
+            (
+                EPISODE_NUMBER ||
+                1
+            ) +
+            "."
         );
 
     }
+
 
     if (
         video.type ===
@@ -8951,6 +9101,7 @@ console.log(
 
     }
 
+
     if (
         video.type ===
         "embed"
@@ -8964,9 +9115,248 @@ console.log(
 
     }
 
+
     throw new Error(
         "Không xác định được loại video."
     );
+
+}
+
+
+// =====================================================
+// FIND VIDEO FOR MOVIE / SERIES EPISODE
+// =====================================================
+
+function findVideoUrlForEpisode(
+    detail,
+    seasonNumber,
+    episodeNumber,
+    streamType
+) {
+
+    const movie =
+        detail?.movie ||
+        detail?.data?.movie ||
+        detail?.data?.item ||
+        detail?.data ||
+        {};
+
+
+    const episodes =
+        movie?.episodes ||
+        detail?.episodes ||
+        detail?.data?.episodes ||
+        [];
+
+
+    if (
+        !Array.isArray(
+            episodes
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    // =====================================================
+    // MOVIE
+    // =====================================================
+
+    if (
+        streamType !==
+        "series"
+    ) {
+
+        return findVideoUrl(
+            detail
+        );
+
+    }
+
+
+    // =====================================================
+    // SERIES
+    // =====================================================
+
+    const targetEpisode =
+        Number(
+            episodeNumber
+        ) || 1;
+
+
+    for (
+        const server
+        of episodes
+    ) {
+
+        const items =
+            server?.items ||
+            server?.server_data ||
+            [];
+
+
+        if (
+            !Array.isArray(
+                items
+            )
+        ) {
+
+            continue;
+
+        }
+
+
+        for (
+            let index = 0;
+            index < items.length;
+            index++
+        ) {
+
+            const episode =
+                items[index];
+
+
+            const episodeName =
+                String(
+                    episode?.name ||
+                    episode?.filename ||
+                    episode?.slug ||
+                    ""
+                )
+                    .trim();
+
+
+            let detectedEpisode =
+                0;
+
+
+            const directNumber =
+                episodeName.match(
+                    /^\s*0*(\d+)\s*$/
+                );
+
+
+            if (
+                directNumber
+            ) {
+
+                detectedEpisode =
+                    Number(
+                        directNumber[1]
+                    ) || 0;
+
+            }
+
+
+            if (
+                !detectedEpisode
+            ) {
+
+                const episodeMatch =
+                    episodeName.match(
+                        /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*(\d+)/i
+                    );
+
+
+                if (
+                    episodeMatch
+                ) {
+
+                    detectedEpisode =
+                        Number(
+                            episodeMatch[1]
+                        ) || 0;
+
+                }
+
+            }
+
+
+            if (
+                !detectedEpisode
+            ) {
+
+                detectedEpisode =
+                    index + 1;
+
+            }
+
+
+            if (
+                detectedEpisode !==
+                targetEpisode
+            ) {
+
+                continue;
+
+            }
+
+
+            const m3u8 =
+                String(
+                    episode?.m3u8 ||
+                    episode?.link_m3u8 ||
+                    ""
+                )
+                    .trim();
+
+
+            if (
+                m3u8 &&
+                /^https?:\/\//i.test(
+                    m3u8
+                )
+            ) {
+
+                return {
+
+                    type:
+                        "m3u8",
+
+                    url:
+                        m3u8
+
+                };
+
+            }
+
+
+            const embed =
+                String(
+                    episode?.embed ||
+                    episode?.link_embed ||
+                    ""
+                )
+                    .trim();
+
+
+            if (
+                embed &&
+                /^https?:\/\//i.test(
+                    embed
+                )
+            ) {
+
+                return {
+
+                    type:
+                        "embed",
+
+                    url:
+                        embed
+
+                };
+
+            }
+
+        }
+
+    }
+
+
+    return null;
 
 }
 
