@@ -5938,12 +5938,31 @@ console.log(
 // =====================================================
 // Không gọi NguonC từ Vercel.
 // Client sẽ mở trang NguonC trong widget/player.
+// Truyền đầy đủ title + year + season + episode
+// để client có thể chọn đúng phiên bản phim.
 // =====================================================
 
 const nguoncClientUrl =
-    "https://my-strem-addon.vercel.app/nguonc-player?title=" +
+    "https://my-strem-addon.vercel.app/nguonc-player" +
+    "?title=" +
     encodeURIComponent(
         movieName
+    ) +
+    "&year=" +
+    encodeURIComponent(
+        movieYear || ""
+    ) +
+    "&type=" +
+    encodeURIComponent(
+        streamType || "movie"
+    ) +
+    "&season=" +
+    encodeURIComponent(
+        seasonNumber || ""
+    ) +
+    "&episode=" +
+    encodeURIComponent(
+        episodeNumber || ""
     );
 
 const nguoncClientStream = {
@@ -5953,7 +5972,12 @@ const nguoncClientStream = {
 
     title:
         "NguonC - " +
-        movieName,
+        movieName +
+        (
+            movieYear
+                ? " (" + movieYear + ")"
+                : ""
+        ),
 
     externalUrl:
         nguoncClientUrl,
@@ -8083,6 +8107,36 @@ button {
 const MOVIE_TITLE =
     \`${safeTitle}\`;
 
+const MOVIE_YEAR =
+    Number(
+        new URLSearchParams(
+            window.location.search
+        ).get("year") ||
+        0
+    );
+
+const STREAM_TYPE =
+    new URLSearchParams(
+        window.location.search
+    ).get("type") ||
+    "movie";
+
+const SEASON_NUMBER =
+    Number(
+        new URLSearchParams(
+            window.location.search
+        ).get("season") ||
+        0
+    );
+
+const EPISODE_NUMBER =
+    Number(
+        new URLSearchParams(
+            window.location.search
+        ).get("episode") ||
+        0
+    );
+
 const API_BASE =
     "https://phim.nguonc.com/api";
 
@@ -8144,7 +8198,7 @@ function normalizeTitle(
 
 
 // =====================================================
-// TITLE SCORE
+// TITLE + YEAR SCORE
 // =====================================================
 
 function scoreMovie(
@@ -8166,13 +8220,25 @@ function scoreMovie(
             item?.original_name
         );
 
+    const itemYear =
+        Number(
+            item?.year ||
+            item?.release_year ||
+            item?.releaseYear ||
+            0
+        );
+
     let score = 0;
+
+    // -------------------------------------------------
+    // TÊN PHIM
+    // -------------------------------------------------
 
     if (
         name === target
     ) {
 
-        score += 100;
+        score += 1000;
 
     }
 
@@ -8180,7 +8246,7 @@ function scoreMovie(
         origin === target
     ) {
 
-        score += 100;
+        score += 1000;
 
     }
 
@@ -8190,7 +8256,7 @@ function scoreMovie(
         )
     ) {
 
-        score += 60;
+        score += 300;
 
     }
 
@@ -8201,7 +8267,7 @@ function scoreMovie(
         name.length >= 4
     ) {
 
-        score += 50;
+        score += 250;
 
     }
 
@@ -8211,7 +8277,7 @@ function scoreMovie(
         )
     ) {
 
-        score += 50;
+        score += 300;
 
     }
 
@@ -8222,7 +8288,34 @@ function scoreMovie(
         origin.length >= 4
     ) {
 
-        score += 40;
+        score += 250;
+
+    }
+
+    // -------------------------------------------------
+    // NĂM PHIM
+    // -------------------------------------------------
+
+    if (
+        MOVIE_YEAR > 0
+    ) {
+
+        if (
+            itemYear === MOVIE_YEAR
+        ) {
+
+            // ĐÚNG NĂM: ưu tiên rất mạnh
+            score += 5000;
+
+        }
+        else if (
+            itemYear > 0
+        ) {
+
+            // KHÁC NĂM: loại khỏi lựa chọn
+            score -= 10000;
+
+        }
 
     }
 
@@ -8612,47 +8705,107 @@ async function startNguonC() {
     }
 
     const ranked =
-        items
-            .map(
-                function (item) {
+    items
+        .map(
+            function (item) {
 
-                    return {
+                return {
 
-                        item:
-                            item,
+                    item:
+                        item,
 
-                        score:
-                            scoreMovie(
-                                item
-                            )
+                    score:
+                        scoreMovie(
+                            item
+                        )
 
-                    };
+                };
 
-                }
-            )
-            .sort(
-                function (a, b) {
+            }
+        )
+        .sort(
+            function (a, b) {
 
-                    return (
-                        b.score -
-                        a.score
-                    );
+                return (
+                    b.score -
+                    a.score
+                );
 
-                }
-            );
-
-    const selected =
-        ranked[0]?.item;
-
-    if (
-        !selected?.slug
-    ) {
-
-        throw new Error(
-            "Không tìm được slug phim trên NguonC."
+            }
         );
 
+
+// -------------------------------------------------
+// CHỌN PHIM
+// -------------------------------------------------
+
+let selected =
+    null;
+
+
+// Nếu có năm:
+// chỉ chấp nhận phim đúng năm.
+// Không lấy phim khác năm chỉ vì tên giống.
+if (
+    MOVIE_YEAR > 0
+) {
+
+    const exactYearCandidates =
+        ranked.filter(
+            function (entry) {
+
+                const year =
+                    Number(
+                        entry.item?.year ||
+                        entry.item?.release_year ||
+                        entry.item?.releaseYear ||
+                        0
+                    );
+
+                return (
+                    year ===
+                    MOVIE_YEAR
+                );
+
+            }
+        );
+
+    if (
+        exactYearCandidates.length
+    ) {
+
+        selected =
+            exactYearCandidates[0].item;
+
     }
+
+}
+else {
+
+    // Không có năm thì mới
+    // dùng ranking tên phim.
+    selected =
+        ranked[0]?.item ||
+        null;
+
+}
+
+
+if (
+    !selected?.slug
+) {
+
+    throw new Error(
+        MOVIE_YEAR
+            ? (
+                "Không tìm được phim đúng năm " +
+                MOVIE_YEAR +
+                " trên NguonC."
+            )
+            : "Không tìm được slug phim trên NguonC."
+    );
+
+}
 
     statusEl.textContent =
         "Đã tìm thấy: " +
