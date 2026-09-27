@@ -1403,445 +1403,515 @@ console.log(
 }
 
 
-/* ============================================================
-   VSMOV API
-   SEARCH API
-   DETAIL API
-   ƯU TIÊN M3U8 TRỰC TIẾP
-   FALLBACK EMBED
-   GIỮ CẢ VIETSUB / 4K
-   ============================================================ */
+// =====================================================
+// VSMOV
+// =====================================================
 
-async function fetchVSMov(movieName) {
+async function fetchVSMov(
+    movieName
+) {
 
     const streams = [];
 
     try {
 
-        console.log("========================================");
-        console.log("[VSMOV] START");
-        console.log("[VSMOV] Search:", movieName);
+        // =====================================================
+        // 1. HÀM CHUẨN HÓA TÊN
+        // =====================================================
 
-        if (!movieName) {
-            return streams;
-        }
+        function normalizeTitle(
+            value
+        ) {
 
-        // ====================================================
-        // 1. TITLE VARIANTS
-        // ====================================================
-
-        const original =
-            String(movieName || "")
+            return String(
+                value ||
+                ""
+            )
+                .normalize("NFD")
+                .replace(
+                    /[\u0300-\u036f]/g,
+                    ""
+                )
+                .toLowerCase()
+                .replace(
+                    /&/g,
+                    " and "
+                )
+                .replace(
+                    /[^a-z0-9]+/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
                 .trim();
 
-        const variants = [];
+        }
 
-        function addVariant(value) {
 
-            const clean =
-                String(value || "")
-                    .replace(/\s+/g, " ")
-                    .trim();
+        // =====================================================
+        // 2. TỪ KHÓA BỎ QUA
+        // =====================================================
 
-            if (!clean) return;
+        const stopWords = new Set([
 
-            const key =
-                clean
-                    .normalize("NFD")
-                    .replace(/[\u0300-\u036f]/g, "")
-                    .toLowerCase();
+            "the",
+            "a",
+            "an",
+            "movie",
+            "film",
+            "phim",
+            "full",
+            "hd",
+            "4k",
+            "tv"
+
+        ]);
+
+
+        // =====================================================
+        // 3. TÁCH TỪ KHÓA
+        // =====================================================
+
+        function getWords(
+            value
+        ) {
+
+            return normalizeTitle(
+                value
+            )
+                .split(" ")
+                .filter(
+                    word =>
+                        word.length >= 2 &&
+                        !stopWords.has(
+                            word
+                        )
+                );
+
+        }
+
+
+        // =====================================================
+        // 4. TÍNH ĐỘ GIỐNG NHAU
+        // =====================================================
+
+        function scoreText(
+            target,
+            candidate
+        ) {
+
+            const t =
+                normalizeTitle(
+                    target
+                );
+
+            const c =
+                normalizeTitle(
+                    candidate
+                );
 
             if (
-                !variants.some(
-                    x => x.key === key
-                )
+                !t ||
+                !c
             ) {
 
-                variants.push({
-                    text: clean,
-                    key
-                });
+                return 0;
 
             }
 
-        }
 
-        addVariant(original);
+            // Exact
+            if (
+                t === c
+            ) {
 
-        original
-            .split("/")
-            .forEach(addVariant);
-
-        original
-            .split("|")
-            .forEach(addVariant);
-
-        original
-            .split(/\s+-\s+/)
-            .forEach(part => {
-
-                if (
-                    String(part).trim().length >= 3
-                ) {
-                    addVariant(part);
-                }
-
-            });
-
-        const titleVariants =
-            variants.map(
-                x => x.text
-            );
-
-        // ====================================================
-        // 2. NORMALIZE TITLE
-        // ====================================================
-
-        function normalizeTitle(text) {
-
-            return String(text || "")
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .toLowerCase()
-                .replace(/đ/g, "d")
-                .replace(/[^a-z0-9\s]/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
-
-        }
-
-        // ====================================================
-        // 3. SEARCH VSMOV
-        // ====================================================
-
-        const candidates = [];
-
-        for (
-            const variant
-            of titleVariants
-        ) {
-
-            try {
-
-                const searchUrl =
-                    "https://vsmov.com/api/tim-kiem?keyword=" +
-                    encodeURIComponent(variant) +
-                    "&page=1&limit=24";
-
-                console.log(
-                    "[VSMOV] API Search:",
-                    variant
-                );
-
-                const res =
-                    await axios.get(
-                        searchUrl,
-                        {
-                            timeout: 8000,
-
-                            headers: {
-
-                                "User-Agent":
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                                "Accept":
-                                    "application/json"
-
-                            }
-
-                        }
-                    );
-
-                const data =
-                    res.data || {};
-
-                const items =
-                    data?.data?.items ||
-                    data?.items ||
-                    data?.results ||
-                    [];
-
-                if (
-                    Array.isArray(items)
-                ) {
-
-                    items.forEach(
-                        item => {
-
-                            if (
-                                item &&
-                                item.slug
-                            ) {
-
-                                candidates.push(
-                                    item
-                                );
-
-                            }
-
-                        }
-                    );
-
-                }
-
-            } catch (e) {
-
-                console.log(
-                    "[VSMOV] SEARCH ERROR:",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
+                return 1000;
 
             }
 
-        }
 
-        // ====================================================
-        // 4. UNIQUE
-        // ====================================================
+            let score = 0;
 
-        const uniqueCandidates = [];
 
-        const seen =
-            new Set();
+            // Một chuỗi chứa chuỗi kia
+            if (
+                c.includes(t)
+            ) {
 
-        candidates.forEach(
-            item => {
-
-                const slug =
-                    String(
-                        item?.slug || ""
-                    ).trim();
-
-                if (
-                    !slug ||
-                    seen.has(slug)
-                ) {
-                    return;
-                }
-
-                seen.add(slug);
-
-                uniqueCandidates.push(
-                    item
-                );
+                score += 300;
 
             }
-        );
 
-        // ====================================================
-        // 5. RANK
-        // ====================================================
+            if (
+                t.includes(c) &&
+                c.length >= 4
+            ) {
 
-        const ranked =
-            uniqueCandidates
-                .map(item => {
+                score += 250;
 
-                    const normalizedName =
-                        normalizeTitle(
-                            item?.name
-                        );
+            }
 
-                    let score = 0;
 
-                    titleVariants.forEach(
-                        variant => {
-
-                            const v =
-                                normalizeTitle(
-                                    variant
-                                );
-
-                            if (
-                                normalizedName === v
-                            ) {
-
-                                score += 100;
-
-                            }
-                            else if (
-                                normalizedName.includes(v)
-                            ) {
-
-                                score += 50;
-
-                            }
-                            else if (
-                                v.includes(normalizedName)
-                            ) {
-
-                                score += 40;
-
-                            }
-
-                        }
-                    );
-
-                    return {
-                        item,
-                        score
-                    };
-
-                })
-                .sort(
-                    (a, b) =>
-                        b.score - a.score
+            // So sánh từng từ
+            const targetWords =
+                getWords(
+                    t
                 );
+
+            const candidateWords =
+                getWords(
+                    c
+                );
+
+            if (
+                targetWords.length &&
+                candidateWords.length
+            ) {
+
+                let matched = 0;
+
+                for (
+                    const word
+                    of targetWords
+                ) {
+
+                    if (
+                        candidateWords.includes(
+                            word
+                        )
+                    ) {
+
+                        matched++;
+
+                    }
+
+                }
+
+                if (
+                    matched
+                ) {
+
+                    score +=
+                        (
+                            matched /
+                            targetWords.length
+                        ) *
+                        180;
+
+                }
+
+            }
+
+
+            return score;
+
+        }
+
+
+        // =====================================================
+        // 5. SEARCH VSMOV
+        // =====================================================
+
+        const searchUrl =
+            "https://vsmov.com/api/tim-kiem?keyword=" +
+            encodeURIComponent(
+                movieName
+            ) +
+            "&page=1&limit=24";
 
         console.log(
-            "[VSMOV] RANKED:",
-            JSON.stringify(
-                ranked.map(
-                    x => ({
-                        name:
-                            x.item?.name,
-
-                        slug:
-                            x.item?.slug,
-
-                        score:
-                            x.score
-                    })
-                )
-            )
+            "[VSMOV] Search:",
+            searchUrl
         );
 
-        // ====================================================
-        // 6. KHÔNG TÌM THẤY
-        // ====================================================
+
+        const searchResponse =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout:
+                        15000,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0",
+
+                        "Accept":
+                            "application/json"
+
+                    }
+
+                }
+            );
+
+
+        const data =
+            searchResponse?.data;
+
+
+        // =====================================================
+        // 6. LẤY ITEMS
+        // =====================================================
+
+        let items = [];
 
         if (
-            ranked.length === 0
+            Array.isArray(
+                data?.items
+            )
         ) {
 
-            const searchTerm =
-                titleVariants.length > 1
-                    ? titleVariants[
-                        titleVariants.length - 1
-                    ]
-                    : movieName;
+            items =
+                data.items;
 
-            streams.push({
+        }
+        else if (
+            Array.isArray(
+                data?.data
+            )
+        ) {
 
-                name:
-                    "🔎 [Fallback Search] VSmov",
+            items =
+                data.data;
 
-                title:
-                    "Tìm phim trên VSmov - " +
-                    searchTerm,
+        }
+        else if (
+            Array.isArray(
+                data?.data?.items
+            )
+        ) {
 
-                externalUrl:
-                    "https://vsmov.com/?search=" +
-                    encodeURIComponent(
-                        searchTerm
-                    )
+            items =
+                data.data.items;
 
-            });
+        }
+
+
+        if (
+            !items.length
+        ) {
+
+            console.log(
+                "[VSMOV] No search results"
+            );
 
             return streams;
 
         }
 
-        // ====================================================
-        // 7. SELECT
-        // ====================================================
 
-        const selected =
-            ranked[0].item;
+        // =====================================================
+        // 7. RANK KẾT QUẢ
+        // =====================================================
 
-        const movieSlug =
-            String(
-                selected?.slug || ""
-            ).trim();
+        const ranked =
+            items
+                .map(
+                    function (
+                        item
+                    ) {
 
-        const foundName =
-            selected?.name ||
-            movieName;
+                        const name =
+                            item?.name ||
+                            "";
 
-        console.log(
-            "[VSMOV] Selected:",
-            foundName
-        );
+                        const origin =
+                            item?.original_name ||
+                            item?.origin_name ||
+                            "";
 
-        console.log(
-            "[VSMOV] Slug:",
-            movieSlug
-        );
+                        const slug =
+                            item?.slug ||
+                            "";
 
-        // ====================================================
-        // 8. DETAIL API
-        // ====================================================
 
-        const detailUrl =
-            "https://vsmov.com/api/phim/" +
-            encodeURIComponent(
-                movieSlug
-            );
+                        const nameScore =
+                            scoreText(
+                                movieName,
+                                name
+                            );
 
-        let detailRes;
+                        const originScore =
+                            scoreText(
+                                movieName,
+                                origin
+                            );
 
-        try {
 
-            detailRes =
-                await axios.get(
-                    detailUrl,
-                    {
-                        timeout: 8000,
+                        // original_name thường quan trọng
+                        // hơn tên Việt khi Cinemeta trả
+                        // tên tiếng Anh.
+                        const score =
+                            Math.max(
+                                nameScore,
+                                originScore
+                            );
 
-                        headers: {
 
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                        return {
 
-                            "Accept":
-                                "application/json"
+                            item,
+                            score,
+                            name,
+                            origin,
+                            slug
 
-                        }
+                        };
+
+                    }
+                )
+                .sort(
+                    function (
+                        a,
+                        b
+                    ) {
+
+                        return (
+                            b.score -
+                            a.score
+                        );
 
                     }
                 );
 
-        } catch (e) {
+
+        console.log(
+            "[VSMOV] RANKED:",
+            ranked
+                .slice(
+                    0,
+                    10
+                )
+                .map(
+                    function (
+                        x
+                    ) {
+
+                        return {
+
+                            name:
+                                x.name,
+
+                            origin:
+                                x.origin,
+
+                            slug:
+                                x.slug,
+
+                            score:
+                                Math.round(
+                                    x.score
+                                )
+
+                        };
+
+                    }
+                )
+        );
+
+
+        // =====================================================
+        // 8. KHÔNG LẤY KẾT QUẢ SCORE = 0
+        // =====================================================
+
+        const best =
+            ranked[0];
+
+
+        if (
+            !best ||
+            best.score <= 0 ||
+            !best.slug
+        ) {
 
             console.log(
-                "[VSMOV] DETAIL ERROR:",
-                e?.response?.status ||
-                e?.message ||
-                e
+                "[VSMOV] No reliable match"
             );
 
-            detailRes = null;
+            return streams;
 
         }
 
-        const detailData =
-            detailRes?.data || {};
 
-        const movieData =
-            detailData?.movie ||
-            detailData?.data ||
-            detailData;
+        const selected =
+            best.item;
 
-        const episodes =
-            Array.isArray(
-                detailData?.episodes
-            )
-                ? detailData.episodes
-                : Array.isArray(
-                    movieData?.episodes
-                )
-                    ? movieData.episodes
-                    : [];
 
         console.log(
-            "[VSMOV] Servers:",
-            episodes.length
+            "[VSMOV] Selected:",
+            selected?.name
         );
 
-        // ====================================================
-        // 9. PROCESS SERVERS
-        // ====================================================
+        console.log(
+            "[VSMOV] Original:",
+            selected?.original_name ||
+            selected?.origin_name ||
+            ""
+        );
+
+        console.log(
+            "[VSMOV] Slug:",
+            selected?.slug
+        );
+
+
+        // =====================================================
+        // 9. LẤY DETAIL
+        // =====================================================
+
+        const detailUrl =
+            "https://vsmov.com/api/phim/" +
+            encodeURIComponent(
+                selected.slug
+            );
+
+
+        const detailResponse =
+            await axios.get(
+                detailUrl,
+                {
+                    timeout:
+                        15000,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0",
+
+                        "Accept":
+                            "application/json"
+
+                    }
+
+                }
+            );
+
+
+        const detail =
+            detailResponse?.data;
+
+
+        const movie =
+            detail?.movie ||
+            detail?.data?.movie ||
+            detail?.data?.item ||
+            detail?.data ||
+            {};
+
+
+        const episodes =
+            movie?.episodes ||
+            detail?.episodes ||
+            detail?.data?.episodes ||
+            [];
+
+
+        // =====================================================
+        // 10. DUYỆT SERVER / EPISODE
+        // =====================================================
 
         for (
             const server
@@ -1849,88 +1919,73 @@ async function fetchVSMov(movieName) {
         ) {
 
             const serverName =
-                String(
-                    server?.server_name ||
-                    server?.name ||
-                    "VSMov"
-                );
+                server?.server_name ||
+                server?.name ||
+                "Server";
 
-            const serverData =
-                Array.isArray(
-                    server?.server_data
-                )
-                    ? server.server_data
-                    : [];
 
-            console.log(
-                "[VSMOV] Server:",
-                serverName,
-                "Episodes:",
-                serverData.length
-            );
+            const serverItems =
+                server?.items ||
+                server?.server_data ||
+                [];
+
 
             for (
                 const ep
-                of serverData
+                of serverItems
             ) {
 
                 const episodeName =
-                    String(
-                        ep?.name ||
-                        ep?.filename ||
-                        ep?.slug ||
-                        "Full"
-                    );
+                    ep?.name ||
+                    ep?.episode_name ||
+                    ep?.title ||
+                    "Full";
 
-                // =================================================
-                // A. DIRECT M3U8
-                // =================================================
 
                 const m3u8 =
-                    String(
-                        ep?.link_m3u8 ||
-                        ep?.m3u8 ||
-                        ep?.link_m3u8_url ||
-                        ""
-                    ).trim();
+                    ep?.m3u8 ||
+                    ep?.link_m3u8 ||
+                    ep?.url ||
+                    "";
+
+
+                const embed =
+                    ep?.embed ||
+                    ep?.link_embed ||
+                    "";
+
+
+                // =====================================================
+                // M3U8
+                // =====================================================
 
                 if (
                     m3u8 &&
-                    /^https?:\/\//i.test(m3u8)
-                ) {
-
-                    console.log(
-                        "[VSMOV] DIRECT M3U8:",
-                        serverName,
-                        episodeName
-                    );
-
-                    console.log(
-                        "[VSMOV] M3U8:",
+                    String(
                         m3u8
-                    );
+                    ).includes(
+                        ".m3u8"
+                    )
+                ) {
 
                     streams.push({
 
                         name:
-                            "⚡ [VSMov M3U8] " +
+                            "⚡ [VSMov] " +
                             serverName,
 
                         title:
-                            episodeName +
-                            " - " +
-                            serverName,
+                            episodeName,
 
                         url:
-                            m3u8,
+                            String(
+                                m3u8
+                            ),
 
                         behaviorHints: {
 
                             bingeGroup:
-                                "vsmov-m3u8-" +
-                                normalizeTitle(
-                                    serverName
-                                )
+                                "vsmov"
 
                         }
 
@@ -1940,141 +1995,70 @@ async function fetchVSMov(movieName) {
 
                 }
 
-                // =================================================
-// B. EMBED FALLBACK
-// =================================================
 
-const embed =
-    String(
-        ep?.link_embed ||
-        ep?.embed ||
-        ""
-    ).trim();
+                // =====================================================
+                // EMBED → VSMOV PLAYER
+                // =====================================================
 
-if (
-    embed &&
-    /^https?:\/\//i.test(embed)
-) {
+                if (
+                    embed
+                ) {
 
-    console.log(
-        "[VSMOV] EMBED FALLBACK:",
-        serverName,
-        episodeName
-    );
+                    const widgetUrl =
+                        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
+                        encodeURIComponent(
+                            embed
+                        );
 
-    console.log(
-        "[VSMOV] EMBED:",
-        embed
-    );
 
-    const widgetUrl =
-        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
-        encodeURIComponent(embed);
+                    streams.push({
 
-    console.log(
-        "[VSMOV] WIDGET:",
-        widgetUrl
-    );
+                        name:
+                            "▶️ [VSMov] " +
+                            serverName,
 
-    streams.push({
-    name:
-        "▶️ [VSMov] " +
-        serverName,
+                        title:
+                            episodeName,
 
-    title:
-        episodeName ||
-        "Full",
+                        externalUrl:
+                            widgetUrl,
 
-    externalUrl:
-        widgetUrl,
+                        widgetPlayer:
+                            widgetUrl,
 
-    widgetPlayer:
-        widgetUrl,
+                        widgetPlayerStates: [
 
-    widgetPlayerStates: [
-        "replaceplayer"
-    ]
-});
-}
-}
-}
-        // ====================================================
-        // 10. FALLBACK ĐÚNG TRANG PHIM
-        // ====================================================
+                            "replaceplayer"
 
-        if (
-            streams.length === 0
-        ) {
+                        ]
 
-            const movieUrl =
-                "https://vsmov.com/phim/" +
-                encodeURIComponent(
-                    movieSlug
-                );
+                    });
 
-            console.log(
-                "[VSMOV] No stream."
-            );
+                }
 
-            streams.push({
-
-                name:
-                    "🌐 [Fallback] VSmov",
-
-                title:
-                    "Mở đúng trang VSmov - " +
-                    foundName,
-
-                externalUrl:
-                    movieUrl
-
-            });
+            }
 
         }
 
-        // ====================================================
-        // 11. FINAL
-        // ====================================================
 
         console.log(
-            "[VSMOV] FINAL STREAM COUNT:",
+            "[VSMOV] Streams:",
             streams.length
         );
 
-        console.log(
-            "[VSMOV] FINAL STREAMS:",
-            JSON.stringify(
-                streams
-            )
-        );
 
         return streams;
 
-    } catch (e) {
+    } catch (
+        error
+    ) {
 
         console.log(
-            "[VSMOV FATAL]",
-            e?.response?.status ||
-            e?.message ||
-            e
+            "[VSMOV ERROR]:",
+            error?.response?.status ||
+            error?.message ||
+            error
         );
-
-        streams.push({
-
-            name:
-                "🔎 [Fallback Search] VSmov",
-
-            title:
-                "Tìm phim trên VSmov - " +
-                movieName,
-
-            externalUrl:
-                "https://vsmov.com/?search=" +
-                encodeURIComponent(
-                    movieName
-                )
-
-        });
 
         return streams;
 
