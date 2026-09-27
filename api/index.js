@@ -1997,44 +1997,89 @@ async function fetchVSMov(
 
 
                 // =====================================================
-                // EMBED → VSMOV PLAYER
-                // =====================================================
+// EMBED → VSMOV PLAYER
+// =====================================================
 
-                if (
-                    embed
-                ) {
+if (
+    embed
+) {
 
-                    const widgetUrl =
-                        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
-                        encodeURIComponent(
-                            embed
-                        );
+    // -------------------------------------------------
+    // LOG URL EMBED THỰC TẾ
+    // -------------------------------------------------
+
+    console.log(
+        "[VSMOV] EMBED URL:",
+        embed
+    );
+
+    let embedHost =
+        "INVALID_URL";
+
+    try {
+
+        embedHost =
+            new URL(
+                embed
+            ).hostname;
+
+    } catch (
+        error
+    ) {
+
+        console.log(
+            "[VSMOV] EMBED URL INVALID"
+        );
+
+    }
+
+    console.log(
+        "[VSMOV] EMBED HOST:",
+        embedHost
+    );
 
 
-                    streams.push({
+    // -------------------------------------------------
+    // TẠO PLAYER URL
+    // -------------------------------------------------
 
-                        name:
-                            "▶️ [VSMov] " +
-                            serverName,
+    const widgetUrl =
+        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
+        encodeURIComponent(
+            embed
+        );
 
-                        title:
-                            episodeName,
 
-                        externalUrl:
-                            widgetUrl,
+    console.log(
+        "[VSMOV] WIDGET URL:",
+        widgetUrl
+    );
 
-                        widgetPlayer:
-                            widgetUrl,
 
-                        widgetPlayerStates: [
+    streams.push({
 
-                            "replaceplayer"
+        name:
+            "▶️ [VSMov] " +
+            serverName,
 
-                        ]
+        title:
+            episodeName,
 
-                    });
+        externalUrl:
+            widgetUrl,
 
-                }
+        widgetPlayer:
+            widgetUrl,
+
+        widgetPlayerStates: [
+
+            "replaceplayer"
+
+        ]
+
+    });
+
+}
 
             }
 
