@@ -9390,7 +9390,7 @@ function findVideoUrlForEpisode(
 
 if (
     m3u8 &&
-    /^https?:\/\//i.test(
+    /^https?:\\/\\//i.test(
         m3u8
     )
 ) {
@@ -9419,7 +9419,7 @@ const embed =
 
 if (
     embed &&
-    /^https?:\/\//i.test(
+    /^https?:\\/\\//i.test(
         embed
     )
 ) {
