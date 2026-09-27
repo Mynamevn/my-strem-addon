@@ -1233,7 +1233,154 @@ if (
 }
 
 // -------------------------------------------------
-// B. FALLBACK: SEARCH THEO TÊN
+// B. FALLBACK 1: TÌM THEO NĂM + IMDb ID
+// -------------------------------------------------
+// Nếu endpoint /imdb/title/{id} không có dữ liệu,
+// thử quét danh sách phim đúng năm.
+// Mục tiêu vẫn là tìm ĐÚNG IMDb ID,
+// tuyệt đối không lấy phim khác năm.
+// -------------------------------------------------
+
+if (
+    !movie &&
+    imdbId &&
+    movieYear
+) {
+
+    const yearUrl =
+        "https://phimapi.com/v1/api/nam/" +
+        encodeURIComponent(
+            movieYear
+        ) +
+        "?limit=64";
+
+    console.log(
+        "[KKPHIM] Year lookup URL:",
+        yearUrl
+    );
+
+    try {
+
+        const yearRes =
+            await axios.get(
+                yearUrl,
+                {
+                    timeout: 10000,
+
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0",
+
+                        "Accept":
+                            "application/json"
+                    }
+                }
+            );
+
+        console.log(
+            "[KKPHIM] Year lookup HTTP:",
+            yearRes.status
+        );
+
+        const yearItems =
+            yearRes.data?.data?.items ||
+            yearRes.data?.items ||
+            [];
+
+        console.log(
+            "[KKPHIM] Year results:",
+            Array.isArray(
+                yearItems
+            )
+                ? yearItems.length
+                : "NOT ARRAY"
+        );
+
+        if (
+            Array.isArray(
+                yearItems
+            ) &&
+            yearItems.length
+        ) {
+
+            const imdbMatched =
+                yearItems.find(
+                    item => {
+
+                        const itemImdb =
+                            item?.imdb?.id ||
+                            item?.imdb_id ||
+                            item?.imdbId ||
+                            "";
+
+                        return (
+                            String(
+                                itemImdb
+                            ).trim().toLowerCase() ===
+                            String(
+                                imdbId
+                            ).trim().toLowerCase()
+                        );
+
+                    }
+                );
+
+            if (
+                imdbMatched
+            ) {
+
+                movie =
+                    imdbMatched;
+
+                console.log(
+                    "[KKPHIM] YEAR + IMDb MATCH:",
+                    JSON.stringify({
+                        name:
+                            movie?.name,
+
+                        origin_name:
+                            movie?.origin_name,
+
+                        slug:
+                            movie?.slug,
+
+                        year:
+                            movie?.year,
+
+                        imdb:
+                            movie?.imdb?.id ||
+                            movie?.imdb_id ||
+                            movie?.imdbId ||
+                            ""
+                    })
+                );
+
+            } else {
+
+                console.log(
+                    "[KKPHIM] IMDb not found in year list:",
+                    imdbId
+                );
+
+            }
+
+        }
+
+    } catch (e) {
+
+        console.log(
+            "[KKPHIM] Year lookup error:",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+    }
+
+}
+
+// -------------------------------------------------
+// C. FALLBACK 2: SEARCH THEO TÊN
 // -------------------------------------------------
 
 if (
@@ -1243,7 +1390,7 @@ if (
     const searchUrl =
         "https://phimapi.com/v1/api/tim-kiem?keyword=" +
         encodeURIComponent(movieName) +
-        "&limit=10";
+        "&limit=64";
 
     console.log(
         "[KKPHIM] Search URL:",
@@ -1254,7 +1401,7 @@ if (
         await axios.get(
             searchUrl,
             {
-                timeout: 8000,
+                timeout: 10000,
 
                 headers: {
                     "User-Agent":
@@ -1295,6 +1442,274 @@ if (
         return streams;
 
     }
+
+    // =================================================
+    // NORMALIZE TITLE
+    // =================================================
+
+    const normalizeTitle =
+        value => {
+
+            return String(
+                value ||
+                ""
+            )
+                .normalize("NFD")
+                .replace(
+                    /[\u0300-\u036f]/g,
+                    ""
+                )
+                .toLowerCase()
+                .replace(
+                    /[^a-z0-9]+/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+        };
+
+    const normalizedSearch =
+        normalizeTitle(
+            movieName
+        );
+
+    // =================================================
+    // RANK CÁC KẾT QUẢ
+    // =================================================
+
+    const ranked =
+        items.map(
+            (item, index) => {
+
+                const name =
+                    normalizeTitle(
+                        item?.name
+                    );
+
+                const origin =
+                    normalizeTitle(
+                        item?.origin_name
+                    );
+
+                const year =
+                    Number(
+                        item?.year
+                    ) || 0;
+
+                const type =
+                    String(
+                        item?.type ||
+                        ""
+                    ).toLowerCase();
+
+                let score = 0;
+
+                // -------------------------------------
+                // TITLE
+                // -------------------------------------
+
+                if (
+                    origin ===
+                    normalizedSearch
+                ) {
+
+                    score += 1000;
+
+                } else if (
+                    name ===
+                    normalizedSearch
+                ) {
+
+                    score += 900;
+
+                } else if (
+                    origin.includes(
+                        normalizedSearch
+                    )
+                ) {
+
+                    score += 300;
+
+                } else if (
+                    name.includes(
+                        normalizedSearch
+                    )
+                ) {
+
+                    score += 200;
+
+                }
+
+                // -------------------------------------
+                // YEAR
+                // -------------------------------------
+
+                if (
+                    movieYear &&
+                    year === movieYear
+                ) {
+
+                    score += 3000;
+
+                } else if (
+                    movieYear &&
+                    year &&
+                    year !== movieYear
+                ) {
+
+                    score -= 1500;
+
+                }
+
+                // -------------------------------------
+                // TYPE
+                // -------------------------------------
+
+                if (
+                    streamType === "series" &&
+                    type === "series"
+                ) {
+
+                    score += 500;
+
+                }
+
+                return {
+                    item,
+                    score,
+                    index
+                };
+
+            }
+        );
+
+    ranked.sort(
+        (a, b) => {
+
+            if (
+                b.score !==
+                a.score
+            ) {
+
+                return (
+                    b.score -
+                    a.score
+                );
+
+            }
+
+            return (
+                a.index -
+                b.index
+            );
+
+        }
+    );
+
+    console.log(
+        "[KKPHIM] Ranked candidates:",
+        ranked
+            .slice(0, 10)
+            .map(
+                x => ({
+                    name:
+                        x.item?.name,
+
+                    origin_name:
+                        x.item?.origin_name,
+
+                    year:
+                        x.item?.year,
+
+                    type:
+                        x.item?.type,
+
+                    score:
+                        x.score,
+
+                    imdb:
+                        x.item?.imdb?.id ||
+                        x.item?.imdb_id ||
+                        ""
+                })
+            )
+    );
+
+    // =================================================
+    // CHỌN PHIM THEO TITLE + YEAR
+    // =================================================
+
+    if (
+        streamType === "series" &&
+        movieYear
+    ) {
+
+        const yearMatched =
+            ranked.filter(
+                candidate =>
+                    Number(
+                        candidate?.item?.year
+                    ) === Number(
+                        movieYear
+                    )
+            );
+
+        console.log(
+            "[KKPHIM] Year matched candidates:",
+            yearMatched.map(
+                x => ({
+                    name:
+                        x.item?.name,
+
+                    origin_name:
+                        x.item?.origin_name,
+
+                    year:
+                        x.item?.year,
+
+                    type:
+                        x.item?.type,
+
+                    score:
+                        x.score
+                })
+            )
+        );
+
+        if (
+            yearMatched.length
+        ) {
+
+            movie =
+                yearMatched[0]?.item;
+
+        } else {
+
+            console.log(
+                "[KKPHIM] NO EXACT YEAR MATCH:",
+                movieYear
+            );
+
+            console.log(
+                "[KKPHIM] Refusing mismatched version."
+            );
+
+            return streams;
+
+        }
+
+    } else {
+
+        movie =
+            ranked[0]?.item;
+
+    }
+
+}
 
     // =================================================
     // NORMALIZE TITLE
