@@ -2229,45 +2229,40 @@ async function fetchVSMov(
 
 
         // =====================================================
-        // 1. TITLE VARIANTS
-        // =====================================================
+// 1. TITLE VARIANTS
+// =====================================================
 
-        const titleVariants = [];
+const titleVariants = [];
 
-        const addVariant =
-            value => {
+const addVariant =
+    value => {
 
-                const text =
-                    String(
-                        value || ""
-                    ).trim();
+        const text =
+            String(
+                value || ""
+            ).trim();
 
-                if (
-                    text &&
-                    !titleVariants.includes(
-                        text
-                    )
-                ) {
-                    titleVariants.push(
-                        text
-                    );
-                }
-
-            };
-
-        addVariant(
-            movieName
-        );
-
-        const normalizedInput =
-            normalizeTitle(
-                movieName
+        if (
+            text &&
+            !titleVariants.includes(
+                text
+            )
+        ) {
+            titleVariants.push(
+                text
             );
+        }
 
-        console.log(
-            "[VSMOV] Normalized:",
-            normalizedInput
-        );
+    };
+
+addVariant(
+    movieName
+);
+
+console.log(
+    "[VSMOV] Title variants:",
+    titleVariants
+);
 
 
         // =====================================================
