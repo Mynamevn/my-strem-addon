@@ -1073,9 +1073,9 @@ async function fetchKKPhim(
     movieYear = 0,
     seasonNumber = 0,
     episodeNumber = 0,
-    streamType = "movie"
+    streamType = "movie",
+    imdbId = ""
 ) {
-
     const streams = [];
 
     try {
@@ -1104,22 +1104,37 @@ async function fetchKKPhim(
         );
 
         // =================================================
-        // 1. SEARCH
-        // =================================================
+// 1. IMDb LOOKUP → FALLBACK SEARCH
+// =================================================
 
-        const searchUrl =
-            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-            encodeURIComponent(movieName) +
-            "&limit=10";
+// -------------------------------------------------
+// A. ƯU TIÊN TRA TRỰC TIẾP BẰNG IMDb ID
+// -------------------------------------------------
 
-        console.log(
-            "[KKPHIM] Search URL:",
-            searchUrl
+let movie = null;
+
+let imdbEpisodes = null;
+
+if (
+    imdbId
+) {
+
+    const imdbUrl =
+        "https://phimapi.com/imdb/title/" +
+        encodeURIComponent(
+            imdbId
         );
 
-        const res =
+    console.log(
+        "[KKPHIM] IMDb URL:",
+        imdbUrl
+    );
+
+    try {
+
+        const imdbRes =
             await axios.get(
-                searchUrl,
+                imdbUrl,
                 {
                     timeout: 8000,
 
@@ -1134,33 +1149,431 @@ async function fetchKKPhim(
             );
 
         console.log(
-            "[KKPHIM] Search HTTP:",
-            res.status
+            "[KKPHIM] IMDb HTTP:",
+            imdbRes.status
         );
 
-        const items =
-            res.data?.data?.items ||
-            res.data?.items ||
-            [];
+        const imdbData =
+            imdbRes.data ||
+            {};
+
+        const imdbMovie =
+            imdbData?.movie ||
+            imdbData?.data?.movie ||
+            imdbData?.data?.item ||
+            imdbData?.item ||
+            null;
+
+        const directEpisodes =
+            imdbData?.episodes ||
+            imdbData?.data?.episodes ||
+            imdbMovie?.episodes ||
+            null;
+
+        if (
+            imdbMovie
+        ) {
+
+            movie =
+                imdbMovie;
+
+            imdbEpisodes =
+                Array.isArray(
+                    directEpisodes
+                )
+                    ? directEpisodes
+                    : null;
+
+            console.log(
+                "[KKPHIM] IMDb MATCH:",
+                JSON.stringify({
+                    name:
+                        movie?.name,
+
+                    origin_name:
+                        movie?.origin_name,
+
+                    slug:
+                        movie?.slug,
+
+                    year:
+                        movie?.year,
+
+                    type:
+                        movie?.type,
+
+                    episodes:
+                        Array.isArray(
+                            imdbEpisodes
+                        )
+                            ? imdbEpisodes.length
+                            : 0
+                })
+            );
+
+        } else {
+
+            console.log(
+                "[KKPHIM] IMDb lookup returned no movie"
+            );
+
+        }
+
+    } catch (e) {
 
         console.log(
-            "[KKPHIM] Search results:",
-            Array.isArray(items)
-                ? items.length
-                : "NOT ARRAY"
+            "[KKPHIM] IMDb lookup error:",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+    }
+
+}
+
+// -------------------------------------------------
+// B. FALLBACK: SEARCH THEO TÊN
+// -------------------------------------------------
+
+if (
+    !movie
+) {
+
+    const searchUrl =
+        "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+        encodeURIComponent(movieName) +
+        "&limit=10";
+
+    console.log(
+        "[KKPHIM] Search URL:",
+        searchUrl
+    );
+
+    const res =
+        await axios.get(
+            searchUrl,
+            {
+                timeout: 8000,
+
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0",
+
+                    "Accept":
+                        "application/json"
+                }
+            }
+        );
+
+    console.log(
+        "[KKPHIM] Search HTTP:",
+        res.status
+    );
+
+    const items =
+        res.data?.data?.items ||
+        res.data?.items ||
+        [];
+
+    console.log(
+        "[KKPHIM] Search results:",
+        Array.isArray(items)
+            ? items.length
+            : "NOT ARRAY"
+    );
+
+    if (
+        !Array.isArray(items) ||
+        !items.length
+    ) {
+
+        console.log(
+            "[KKPHIM] NO SEARCH RESULT"
+        );
+
+        return streams;
+
+    }
+
+    // =================================================
+    // NORMALIZE TITLE
+    // =================================================
+
+    const normalizeTitle =
+        value => {
+
+            return String(
+                value ||
+                ""
+            )
+                .normalize("NFD")
+                .replace(
+                    /[\u0300-\u036f]/g,
+                    ""
+                )
+                .toLowerCase()
+                .replace(
+                    /[^a-z0-9]+/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+        };
+
+    const normalizedSearch =
+        normalizeTitle(
+            movieName
+        );
+
+    // =================================================
+    // RANK CÁC KẾT QUẢ
+    // =================================================
+
+    const ranked =
+        items.map(
+            (item, index) => {
+
+                const name =
+                    normalizeTitle(
+                        item?.name
+                    );
+
+                const origin =
+                    normalizeTitle(
+                        item?.origin_name
+                    );
+
+                const year =
+                    Number(
+                        item?.year
+                    ) || 0;
+
+                const type =
+                    String(
+                        item?.type ||
+                        ""
+                    ).toLowerCase();
+
+                let score = 0;
+
+                // -------------------------------------
+                // TITLE
+                // -------------------------------------
+
+                if (
+                    origin ===
+                    normalizedSearch
+                ) {
+
+                    score += 1000;
+
+                } else if (
+                    name ===
+                    normalizedSearch
+                ) {
+
+                    score += 900;
+
+                } else if (
+                    origin.includes(
+                        normalizedSearch
+                    )
+                ) {
+
+                    score += 300;
+
+                } else if (
+                    name.includes(
+                        normalizedSearch
+                    )
+                ) {
+
+                    score += 200;
+
+                }
+
+                // -------------------------------------
+                // YEAR
+                // -------------------------------------
+
+                if (
+                    movieYear &&
+                    year === movieYear
+                ) {
+
+                    score += 3000;
+
+                } else if (
+                    movieYear &&
+                    year &&
+                    year !== movieYear
+                ) {
+
+                    score -= 1500;
+
+                }
+
+                // -------------------------------------
+                // TYPE
+                // -------------------------------------
+
+                if (
+                    streamType === "series" &&
+                    type === "series"
+                ) {
+
+                    score += 500;
+
+                }
+
+                return {
+                    item,
+                    score,
+                    index
+                };
+
+            }
+        );
+
+    ranked.sort(
+        (a, b) => {
+
+            if (
+                b.score !==
+                a.score
+            ) {
+
+                return (
+                    b.score -
+                    a.score
+                );
+
+            }
+
+            return (
+                a.index -
+                b.index
+            );
+
+        }
+    );
+
+    console.log(
+        "[KKPHIM] Ranked candidates:",
+        ranked
+            .slice(0, 5)
+            .map(
+                x => ({
+                    name:
+                        x.item?.name,
+
+                    origin_name:
+                        x.item?.origin_name,
+
+                    year:
+                        x.item?.year,
+
+                    type:
+                        x.item?.type,
+
+                    score:
+                        x.score
+                })
+            )
+    );
+
+    // =================================================
+    // CHỌN PHIM THEO TITLE + YEAR
+    // =================================================
+
+    if (
+        streamType === "series" &&
+        movieYear
+    ) {
+
+        const yearMatched =
+            ranked.filter(
+                candidate =>
+                    Number(
+                        candidate?.item?.year
+                    ) === Number(
+                        movieYear
+                    )
+            );
+
+        console.log(
+            "[KKPHIM] Year matched candidates:",
+            yearMatched.map(
+                x => ({
+                    name:
+                        x.item?.name,
+
+                    origin_name:
+                        x.item?.origin_name,
+
+                    year:
+                        x.item?.year,
+
+                    type:
+                        x.item?.type,
+
+                    score:
+                        x.score
+                })
+            )
         );
 
         if (
-            !Array.isArray(items) ||
-            !items.length
+            yearMatched.length
         ) {
 
+            movie =
+                yearMatched[0]?.item;
+
+        } else {
+
             console.log(
-                "[KKPHIM] NO SEARCH RESULT"
+                "[KKPHIM] NO EXACT YEAR MATCH:",
+                movieYear
+            );
+
+            console.log(
+                "[KKPHIM] Refusing mismatched version."
             );
 
             return streams;
+
         }
+
+    } else {
+
+        movie =
+            ranked[0]?.item;
+
+    }
+
+}
+
+// -------------------------------------------------
+// KHÔNG CÓ MOVIE
+// -------------------------------------------------
+
+if (
+    !movie
+) {
+
+    console.log(
+        "[KKPHIM] NO MATCHED MOVIE"
+    );
+
+    return streams;
+
+}
 
         // =================================================
         // 2. NORMALIZE TITLE
@@ -1353,102 +1766,7 @@ async function fetchKKPhim(
                 )
         );
 
-        // =================================================
-// 4. CHỌN PHIM THEO TITLE + YEAR
-// =================================================
-
-let movie = null;
-
-// -------------------------------------------------
-// SERIES: BẮT BUỘC KHỚP NĂM NẾU ĐÃ CÓ NĂM
-// -------------------------------------------------
-
-if (
-    streamType === "series" &&
-    movieYear
-) {
-
-    const yearMatched =
-        ranked.filter(
-            candidate =>
-                Number(
-                    candidate?.item?.year
-                ) === Number(
-                    movieYear
-                )
-        );
-
-    console.log(
-        "[KKPHIM] Year matched candidates:",
-        yearMatched.map(
-            x => ({
-                name:
-                    x.item?.name,
-
-                origin_name:
-                    x.item?.origin_name,
-
-                year:
-                    x.item?.year,
-
-                type:
-                    x.item?.type,
-
-                score:
-                    x.score
-            })
-        )
-    );
-
-    if (
-        yearMatched.length
-    ) {
-
-        movie =
-            yearMatched[0]?.item;
-
-    } else {
-
-        console.log(
-            "[KKPHIM] NO EXACT YEAR MATCH:",
-            movieYear
-        );
-
-        console.log(
-            "[KKPHIM] Refusing mismatched version."
-        );
-
-        return streams;
-
-    }
-
-}
-
-// -------------------------------------------------
-// MOVIE HOẶC KHÔNG CÓ YEAR
-// -------------------------------------------------
-
-else {
-
-    movie =
-        ranked[0]?.item;
-
-}
-
-// -------------------------------------------------
-// KHÔNG CÓ MOVIE
-// -------------------------------------------------
-
-if (!movie) {
-
-    console.log(
-        "[KKPHIM] NO MATCHED MOVIE"
-    );
-
-    return streams;
-}
-
-        console.log(
+            console.log(
             "[KKPHIM] Selected movie:",
             JSON.stringify({
                 name:
@@ -1530,12 +1848,18 @@ if (!movie) {
         );
 
         const movieData =
-            detail.data?.data?.item ||
-            {};
+    detail.data?.data?.item ||
+    {};
 
-        const episodes =
+const episodes =
+    Array.isArray(
+        imdbEpisodes
+    )
+        ? imdbEpisodes
+        : (
             movieData?.episodes ||
-            [];
+            []
+        );
 
         console.log(
             "[KKPHIM] Movie data:",
@@ -4555,10 +4879,9 @@ console.log(
 // =====================================================
 // 6. CHẠY KKPHIM TRƯỚC
 // =====================================================
-// KKPhim tự xử lý slug của chính nó.
-// Truyền year + season + episode + type để KKPhim
-// biết chính xác nội dung Stremio đang yêu cầu.
-// Không truyền slug KKPhim sang NguonC.
+// KKPhim ưu tiên tra trực tiếp bằng IMDb ID.
+// Nếu IMDb lookup không có kết quả thì fetchKKPhim()
+// mới fallback sang search theo tên + năm.
 // =====================================================
 
 let kkphim = [];
@@ -4571,7 +4894,10 @@ try {
             movieYear,
             seasonNumber,
             episodeNumber,
-            streamType
+            streamType,
+            rawId.startsWith("tt")
+                ? rawId.split(":")[0]
+                : ""
         );
 
 } catch (e) {
