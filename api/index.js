@@ -3669,82 +3669,214 @@ builder.defineStreamHandler(async (args) => {
     }
 
     // =====================================================
-    // 2. XÁC ĐỊNH TÊN PHIM
-    // =====================================================
+// 2. XÁC ĐỊNH TÊN + NĂM + SEASON + EPISODE
+// =====================================================
 
-    let movieName = "";
+let movieName = "";
 
-    try {
+let movieYear = 0;
 
-        // -------------------------------------------------
-        // A. ID CỦA MOVINA
-        // -------------------------------------------------
+let seasonNumber = 0;
 
-        if (
-            rawId.startsWith("vnwpsw:")
-        ) {
+let episodeNumber = 0;
 
-            const encodedPart =
-                rawId
-                    .substring("vnwpsw:".length)
-                    .split(":")[0];
+// -----------------------------------------------------
+// A. LẤY SEASON + EPISODE TỪ STREAM ID
+// -----------------------------------------------------
 
-            movieName =
-                decodeURIComponent(
-                    encodedPart
+if (
+    streamType === "series" &&
+    rawId.startsWith("tt")
+) {
+
+    const idParts =
+        rawId.split(":");
+
+    seasonNumber =
+        Number(
+            idParts[1]
+        ) || 1;
+
+    episodeNumber =
+        Number(
+            idParts[2]
+        ) || 1;
+
+    console.log(
+        "[STREAM] Season:",
+        seasonNumber
+    );
+
+    console.log(
+        "[STREAM] Episode:",
+        episodeNumber
+    );
+
+}
+
+// -----------------------------------------------------
+// B. ID CỦA MOVINA
+// -----------------------------------------------------
+
+try {
+
+    if (
+        rawId.startsWith("vnwpsw:")
+    ) {
+
+        const encodedPart =
+            rawId
+                .substring("vnwpsw:".length)
+                .split(":")[0];
+
+        movieName =
+            decodeURIComponent(
+                encodedPart
+            );
+
+        console.log(
+            "[STREAM] MOVINA name:",
+            movieName
+        );
+
+    }
+
+    // -------------------------------------------------
+    // C. IMDb ID TỪ BOARD / DISCOVER
+    // -------------------------------------------------
+
+    else if (
+        rawId.startsWith("tt")
+    ) {
+
+        const imdbId =
+            rawId.split(":")[0];
+
+        console.log(
+            "[STREAM] IMDb ID:",
+            imdbId
+        );
+
+        const metadataType =
+            streamType === "series"
+                ? "series"
+                : "movie";
+
+        // =================================================
+        // C1. THỬ CINEMETA
+        // =================================================
+
+        const cinemetaUrl =
+            "https://v3-cinemeta.strem.io/meta/" +
+            metadataType +
+            "/" +
+            encodeURIComponent(
+                imdbId
+            ) +
+            ".json";
+
+        console.log(
+            "[STREAM] Cinemeta URL:",
+            cinemetaUrl
+        );
+
+        try {
+
+            const metaRes =
+                await axios.get(
+                    cinemetaUrl,
+                    {
+                        timeout: 8000,
+
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0",
+                            "Accept":
+                                "application/json"
+                        }
+                    }
                 );
 
+            const cinemetaMeta =
+                metaRes.data?.meta ||
+                {};
+
+            // -------------------------------------------------
+            // TÊN
+            // -------------------------------------------------
+
+            movieName =
+                cinemetaMeta.name ||
+                "";
+
+            // -------------------------------------------------
+            // NĂM
+            // -------------------------------------------------
+
+            const rawYear =
+                cinemetaMeta.year ||
+                cinemetaMeta.releaseInfo ||
+                cinemetaMeta.released ||
+                "";
+
+            const yearMatch =
+                String(
+                    rawYear
+                ).match(
+                    /\b(19|20)\d{2}\b/
+                );
+
+            movieYear =
+                yearMatch
+                    ? Number(
+                        yearMatch[0]
+                    )
+                    : 0;
+
             console.log(
-                "[STREAM] MOVINA name:",
+                "[STREAM] Cinemeta name:",
                 movieName
+            );
+
+            console.log(
+                "[STREAM] Cinemeta year:",
+                movieYear
+            );
+
+        } catch (e) {
+
+            console.log(
+                "[STREAM] Cinemeta error:",
+                e?.response?.status ||
+                e?.message ||
+                e
             );
 
         }
 
-        // -------------------------------------------------
-        // B. IMDb ID TỪ BOARD / DISCOVER
-        // -------------------------------------------------
+        // =================================================
+        // C2. NẾU CINEMETA KHÔNG CÓ → IMDb SUGGESTION
+        // =================================================
 
-        else if (
-            rawId.startsWith("tt")
-        ) {
+        if (!movieName) {
 
-            const imdbId =
-                rawId.split(":")[0];
-
-            console.log(
-                "[STREAM] IMDb ID:",
-                imdbId
-            );
-
-            const metadataType =
-                streamType === "series"
-                    ? "series"
-                    : "movie";
-
-            // =================================================
-            // B1. THỬ CINEMETA
-            // =================================================
-
-            const cinemetaUrl =
-                "https://v3-cinemeta.strem.io/meta/" +
-                metadataType +
-                "/" +
+            const imdbSuggestionUrl =
+                "https://v3.sg.media-imdb.com/suggestion/x/" +
                 encodeURIComponent(
                     imdbId
                 ) +
                 ".json";
 
             console.log(
-                "[STREAM] Cinemeta URL:",
-                cinemetaUrl
+                "[STREAM] IMDb Suggestion URL:",
+                imdbSuggestionUrl
             );
 
             try {
 
-                const metaRes =
+                const imdbRes =
                     await axios.get(
-                        cinemetaUrl,
+                        imdbSuggestionUrl,
                         {
                             timeout: 8000,
 
@@ -3757,19 +3889,53 @@ builder.defineStreamHandler(async (args) => {
                         }
                     );
 
+                const imdbItems =
+                    Array.isArray(
+                        imdbRes.data?.d
+                    )
+                        ? imdbRes.data.d
+                        : [];
+
+                const imdbMovie =
+                    imdbItems.find(
+                        item =>
+                            String(
+                                item?.id || ""
+                            ) === imdbId
+                    ) ||
+                    imdbItems[0];
+
                 movieName =
-                    metaRes.data?.meta?.name ||
+                    imdbMovie?.l ||
                     "";
 
+                // IMDb suggestion thường có year
+                if (
+                    !movieYear &&
+                    imdbMovie?.y
+                ) {
+
+                    movieYear =
+                        Number(
+                            imdbMovie.y
+                        ) || 0;
+
+                }
+
                 console.log(
-                    "[STREAM] Cinemeta name:",
+                    "[STREAM] IMDb Suggestion name:",
                     movieName
+                );
+
+                console.log(
+                    "[STREAM] IMDb Suggestion year:",
+                    movieYear
                 );
 
             } catch (e) {
 
                 console.log(
-                    "[STREAM] Cinemeta error:",
+                    "[STREAM] IMDb Suggestion error:",
                     e?.response?.status ||
                     e?.message ||
                     e
@@ -3777,110 +3943,63 @@ builder.defineStreamHandler(async (args) => {
 
             }
 
-            // =================================================
-            // B2. NẾU CINEMETA KHÔNG CÓ → IMDb SUGGESTION
-            // =================================================
-
-            if (!movieName) {
-
-                const imdbSuggestionUrl =
-                    "https://v3.sg.media-imdb.com/suggestion/x/" +
-                    encodeURIComponent(
-                        imdbId
-                    ) +
-                    ".json";
-
-                console.log(
-                    "[STREAM] IMDb Suggestion URL:",
-                    imdbSuggestionUrl
-                );
-
-                try {
-
-                    const imdbRes =
-                        await axios.get(
-                            imdbSuggestionUrl,
-                            {
-                                timeout: 8000,
-
-                                headers: {
-                                    "User-Agent":
-                                        "Mozilla/5.0",
-                                    "Accept":
-                                        "application/json"
-                                }
-                            }
-                        );
-
-                    const imdbItems =
-                        Array.isArray(
-                            imdbRes.data?.d
-                        )
-                            ? imdbRes.data.d
-                            : [];
-
-                    const imdbMovie =
-                        imdbItems.find(
-                            item =>
-                                String(
-                                    item?.id || ""
-                                ) === imdbId
-                        ) ||
-                        imdbItems[0];
-
-                    movieName =
-                        imdbMovie?.l ||
-                        "";
-
-                    console.log(
-                        "[STREAM] IMDb Suggestion name:",
-                        movieName
-                    );
-
-                } catch (e) {
-
-                    console.log(
-                        "[STREAM] IMDb Suggestion error:",
-                        e?.response?.status ||
-                        e?.message ||
-                        e
-                    );
-
-                }
-
-            }
-
         }
-
-        // -------------------------------------------------
-        // C. ID KHÁC
-        // -------------------------------------------------
-
-        else {
-
-            movieName =
-                decodeMovieName(
-                    rawId
-                );
-
-            console.log(
-                "[STREAM] Decoded name:",
-                movieName
-            );
-
-        }
-
-    } catch (e) {
-
-        console.log(
-            "[STREAM] Resolve movie name error:",
-            e?.message ||
-            e
-        );
-
-        movieName = "";
 
     }
+
+    // -------------------------------------------------
+    // D. ID KHÁC
+    // -------------------------------------------------
+
+    else {
+
+        movieName =
+            decodeMovieName(
+                rawId
+            );
+
+        console.log(
+            "[STREAM] Decoded name:",
+            movieName
+        );
+
+    }
+
+} catch (e) {
+
+    console.log(
+        "[STREAM] Resolve movie metadata error:",
+        e?.message ||
+        e
+    );
+
+    movieName = "";
+
+}
+
+// =====================================================
+// E. LOG TOÀN BỘ THÔNG TIN ĐÃ RESOLVE
+// =====================================================
+
+console.log(
+    "[STREAM] Resolved movie:",
+    movieName
+);
+
+console.log(
+    "[STREAM] Resolved year:",
+    movieYear
+);
+
+console.log(
+    "[STREAM] Resolved season:",
+    seasonNumber
+);
+
+console.log(
+    "[STREAM] Resolved episode:",
+    episodeNumber
+);
 
     // =====================================================
     // 3. CHUẨN HÓA TÊN
