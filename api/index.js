@@ -2028,9 +2028,17 @@ if (
         embed
     );
 
+    const moviePageUrl =
+        "https://vsmov.com/phim/" +
+        encodeURIComponent(
+            movieSlug
+        );
+
     const widgetUrl =
         "https://my-strem-addon.vercel.app/vsmov-player?url=" +
-        encodeURIComponent(embed);
+        encodeURIComponent(embed) +
+        "&movie=" +
+        encodeURIComponent(moviePageUrl);
 
     console.log(
         "[VSMOV] WIDGET:",
@@ -2038,24 +2046,27 @@ if (
     );
 
     streams.push({
-    name:
-        "▶️ [VSMov] " +
-        serverName,
 
-    title:
-        episodeName ||
-        "Full",
+        name:
+            "▶️ [VSMov] " +
+            serverName,
 
-    externalUrl:
-        widgetUrl,
+        title:
+            episodeName ||
+            "Full",
 
-    widgetPlayer:
-        widgetUrl,
+        externalUrl:
+            widgetUrl,
 
-    widgetPlayerStates: [
-        "replaceplayer"
-    ]
-});
+        widgetPlayer:
+            widgetUrl,
+
+        widgetPlayerStates: [
+            "replaceplayer"
+        ]
+
+    });
+
 }
 }
 }
@@ -5748,10 +5759,20 @@ app.get(
                 ""
             ).trim();
 
+        const moviePageUrl =
+            String(
+                req.query.movie ||
+                ""
+            ).trim();
+
         if (!targetUrl) {
+
             return res
                 .status(400)
-                .send("Missing VSMov URL");
+                .send(
+                    "Missing VSMov URL"
+                );
+
         }
 
         let parsedUrl;
@@ -5767,25 +5788,23 @@ app.get(
 
             return res
                 .status(400)
-                .send("Invalid URL");
+                .send(
+                    "Invalid URL"
+                );
+
         }
 
         // -------------------------------------------------
-// Cho phép các host VSMov dạng:
-// v1.streamvsmov.com
-// v2.streamvsmov.com
-// ...
-// s1.streamvsmov.com
-// s2.streamvsmov.com
-// ...
-// s10.streamvsmov.com
-// -------------------------------------------------
+        // CHỈ CHO PHÉP HOST STREAM VSMOV
+        // v1, v2, v3...
+        // s1, s2, s3...
+        // -------------------------------------------------
 
-const validVsmovHost =
-    /^[sv]\d+\.streamvsmov\.com$/i
-        .test(
-            parsedUrl.hostname
-        );
+        const validVsmovHost =
+            /^[sv]\d+\.streamvsmov\.com$/i
+                .test(
+                    parsedUrl.hostname
+                );
 
         if (!validVsmovHost) {
 
@@ -5796,7 +5815,10 @@ const validVsmovHost =
 
             return res
                 .status(403)
-                .send("Host not allowed");
+                .send(
+                    "Host not allowed"
+                );
+
         }
 
         const iframeUrl =
@@ -5807,6 +5829,11 @@ const validVsmovHost =
             iframeUrl
         );
 
+        console.log(
+            "[VSMOV PLAYER] Movie page:",
+            moviePageUrl
+        );
+
         res.setHeader(
             "Content-Type",
             "text/html; charset=utf-8"
@@ -5815,7 +5842,9 @@ const validVsmovHost =
         res.send(`
 <!DOCTYPE html>
 <html>
+
 <head>
+
     <meta charset="UTF-8">
 
     <meta
@@ -5826,38 +5855,218 @@ const validVsmovHost =
     <title>VSMov Player</title>
 
     <style>
+
         html,
         body {
+
             width: 100%;
             height: 100%;
+
             margin: 0;
             padding: 0;
+
             background: #000;
+
             overflow: hidden;
+
+            font-family:
+                Arial,
+                sans-serif;
+
         }
 
         iframe {
+
             width: 100%;
             height: 100%;
+
             border: 0;
+
             display: block;
+
         }
+
+        #fallback {
+
+            position: fixed;
+
+            inset: 0;
+
+            display: none;
+
+            align-items: center;
+            justify-content: center;
+
+            flex-direction: column;
+
+            background: #000;
+
+            color: #fff;
+
+            text-align: center;
+
+            padding: 30px;
+
+            box-sizing: border-box;
+
+            z-index: 9999;
+
+        }
+
+        #fallback h2 {
+
+            margin:
+                0 0 12px 0;
+
+            font-size: 22px;
+
+        }
+
+        #fallback p {
+
+            margin:
+                0 0 24px 0;
+
+            color: #bbb;
+
+            line-height: 1.5;
+
+        }
+
+        #fallback a {
+
+            display: inline-block;
+
+            padding:
+                14px 22px;
+
+            background: #e50914;
+
+            color: #fff;
+
+            text-decoration: none;
+
+            border-radius: 6px;
+
+            font-weight: bold;
+
+        }
+
+        #fallback a:hover {
+
+            opacity: 0.9;
+
+        }
+
     </style>
+
 </head>
 
 <body>
 
-<iframe
-    src="${iframeUrl}"
-    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-    allowfullscreen
-    webkitallowfullscreen
-    referrerpolicy="no-referrer">
-</iframe>
+    <iframe
+        id="vsmovFrame"
+        src="${iframeUrl}"
+        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+        allowfullscreen
+        webkitallowfullscreen
+        referrerpolicy="no-referrer">
+    </iframe>
+
+    <div id="fallback">
+
+        <h2>
+            ⚠️ VSMov không phản hồi
+        </h2>
+
+        <p>
+            Nguồn phát hiện tại có thể đã ngừng hoạt động.<br>
+            Bạn có thể mở trực tiếp trang phim trên VSMov<br>
+            và thử nút Play tại đó.
+        </p>
+
+        ${
+            moviePageUrl
+                ? `
+                    <a
+                        href="${moviePageUrl}"
+                        target="_blank"
+                        rel="noopener noreferrer">
+                        ▶️ Mở phim trên VSMov
+                    </a>
+                  `
+                : `
+                    <p>
+                        Không tìm thấy trang phim VSMov.
+                    </p>
+                  `
+        }
+
+    </div>
+
+    <script>
+
+        const frame =
+            document.getElementById(
+                "vsmovFrame"
+            );
+
+        const fallback =
+            document.getElementById(
+                "fallback"
+            );
+
+        let loaded = false;
+
+        frame.addEventListener(
+            "load",
+            function () {
+
+                loaded = true;
+
+                console.log(
+                    "[VSMOV PLAYER] iframe loaded"
+                );
+
+            }
+        );
+
+        // -------------------------------------------------
+        // Nếu sau 12 giây iframe vẫn chưa load
+        // → coi như nguồn có vấn đề
+        // → hiện nút mở trang phim VSMov
+        // -------------------------------------------------
+
+        setTimeout(
+            function () {
+
+                if (loaded) {
+
+                    return;
+
+                }
+
+                console.log(
+                    "[VSMOV PLAYER] Timeout"
+                );
+
+                frame.style.display =
+                    "none";
+
+                fallback.style.display =
+                    "flex";
+
+            },
+            12000
+        );
+
+    </script>
 
 </body>
+
 </html>
         `);
+
     }
 );
 
