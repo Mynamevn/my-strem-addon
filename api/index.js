@@ -4048,8 +4048,35 @@ console.log(
 // 11. GỘP STREAM TRỰC TIẾP
 // =====================================================
 
-const directStreams = [
+// =====================================================
+// NGUONC CLIENT WIDGET
+// =====================================================
+// Không gọi NguonC từ Vercel.
+// Chỉ đưa người dùng sang NguonC từ WebView/client.
+// =====================================================
 
+const nguoncClientStream = {
+
+    name:
+        "▶️ [NguonC] Client",
+
+    title:
+        "Tìm trên NguonC - " +
+        movieName,
+
+    widgetPlayer:
+        "https://my-strem-addon.vercel.app/nguonc-player?title=" +
+        encodeURIComponent(
+            movieName
+        ),
+
+    widgetPlayerStates: [
+        "replaceplayer"
+    ]
+
+};
+
+const directStreams = [
     ...nguonc,
 
     ...kkphim,
@@ -4058,8 +4085,9 @@ const directStreams = [
 
     ...longtieng,
 
-    ...motphim
+    ...motphim,
 
+    nguoncClientStream
 ];
 
     // =====================================================
@@ -5767,94 +5795,38 @@ app.get(
 );
 
 // =====================================================
-// NGUONC PLAYER
-// Mở trực tiếp embed URL của NguonC
+// NGUONC CLIENT PLAYER
 // =====================================================
 
 app.get(
     "/nguonc-player",
-    (req, res) => {
+    function (req, res) {
 
-        const embedUrl =
+        const title =
             String(
-                req.query.url ||
+                req.query.title ||
                 ""
             ).trim();
 
-
-        if (!embedUrl) {
-
-            return res
-                .status(400)
-                .send(
-                    "Missing NguonC embed URL"
-                );
-
-        }
-
-
-        let parsedUrl;
-
-        try {
-
-            parsedUrl =
-                new URL(
-                    embedUrl
-                );
-
-        } catch (e) {
-
-            return res
-                .status(400)
-                .send(
-                    "Invalid NguonC embed URL"
-                );
-
-        }
-
-
-        // =====================================================
-        // CHỈ CHO PHÉP STREAMC
-        // =====================================================
-
-        if (
-            !/\.streamc\.xyz$/i.test(
-                parsedUrl.hostname
-            )
-        ) {
-
-            return res
-                .status(403)
-                .send(
-                    "Invalid NguonC embed host"
-                );
-
-        }
-
-
-        console.log(
-            "[NGUONC PLAYER] Embed:",
-            embedUrl
-        );
-
-
-        const safeUrl =
-            JSON.stringify(
-                embedUrl
+        const searchUrl =
+            "https://nguonc.com/tim-kiem?keyword=" +
+            encodeURIComponent(
+                title
             );
-
 
         res.setHeader(
             "Content-Type",
             "text/html; charset=utf-8"
         );
 
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
 
         res.send(`
 <!DOCTYPE html>
-
-<html>
-
+<html lang="vi">
 <head>
 
 <meta charset="UTF-8">
@@ -5864,18 +5836,22 @@ app.get(
     content="width=device-width, initial-scale=1.0"
 >
 
-<title>NguonC Player</title>
+<title>NguonC - ${title
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+}</title>
 
 <style>
 
 html,
 body {
 
-    width: 100%;
-    height: 100%;
-
     margin: 0;
     padding: 0;
+
+    width: 100%;
+    height: 100%;
 
     background: #000;
 
@@ -5890,55 +5866,21 @@ iframe {
 
     border: 0;
 
-    display: block;
-
 }
 
 </style>
 
 </head>
 
-
 <body>
 
-
 <iframe
-
-    id="nguonc-frame"
-
-    src="${embedUrl}"
-
-    allow="
-        autoplay;
-        fullscreen;
-        encrypted-media;
-        picture-in-picture;
-        accelerometer;
-        gyroscope;
-        clipboard-write
-    "
-
+    src="${searchUrl}"
     allowfullscreen
-
-    webkitallowfullscreen
-
-    referrerpolicy="origin"
-
+    allow="autoplay; fullscreen; encrypted-media"
 ></iframe>
 
-
-<script>
-
-console.log(
-    "[NGUONC PLAYER] iframe:",
-    ${safeUrl}
-);
-
-</script>
-
-
 </body>
-
 </html>
         `);
 
