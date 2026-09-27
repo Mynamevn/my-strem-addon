@@ -1967,69 +1967,38 @@ async function fetchVSMov(movieName) {
                 }
 
                 // =================================================
-                // B. EMBED FALLBACK
-                // =================================================
+// B. EMBED FALLBACK
+// =================================================
+//
+// Không đưa embed vào Stremio.
+// Embed hiện tại có thể timeout trực tiếp.
+// Chỉ giữ log để biết VSMov không có M3U8.
+// =================================================
 
-                const embed =
-                    String(
-                        ep?.link_embed ||
-                        ep?.embed ||
-                        ""
-                    ).trim();
+const embed =
+    String(
+        ep?.link_embed ||
+        ep?.embed ||
+        ""
+    ).trim();
 
-                if (
-                    embed &&
-                    /^https?:\/\//i.test(embed)
-                ) {
+if (
+    embed &&
+    /^https?:\/\//i.test(embed)
+) {
 
-                    console.log(
-                        "[VSMOV] EMBED FALLBACK:",
-                        serverName,
-                        episodeName
-                    );
+    console.log(
+        "[VSMOV] NO M3U8 - EMBED ONLY:",
+        serverName,
+        episodeName
+    );
 
-                    console.log(
-                        "[VSMOV] EMBED:",
-                        embed
-                    );
+    console.log(
+        "[VSMOV] EMBED AVAILABLE:",
+        embed
+    );
 
-                    const widgetUrl =
-                        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
-                        encodeURIComponent(
-                            embed
-                        );
-
-                    console.log(
-                        "[VSMOV] WIDGET:",
-                        widgetUrl
-                    );
-
-                    streams.push({
-
-                        name:
-                            "▶️ [VSMov] " +
-                            serverName,
-
-                        title:
-                            episodeName,
-
-                        externalUrl:
-                            widgetUrl,
-
-                        widgetPlayer:
-                            widgetUrl,
-
-                        widgetPlayerStates: [
-                            "replaceplayer"
-                        ]
-
-                    });
-
-                }
-
-            }
-
-        }
+}
 
         // ====================================================
         // 10. FALLBACK ĐÚNG TRANG PHIM
