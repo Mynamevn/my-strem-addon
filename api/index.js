@@ -8729,6 +8729,10 @@ async function loadDetail(
 
 async function startNguonC() {
 
+    console.log(
+        "[NGUONC CLIENT] START CLIENT RESOLVER"
+    );
+
     if (
         !MOVIE_TITLE
     ) {
@@ -8743,8 +8747,20 @@ async function startNguonC() {
         "Đang tìm: " +
         MOVIE_TITLE;
 
+
+    // =====================================================
+    // SEARCH
+    // =====================================================
+
     const items =
         await searchNguonC();
+
+
+    console.log(
+        "[NGUONC CLIENT] Items count:",
+        items.length
+    );
+
 
     if (
         !items.length
@@ -8758,7 +8774,7 @@ async function startNguonC() {
 
 
     // =====================================================
-    // RANK SEARCH RESULTS
+    // RANK
     // =====================================================
 
     const ranked =
@@ -8794,12 +8810,35 @@ async function startNguonC() {
 
     console.log(
         "[NGUONC CLIENT] Ranked:",
-        ranked
+        ranked.map(
+            function (entry) {
+
+                return {
+
+                    name:
+                        entry.item?.name,
+
+                    origin_name:
+                        entry.item?.origin_name,
+
+                    year:
+                        entry.item?.year,
+
+                    slug:
+                        entry.item?.slug,
+
+                    score:
+                        entry.score
+
+                };
+
+            }
+        )
     );
 
 
     // =====================================================
-    // EXACT YEAR AVAILABLE DIRECTLY IN SEARCH
+    // EXACT YEAR FROM SEARCH
     // =====================================================
 
     if (
@@ -8819,7 +8858,8 @@ async function startNguonC() {
                         );
 
                     return (
-                        year === MOVIE_YEAR
+                        year ===
+                        MOVIE_YEAR
                     );
 
                 }
@@ -8839,15 +8879,12 @@ async function startNguonC() {
             const selected =
                 exactYearCandidates[0].item;
 
-            if (
-                !selected?.slug
-            ) {
 
-                throw new Error(
-                    "NguonC tìm thấy phim đúng năm nhưng thiếu slug."
-                );
+            console.log(
+                "[NGUONC CLIENT] SELECT SEARCH YEAR:",
+                selected
+            );
 
-            }
 
             await resolveSelectedNguonC(
                 selected
@@ -8861,12 +8898,7 @@ async function startNguonC() {
 
 
     // =====================================================
-    // YEAR KHÔNG CÓ TRỰC TIẾP TRONG SEARCH
-    // =====================================================
-    // Không chọn bừa kết quả đầu tiên.
-    //
-    // Kiểm tra các ứng viên có điểm tên cao bằng DETAIL.
-    // Detail có thể chứa year chính xác hơn search result.
+    // CHECK DETAIL CANDIDATES
     // =====================================================
 
     if (
@@ -8879,14 +8911,20 @@ async function startNguonC() {
             "...";
 
 
+        /*
+         * Không dùng score >= 100 nữa.
+         *
+         * Lấy tất cả kết quả có slug.
+         * Sau đó detail mới quyết định năm.
+         */
+
         const candidates =
             ranked
                 .filter(
                     function (entry) {
 
                         return (
-                            entry.item?.slug &&
-                            entry.score >= 100
+                            entry.item?.slug
                         );
 
                     }
@@ -8899,9 +8937,47 @@ async function startNguonC() {
 
         console.log(
             "[NGUONC CLIENT] Checking detail candidates:",
-            candidates
+            candidates.map(
+                function (entry) {
+
+                    return {
+
+                        name:
+                            entry.item?.name,
+
+                        origin_name:
+                            entry.item?.origin_name,
+
+                        year:
+                            entry.item?.year,
+
+                        slug:
+                            entry.item?.slug,
+
+                        score:
+                            entry.score
+
+                    };
+
+                }
+            )
         );
 
+
+        if (
+            !candidates.length
+        ) {
+
+            throw new Error(
+                "NguonC có kết quả nhưng không có kết quả nào có slug."
+            );
+
+        }
+
+
+        // =====================================================
+        // CHECK EACH DETAIL
+        // =====================================================
 
         for (
             const entry
@@ -8911,13 +8987,18 @@ async function startNguonC() {
             const candidate =
                 entry.item;
 
+
             try {
 
                 console.log(
-                    "[NGUONC CLIENT] Checking:",
-                    candidate.name,
-                    candidate.origin_name,
-                    candidate.slug
+                    "[NGUONC CLIENT] Checking detail:",
+                    candidate?.name,
+                    "|",
+                    candidate?.origin_name,
+                    "|",
+                    candidate?.year,
+                    "|",
+                    candidate?.slug
                 );
 
 
@@ -8948,14 +9029,18 @@ async function startNguonC() {
 
 
                 console.log(
-                    "[NGUONC CLIENT] Detail year:",
+                    "[NGUONC CLIENT] DETAIL YEAR:",
                     detailYear,
+                    "| TARGET:",
+                    MOVIE_YEAR,
+                    "| SLUG:",
                     candidate.slug
                 );
 
 
                 if (
-                    detailYear === MOVIE_YEAR
+                    detailYear ===
+                    MOVIE_YEAR
                 ) {
 
                     console.log(
@@ -8969,6 +9054,7 @@ async function startNguonC() {
                         detail
                     );
 
+
                     return;
 
                 }
@@ -8979,8 +9065,9 @@ async function startNguonC() {
             ) {
 
                 console.warn(
-                    "[NGUONC CLIENT] Detail check failed:",
+                    "[NGUONC CLIENT] DETAIL FAILED:",
                     candidate?.slug,
+                    error?.message ||
                     error
                 );
 
@@ -8990,18 +9077,16 @@ async function startNguonC() {
 
 
         throw new Error(
-            "Không tìm thấy " +
-            MOVIE_TITLE +
-            " đúng năm " +
+            "NguonC có kết quả nhưng không tìm thấy phim đúng năm " +
             MOVIE_YEAR +
-            " trên NguonC."
+            "."
         );
 
     }
 
 
     // =====================================================
-    // KHÔNG CÓ YEAR
+    // NO YEAR
     // =====================================================
 
     const selected =
