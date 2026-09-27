@@ -456,13 +456,7 @@ builder.defineMetaHandler(async (args) => {
 // NGUONC - API SEARCH + API DETAIL
 // =====================================================
 
-async function fetchNguonC(
-    movieName,
-    movieYear = 0,
-    seasonNumber = 0,
-    episodeNumber = 0,
-    streamType = "movie"
-) {
+async function fetchNguonC(movieName) {
 
     const streams = [];
 
@@ -478,15 +472,7 @@ async function fetchNguonC(
 
         console.log(
             "[NGUONC] Searching via API:",
-            movieName,
-            "| Year:",
-            movieYear,
-            "| Season:",
-            seasonNumber,
-            "| Episode:",
-            episodeNumber,
-            "| Type:",
-            streamType
+            movieName
         );
 
         // =================================================
@@ -497,8 +483,7 @@ async function fetchNguonC(
             "https://phim.nguonc.com/api/films/search?keyword=" +
             encodeURIComponent(
                 String(movieName || "").trim()
-            ) +
-            "&page=1";
+            );
 
         console.log(
             "[NGUONC] Search URL:",
@@ -540,6 +525,15 @@ async function fetchNguonC(
 
         if (
             Array.isArray(
+                searchData?.data
+            )
+        ) {
+
+            candidates =
+                searchData.data;
+
+        } else if (
+            Array.isArray(
                 searchData?.items
             )
         ) {
@@ -547,8 +541,7 @@ async function fetchNguonC(
             candidates =
                 searchData.items;
 
-        }
-        else if (
+        } else if (
             Array.isArray(
                 searchData?.data?.items
             )
@@ -556,16 +549,6 @@ async function fetchNguonC(
 
             candidates =
                 searchData.data.items;
-
-        }
-        else if (
-            Array.isArray(
-                searchData?.data
-            )
-        ) {
-
-            candidates =
-                searchData.data;
 
         }
 
@@ -620,270 +603,66 @@ async function fetchNguonC(
             );
 
         // =================================================
-        // 4. CHẤM ĐIỂM CANDIDATES
+        // 4. CHỌN PHIM
         // =================================================
 
-        const wantedWords =
-            wantedTitle
-                .split(" ")
-                .filter(
-                    word =>
-                        word.length >= 2
-                );
+        let selectedMovie =
+            null;
 
-        const scoredCandidates =
-            candidates.map(
+        // Exact normalized match
+        selectedMovie =
+            candidates.find(
                 function (item) {
 
-                    const candidateName =
+                    return (
                         normalizeTitle(
                             item?.name
-                        );
-
-                    const candidateOrigin =
-                        normalizeTitle(
-                            item?.original_name ||
-                            item?.origin_name
-                        );
-
-                    const candidateYear =
-                        Number(
-                            item?.year
-                        ) || 0;
-
-                    let score = 0;
-
-                    // -----------------------------------------
-                    // TÊN CHÍNH XÁC
-                    // -----------------------------------------
-
-                    if (
-                        candidateName &&
-                        candidateName ===
+                        ) ===
                         wantedTitle
-                    ) {
-
-                        score += 1000;
-
-                    }
-
-                    // -----------------------------------------
-                    // ORIGINAL NAME CHÍNH XÁC
-                    // -----------------------------------------
-
-                    if (
-                        candidateOrigin &&
-                        candidateOrigin ===
-                        wantedTitle
-                    ) {
-
-                        score += 1000;
-
-                    }
-
-                    // -----------------------------------------
-                    // TITLE CHỨA NHAU
-                    // -----------------------------------------
-
-                    if (
-                        candidateName &&
-                        wantedTitle &&
-                        (
-                            candidateName.includes(
-                                wantedTitle
-                            ) ||
-                            wantedTitle.includes(
-                                candidateName
-                            )
-                        )
-                    ) {
-
-                        score += 500;
-
-                    }
-
-                    if (
-                        candidateOrigin &&
-                        wantedTitle &&
-                        (
-                            candidateOrigin.includes(
-                                wantedTitle
-                            ) ||
-                            wantedTitle.includes(
-                                candidateOrigin
-                            )
-                        )
-                    ) {
-
-                        score += 500;
-
-                    }
-
-                    // -----------------------------------------
-                    // WORD OVERLAP
-                    // -----------------------------------------
-
-                    const candidateWords =
-                        (
-                            candidateName +
-                            " " +
-                            candidateOrigin
-                        )
-                            .split(" ")
-                            .filter(
-                                word =>
-                                    word.length >= 2
-                            );
-
-                    let matchedWords = 0;
-
-                    for (
-                        const word of wantedWords
-                    ) {
-
-                        if (
-                            candidateWords.includes(
-                                word
-                            )
-                        ) {
-
-                            matchedWords++;
-
-                        }
-
-                    }
-
-                    if (
-                        matchedWords > 0
-                    ) {
-
-                        score +=
-                            matchedWords *
-                            80;
-
-                    }
-
-                    // -----------------------------------------
-                    // ĐÚNG NĂM
-                    // -----------------------------------------
-
-                    if (
-                        movieYear &&
-                        candidateYear ===
-                        Number(movieYear)
-                    ) {
-
-                        score += 1000;
-
-                    }
-
-                    // -----------------------------------------
-                    // KHÁC NĂM → PHẠT RẤT NẶNG
-                    // -----------------------------------------
-
-                    if (
-                        movieYear &&
-                        candidateYear &&
-                        candidateYear !==
-                        Number(movieYear)
-                    ) {
-
-                        score -= 1000;
-
-                    }
-
-                    return {
-                        item,
-                        score
-                    };
-
-                }
-            );
-
-        scoredCandidates.sort(
-            function (a, b) {
-
-                return b.score - a.score;
-
-            }
-        );
-
-        console.log(
-            "[NGUONC] Ranked candidates:"
-        );
-
-        scoredCandidates
-            .slice(0, 10)
-            .forEach(
-                function (entry, index) {
-
-                    console.log(
-                        "[NGUONC]",
-                        "#" +
-                        (index + 1),
-                        "| score:",
-                        entry.score,
-                        "| name:",
-                        entry.item?.name,
-                        "| original:",
-                        entry.item?.original_name ||
-                        entry.item?.origin_name ||
-                        "",
-                        "| year:",
-                        entry.item?.year,
-                        "| slug:",
-                        entry.item?.slug
                     );
 
                 }
             );
 
-        // =================================================
-        // 5. CHỌN CANDIDATE TỐT NHẤT
-        // =================================================
-
-        const bestCandidate =
-            scoredCandidates[0];
-
+        // Nếu không có exact match,
+        // thử title chứa nhau
         if (
-            !bestCandidate
+            !selectedMovie
         ) {
 
-            console.log(
-                "[NGUONC] No ranked candidate"
-            );
+            selectedMovie =
+                candidates.find(
+                    function (item) {
 
-            return streams;
+                        const candidateTitle =
+                            normalizeTitle(
+                                item?.name
+                            );
+
+                        return (
+                            candidateTitle &&
+                            (
+                                candidateTitle.includes(
+                                    wantedTitle
+                                ) ||
+                                wantedTitle.includes(
+                                    candidateTitle
+                                )
+                            )
+                        );
+
+                    }
+                );
 
         }
 
-        const selectedMovie =
-            bestCandidate.item;
-
-        const selectedYear =
-            Number(
-                selectedMovie?.year
-            ) || 0;
-
-        // =================================================
-        // 6. BẮT BUỘC ĐÚNG NĂM
-        // =================================================
-
+        // Cuối cùng dùng kết quả đầu tiên
         if (
-            movieYear &&
-            selectedYear &&
-            selectedYear !==
-            Number(movieYear)
+            !selectedMovie
         ) {
 
-            console.log(
-                "[NGUONC] REJECTED - wrong year:",
-                selectedYear,
-                "expected:",
-                movieYear
-            );
-
-            return streams;
+            selectedMovie =
+                candidates[0];
 
         }
 
@@ -894,18 +673,11 @@ async function fetchNguonC(
                     name:
                         selectedMovie?.name,
 
-                    original_name:
-                        selectedMovie?.original_name ||
-                        selectedMovie?.origin_name,
-
                     slug:
                         selectedMovie?.slug,
 
                     year:
-                        selectedMovie?.year,
-
-                    score:
-                        bestCandidate.score
+                        selectedMovie?.year
                 }
             )
         );
@@ -929,7 +701,7 @@ async function fetchNguonC(
         }
 
         // =================================================
-        // 7. DETAIL API
+        // 5. DETAIL API
         // =================================================
 
         const detailUrl =
@@ -971,7 +743,7 @@ async function fetchNguonC(
             detailResponse.data;
 
         // =================================================
-        // 8. CHUẨN HÓA MOVIE
+        // 6. CHUẨN HÓA MOVIE
         // =================================================
 
         const movie =
@@ -1010,7 +782,7 @@ async function fetchNguonC(
         }
 
         // =================================================
-        // 9. DUYỆT SERVER
+        // 7. DUYỆT SERVER
         // =================================================
 
         for (
@@ -1030,12 +802,7 @@ async function fetchNguonC(
                     server?.server_name ||
                     server?.name ||
                     "NguonC"
-                )
-                    .replace(
-                        /\s+/g,
-                        " "
-                    )
-                    .trim();
+                ).trim();
 
             const episodes =
                 server?.items ||
@@ -1060,168 +827,66 @@ async function fetchNguonC(
             );
 
             // =================================================
-            // 10. SERIES → CHỈ LẤY ĐÚNG EPISODE
+            // 8. DUYỆT EPISODE
             // =================================================
 
-            if (
-                streamType === "series"
+            for (
+                let episodeIndex = 0;
+                episodeIndex <
+                episodes.length;
+                episodeIndex++
             ) {
 
-                const targetEpisode =
-                    Number(
-                        episodeNumber
-                    ) || 1;
-
-                const matchedEpisode =
-                    episodes.find(
-                        function (
-                            episode,
-                            episodeIndex
-                        ) {
-
-                            const episodeName =
-                                String(
-                                    episode?.name ||
-                                    episode?.episode_name ||
-                                    episode?.slug ||
-                                    ""
-                                ).trim();
-
-                            let detectedEpisode =
-                                0;
-
-                            // ---------------------------------
-                            // "1"
-                            // "01"
-                            // ---------------------------------
-
-                            const directNumber =
-                                episodeName.match(
-                                    /^\s*0*(\d+)\s*$/
-                                );
-
-                            if (
-                                directNumber
-                            ) {
-
-                                detectedEpisode =
-                                    Number(
-                                        directNumber[1]
-                                    ) || 0;
-
-                            }
-
-                            // ---------------------------------
-                            // "Tập 01"
-                            // "Episode 01"
-                            // "Ep 01"
-                            // "Part 01"
-                            // ---------------------------------
-
-                            if (
-                                !detectedEpisode
-                            ) {
-
-                                const episodeMatch =
-                                    episodeName.match(
-                                        /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*(\d+)/i
-                                    );
-
-                                if (
-                                    episodeMatch
-                                ) {
-
-                                    detectedEpisode =
-                                        Number(
-                                            episodeMatch[1]
-                                        ) || 0;
-
-                                }
-
-                            }
-
-                            // ---------------------------------
-                            // FALLBACK THEO INDEX
-                            // ---------------------------------
-
-                            if (
-                                !detectedEpisode
-                            ) {
-
-                                detectedEpisode =
-                                    episodeIndex + 1;
-
-                            }
-
-                            return (
-                                detectedEpisode ===
-                                targetEpisode
-                            );
-
-                        }
-                    );
-
-                if (
-                    !matchedEpisode
-                ) {
-
-                    console.log(
-                        "[NGUONC] Episode not found:",
-                        targetEpisode,
-                        "| Server:",
-                        serverName
-                    );
-
-                    continue;
-
-                }
+                const episode =
+                    episodes[
+                        episodeIndex
+                    ];
 
                 const episodeName =
                     String(
-                        matchedEpisode?.name ||
-                        matchedEpisode?.episode_name ||
-                        matchedEpisode?.slug ||
-                        (
-                            "Tập " +
-                            String(
-                                targetEpisode
-                            ).padStart(
-                                2,
-                                "0"
-                            )
-                        )
+                        episode?.name ||
+                        episode?.episode_name ||
+                        episode?.slug ||
+                        "Full"
                     ).trim();
 
                 const embedUrl =
                     String(
-                        matchedEpisode?.embed ||
-                        matchedEpisode?.link_embed ||
+                        episode?.embed ||
+                        episode?.link_embed ||
                         ""
                     ).trim();
 
                 const m3u8Url =
                     String(
-                        matchedEpisode?.m3u8 ||
-                        matchedEpisode?.link_m3u8 ||
+                        episode?.m3u8 ||
+                        episode?.link_m3u8 ||
                         ""
                     ).trim();
 
                 console.log(
-                    "[NGUONC] Matched Episode:",
-                    episodeName,
-                    "| Server:",
-                    serverName
+                    "[NGUONC] Episode:",
+                    episodeName
                 );
 
-                // ---------------------------------------------
-                // M3U8
-                // ---------------------------------------------
+                console.log(
+                    "[NGUONC] Embed:",
+                    embedUrl ||
+                    "(none)"
+                );
+
+                console.log(
+                    "[NGUONC] M3U8:",
+                    m3u8Url ||
+                    "(none)"
+                );
+
+                // =================================================
+                // 9. ƯU TIÊN M3U8 TRỰC TIẾP
+                // =================================================
 
                 if (
-                    m3u8Url &&
-                    /^https?:\\/\//i.test(
-                        m3u8Url
-                    )
+                    m3u8Url
                 ) {
 
                     streams.push({
@@ -1247,236 +912,97 @@ async function fetchNguonC(
 
                 }
 
-                // ---------------------------------------------
-                // EMBED
-                // ---------------------------------------------
+                // =================================================
+                // 10. EMBED
+                // =================================================
 
                 if (
-                    embedUrl &&
-                    /^https?:\\/\//i.test(
-                        embedUrl
-                    )
+                    !embedUrl
                 ) {
 
-                    try {
-
-                        console.log(
-                            "[NGUONC] Resolving embed..."
-                        );
-
-                        const resolved =
-                            await resolveNguonCEmbed(
-                                embedUrl,
-                                "https://phim.nguonc.com/phim/" +
-                                movieSlug
-                            );
-
-                        if (
-                            resolved &&
-                            resolved.playlist
-                        ) {
-
-                            console.log(
-                                "[NGUONC] Embed resolved successfully"
-                            );
-
-                        } else {
-
-                            console.log(
-                                "[NGUONC] Embed resolver returned no playlist"
-                            );
-
-                        }
-
-                    } catch (
-                        resolveError
-                    ) {
-
-                        console.log(
-                            "[NGUONC] Embed resolve error:",
-                            resolveError?.message ||
-                            resolveError
-                        );
-
-                    }
-
-                    // -----------------------------------------
-                    // FALLBACK EMBED
-                    // -----------------------------------------
-
-                    streams.push({
-
-                        name:
-                            "▶️ [NguonC] " +
-                            serverName,
-
-                        title:
-                            episodeName,
-
-                        externalUrl:
-                            embedUrl,
-
-                        behaviorHints: {
-                            bingeGroup:
-                                "nguonc"
-                        }
-
-                    });
+                    continue;
 
                 }
 
-            }
+                // =================================================
+                // 11. THỬ RESOLVE EMBED BẰNG
+                //     RESOLVER NGUONC HIỆN CÓ
+                // =================================================
 
-            // =================================================
-            // 11. MOVIE → LẤY CÁC SERVER/BẢN
-            // =================================================
-
-            else {
-
-                for (
-                    let episodeIndex = 0;
-                    episodeIndex <
-                    episodes.length;
-                    episodeIndex++
-                ) {
-
-                    const episode =
-                        episodes[
-                            episodeIndex
-                        ];
-
-                    const episodeName =
-                        String(
-                            episode?.name ||
-                            episode?.episode_name ||
-                            episode?.slug ||
-                            "Full"
-                        ).trim();
-
-                    const embedUrl =
-                        String(
-                            episode?.embed ||
-                            episode?.link_embed ||
-                            ""
-                        ).trim();
-
-                    const m3u8Url =
-                        String(
-                            episode?.m3u8 ||
-                            episode?.link_m3u8 ||
-                            ""
-                        ).trim();
+                try {
 
                     console.log(
-                        "[NGUONC] Movie Episode:",
-                        episodeName
+                        "[NGUONC] Resolving embed..."
                     );
 
-                    // -----------------------------------------
-                    // M3U8
-                    // -----------------------------------------
-
-                    if (
-                        m3u8Url &&
-                        /^https?:\/\//i.test(
-                            m3u8Url
-                        )
-                    ) {
-
-                        streams.push({
-
-                            name:
-                                "⚡ [API] NguonC " +
-                                serverName,
-
-                            title:
-                                episodeName,
-
-                            url:
-                                m3u8Url,
-
-                            behaviorHints: {
-                                bingeGroup:
-                                    "nguonc"
-                            }
-
-                        });
-
-                        continue;
-
-                    }
-
-                    // -----------------------------------------
-                    // EMBED
-                    // -----------------------------------------
-
-                    if (
-                        !embedUrl ||
-                        !/^https?:\/\//i.test(
-                            embedUrl
-                        )
-                    ) {
-
-                        continue;
-
-                    }
-
-                    try {
-
-                        console.log(
-                            "[NGUONC] Resolving movie embed..."
-                        );
-
-                        const resolved =
-                            await resolveNguonCEmbed(
-                                embedUrl,
-                                "https://phim.nguonc.com/phim/" +
-                                movieSlug
-                            );
-
-                        if (
-                            resolved &&
-                            resolved.playlist
-                        ) {
-
-                            console.log(
-                                "[NGUONC] Movie embed resolved successfully"
-                            );
-
-                        }
-
-                    } catch (
-                        resolveError
-                    ) {
-
-                        console.log(
-                            "[NGUONC] Movie embed resolve error:",
-                            resolveError?.message ||
-                            resolveError
-                        );
-
-                    }
-
-                    streams.push({
-
-                        name:
-                            "▶️ [NguonC] " +
-                            serverName,
-
-                        title:
-                            episodeName,
-
-                        externalUrl:
+                    const resolved =
+                        await resolveNguonCEmbed(
                             embedUrl,
+                            "https://phim.nguonc.com/phim/" +
+                            movieSlug
+                        );
 
-                        behaviorHints: {
-                            bingeGroup:
-                                "nguonc"
-                        }
+                    if (
+                        resolved &&
+                        resolved.playlist
+                    ) {
 
-                    });
+                        console.log(
+                            "[NGUONC] Embed resolved successfully"
+                        );
+
+                        /*
+                         * Ở đây KHÔNG tự tạo URL HLS mới.
+                         *
+                         * Resolver/proxy NguonC hiện tại
+                         * của bạn sẽ tiếp tục xử lý playlist
+                         * thông qua phần proxy đã có.
+                         *
+                         * Tạm thời giữ embed như fallback
+                         * nếu proxy route hiện tại không được
+                         * expose trực tiếp từ fetch function.
+                         */
+
+                    } else {
+
+                        console.log(
+                            "[NGUONC] Embed resolver returned no playlist"
+                        );
+
+                    }
+
+                } catch (resolveError) {
+
+                    console.log(
+                        "[NGUONC] Embed resolve error:",
+                        resolveError?.message ||
+                        resolveError
+                    );
 
                 }
+
+                // =================================================
+                // 12. FALLBACK EMBED
+                // =================================================
+
+                streams.push({
+
+                    name:
+                        "▶️ [NguonC] " +
+                        serverName,
+
+                    title:
+                        episodeName,
+
+                    externalUrl:
+                        embedUrl,
+
+                    behaviorHints: {
+                        bingeGroup:
+                            "nguonc"
+                    }
+
+                });
 
             }
 
@@ -5837,15 +5363,10 @@ try {
 let results = [];
 
 try {
+
     results =
         await Promise.allSettled([
-            fetchNguonC(
-                movieName,
-                movieYear,
-                seasonNumber,
-                episodeNumber,
-                streamType
-            ),
+            fetchNguonC(nguonCFallbackName),
 
             fetchVSMov(
                 movieName,
@@ -5859,11 +5380,15 @@ try {
 
             scrapeMotPhimTV(movieName)
         ]);
+
 } catch (e) {
+
     console.log(
         "[STREAM SOURCES ERROR]:",
-        e?.message || e
+        e?.message ||
+        e
     );
+
 }
 
 
@@ -5938,31 +5463,12 @@ console.log(
 // =====================================================
 // Không gọi NguonC từ Vercel.
 // Client sẽ mở trang NguonC trong widget/player.
-// Truyền đầy đủ title + year + season + episode
-// để client có thể chọn đúng phiên bản phim.
 // =====================================================
 
 const nguoncClientUrl =
-    "https://my-strem-addon.vercel.app/nguonc-player" +
-    "?title=" +
+    "https://my-strem-addon.vercel.app/nguonc-player?title=" +
     encodeURIComponent(
         movieName
-    ) +
-    "&year=" +
-    encodeURIComponent(
-        movieYear || ""
-    ) +
-    "&type=" +
-    encodeURIComponent(
-        streamType || "movie"
-    ) +
-    "&season=" +
-    encodeURIComponent(
-        seasonNumber || ""
-    ) +
-    "&episode=" +
-    encodeURIComponent(
-        episodeNumber || ""
     );
 
 const nguoncClientStream = {
@@ -5972,12 +5478,7 @@ const nguoncClientStream = {
 
     title:
         "NguonC - " +
-        movieName +
-        (
-            movieYear
-                ? " (" + movieYear + ")"
-                : ""
-        ),
+        movieName,
 
     externalUrl:
         nguoncClientUrl,
@@ -8107,36 +7608,6 @@ button {
 const MOVIE_TITLE =
     \`${safeTitle}\`;
 
-const MOVIE_YEAR =
-    Number(
-        new URLSearchParams(
-            window.location.search
-        ).get("year") ||
-        0
-    );
-
-const STREAM_TYPE =
-    new URLSearchParams(
-        window.location.search
-    ).get("type") ||
-    "movie";
-
-const SEASON_NUMBER =
-    Number(
-        new URLSearchParams(
-            window.location.search
-        ).get("season") ||
-        0
-    );
-
-const EPISODE_NUMBER =
-    Number(
-        new URLSearchParams(
-            window.location.search
-        ).get("episode") ||
-        0
-    );
-
 const API_BASE =
     "https://phim.nguonc.com/api";
 
@@ -8180,7 +7651,7 @@ function normalizeTitle(
     )
         .normalize("NFD")
         .replace(
-            /[\u0300-\u036f]/g,
+            /[\\\\u0300-\\\\u036f]/g,
             ""
         )
         .toLowerCase()
@@ -8189,7 +7660,7 @@ function normalizeTitle(
             " "
         )
         .replace(
-            /\s+/g,
+            /\\\\s+/g,
             " "
         )
         .trim();
@@ -8198,7 +7669,7 @@ function normalizeTitle(
 
 
 // =====================================================
-// TITLE + YEAR SCORE
+// TITLE SCORE
 // =====================================================
 
 function scoreMovie(
@@ -8217,29 +7688,16 @@ function scoreMovie(
 
     const origin =
         normalizeTitle(
-            item?.origin_name ||
             item?.original_name
         );
 
-    const itemYear =
-        Number(
-            item?.year ||
-            item?.release_year ||
-            item?.releaseYear ||
-            0
-        );
-
     let score = 0;
-
-    // -------------------------------------------------
-    // TITLE
-    // -------------------------------------------------
 
     if (
         name === target
     ) {
 
-        score += 1000;
+        score += 100;
 
     }
 
@@ -8247,7 +7705,7 @@ function scoreMovie(
         origin === target
     ) {
 
-        score += 1000;
+        score += 100;
 
     }
 
@@ -8257,7 +7715,7 @@ function scoreMovie(
         )
     ) {
 
-        score += 300;
+        score += 60;
 
     }
 
@@ -8268,7 +7726,7 @@ function scoreMovie(
         name.length >= 4
     ) {
 
-        score += 250;
+        score += 50;
 
     }
 
@@ -8278,7 +7736,7 @@ function scoreMovie(
         )
     ) {
 
-        score += 300;
+        score += 50;
 
     }
 
@@ -8289,33 +7747,7 @@ function scoreMovie(
         origin.length >= 4
     ) {
 
-        score += 250;
-
-    }
-
-    // -------------------------------------------------
-    // YEAR
-    // -------------------------------------------------
-
-    if (
-        MOVIE_YEAR > 0
-    ) {
-
-        if (
-            itemYear ===
-            MOVIE_YEAR
-        ) {
-
-            score += 5000;
-
-        }
-        else if (
-            itemYear > 0
-        ) {
-
-            score -= 10000;
-
-        }
+        score += 40;
 
     }
 
@@ -8548,54 +7980,25 @@ async function searchNguonC() {
         ) +
         "&page=1";
 
-    console.log(
-        "[NGUONC CLIENT] Search URL:",
-        searchUrl
-    );
+    const response =
+        await fetch(
+            searchUrl,
+            {
+                method:
+                    "GET",
 
-    let response;
+                headers: {
 
-    try {
+                    "Accept":
+                        "application/json"
 
-        response =
-            await fetch(
-                searchUrl,
-                {
-                    method:
-                        "GET",
+                },
 
-                    headers: {
+                cache:
+                    "no-store"
 
-                        "Accept":
-                            "application/json"
-
-                    },
-
-                    cache:
-                        "no-store"
-
-                }
-            );
-
-    }
-    catch (error) {
-
-        console.error(
-            "[NGUONC CLIENT] FETCH ERROR:",
-            error
+            }
         );
-
-        throw new Error(
-            "Browser không thể gọi NguonC API. " +
-            "Có thể NguonC đang chặn yêu cầu từ trang này."
-        );
-
-    }
-
-    console.log(
-        "[NGUONC CLIENT] HTTP:",
-        response.status
-    );
 
     if (
         !response.ok
@@ -8608,31 +8011,8 @@ async function searchNguonC() {
 
     }
 
-    let data;
-
-    try {
-
-        data =
-            await response.json();
-
-    }
-    catch (error) {
-
-        console.error(
-            "[NGUONC CLIENT] JSON ERROR:",
-            error
-        );
-
-        throw new Error(
-            "NguonC trả về dữ liệu không phải JSON."
-        );
-
-    }
-
-    console.log(
-        "[NGUONC CLIENT] Search data:",
-        data
-    );
+    const data =
+        await response.json();
 
     let items = [];
 
@@ -8648,22 +8028,22 @@ async function searchNguonC() {
     }
     else if (
         Array.isArray(
-            data?.data?.items
-        )
-    ) {
-
-        items =
-            data.data.items;
-
-    }
-    else if (
-        Array.isArray(
             data?.data
         )
     ) {
 
         items =
             data.data;
+
+    }
+    else if (
+        Array.isArray(
+            data?.data?.items
+        )
+    ) {
+
+        items =
+            data.data.items;
 
     }
 
@@ -8729,10 +8109,6 @@ async function loadDetail(
 
 async function startNguonC() {
 
-    console.log(
-        "[NGUONC CLIENT] START CLIENT RESOLVER"
-    );
-
     if (
         !MOVIE_TITLE
     ) {
@@ -8747,20 +8123,8 @@ async function startNguonC() {
         "Đang tìm: " +
         MOVIE_TITLE;
 
-
-    // =====================================================
-    // SEARCH
-    // =====================================================
-
     const items =
         await searchNguonC();
-
-
-    console.log(
-        "[NGUONC CLIENT] Items count:",
-        items.length
-    );
-
 
     if (
         !items.length
@@ -8771,11 +8135,6 @@ async function startNguonC() {
         );
 
     }
-
-
-    // =====================================================
-    // RANK
-    // =====================================================
 
     const ranked =
         items
@@ -8807,292 +8166,8 @@ async function startNguonC() {
                 }
             );
 
-
-    console.log(
-        "[NGUONC CLIENT] Ranked:",
-        ranked.map(
-            function (entry) {
-
-                return {
-
-                    name:
-                        entry.item?.name,
-
-                    origin_name:
-                        entry.item?.origin_name,
-
-                    year:
-                        entry.item?.year,
-
-                    slug:
-                        entry.item?.slug,
-
-                    score:
-                        entry.score
-
-                };
-
-            }
-        )
-    );
-
-
-    // =====================================================
-    // EXACT YEAR FROM SEARCH
-    // =====================================================
-
-    if (
-        MOVIE_YEAR > 0
-    ) {
-
-        const exactYearCandidates =
-            ranked.filter(
-                function (entry) {
-
-                    const year =
-                        Number(
-                            entry.item?.year ||
-                            entry.item?.release_year ||
-                            entry.item?.releaseYear ||
-                            0
-                        );
-
-                    return (
-                        year ===
-                        MOVIE_YEAR
-                    );
-
-                }
-            );
-
-
-        console.log(
-            "[NGUONC CLIENT] Exact year candidates:",
-            exactYearCandidates
-        );
-
-
-        if (
-            exactYearCandidates.length
-        ) {
-
-            const selected =
-                exactYearCandidates[0].item;
-
-
-            console.log(
-                "[NGUONC CLIENT] SELECT SEARCH YEAR:",
-                selected
-            );
-
-
-            await resolveSelectedNguonC(
-                selected
-            );
-
-            return;
-
-        }
-
-    }
-
-
-    // =====================================================
-    // CHECK DETAIL CANDIDATES
-    // =====================================================
-
-    if (
-        MOVIE_YEAR > 0
-    ) {
-
-        statusEl.textContent =
-            "Đang kiểm tra phiên bản " +
-            MOVIE_YEAR +
-            "...";
-
-
-        /*
-         * Không dùng score >= 100 nữa.
-         *
-         * Lấy tất cả kết quả có slug.
-         * Sau đó detail mới quyết định năm.
-         */
-
-        const candidates =
-            ranked
-                .filter(
-                    function (entry) {
-
-                        return (
-                            entry.item?.slug
-                        );
-
-                    }
-                )
-                .slice(
-                    0,
-                    10
-                );
-
-
-        console.log(
-            "[NGUONC CLIENT] Checking detail candidates:",
-            candidates.map(
-                function (entry) {
-
-                    return {
-
-                        name:
-                            entry.item?.name,
-
-                        origin_name:
-                            entry.item?.origin_name,
-
-                        year:
-                            entry.item?.year,
-
-                        slug:
-                            entry.item?.slug,
-
-                        score:
-                            entry.score
-
-                    };
-
-                }
-            )
-        );
-
-
-        if (
-            !candidates.length
-        ) {
-
-            throw new Error(
-                "NguonC có kết quả nhưng không có kết quả nào có slug."
-            );
-
-        }
-
-
-        // =====================================================
-        // CHECK EACH DETAIL
-        // =====================================================
-
-        for (
-            const entry
-            of candidates
-        ) {
-
-            const candidate =
-                entry.item;
-
-
-            try {
-
-                console.log(
-                    "[NGUONC CLIENT] Checking detail:",
-                    candidate?.name,
-                    "|",
-                    candidate?.origin_name,
-                    "|",
-                    candidate?.year,
-                    "|",
-                    candidate?.slug
-                );
-
-
-                const detail =
-                    await loadDetail(
-                        candidate.slug
-                    );
-
-
-                const detailMovie =
-                    detail?.movie ||
-                    detail?.data?.movie ||
-                    detail?.data?.item ||
-                    detail?.data ||
-                    {};
-
-
-                const detailYear =
-                    Number(
-                        detailMovie?.year ||
-                        detailMovie?.release_year ||
-                        detailMovie?.releaseYear ||
-                        candidate?.year ||
-                        candidate?.release_year ||
-                        candidate?.releaseYear ||
-                        0
-                    );
-
-
-                console.log(
-                    "[NGUONC CLIENT] DETAIL YEAR:",
-                    detailYear,
-                    "| TARGET:",
-                    MOVIE_YEAR,
-                    "| SLUG:",
-                    candidate.slug
-                );
-
-
-                if (
-                    detailYear ===
-                    MOVIE_YEAR
-                ) {
-
-                    console.log(
-                        "[NGUONC CLIENT] EXACT DETAIL YEAR MATCH:",
-                        candidate
-                    );
-
-
-                    await resolveSelectedNguonC(
-                        candidate,
-                        detail
-                    );
-
-
-                    return;
-
-                }
-
-            }
-            catch (
-                error
-            ) {
-
-                console.warn(
-                    "[NGUONC CLIENT] DETAIL FAILED:",
-                    candidate?.slug,
-                    error?.message ||
-                    error
-                );
-
-            }
-
-        }
-
-
-        throw new Error(
-            "NguonC có kết quả nhưng không tìm thấy phim đúng năm " +
-            MOVIE_YEAR +
-            "."
-        );
-
-    }
-
-
-    // =====================================================
-    // NO YEAR
-    // =====================================================
-
     const selected =
-        ranked[0]?.item ||
-        null;
-
+        ranked[0]?.item;
 
     if (
         !selected?.slug
@@ -9104,53 +8179,22 @@ async function startNguonC() {
 
     }
 
-
-    await resolveSelectedNguonC(
-        selected
-    );
-
-}
-
-
-// =====================================================
-// RESOLVE SELECTED NGUONC MOVIE
-// =====================================================
-
-async function resolveSelectedNguonC(
-    selected,
-    existingDetail = null
-) {
-
-    if (
-        !selected?.slug
-    ) {
-
-        throw new Error(
-            "Thiếu slug NguonC."
-        );
-
-    }
-
     statusEl.textContent =
         "Đã tìm thấy: " +
         (
             selected.name ||
             MOVIE_TITLE
         ) +
-        " — Đang tải video...";
+        "\\\\nĐang tải video...";
 
     const detail =
-        existingDetail ||
         await loadDetail(
             selected.slug
         );
 
     const video =
-        findVideoUrlForEpisode(
-            detail,
-            SEASON_NUMBER,
-            EPISODE_NUMBER,
-            STREAM_TYPE
+        findVideoUrl(
+            detail
         );
 
     if (
@@ -9158,12 +8202,7 @@ async function resolveSelectedNguonC(
     ) {
 
         throw new Error(
-            "Phim có trên NguonC nhưng không tìm thấy link phát cho tập " +
-            (
-                EPISODE_NUMBER ||
-                1
-            ) +
-            "."
+            "Phim có trên NguonC nhưng không tìm thấy link phát."
         );
 
     }
@@ -9202,235 +8241,6 @@ async function resolveSelectedNguonC(
 
 
 // =====================================================
-// FIND VIDEO FOR MOVIE / SERIES EPISODE
-// =====================================================
-
-function findVideoUrlForEpisode(
-    detail,
-    seasonNumber,
-    episodeNumber,
-    streamType
-) {
-
-    const movie =
-        detail?.movie ||
-        detail?.data?.movie ||
-        detail?.data?.item ||
-        detail?.data ||
-        {};
-
-
-    const episodes =
-        movie?.episodes ||
-        detail?.episodes ||
-        detail?.data?.episodes ||
-        [];
-
-
-    if (
-        !Array.isArray(
-            episodes
-        )
-    ) {
-
-        return null;
-
-    }
-
-
-    // =====================================================
-    // MOVIE
-    // =====================================================
-
-    if (
-        streamType !==
-        "series"
-    ) {
-
-        return findVideoUrl(
-            detail
-        );
-
-    }
-
-
-    // =====================================================
-    // SERIES
-    // =====================================================
-
-    const targetEpisode =
-        Number(
-            episodeNumber
-        ) || 1;
-
-
-    for (
-        const server
-        of episodes
-    ) {
-
-        const items =
-            server?.items ||
-            server?.server_data ||
-            [];
-
-
-        if (
-            !Array.isArray(
-                items
-            )
-        ) {
-
-            continue;
-
-        }
-
-
-        for (
-            let index = 0;
-            index < items.length;
-            index++
-        ) {
-
-            const episode =
-                items[index];
-
-
-            const episodeName =
-                String(
-                    episode?.name ||
-                    episode?.filename ||
-                    episode?.slug ||
-                    ""
-                )
-                    .trim();
-
-
-            let detectedEpisode =
-                0;
-
-
-            const directNumber =
-                episodeName.match(
-                    /^\s*0*(\d+)\s*$/
-                );
-
-
-            if (
-                directNumber
-            ) {
-
-                detectedEpisode =
-                    Number(
-                        directNumber[1]
-                    ) || 0;
-
-            }
-
-
-            if (
-                !detectedEpisode
-            ) {
-
-                const episodeMatch =
-                    episodeName.match(
-                        /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*(\d+)/i
-                    );
-
-
-                if (
-                    episodeMatch
-                ) {
-
-                    detectedEpisode =
-                        Number(
-                            episodeMatch[1]
-                        ) || 0;
-
-                }
-
-            }
-
-
-            if (
-                !detectedEpisode
-            ) {
-
-                detectedEpisode =
-                    index + 1;
-
-            }
-
-
-            if (
-                detectedEpisode !==
-                targetEpisode
-            ) {
-
-                continue;
-
-            }
-
-
-            const m3u8 =
-    String(
-        episode?.m3u8 ||
-        episode?.link_m3u8 ||
-        ""
-    )
-        .trim();
-
-
-if (
-    m3u8 &&
-    /^https?:\/\//i.test(
-        m3u8
-    )
-) {
-
-    return {
-
-        type:
-            "m3u8",
-
-        url:
-            m3u8
-
-    };
-
-}
-
-
-const embed =
-    String(
-        episode?.embed ||
-        episode?.link_embed ||
-        ""
-    )
-        .trim();
-
-
-if (
-    embed &&
-    /^https?:\/\//i.test(
-        embed
-    )
-) {
-
-    return {
-
-        type:
-            "embed",
-
-        url:
-            embed
-
-    };
-
-}
-
-
-// =====================================================
 // START
 // =====================================================
 
@@ -9444,7 +8254,7 @@ startNguonC()
             );
 
             showError(
-                "Không thể tự phát NguonC. " +
+                "Không thể tự phát NguonC.\\n\\n" +
                 (
                     error?.message ||
                     "Lỗi không xác định."
