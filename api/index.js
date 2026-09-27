@@ -4043,17 +4043,18 @@ console.log(
     motphim.length
 );
 
-
-// =====================================================
-// 11. GỘP STREAM TRỰC TIẾP
-// =====================================================
-
 // =====================================================
 // NGUONC CLIENT WIDGET
 // =====================================================
 // Không gọi NguonC từ Vercel.
-// Chỉ đưa người dùng sang NguonC từ WebView/client.
+// Client sẽ mở trang NguonC trong widget/player.
 // =====================================================
+
+const nguoncClientUrl =
+    "https://my-strem-addon.vercel.app/nguonc-player?title=" +
+    encodeURIComponent(
+        movieName
+    );
 
 const nguoncClientStream = {
 
@@ -4061,20 +4062,27 @@ const nguoncClientStream = {
         "▶️ [NguonC] Client",
 
     title:
-        "Tìm trên NguonC - " +
+        "NguonC - " +
         movieName,
 
+    // Cần externalUrl để stream không bị
+    // loại khỏi danh sách Direct ở bước filter phía sau.
+    externalUrl:
+        nguoncClientUrl,
+
+    // Widget player
     widgetPlayer:
-        "https://my-strem-addon.vercel.app/nguonc-player?title=" +
-        encodeURIComponent(
-            movieName
-        ),
+        nguoncClientUrl,
 
     widgetPlayerStates: [
         "replaceplayer"
     ]
 
 };
+
+// =====================================================
+// 11. GỘP STREAM TRỰC TIẾP
+// =====================================================
 
 const directStreams = [
     ...nguonc,
