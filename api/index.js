@@ -9380,68 +9380,59 @@ function findVideoUrlForEpisode(
 
 
             const m3u8 =
-                String(
-                    episode?.m3u8 ||
-                    episode?.link_m3u8 ||
-                    ""
-                )
-                    .trim();
+    String(
+        episode?.m3u8 ||
+        episode?.link_m3u8 ||
+        ""
+    )
+        .trim();
 
 
-            if (
-                m3u8 &&
-                /^https?:\/\//i.test(
-                    m3u8
-                )
-            ) {
+if (
+    m3u8 &&
+    /^https?:\/\//i.test(
+        m3u8
+    )
+) {
 
-                return {
+    return {
 
-                    type:
-                        "m3u8",
+        type:
+            "m3u8",
 
-                    url:
-                        m3u8
+        url:
+            m3u8
 
-                };
+    };
 
-            }
-
-
-            const embed =
-                String(
-                    episode?.embed ||
-                    episode?.link_embed ||
-                    ""
-                )
-                    .trim();
+}
 
 
-            if (
-                embed &&
-                /^https?:\/\//i.test(
-                    embed
-                )
-            ) {
-
-                return {
-
-                    type:
-                        "embed",
-
-                    url:
-                        embed
-
-                };
-
-            }
-
-        }
-
-    }
+const embed =
+    String(
+        episode?.embed ||
+        episode?.link_embed ||
+        ""
+    )
+        .trim();
 
 
-    return null;
+if (
+    embed &&
+    /^https?:\/\//i.test(
+        embed
+    )
+) {
+
+    return {
+
+        type:
+            "embed",
+
+        url:
+            embed
+
+    };
 
 }
 
