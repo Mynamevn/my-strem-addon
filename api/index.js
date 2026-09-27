@@ -1072,7 +1072,8 @@ async function fetchKKPhim(
     movieName,
     movieYear = 0,
     seasonNumber = 0,
-    episodeNumber = 0
+    episodeNumber = 0,
+    streamType = "movie"
 ) {
 
     const streams = [];
@@ -4472,8 +4473,8 @@ console.log(
 // 6. CHẠY KKPHIM TRƯỚC
 // =====================================================
 // KKPhim tự xử lý slug của chính nó.
-// Truyền thêm year + season + episode để KKPhim
-// chọn đúng phim và đúng tập mà Stremio đang yêu cầu.
+// Truyền year + season + episode + type để KKPhim
+// biết chính xác nội dung Stremio đang yêu cầu.
 // Không truyền slug KKPhim sang NguonC.
 // =====================================================
 
@@ -4486,7 +4487,8 @@ try {
             movieName,
             movieYear,
             seasonNumber,
-            episodeNumber
+            episodeNumber,
+            streamType
         );
 
 } catch (e) {
