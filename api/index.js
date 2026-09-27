@@ -5716,7 +5716,9 @@ app.get(
                 ""
             ).trim();
 
-        if (!targetUrl) {
+        if (
+            !targetUrl
+        ) {
 
             return res
                 .status(400)
@@ -5725,7 +5727,6 @@ app.get(
                 );
 
         }
-
 
         let parsedUrl;
 
@@ -5748,67 +5749,9 @@ app.get(
 
         }
 
-
-        // =====================================================
-        // LOG HOST THỰC TẾ VSMOV TRẢ VỀ
-        // =====================================================
-
-        console.log(
-            "[VSMOV PLAYER] Target URL:",
-            parsedUrl.href
-        );
-
-        console.log(
-            "[VSMOV PLAYER] Target host:",
-            parsedUrl.hostname
-        );
-
-
-        // =====================================================
-        // CHỈ CHO PHÉP HTTP / HTTPS
-        // =====================================================
-
-        if (
-            parsedUrl.protocol !==
-                "http:" &&
-            parsedUrl.protocol !==
-                "https:"
-        ) {
-
-            console.log(
-                "[VSMOV PLAYER] Invalid protocol:",
-                parsedUrl.protocol
-            );
-
-            return res
-                .status(403)
-                .send(
-                    "Protocol not allowed"
-                );
-
-        }
-
-
-        // =====================================================
-        // VSMOV HOST WHITELIST
-        // =====================================================
-        //
-        // Cho phép:
-        //
-        // v1.streamvsmov.com
-        // v2.streamvsmov.com
-        // v3.streamvsmov.com
-        // ...
-        //
-        // và các subdomain thuộc streamvsmov.com
-        // nếu VSMov thay đổi server.
-        //
-        // =====================================================
-
         const hostname =
             parsedUrl.hostname
                 .toLowerCase();
-
 
         const validVsmovHost =
             hostname ===
@@ -5817,7 +5760,6 @@ app.get(
             hostname.endsWith(
                 ".streamvsmov.com"
             );
-
 
         if (
             !validVsmovHost
@@ -5831,111 +5773,20 @@ app.get(
             return res
                 .status(403)
                 .send(
-                    "Host not allowed: " +
-                    hostname
+                    "Host not allowed"
                 );
 
         }
 
-
-        // =====================================================
-        // IFRAME
-        // =====================================================
-
-        const iframeUrl =
-            parsedUrl.href;
-
-
         console.log(
-            "[VSMOV PLAYER] iframe:",
-            iframeUrl
+            "[VSMOV PLAYER] Redirect:",
+            parsedUrl.href
         );
 
-
-        res.setHeader(
-            "Content-Type",
-            "text/html; charset=utf-8"
+        return res.redirect(
+            302,
+            parsedUrl.href
         );
-
-        res.setHeader(
-            "Cache-Control",
-            "no-store"
-        );
-
-
-        // =====================================================
-        // HTML PLAYER
-        // =====================================================
-
-        res.send(`
-<!DOCTYPE html>
-<html>
-
-<head>
-
-    <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>VSMov Player</title>
-
-    <style>
-
-        html,
-        body {
-
-            width: 100%;
-            height: 100%;
-
-            margin: 0;
-            padding: 0;
-
-            background: #000;
-
-            overflow: hidden;
-
-        }
-
-        iframe {
-
-            width: 100%;
-            height: 100%;
-
-            border: 0;
-
-            display: block;
-
-            background: #000;
-
-        }
-
-    </style>
-
-</head>
-
-<body>
-
-<iframe
-    src="${iframeUrl}"
-    allow="
-        autoplay;
-        fullscreen;
-        encrypted-media;
-        picture-in-picture
-    "
-    allowfullscreen
-    webkitallowfullscreen
-    mozallowfullscreen
-    referrerpolicy="no-referrer">
-</iframe>
-
-</body>
-
-</html>
-        `);
 
     }
 );
