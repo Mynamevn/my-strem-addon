@@ -1353,17 +1353,100 @@ async function fetchKKPhim(
                 )
         );
 
-        const movie =
-            ranked[0]?.item;
+        // =================================================
+// 4. CHỌN PHIM THEO TITLE + YEAR
+// =================================================
 
-        if (!movie) {
+let movie = null;
 
-            console.log(
-                "[KKPHIM] NO MATCHED MOVIE"
-            );
+// -------------------------------------------------
+// SERIES: BẮT BUỘC KHỚP NĂM NẾU ĐÃ CÓ NĂM
+// -------------------------------------------------
 
-            return streams;
-        }
+if (
+    streamType === "series" &&
+    movieYear
+) {
+
+    const yearMatched =
+        ranked.filter(
+            candidate =>
+                Number(
+                    candidate?.item?.year
+                ) === Number(
+                    movieYear
+                )
+        );
+
+    console.log(
+        "[KKPHIM] Year matched candidates:",
+        yearMatched.map(
+            x => ({
+                name:
+                    x.item?.name,
+
+                origin_name:
+                    x.item?.origin_name,
+
+                year:
+                    x.item?.year,
+
+                type:
+                    x.item?.type,
+
+                score:
+                    x.score
+            })
+        )
+    );
+
+    if (
+        yearMatched.length
+    ) {
+
+        movie =
+            yearMatched[0]?.item;
+
+    } else {
+
+        console.log(
+            "[KKPHIM] NO EXACT YEAR MATCH:",
+            movieYear
+        );
+
+        console.log(
+            "[KKPHIM] Refusing mismatched version."
+        );
+
+        return streams;
+
+    }
+
+}
+
+// -------------------------------------------------
+// MOVIE HOẶC KHÔNG CÓ YEAR
+// -------------------------------------------------
+
+else {
+
+    movie =
+        ranked[0]?.item;
+
+}
+
+// -------------------------------------------------
+// KHÔNG CÓ MOVIE
+// -------------------------------------------------
+
+if (!movie) {
+
+    console.log(
+        "[KKPHIM] NO MATCHED MOVIE"
+    );
+
+    return streams;
+}
 
         console.log(
             "[KKPHIM] Selected movie:",
