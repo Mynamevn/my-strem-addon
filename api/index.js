@@ -8180,7 +8180,7 @@ function normalizeTitle(
     )
         .normalize("NFD")
         .replace(
-            /[\\\\u0300-\\\\u036f]/g,
+            /[\u0300-\u036f]/g,
             ""
         )
         .toLowerCase()
@@ -8189,7 +8189,7 @@ function normalizeTitle(
             " "
         )
         .replace(
-            /\\\\s+/g,
+            /\s+/g,
             " "
         )
         .trim();
