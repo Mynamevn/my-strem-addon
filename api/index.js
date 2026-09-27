@@ -1403,9 +1403,14 @@ console.log(
 }
 
 
-// =====================================================
-// VSMOV
-// =====================================================
+/* ============================================================
+   VSMOV API
+   SEARCH API
+   DETAIL API
+   ƯU TIÊN M3U8 TRỰC TIẾP
+   FALLBACK EMBED
+   GIỮ CẢ VIETSUB / 4K
+   ============================================================ */
 
 async function fetchVSMov(movieName) {
 
@@ -1478,9 +1483,7 @@ async function fetchVSMov(movieName) {
                 if (
                     String(part).trim().length >= 3
                 ) {
-
                     addVariant(part);
-
                 }
 
             });
@@ -1615,9 +1618,7 @@ async function fetchVSMov(movieName) {
                     !slug ||
                     seen.has(slug)
                 ) {
-
                     return;
-
                 }
 
                 seen.add(slug);
@@ -1642,12 +1643,6 @@ async function fetchVSMov(movieName) {
                             item?.name
                         );
 
-                    const normalizedOrigin =
-                        normalizeTitle(
-                            item?.origin_name ||
-                            item?.original_name
-                        );
-
                     let score = 0;
 
                     titleVariants.forEach(
@@ -1662,31 +1657,21 @@ async function fetchVSMov(movieName) {
                                 normalizedName === v
                             ) {
 
-                                score += 500;
-
-                            }
-
-                            if (
-                                normalizedOrigin === v
-                            ) {
-
-                                score += 1000;
-
-                            }
-
-                            if (
-                                normalizedName.includes(v)
-                            ) {
-
                                 score += 100;
 
                             }
-
-                            if (
-                                normalizedOrigin.includes(v)
+                            else if (
+                                normalizedName.includes(v)
                             ) {
 
-                                score += 300;
+                                score += 50;
+
+                            }
+                            else if (
+                                v.includes(normalizedName)
+                            ) {
+
+                                score += 40;
 
                             }
 
@@ -1711,10 +1696,6 @@ async function fetchVSMov(movieName) {
                     x => ({
                         name:
                             x.item?.name,
-
-                        origin:
-                            x.item?.origin_name ||
-                            x.item?.original_name,
 
                         slug:
                             x.item?.slug,
@@ -1781,13 +1762,6 @@ async function fetchVSMov(movieName) {
         console.log(
             "[VSMOV] Selected:",
             foundName
-        );
-
-        console.log(
-            "[VSMOV] Original:",
-            selected?.origin_name ||
-            selected?.original_name ||
-            ""
         );
 
         console.log(
@@ -1969,11 +1943,6 @@ async function fetchVSMov(movieName) {
                 // =================================================
 // B. EMBED FALLBACK
 // =================================================
-//
-// Không đưa embed vào Stremio.
-// Embed hiện tại có thể timeout trực tiếp.
-// Chỉ giữ log để biết VSMov không có M3U8.
-// =================================================
 
 const embed =
     String(
@@ -1988,22 +1957,47 @@ if (
 ) {
 
     console.log(
-        "[VSMOV] NO M3U8 - EMBED ONLY:",
+        "[VSMOV] EMBED FALLBACK:",
         serverName,
         episodeName
     );
 
     console.log(
-        "[VSMOV] EMBED AVAILABLE:",
+        "[VSMOV] EMBED:",
         embed
     );
 
+    const widgetUrl =
+        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
+        encodeURIComponent(embed);
+
+    console.log(
+        "[VSMOV] WIDGET:",
+        widgetUrl
+    );
+
+    streams.push({
+    name:
+        "▶️ [VSMov] " +
+        serverName,
+
+    title:
+        episodeName ||
+        "Full",
+
+    externalUrl:
+        widgetUrl,
+
+    widgetPlayer:
+        widgetUrl,
+
+    widgetPlayerStates: [
+        "replaceplayer"
+    ]
+});
 }
-
-            }
-
-        }
-
+}
+}
         // ====================================================
         // 10. FALLBACK ĐÚNG TRANG PHIM
         // ====================================================
@@ -5693,16 +5687,10 @@ app.get(
                 ""
             ).trim();
 
-        if (
-            !targetUrl
-        ) {
-
+        if (!targetUrl) {
             return res
                 .status(400)
-                .send(
-                    "Missing VSMov URL"
-                );
-
+                .send("Missing VSMov URL");
         }
 
         let parsedUrl;
@@ -5714,60 +5702,102 @@ app.get(
                     targetUrl
                 );
 
-        } catch (
-            error
-        ) {
+        } catch (error) {
 
             return res
                 .status(400)
-                .send(
-                    "Invalid URL"
-                );
-
+                .send("Invalid URL");
         }
 
-        const hostname =
-            parsedUrl.hostname
-                .toLowerCase();
+        // -------------------------------------------------
+        // Cho phép các host VSMov dạng:
+        // v1.streamvsmov.com
+        // v2.streamvsmov.com
+        // v3.streamvsmov.com
+        // v4.streamvsmov.com
+        // v5.streamvsmov.com
+        // ...
+        // -------------------------------------------------
 
         const validVsmovHost =
-            hostname ===
-                "streamvsmov.com" ||
+            /^v\d+\.streamvsmov\.com$/i
+                .test(
+                    parsedUrl.hostname
+                );
 
-            hostname.endsWith(
-                ".streamvsmov.com"
-            );
-
-        if (
-            !validVsmovHost
-        ) {
+        if (!validVsmovHost) {
 
             console.log(
                 "[VSMOV PLAYER] Host blocked:",
-                hostname
+                parsedUrl.hostname
             );
 
             return res
                 .status(403)
-                .send(
-                    "Host not allowed"
-                );
-
+                .send("Host not allowed");
         }
 
+        const iframeUrl =
+            parsedUrl.href;
+
         console.log(
-            "[VSMOV PLAYER] Redirect:",
-            parsedUrl.href
+            "[VSMOV PLAYER] iframe:",
+            iframeUrl
         );
 
-        return res.redirect(
-            302,
-            parsedUrl.href
+        res.setHeader(
+            "Content-Type",
+            "text/html; charset=utf-8"
         );
 
+        res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>VSMov Player</title>
+
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+<iframe
+    src="${iframeUrl}"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+    webkitallowfullscreen
+    referrerpolicy="no-referrer">
+</iframe>
+
+</body>
+</html>
+        `);
     }
 );
-
 
 // =====================================================
 // NGUONC CLIENT PLAYER
