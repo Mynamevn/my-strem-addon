@@ -2862,296 +2862,467 @@ console.log(
 
 
         // =====================================================
-        // 8. XỬ LÝ EPISODES
-        // =====================================================
+// 8. XỬ LÝ EPISODES
+// =====================================================
+
+// VSMov có cấu trúc:
+// episodes[]
+//   └── server_name
+//       └── server_data[]
+//           ├── episode 1
+//           ├── episode 2
+//           └── ...
+
+for (
+    const episodeServer
+    of episodes
+) {
+
+    const serverName =
+        String(
+            episodeServer?.server_name ||
+            episodeServer?.name ||
+            "VSMov"
+        )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+
+
+    const serverData =
+        Array.isArray(
+            episodeServer?.server_data
+        )
+            ? episodeServer.server_data
+            : [];
+
+
+    console.log(
+        "[VSMOV] Server:",
+        serverName
+    );
+
+    console.log(
+        "[VSMOV] Server episodes:",
+        serverData.length
+    );
+
+
+    // =================================================
+    // SERIES
+    // =================================================
+
+    if (
+        streamType === "series"
+    ) {
+
+        const targetEpisode =
+            Number(
+                episodeNumber
+            ) || 1;
+
+
+        // ---------------------------------------------
+        // TÌM ĐÚNG EPISODE
+        // ---------------------------------------------
+
+        const matchedEpisode =
+            serverData.find(
+                (
+                    ep,
+                    index
+                ) => {
+
+                    const episodeName =
+                        String(
+                            ep?.name ||
+                            ep?.filename ||
+                            ep?.slug ||
+                            ""
+                        ).trim();
+
+
+                    let detectedEpisode =
+                        0;
+
+
+                    // Ví dụ:
+                    // "1"
+                    // "01"
+                    // "Tập 1"
+                    // "tap-1"
+                    // "episode-1"
+
+                    const directNumber =
+                        episodeName.match(
+                            /^\s*0*(\d+)\s*$/
+                        );
+
+
+                    if (
+                        directNumber
+                    ) {
+
+                        detectedEpisode =
+                            Number(
+                                directNumber[1]
+                            ) || 0;
+
+                    }
+
+
+                    if (
+                        !detectedEpisode
+                    ) {
+
+                        const episodeMatch =
+                            episodeName.match(
+                                /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*(\d+)/i
+                            );
+
+
+                        if (
+                            episodeMatch
+                        ) {
+
+                            detectedEpisode =
+                                Number(
+                                    episodeMatch[1]
+                                ) || 0;
+
+                            }
+
+                    }
+
+
+                    // Nếu API không có số rõ ràng,
+                    // dùng vị trí trong server_data.
+
+                    if (
+                        !detectedEpisode
+                    ) {
+
+                        detectedEpisode =
+                            index + 1;
+
+                    }
+
+
+                    return (
+                        detectedEpisode ===
+                        targetEpisode
+                    );
+
+                }
+            );
+
+
+        if (
+            !matchedEpisode
+        ) {
+
+            console.log(
+                "[VSMOV] Episode not found:",
+                targetEpisode
+            );
+
+            continue;
+
+        }
+
+
+        const matchedName =
+            String(
+                matchedEpisode?.name ||
+                matchedEpisode?.filename ||
+                matchedEpisode?.slug ||
+                ("Tập " +
+                    String(
+                        targetEpisode
+                    ).padStart(
+                        2,
+                        "0"
+                    ))
+            ).trim();
+
+
+        console.log(
+            "[VSMOV] Matched episode:",
+            matchedName
+        );
+
+
+        // =================================================
+        // DIRECT M3U8
+        // =================================================
+
+        const m3u8 =
+            String(
+                matchedEpisode?.link_m3u8 ||
+                matchedEpisode?.m3u8 ||
+                ""
+            ).trim();
+
+
+        if (
+            m3u8 &&
+            /^https?:\/\//i.test(
+                m3u8
+            )
+        ) {
+
+            streams.push({
+
+                name:
+                    "▶️ [VSMov] " +
+                    serverName,
+
+                title:
+                    "Tập " +
+                    String(
+                        targetEpisode
+                    ).padStart(
+                        2,
+                        "0"
+                    ),
+
+                url:
+                    m3u8,
+
+                behaviorHints: {
+                    bingeGroup:
+                        "vsmov"
+                }
+
+            });
+
+
+            console.log(
+                "[VSMOV] M3U8:",
+                m3u8
+            );
+
+            continue;
+
+        }
+
+
+        // =================================================
+        // EMBED FALLBACK
+        // =================================================
+
+        const embed =
+            String(
+                matchedEpisode?.link_embed ||
+                matchedEpisode?.embed ||
+                ""
+            ).trim();
+
+
+        if (
+            embed &&
+            /^https?:\/\//i.test(
+                embed
+            )
+        ) {
+
+            const moviePageUrl =
+                "https://vsmov.com/phim/" +
+                encodeURIComponent(
+                    movieSlug
+                );
+
+
+            const widgetUrl =
+                "https://my-strem-addon.vercel.app/vsmov-player?url=" +
+                encodeURIComponent(
+                    embed
+                ) +
+                "&movie=" +
+                encodeURIComponent(
+                    moviePageUrl
+                );
+
+
+            streams.push({
+
+                name:
+                    "▶️ [VSMov] " +
+                    serverName,
+
+                title:
+                    "Tập " +
+                    String(
+                        targetEpisode
+                    ).padStart(
+                        2,
+                        "0"
+                    ),
+
+                externalUrl:
+                    widgetUrl,
+
+                widgetPlayer:
+                    widgetUrl,
+
+                widgetPlayerStates:
+                    [
+                        "replaceplayer"
+                    ],
+
+                behaviorHints: {
+                    bingeGroup:
+                        "vsmov"
+                }
+
+            });
+
+
+            console.log(
+                "[VSMOV] EMBED:",
+                embed
+            );
+
+        }
+
+    }
+
+
+    // =================================================
+    // MOVIE
+    // =================================================
+
+    else {
 
         for (
-            const episode
-            of episodes
+            const ep
+            of serverData
         ) {
 
             const episodeName =
                 String(
-                    episode?.name ||
-                    episode?.slug ||
+                    ep?.name ||
+                    ep?.filename ||
+                    "Full"
+                ).trim();
+
+
+            // -----------------------------------------
+            // DIRECT M3U8
+            // -----------------------------------------
+
+            const m3u8 =
+                String(
+                    ep?.link_m3u8 ||
+                    ep?.m3u8 ||
                     ""
                 ).trim();
 
 
-            // -------------------------------------------------
-            // LẤY SEASON
-            // -------------------------------------------------
-
-            const episodeSeason =
-                Number(
-                    episode?.season ||
-                    episode?.season_number ||
-                    episode?.seasonNumber ||
-                    0
-                ) || 0;
-
-
-            // -------------------------------------------------
-            // LẤY EPISODE
-            // -------------------------------------------------
-
-            let detectedEpisode =
-                Number(
-                    episode?.episode ||
-                    episode?.episode_number ||
-                    episode?.episodeNumber ||
-                    0
-                ) || 0;
-
-
             if (
-                !detectedEpisode
+                m3u8 &&
+                /^https?:\/\//i.test(
+                    m3u8
+                )
             ) {
 
-                const episodeMatch =
-                    episodeName.match(
-                        /(?:tập|tap|episode|ep\.?|part|phần)\s*0*(\d+)/i
-                    );
+                streams.push({
 
-                if (
-                    episodeMatch
-                ) {
+                    name:
+                        "▶️ [VSMov] " +
+                        serverName,
 
-                    detectedEpisode =
-                        Number(
-                            episodeMatch[1]
-                        ) || 0;
+                    title:
+                        episodeName,
 
-                }
+                    url:
+                        m3u8,
 
-            }
-
-
-            // -------------------------------------------------
-            // SEASON + EPISODE MATCH
-            // -------------------------------------------------
-
-            if (
-                streamType === "series"
-            ) {
-
-                const targetSeason =
-                    Number(
-                        seasonNumber
-                    ) || 1;
-
-                const targetEpisode =
-                    Number(
-                        episodeNumber
-                    ) || 1;
-
-
-                // Nếu episode có season
-                // thì bắt buộc season phải đúng.
-
-                if (
-                    episodeSeason &&
-                    episodeSeason !==
-                        targetSeason
-                ) {
-
-                    continue;
-
-                }
-
-
-                // Nếu xác định được episode
-                // thì bắt buộc đúng episode.
-
-                if (
-                    detectedEpisode &&
-                    detectedEpisode !==
-                        targetEpisode
-                ) {
-
-                    continue;
-
-                }
-
-
-                // Nếu không đọc được số episode
-                // thì dùng vị trí trong danh sách
-                // chỉ khi episode list không có season.
-
-                if (
-                    !detectedEpisode &&
-                    !episodeSeason
-                ) {
-
-                    const index =
-                        episodes.indexOf(
-                            episode
-                        );
-
-                    if (
-                        index + 1 !==
-                        targetEpisode
-                    ) {
-
-                        continue;
-
+                    behaviorHints: {
+                        bingeGroup:
+                            "vsmov"
                     }
 
-                }
+                });
+
+                continue;
 
             }
 
 
-            // =================================================
-            // 9. SERVER DATA
-            // =================================================
+            // -----------------------------------------
+            // EMBED
+            // -----------------------------------------
 
-            const servers =
-                Array.isArray(
-                    episode?.server_data
+            const embed =
+                String(
+                    ep?.link_embed ||
+                    ep?.embed ||
+                    ""
+                ).trim();
+
+
+            if (
+                embed &&
+                /^https?:\/\//i.test(
+                    embed
                 )
-                    ? episode.server_data
-                    : Array.isArray(
-                        episode?.serverData
-                    )
-                        ? episode.serverData
-                        : [];
-
-
-            console.log(
-                "[VSMOV] Episode:",
-                episodeName,
-                "| detected:",
-                detectedEpisode,
-                "| season:",
-                episodeSeason,
-                "| servers:",
-                servers.length
-            );
-
-
-            // -------------------------------------------------
-            // SERVER LOOP
-            // -------------------------------------------------
-
-            for (
-                const ep
-                of servers
             ) {
 
-                const serverName =
-                    String(
-                        ep?.name ||
-                        ep?.server_name ||
-                        "VSMov"
-                    ).trim();
+                const moviePageUrl =
+                    "https://vsmov.com/phim/" +
+                    encodeURIComponent(
+                        movieSlug
+                    );
 
 
-                // =================================================
-                // DIRECT M3U8
-                // =================================================
-
-                const m3u8 =
-                    String(
-                        ep?.link_m3u8 ||
-                        ep?.m3u8 ||
-                        ep?.url ||
-                        ""
-                    ).trim();
-
-
-                if (
-                    m3u8 &&
-                    /^https?:\/\//i.test(
-                        m3u8
-                    )
-                ) {
-
-                    streams.push({
-
-                        name:
-                            "▶️ [VSMov] " +
-                            serverName,
-
-                        title:
-                            episodeName ||
-                            "Full",
-
-                        url:
-                            m3u8
-
-                    });
-
-                    continue;
-
-                }
-
-
-                // =================================================
-                // EMBED FALLBACK
-                // =================================================
-
-                const embed =
-                    String(
-                        ep?.link_embed ||
-                        ep?.embed ||
-                        ""
-                    ).trim();
-
-
-                if (
-                    embed &&
-                    /^https?:\/\//i.test(
+                const widgetUrl =
+                    "https://my-strem-addon.vercel.app/vsmov-player?url=" +
+                    encodeURIComponent(
                         embed
-                    )
-                ) {
-
-                    const moviePageUrl =
-                        "https://vsmov.com/phim/" +
-                        encodeURIComponent(
-                            movieSlug
-                        );
+                    ) +
+                    "&movie=" +
+                    encodeURIComponent(
+                        moviePageUrl
+                    );
 
 
-                    const widgetUrl =
-                        "https://my-strem-addon.vercel.app/vsmov-player?url=" +
-                        encodeURIComponent(
-                            embed
-                        ) +
-                        "&movie=" +
-                        encodeURIComponent(
-                            moviePageUrl
-                        );
+                streams.push({
 
+                    name:
+                        "▶️ [VSMov] " +
+                        serverName,
 
-                    streams.push({
+                    title:
+                        episodeName,
 
-                        name:
-                            "▶️ [VSMov] " +
-                            serverName,
+                    externalUrl:
+                        widgetUrl,
 
-                        title:
-                            episodeName ||
-                            "Full",
+                    widgetPlayer:
+                        widgetUrl,
 
-                        externalUrl:
-                            widgetUrl,
+                    widgetPlayerStates:
+                        [
+                            "replaceplayer"
+                        ],
 
-                        widgetPlayer:
-                            widgetUrl,
+                    behaviorHints: {
+                        bingeGroup:
+                            "vsmov"
+                    }
 
-                        widgetPlayerStates:
-                            [
-                                "replaceplayer"
-                            ]
-
-                    });
-
-                }
+                });
 
             }
 
         }
+
+    }
+
+}
 
 
         // =====================================================
