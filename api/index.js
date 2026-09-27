@@ -5771,20 +5771,21 @@ app.get(
         }
 
         // -------------------------------------------------
-        // Cho phép các host VSMov dạng:
-        // v1.streamvsmov.com
-        // v2.streamvsmov.com
-        // v3.streamvsmov.com
-        // v4.streamvsmov.com
-        // v5.streamvsmov.com
-        // ...
-        // -------------------------------------------------
+// Cho phép các host VSMov dạng:
+// v1.streamvsmov.com
+// v2.streamvsmov.com
+// ...
+// s1.streamvsmov.com
+// s2.streamvsmov.com
+// ...
+// s10.streamvsmov.com
+// -------------------------------------------------
 
-        const validVsmovHost =
-            /^v\d+\.streamvsmov\.com$/i
-                .test(
-                    parsedUrl.hostname
-                );
+const validVsmovHost =
+    /^[sv]\d+\.streamvsmov\.com$/i
+        .test(
+            parsedUrl.hostname
+        );
 
         if (!validVsmovHost) {
 
