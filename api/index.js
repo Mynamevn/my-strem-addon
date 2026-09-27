@@ -1727,216 +1727,46 @@ if (
 
 }
 
-        // =================================================
-        // 2. NORMALIZE TITLE
-        // =================================================
+// =================================================
+// 2. MOVIE ĐÃ ĐƯỢC CHỌN
+// =================================================
 
-        const normalizeTitle =
-            value => {
+// Tại thời điểm này:
+// - IMDb lookup đã tìm được movie, hoặc
+// - Year + IMDb đã tìm được movie, hoặc
+// - Title search + year đã tìm được movie.
+//
+// KHÔNG chạy ranking lại ở đây.
+// Đặc biệt không tham chiếu biến "items"
+// vì "items" chỉ tồn tại bên trong nhánh search.
 
-                return String(
-                    value ||
-                    ""
-                )
-                    .normalize("NFD")
-                    .replace(
-                        /[\u0300-\u036f]/g,
-                        ""
-                    )
-                    .toLowerCase()
-                    .replace(
-                        /[^a-z0-9]+/g,
-                        " "
-                    )
-                    .replace(
-                        /\s+/g,
-                        " "
-                    )
-                    .trim();
+console.log(
+    "[KKPHIM] Selected movie:",
+    JSON.stringify({
+        name:
+            movie?.name,
 
-            };
+        origin_name:
+            movie?.origin_name,
 
-        const normalizedSearch =
-            normalizeTitle(
-                movieName
-            );
+        slug:
+            movie?.slug,
 
-        // =================================================
-        // 3. RANK CÁC KẾT QUẢ
-        // =================================================
+        year:
+            movie?.year,
 
-        const ranked =
-            items.map(
-                (item, index) => {
+        type:
+            movie?.type,
 
-                    const name =
-                        normalizeTitle(
-                            item?.name
-                        );
+        imdb:
+            movie?.imdb?.id ||
+            movie?.imdb_id ||
+            movie?.imdbId ||
+            imdbId ||
+            ""
+    })
+);
 
-                    const origin =
-                        normalizeTitle(
-                            item?.origin_name
-                        );
-
-                    const year =
-                        Number(
-                            item?.year
-                        ) || 0;
-
-                    const type =
-                        String(
-                            item?.type ||
-                            ""
-                        ).toLowerCase();
-
-                    let score = 0;
-
-                    // -------------------------------------
-                    // TITLE
-                    // -------------------------------------
-
-                    if (
-                        origin ===
-                        normalizedSearch
-                    ) {
-
-                        score += 1000;
-
-                    } else if (
-                        name ===
-                        normalizedSearch
-                    ) {
-
-                        score += 900;
-
-                    } else if (
-                        origin.includes(
-                            normalizedSearch
-                        )
-                    ) {
-
-                        score += 300;
-
-                    } else if (
-                        name.includes(
-                            normalizedSearch
-                        )
-                    ) {
-
-                        score += 200;
-
-                    }
-
-                    // -------------------------------------
-                    // YEAR
-                    // -------------------------------------
-
-                    if (
-                        movieYear &&
-                        year === movieYear
-                    ) {
-
-                        score += 3000;
-
-                    } else if (
-                        movieYear &&
-                        year &&
-                        year !== movieYear
-                    ) {
-
-                        score -= 1500;
-
-                    }
-
-                    // -------------------------------------
-                    // TYPE
-                    // -------------------------------------
-
-                    if (
-                        streamType === "series" &&
-                        type === "series"
-                    ) {
-
-                        score += 500;
-
-                    }
-
-                    return {
-                        item,
-                        score,
-                        index
-                    };
-
-                }
-            );
-
-        ranked.sort(
-            (a, b) => {
-
-                if (
-                    b.score !==
-                    a.score
-                ) {
-
-                    return (
-                        b.score -
-                        a.score
-                    );
-
-                }
-
-                return (
-                    a.index -
-                    b.index
-                );
-
-            }
-        );
-
-        console.log(
-            "[KKPHIM] Ranked candidates:",
-            ranked
-                .slice(0, 5)
-                .map(
-                    x => ({
-                        name:
-                            x.item?.name,
-
-                        origin_name:
-                            x.item?.origin_name,
-
-                        year:
-                            x.item?.year,
-
-                        type:
-                            x.item?.type,
-
-                        score:
-                            x.score
-                    })
-                )
-        );
-
-            console.log(
-            "[KKPHIM] Selected movie:",
-            JSON.stringify({
-                name:
-                    movie?.name,
-
-                origin_name:
-                    movie?.origin_name,
-
-                slug:
-                    movie?.slug,
-
-                year:
-                    movie?.year,
-
-                type:
-                    movie?.type
-            })
-        );
 
         // =================================================
         // 4. SLUG
