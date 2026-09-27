@@ -5672,10 +5672,15 @@ app.get(
             ).trim();
 
         if (!targetUrl) {
+
             return res
                 .status(400)
-                .send("Missing VSMov URL");
+                .send(
+                    "Missing VSMov URL"
+                );
+
         }
+
 
         let parsedUrl;
 
@@ -5686,58 +5691,143 @@ app.get(
                     targetUrl
                 );
 
-        } catch (error) {
+        } catch (
+            error
+        ) {
 
             return res
                 .status(400)
-                .send("Invalid URL");
-        }
-
-        // -------------------------------------------------
-        // Cho phép các host VSMov dạng:
-        // v1.streamvsmov.com
-        // v2.streamvsmov.com
-        // v3.streamvsmov.com
-        // v4.streamvsmov.com
-        // v5.streamvsmov.com
-        // ...
-        // -------------------------------------------------
-
-        const validVsmovHost =
-            /^v\d+\.streamvsmov\.com$/i
-                .test(
-                    parsedUrl.hostname
+                .send(
+                    "Invalid URL"
                 );
 
-        if (!validVsmovHost) {
+        }
+
+
+        // =====================================================
+        // LOG HOST THỰC TẾ VSMOV TRẢ VỀ
+        // =====================================================
+
+        console.log(
+            "[VSMOV PLAYER] Target URL:",
+            parsedUrl.href
+        );
+
+        console.log(
+            "[VSMOV PLAYER] Target host:",
+            parsedUrl.hostname
+        );
+
+
+        // =====================================================
+        // CHỈ CHO PHÉP HTTP / HTTPS
+        // =====================================================
+
+        if (
+            parsedUrl.protocol !==
+                "http:" &&
+            parsedUrl.protocol !==
+                "https:"
+        ) {
 
             console.log(
-                "[VSMOV PLAYER] Host blocked:",
-                parsedUrl.hostname
+                "[VSMOV PLAYER] Invalid protocol:",
+                parsedUrl.protocol
             );
 
             return res
                 .status(403)
-                .send("Host not allowed");
+                .send(
+                    "Protocol not allowed"
+                );
+
         }
+
+
+        // =====================================================
+        // VSMOV HOST WHITELIST
+        // =====================================================
+        //
+        // Cho phép:
+        //
+        // v1.streamvsmov.com
+        // v2.streamvsmov.com
+        // v3.streamvsmov.com
+        // ...
+        //
+        // và các subdomain thuộc streamvsmov.com
+        // nếu VSMov thay đổi server.
+        //
+        // =====================================================
+
+        const hostname =
+            parsedUrl.hostname
+                .toLowerCase();
+
+
+        const validVsmovHost =
+            hostname ===
+                "streamvsmov.com" ||
+
+            hostname.endsWith(
+                ".streamvsmov.com"
+            );
+
+
+        if (
+            !validVsmovHost
+        ) {
+
+            console.log(
+                "[VSMOV PLAYER] Host blocked:",
+                hostname
+            );
+
+            return res
+                .status(403)
+                .send(
+                    "Host not allowed: " +
+                    hostname
+                );
+
+        }
+
+
+        // =====================================================
+        // IFRAME
+        // =====================================================
 
         const iframeUrl =
             parsedUrl.href;
+
 
         console.log(
             "[VSMOV PLAYER] iframe:",
             iframeUrl
         );
 
+
         res.setHeader(
             "Content-Type",
             "text/html; charset=utf-8"
         );
 
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
+
+
+        // =====================================================
+        // HTML PLAYER
+        // =====================================================
+
         res.send(`
 <!DOCTYPE html>
 <html>
+
 <head>
+
     <meta charset="UTF-8">
 
     <meta
@@ -5748,40 +5838,63 @@ app.get(
     <title>VSMov Player</title>
 
     <style>
+
         html,
         body {
+
             width: 100%;
             height: 100%;
+
             margin: 0;
             padding: 0;
+
             background: #000;
+
             overflow: hidden;
+
         }
 
         iframe {
+
             width: 100%;
             height: 100%;
+
             border: 0;
+
             display: block;
+
+            background: #000;
+
         }
+
     </style>
+
 </head>
 
 <body>
 
 <iframe
     src="${iframeUrl}"
-    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allow="
+        autoplay;
+        fullscreen;
+        encrypted-media;
+        picture-in-picture
+    "
     allowfullscreen
     webkitallowfullscreen
+    mozallowfullscreen
     referrerpolicy="no-referrer">
 </iframe>
 
 </body>
+
 </html>
         `);
+
     }
 );
+
 
 // =====================================================
 // NGUONC CLIENT PLAYER
