@@ -9131,22 +9131,19 @@ async function resolveSelectedNguonC(
 
     }
 
-
     statusEl.textContent =
         "Đã tìm thấy: " +
         (
             selected.name ||
             MOVIE_TITLE
         ) +
-        "\\nĐang tải video...";
-
+        " — Đang tải video...";
 
     const detail =
         existingDetail ||
         await loadDetail(
             selected.slug
         );
-
 
     const video =
         findVideoUrlForEpisode(
@@ -9155,7 +9152,6 @@ async function resolveSelectedNguonC(
             EPISODE_NUMBER,
             STREAM_TYPE
         );
-
 
     if (
         !video
@@ -9172,7 +9168,6 @@ async function resolveSelectedNguonC(
 
     }
 
-
     if (
         video.type ===
         "m3u8"
@@ -9186,7 +9181,6 @@ async function resolveSelectedNguonC(
 
     }
 
-
     if (
         video.type ===
         "embed"
@@ -9199,7 +9193,6 @@ async function resolveSelectedNguonC(
         return;
 
     }
-
 
     throw new Error(
         "Không xác định được loại video."
@@ -9451,7 +9444,7 @@ startNguonC()
             );
 
             showError(
-                "Không thể tự phát NguonC.\\n\\n" +
+                "Không thể tự phát NguonC. " +
                 (
                     error?.message ||
                     "Lỗi không xác định."
