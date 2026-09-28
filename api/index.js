@@ -8684,14 +8684,20 @@ if (
 ) {
 
     // =================================================
-    // 1. ƯU TIÊN KẾT QUẢ SEARCH ĐÃ CÓ ĐÚNG NĂM
-    // =================================================
+// 1. ƯU TIÊN KẾT QUẢ SEARCH ĐÃ CÓ ĐÚNG NĂM
+// =================================================
 
-    selectedEntry =
+selectedEntry =
     ranked.find(function (entry) {
 
         const item =
             entry.item || {};
+
+        const rawName =
+            String(
+                item?.name ||
+                ""
+            ).trim();
 
         const itemYear =
             Number(
@@ -8701,18 +8707,30 @@ if (
                 0
             );
 
-        // 1. API year
-        if (itemYear === MOVIE_YEAR) {
+        console.log(
+            "[NGUONC CLIENT] YEAR CHECK:",
+            {
+                name: rawName,
+                apiYear: itemYear,
+                targetYear: MOVIE_YEAR
+            }
+        );
+
+        // API có year đúng
+        if (
+            MOVIE_YEAR > 0 &&
+            itemYear === MOVIE_YEAR
+        ) {
+            console.log(
+                "[NGUONC CLIENT] MATCH API YEAR:",
+                rawName
+            );
+
             return true;
         }
 
-        // 2. Year nằm ở cuối tên phim
-        const rawName =
-            String(
-                item?.name ||
-                ""
-            ).trim();
-
+        // Kiểm tra năm nằm trong tên:
+        // Tây Du Ký Phần 1 (1996)
         const yearMatch =
             rawName.match(
                 /\((19|20)\d{2}\)\s*$/
@@ -8729,19 +8747,41 @@ if (
                 );
 
             console.log(
-                "[NGUONC CLIENT] MATCH NAME YEAR:",
+                "[NGUONC CLIENT] NAME YEAR:",
                 rawName,
                 "=>",
                 nameYear
             );
 
-            return (
+            if (
                 nameYear === MOVIE_YEAR
-            );
+            ) {
+                console.log(
+                    "[NGUONC CLIENT] MATCH NAME YEAR:",
+                    rawName,
+                    "=>",
+                    nameYear
+                );
+
+                return true;
+            }
         }
 
         return false;
     });
+
+console.log(
+    "[NGUONC CLIENT] SELECTED BY YEAR:",
+    selectedEntry?.item
+        ? {
+            name: selectedEntry.item.name,
+            origin_name:
+                selectedEntry.item.origin_name ||
+                selectedEntry.item.original_name,
+            slug: selectedEntry.item.slug
+        }
+        : null
+);
 
 
 // =================================================
