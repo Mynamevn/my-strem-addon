@@ -3516,23 +3516,215 @@ async function scrapePhimLongTieng(movieName) {
 
 
 /* ============================================================
-   MOTPHIMTV
+   PHIMHDCS
    ============================================================ */
 
-async function scrapeMotPhimTV(movieName) {
+async function scrapePhimHDCS(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 0,
+    streamType = "movie"
+) {
 
     const streams = [];
+
+    const BASE_URL =
+        "https://phimhdcss.com";
+
+    // ========================================================
+    // HELPER
+    // ========================================================
+
+    function normalizeTitle(
+        value
+    ) {
+
+        return String(
+            value ||
+            ""
+        )
+            .normalize("NFD")
+            .replace(
+                /[\u0300-\u036f]/g,
+                ""
+            )
+            .toLowerCase()
+            .replace(
+                /[^a-z0-9]+/g,
+                " "
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+
+    }
+
+    function makeAbsoluteUrl(
+        value
+    ) {
+
+        let url =
+            String(
+                value ||
+                ""
+            ).trim();
+
+        if (!url) {
+            return "";
+        }
+
+        if (
+            url.startsWith(
+                "//"
+            )
+        ) {
+
+            return "https:" +
+                url;
+
+        }
+
+        if (
+            url.startsWith(
+                "http://"
+            ) ||
+            url.startsWith(
+                "https://"
+            )
+        ) {
+
+            return url;
+
+        }
+
+        if (
+            url.startsWith(
+                "/"
+            )
+        ) {
+
+            return BASE_URL +
+                url;
+
+        }
+
+        return BASE_URL +
+            "/" +
+            url;
+
+    }
+
+    function extractYear(
+        value
+    ) {
+
+        const match =
+            String(
+                value ||
+                ""
+            ).match(
+                /\b(19|20)\d{2}\b/
+            );
+
+        return match
+            ? Number(
+                match[0]
+            )
+            : 0;
+
+    }
+
+    function addFallback() {
+
+        if (
+            streams.length > 0
+        ) {
+            return;
+        }
+
+        streams.push({
+
+            name:
+                "🌐 [Fallback] PhimHDCS",
+
+            title:
+                "Mở trang PhimHDCS - " +
+                movieName,
+
+            externalUrl:
+                BASE_URL +
+                "/?search=" +
+                encodeURIComponent(
+                    movieName
+                ).replace(
+                    /%20/g,
+                    "+"
+                )
+
+        });
+
+        console.log(
+            "[PHIMHDCS] SELF FALLBACK ADDED"
+        );
+
+    }
+
+    // ========================================================
+    // MAIN
+    // ========================================================
 
     try {
 
         console.log(
-            "[MOTPHIM] Search:",
+            "[PHIMHDCS] START"
+        );
+
+        console.log(
+            "[PHIMHDCS] Search:",
             movieName
         );
 
+        console.log(
+            "[PHIMHDCS] Year:",
+            movieYear
+        );
+
+        console.log(
+            "[PHIMHDCS] Season:",
+            seasonNumber
+        );
+
+        console.log(
+            "[PHIMHDCS] Episode:",
+            episodeNumber
+        );
+
+        console.log(
+            "[PHIMHDCS] Type:",
+            streamType
+        );
+
+        // ====================================================
+        // 1. SEARCH
+        // ====================================================
+
         const searchUrl =
-            "https://motphimtv.run/?search=" +
-            encodeURIComponent(movieName);
+            BASE_URL +
+            "/?search=" +
+            encodeURIComponent(
+                movieName
+            ).replace(
+                /%20/g,
+                "+"
+            );
+
+        console.log(
+            "[PHIMHDCS] SEARCH URL:",
+            searchUrl
+        );
 
         const searchRes =
             await axios.get(
@@ -3540,108 +3732,1454 @@ async function scrapeMotPhimTV(movieName) {
                 {
                     headers: {
                         "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                     },
-                    timeout: 6000
+                    timeout: 10000
                 }
             );
 
-        const parseHtml =
-            cheerio.load(
-                searchRes.data
+        const searchHtml =
+            String(
+                searchRes.data ||
+                ""
             );
 
-        let firstMovieLink =
-            parseHtml(
-                ".list-films .item a"
-            )
-            .first()
-            .attr("href");
+        const parseSearch =
+            cheerio.load(
+                searchHtml
+            );
+
+        // ====================================================
+        // 2. LẤY DANH SÁCH KẾT QUẢ
+        // ====================================================
+
+        const candidates = [];
+
+        parseSearch(
+            "li.item a[href]"
+        ).each(
+            function () {
+
+                const node =
+                    parseSearch(
+                        this
+                    );
+
+                const href =
+                    String(
+                        node.attr(
+                            "href"
+                        ) ||
+                        ""
+                    ).trim();
+
+                const title =
+                    String(
+                        node.attr(
+                            "title"
+                        ) ||
+                        node.text() ||
+                        ""
+                    ).trim();
+
+                if (
+                    !href ||
+                    !title
+                ) {
+                    return;
+                }
+
+                const url =
+                    makeAbsoluteUrl(
+                        href
+                    );
+
+                if (
+                    !url.includes(
+                        "phimhdcss.com"
+                    )
+                ) {
+                    return;
+                }
+
+                candidates.push({
+
+                    url:
+                        url,
+
+                    title:
+                        title,
+
+                    year:
+                        extractYear(
+                            title
+                        )
+
+                });
+
+            }
+        );
+
+        // ====================================================
+        // FALLBACK PARSER
+        // ====================================================
 
         if (
-            firstMovieLink &&
-            firstMovieLink.startsWith("/")
+            candidates.length === 0
         ) {
 
-            firstMovieLink =
-                "https://motphimtv.run" +
-                firstMovieLink;
+            const itemPattern =
+                /<li\s+class="item[^"]*">[\s\S]*?<a\s+href="([^"]+)"\s+title="([^"]+)"/gi;
+
+            let match;
+
+            while (
+                (
+                    match =
+                    itemPattern.exec(
+                        searchHtml
+                    )
+                ) !== null
+            ) {
+
+                candidates.push({
+
+                    url:
+                        makeAbsoluteUrl(
+                            match[1]
+                        ),
+
+                    title:
+                        String(
+                            match[2] ||
+                            ""
+                        ).trim(),
+
+                    year:
+                        extractYear(
+                            match[2]
+                        )
+
+                });
+
+            }
+
         }
 
-        if (!firstMovieLink) {
+        const uniqueCandidates =
+            [];
+
+        const seenUrls =
+            new Set();
+
+        for (
+            const candidate
+            of candidates
+        ) {
+
+            if (
+                seenUrls.has(
+                    candidate.url
+                )
+            ) {
+                continue;
+            }
+
+            seenUrls.add(
+                candidate.url
+            );
+
+            uniqueCandidates.push(
+                candidate
+            );
+
+        }
+
+        console.log(
+            "[PHIMHDCS] SEARCH RESULTS:",
+            uniqueCandidates.length
+        );
+
+        if (
+            uniqueCandidates.length === 0
+        ) {
 
             console.log(
-                "[MOTPHIM] Không tìm thấy trang phim"
+                "[PHIMHDCS] NO SEARCH RESULTS"
             );
+
+            addFallback();
+
+            return streams;
+        }
+
+        // ====================================================
+        // 3. CHỌN PHIM
+        // ====================================================
+
+        const target =
+            normalizeTitle(
+                movieName
+            );
+
+        let selectedMovie =
+            null;
+
+        let selectedScore =
+            -Infinity;
+
+        for (
+            const candidate
+            of uniqueCandidates
+        ) {
+
+            let score =
+                0;
+
+            const candidateTitle =
+                normalizeTitle(
+                    candidate.title
+                );
+
+            // ------------------------------------------------
+            // TITLE
+            // ------------------------------------------------
+
+            if (
+                candidateTitle ===
+                target
+            ) {
+
+                score +=
+                    1000;
+
+            } else if (
+                candidateTitle.includes(
+                    target
+                ) &&
+                target.length >= 4
+            ) {
+
+                score +=
+                    500;
+
+            } else if (
+                target.includes(
+                    candidateTitle
+                ) &&
+                candidateTitle.length >= 4
+            ) {
+
+                score +=
+                    400;
+
+            }
+
+            // ------------------------------------------------
+            // YEAR
+            // ------------------------------------------------
+
+            if (
+                movieYear > 0
+            ) {
+
+                if (
+                    candidate.year ===
+                    Number(
+                        movieYear
+                    )
+                ) {
+
+                    score +=
+                        5000;
+
+                } else if (
+                    candidate.year > 0
+                ) {
+
+                    score -=
+                        300;
+
+                }
+
+            }
+
+            console.log(
+                "[PHIMHDCS] CANDIDATE:",
+                {
+                    title:
+                        candidate.title,
+                    year:
+                        candidate.year,
+                    score:
+                        score,
+                    url:
+                        candidate.url
+                }
+            );
+
+            if (
+                score >
+                selectedScore
+            ) {
+
+                selectedScore =
+                    score;
+
+                selectedMovie =
+                    candidate;
+
+            }
+
+        }
+
+        if (
+            !selectedMovie
+        ) {
+
+            console.log(
+                "[PHIMHDCS] NO MOVIE SELECTED"
+            );
+
+            addFallback();
 
             return streams;
         }
 
         console.log(
-            "[MOTPHIM] Movie URL:",
-            firstMovieLink
+            "[PHIMHDCS] SELECTED MOVIE:",
+            selectedMovie.title,
+            "|",
+            selectedMovie.year,
+            "|",
+            selectedMovie.url
         );
 
-        const movieRes =
+        // ====================================================
+        // 4. LOAD DETAIL PAGE
+        // ====================================================
+
+        const detailRes =
             await axios.get(
-                firstMovieLink,
+                selectedMovie.url,
                 {
                     headers: {
                         "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                        "Referer":
+                            BASE_URL + "/"
                     },
-                    timeout: 6000
+                    timeout: 10000
                 }
             );
 
-        const parseMovie =
+        const detailHtml =
+            String(
+                detailRes.data ||
+                ""
+            );
+
+        const parseDetail =
             cheerio.load(
-                movieRes.data
+                detailHtml
             );
 
-        const scripts =
-            parseMovie(
-                "script"
-            ).text();
+        // ====================================================
+        // 5. LẤY SERVER + EPISODE
+        // ====================================================
 
-        const m3u8Match =
-            scripts.match(
-                /(https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*)/
+        const servers =
+            [];
+
+        parseDetail(
+            ".server-episode-block"
+        ).each(
+            function () {
+
+                const block =
+                    parseDetail(
+                        this
+                    );
+
+                const blockText =
+                    String(
+                        block.text() ||
+                        ""
+                    ).trim();
+
+                const serverMatch =
+                    blockText.match(
+                        /Danh sách\s*(?:Sever)?\s*([^:]+):/i
+                    );
+
+                let serverName =
+                    serverMatch
+                        ? String(
+                            serverMatch[1]
+                        ).trim()
+                        : "PhimHDCS";
+
+                serverName =
+                    serverName
+                        .replace(
+                            /^Server\s+/i,
+                            ""
+                        )
+                        .replace(
+                            /^z/i,
+                            ""
+                        )
+                        .replace(
+                            /\s*#\d+$/,
+                            ""
+                        )
+                        .trim();
+
+                const episodes =
+                    [];
+
+                block
+                    .find(
+                        "a#no-link[href]"
+                    )
+                    .each(
+                        function () {
+
+                            const node =
+                                block.find(
+                                    this
+                                );
+
+                            const href =
+                                String(
+                                    node.attr(
+                                        "href"
+                                    ) ||
+                                    ""
+                                ).trim();
+
+                            const name =
+                                String(
+                                    node.attr(
+                                        "title"
+                                    ) ||
+                                    node.text() ||
+                                    ""
+                                ).trim();
+
+                            if (
+                                !href
+                            ) {
+                                return;
+                            }
+
+                            episodes.push({
+
+                                url:
+                                    makeAbsoluteUrl(
+                                        href
+                                    ),
+
+                                name:
+                                    name,
+
+                                number:
+                                    extractEpisodeNumber(
+                                        name
+                                    )
+
+                            });
+
+                        }
+                    );
+
+                // ------------------------------------------------
+                // FALLBACK: REGEX TRỰC TIẾP
+                // ------------------------------------------------
+
+                if (
+                    episodes.length === 0
+                ) {
+
+                    const blockHtml =
+                        String(
+                            parseDetail.html(
+                                this
+                            ) ||
+                            ""
+                        );
+
+                    const epPattern =
+                        /<a\s+href="([^"]+)"\s+id=['"]no-link['"][\s\S]*?title="([^"]+)"/gi;
+
+                    let epMatch;
+
+                    while (
+                        (
+                            epMatch =
+                            epPattern.exec(
+                                blockHtml
+                            )
+                        ) !== null
+                    ) {
+
+                        episodes.push({
+
+                            url:
+                                makeAbsoluteUrl(
+                                    epMatch[1]
+                                ),
+
+                            name:
+                                String(
+                                    epMatch[2] ||
+                                    ""
+                                ).trim(),
+
+                            number:
+                                extractEpisodeNumber(
+                                    epMatch[2]
+                                )
+
+                        });
+
+                    }
+
+                }
+
+                if (
+                    episodes.length > 0
+                ) {
+
+                    // PhimHDCS thường để tập mới nhất trước.
+                    // Đưa về thứ tự tăng dần.
+
+                    const first =
+                        episodes[0].number;
+
+                    const last =
+                        episodes[
+                            episodes.length - 1
+                        ].number;
+
+                    if (
+                        first > 0 &&
+                        last > 0 &&
+                        first > last
+                    ) {
+
+                        episodes.reverse();
+
+                    } else if (
+                        !first ||
+                        !last
+                    ) {
+
+                        episodes.reverse();
+
+                    }
+
+                    servers.push({
+
+                        name:
+                            serverName,
+
+                        episodes:
+                            episodes
+
+                    });
+
+                }
+
+            }
+        );
+
+        console.log(
+            "[PHIMHDCS] SERVERS:",
+            servers.map(
+                function (
+                    server
+                ) {
+
+                    return {
+                        name:
+                            server.name,
+                        episodes:
+                            server.episodes.length
+                    };
+
+                }
+            )
+        );
+
+        // ====================================================
+        // 6. CHỌN EPISODE
+        // ====================================================
+
+        let selectedEpisode =
+            null;
+
+        const targetEpisode =
+            Number(
+                episodeNumber
+            ) || 1;
+
+        if (
+            streamType ===
+            "series"
+        ) {
+
+            for (
+                const server
+                of servers
+            ) {
+
+                const found =
+                    server.episodes.find(
+                        function (
+                            episode
+                        ) {
+
+                            return (
+                                Number(
+                                    episode.number
+                                ) ===
+                                targetEpisode
+                            );
+
+                        }
+                    );
+
+                if (
+                    found
+                ) {
+
+                    selectedEpisode = {
+
+                        server:
+                            server.name,
+
+                        episode:
+                            found
+
+                    };
+
+                    break;
+
+                }
+
+            }
+
+        } else {
+
+            if (
+                servers.length > 0 &&
+                servers[0].episodes.length > 0
+            ) {
+
+                selectedEpisode = {
+
+                    server:
+                        servers[0].name,
+
+                    episode:
+                        servers[0].episodes[0]
+
+                };
+
+            }
+
+        }
+
+        if (
+            !selectedEpisode
+        ) {
+
+            console.log(
+                "[PHIMHDCS] EPISODE NOT FOUND:",
+                targetEpisode
             );
 
-        if (m3u8Match?.[1]) {
+            addFallback();
+
+            return streams;
+        }
+
+        console.log(
+            "[PHIMHDCS] SELECTED EPISODE:",
+            {
+                server:
+                    selectedEpisode.server,
+
+                name:
+                    selectedEpisode.episode.name,
+
+                url:
+                    selectedEpisode.episode.url
+            }
+        );
+
+        // ====================================================
+        // 7. LOAD EPISODE PAGE
+        // ====================================================
+
+        const episodeUrl =
+            selectedEpisode
+                .episode
+                .url;
+
+        const episodeRes =
+            await axios.get(
+                episodeUrl,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                        "Referer":
+                            selectedMovie.url
+                    },
+                    timeout: 10000
+                }
+            );
+
+        const episodeHtml =
+            String(
+                episodeRes.data ||
+                ""
+            );
+
+        // ====================================================
+        // 8. DIRECT M3U8 / MP4 TRONG HTML
+        // ====================================================
+
+        const directMatches =
+            episodeHtml.match(
+                /https?:\/\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/gi
+            ) ||
+            [];
+
+        const directUrls =
+            [
+                ...new Set(
+                    directMatches
+                )
+            ];
+
+        console.log(
+            "[PHIMHDCS] DIRECT HTML:",
+            directUrls.length
+        );
+
+        for (
+            const videoUrl
+            of directUrls
+        ) {
 
             streams.push({
 
                 name:
-                    "📺 [Scrape] MotPhimTV",
+                    "📺 [PhimHDCS] Direct",
 
                 title:
-                    "Luong phat MotPhimTV",
+                    streamType ===
+                    "series"
+                        ? "Tập " +
+                          String(
+                              targetEpisode
+                          ).padStart(
+                              2,
+                              "0"
+                          ) +
+                          " - PhimHDCS"
+                        : "PhimHDCS",
 
                 url:
-                    String(
-                        m3u8Match[1]
-                    )
+                    videoUrl
+
             });
+
+        }
+
+        if (
+            streams.length > 0
+        ) {
+
+            console.log(
+                "[PHIMHDCS] DIRECT STREAM FOUND"
+            );
+
+            return streams;
+        }
+
+        // ====================================================
+        // 9. ĐỌC _0xS
+        // ====================================================
+
+        let saltString =
+            "";
+
+        const saltMatch =
+            episodeHtml.match(
+                /(?:const|let|var)\s+_0xS\s*=\s*["']([^"']+)["']/
+            );
+
+        if (
+            saltMatch
+        ) {
+
+            saltString =
+                saltMatch[1];
+
+        }
+
+        // ====================================================
+        // 10. BASE64 DECODER
+        // ====================================================
+
+        function decodeBase64(
+            value
+        ) {
+
+            try {
+
+                return Buffer
+                    .from(
+                        String(
+                            value
+                        )
+                            .replace(
+                                /[^A-Za-z0-9+/=]/g,
+                                ""
+                            ),
+                        "base64"
+                    )
+                    .toString(
+                        "utf8"
+                    );
+
+            } catch (
+                decodeError
+            ) {
+
+                return null;
+
+            }
+
+        }
+
+        function decodeChunksWithSalt(
+            chunks,
+            salt
+        ) {
+
+            try {
+
+                let base64 =
+                    chunks.join("");
+
+                base64 =
+                    base64
+                        .split("")
+                        .reverse()
+                        .join("");
+
+                if (
+                    salt
+                ) {
+
+                    base64 =
+                        base64.replace(
+                            salt,
+                            ""
+                        );
+
+                }
+
+                return decodeBase64(
+                    base64
+                );
+
+            } catch (
+                decodeError
+            ) {
+
+                return null;
+
+            }
+
+        }
+
+        // ====================================================
+        // 11. ĐỌC realObj
+        // ====================================================
+
+        let oxData =
+            null;
+
+        const realObjMatch =
+            episodeHtml.match(
+                /(?:const|let|var)\s+realObj\s*=\s*JSON\.parse\(\s*atob\(\s*["']([^"']+)["']\s*\)\s*\)/i
+            );
+
+        if (
+            realObjMatch
+        ) {
+
+            try {
+
+                const decoded =
+                    decodeBase64(
+                        realObjMatch[1]
+                    );
+
+                if (
+                    decoded
+                ) {
+
+                    oxData =
+                        JSON.parse(
+                            decoded
+                        );
+
+                    console.log(
+                        "[PHIMHDCS] realObj FOUND"
+                    );
+
+                }
+
+            } catch (
+                realObjError
+            ) {
+
+                console.log(
+                    "[PHIMHDCS] realObj ERROR:",
+                    realObjError?.message ||
+                    realObjError
+                );
+
+            }
+
+        }
+
+        // ====================================================
+        // 12. FALLBACK _0xData
+        // ====================================================
+
+        if (
+            !oxData
+        ) {
+
+            const dataMatch =
+                episodeHtml.match(
+                    /(?:const|let|var)\s+_0xData\s*=\s*(\{[\s\S]*?\})\s*;/
+                );
+
+            if (
+                dataMatch
+            ) {
+
+                try {
+
+                    const startIndex =
+                        dataMatch.index +
+                        dataMatch[0].indexOf(
+                            "{"
+                        );
+
+                    let braceCount =
+                        0;
+
+                    let jsonEnd =
+                        -1;
+
+                    for (
+                        let i =
+                            startIndex;
+                        i <
+                            episodeHtml.length &&
+                        i <
+                            startIndex +
+                            100000;
+                        i++
+                    ) {
+
+                        if (
+                            episodeHtml[i] ===
+                            "{"
+                        ) {
+
+                            braceCount++;
+
+                        } else if (
+                            episodeHtml[i] ===
+                            "}"
+                        ) {
+
+                            braceCount--;
+
+                            if (
+                                braceCount ===
+                                0
+                            ) {
+
+                                jsonEnd =
+                                    i + 1;
+
+                                break;
+
+                            }
+
+                        }
+
+                    }
+
+                    if (
+                        jsonEnd >
+                        0
+                    ) {
+
+                        oxData =
+                            JSON.parse(
+                                episodeHtml.substring(
+                                    startIndex,
+                                    jsonEnd
+                                )
+                            );
+
+                        console.log(
+                            "[PHIMHDCS] _0xData FOUND"
+                        );
+
+                    }
+
+                } catch (
+                    dataError
+                ) {
+
+                    console.log(
+                        "[PHIMHDCS] _0xData ERROR:",
+                        dataError?.message ||
+                        dataError
+                    );
+
+                }
+
+            }
+
+        }
+
+        // ====================================================
+        // 13. GIẢI MÃ SERVER URL
+        // ====================================================
+
+        if (
+            oxData
+        ) {
+
+            function decodeKey(
+                key
+            ) {
+
+                if (
+                    !key ||
+                    !oxData[key] ||
+                    !Array.isArray(
+                        oxData[key]
+                    )
+                ) {
+
+                    return null;
+
+                }
+
+                let decoded =
+                    decodeChunksWithSalt(
+                        oxData[key],
+                        saltString
+                    );
+
+                if (
+                    decoded &&
+                    decoded.includes(
+                        "player.php?"
+                    )
+                ) {
+
+                    const match =
+                        decoded.match(
+                            /[?&](?:link|url)=([^&]+)/
+                        );
+
+                    if (
+                        match
+                    ) {
+
+                        try {
+
+                            decoded =
+                                decodeURIComponent(
+                                    match[1]
+                                );
+
+                        } catch (
+                            decodeUrlError
+                        ) {}
+
+                    }
+
+                }
+
+                return decoded;
+
+            }
+
+            let directServerUrl =
+                null;
+
+            let streamXemPhimHdUrl =
+                null;
+
+            let fallbackServerUrl =
+                null;
+
+            for (
+                const serverKey
+                of Object.keys(
+                    oxData
+                )
+            ) {
+
+                const decoded =
+                    decodeKey(
+                        serverKey
+                    );
+
+                if (
+                    !decoded ||
+                    !decoded.startsWith(
+                        "http"
+                    )
+                ) {
+
+                    continue;
+
+                }
+
+                console.log(
+                    "[PHIMHDCS] SERVER:",
+                    decoded
+                );
+
+                const isDirect =
+                    decoded.includes(
+                        ".m3u8"
+                    ) ||
+                    decoded.includes(
+                        ".mp4"
+                    );
+
+                if (
+                    isDirect &&
+                    !directServerUrl
+                ) {
+
+                    directServerUrl =
+                        decoded;
+
+                } else if (
+                    decoded.includes(
+                        "streamxemphimhd.site"
+                    ) &&
+                    !streamXemPhimHdUrl
+                ) {
+
+                    streamXemPhimHdUrl =
+                        decoded;
+
+                } else if (
+                    !fallbackServerUrl &&
+                    !decoded.includes(
+                        "tiktok"
+                    )
+                ) {
+
+                    fallbackServerUrl =
+                        decoded;
+
+                }
+
+            }
+
+            // ------------------------------------------------
+            // ƯU TIÊN:
+            // 1. DIRECT M3U8 / MP4
+            // 2. STREAMXEMPHIMHD EMBED
+            // 3. SERVER EMBED KHÁC
+            // ------------------------------------------------
+
+            if (
+                directServerUrl
+            ) {
+
+                streams.push({
+
+                    name:
+                        "📺 [PhimHDCS] Direct",
+
+                    title:
+                        streamType ===
+                        "series"
+                            ? "Tập " +
+                              String(
+                                  targetEpisode
+                              ).padStart(
+                                  2,
+                                  "0"
+                              ) +
+                              " - PhimHDCS"
+                            : "PhimHDCS",
+
+                    url:
+                        directServerUrl
+
+                });
+
+            } else if (
+                streamXemPhimHdUrl
+            ) {
+
+                streams.push({
+
+                    name:
+                        "▶️ [PhimHDCS] Stream",
+
+                    title:
+                        streamType ===
+                        "series"
+                            ? "Tập " +
+                              String(
+                                  targetEpisode
+                              ).padStart(
+                                  2,
+                                  "0"
+                              ) +
+                              " - PhimHDCS"
+                            : "PhimHDCS",
+
+                    externalUrl:
+                        streamXemPhimHdUrl
+
+                });
+
+            } else if (
+                fallbackServerUrl
+            ) {
+
+                streams.push({
+
+                    name:
+                        "▶️ [PhimHDCS] Player",
+
+                    title:
+                        streamType ===
+                        "series"
+                            ? "Tập " +
+                              String(
+                                  targetEpisode
+                              ).padStart(
+                                  2,
+                                  "0"
+                              ) +
+                              " - PhimHDCS"
+                            : "PhimHDCS",
+
+                    externalUrl:
+                        fallbackServerUrl
+
+                });
+
+            }
+
+        }
+
+        // ====================================================
+        // 14. IFRAME TĨNH
+        // ====================================================
+
+        if (
+            streams.length === 0
+        ) {
+
+            const iframeMatch =
+                episodeHtml.match(
+                    /<iframe[^>]*src=["']([^"']+)["']/i
+                );
+
+            if (
+                iframeMatch?.[1]
+            ) {
+
+                let embedUrl =
+                    makeAbsoluteUrl(
+                        iframeMatch[1]
+                    );
+
+                if (
+                    embedUrl.includes(
+                        "player.php?"
+                    )
+                ) {
+
+                    const linkMatch =
+                        embedUrl.match(
+                            /[?&](?:link|url)=([^&]+)/
+                        );
+
+                    if (
+                        linkMatch
+                    ) {
+
+                        try {
+
+                            embedUrl =
+                                decodeURIComponent(
+                                    linkMatch[1]
+                                );
+
+                        } catch (
+                            iframeDecodeError
+                        ) {}
+
+                    }
+
+                }
+
+                if (
+                    embedUrl &&
+                    embedUrl !==
+                    episodeUrl
+                ) {
+
+                    streams.push({
+
+                        name:
+                            "▶️ [PhimHDCS] Player",
+
+                        title:
+                            streamType ===
+                            "series"
+                                ? "Tập " +
+                                  String(
+                                      targetEpisode
+                                  ).padStart(
+                                      2,
+                                      "0"
+                                  ) +
+                                  " - PhimHDCS"
+                                : "PhimHDCS",
+
+                        externalUrl:
+                            embedUrl
+
+                    });
+
+                }
+
+            }
+
+        }
+
+        // ====================================================
+        // 15. KHÔNG CÓ NGUỒN → TỰ FALLBACK
+        // ====================================================
+
+        if (
+            streams.length === 0
+        ) {
+
+            console.log(
+                "[PHIMHDCS] NO STREAM"
+            );
+
+            addFallback();
+
         }
 
         console.log(
-            "[MOTPHIM] Streams:",
+            "[PHIMHDCS] FINAL STREAMS:",
             streams.length
         );
 
     } catch (e) {
 
         console.log(
-            "[MOTPHIM ERROR]",
+            "[PHIMHDCS ERROR]",
             e?.response?.status ||
             e?.message ||
             e
         );
+
+        // ====================================================
+        // NGUỒN LỖI → TỰ FALLBACK
+        // ====================================================
+
+        addFallback();
+
     }
 
     return streams;
+
+
+    // ========================================================
+    // EPISODE NUMBER HELPER
+    // ========================================================
+
+    function extractEpisodeNumber(
+        value
+    ) {
+
+        const text =
+            String(
+                value ||
+                ""
+            );
+
+        const match =
+            text.match(
+                /(?:tập|tap|episode|ep\.?|phần|part)[\s._-]*(\d+)/i
+            );
+
+        if (
+            match
+        ) {
+
+            return Number(
+                match[1]
+            ) || 0;
+
+        }
+
+        const direct =
+            text.match(
+                /^\s*0*(\d+)\s*$/
+            );
+
+        if (
+            direct
+        ) {
+
+            return Number(
+                direct[1]
+            ) || 0;
+
+        }
+
+        return 0;
+
+    }
+
 }
 
 /* ============================================================
@@ -5378,7 +6916,13 @@ try {
 
             scrapePhimLongTieng(movieName),
 
-            scrapeMotPhimTV(movieName)
+            scrapePhimHDCS(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
+            )
         ]);
 
 } catch (e) {
@@ -5420,7 +6964,7 @@ const longtieng =
         ? results[2].value
         : [];
 
-const motphim =
+const phimhdcs =
     results[3]?.status === "fulfilled" &&
     Array.isArray(
         results[3].value
@@ -5454,8 +6998,8 @@ console.log(
 );
 
 console.log(
-    "[STREAM] MotPhimTV streams:",
-    motphim.length
+    "[STREAM] PhimHDCS streams:",
+    phimhdcs.length
 );
 
 // =====================================================
@@ -5530,106 +7074,90 @@ const directStreams = [
 
     ...longtieng,
 
-    ...motphim,
+    ...phimhdcs,
 
     nguoncClientStream
 ];
 
     // =====================================================
-    // 12. 4 FALLBACK CHUNG
-    //
-    // VSMOV KHÔNG THÊM Ở ĐÂY
-    //
-    // fetchVSMov() đã tự tạo fallback của VSMov
-    // khi không lấy được stream.
-    //
-    // Tổng cộng:
-    //
-    // 1. 1Phim32
-    // 2. NguonC
-    // 3. MotPhimTV
-    // 4. KKPhim2
-    // 5. VSMov
-    // =====================================================
+// 12. FALLBACK CHUNG
+//
+// VSMOV KHÔNG THÊM Ở ĐÂY
+//
+// fetchVSMov() đã tự tạo fallback của VSMov
+// khi không lấy được stream.
+//
+// PHIMHDCS CŨNG KHÔNG THÊM Ở ĐÂY
+//
+// scrapePhimHDCS() đã tự tạo fallback
+// khi không lấy được stream.
+//
+// Tổng cộng fallback chung:
+//
+// 1. 1Phim32
+// 2. NguonC
+// 3. KKPhim2
+// =====================================================
 
-    const externalStreams = [
+const externalStreams = [
 
-        // -------------------------------------------------
-        // FALLBACK 1 — 1PHIM32
-        // -------------------------------------------------
+    // -------------------------------------------------
+    // FALLBACK 1 — 1PHIM32
+    // -------------------------------------------------
 
-        {
-            name:
-                "🌐 [Fallback] 1Phim32",
+    {
+        name:
+            "🌐 [Fallback] 1Phim32",
 
-            title:
-                "Mở trang tìm kiếm 1Phim32 - " +
-                movieName,
+        title:
+            "Mở trang tìm kiếm 1Phim32 - " +
+            movieName,
 
-            externalUrl:
-                "https://www.1phim32.com/search/" +
-                toSlug(movieName) +
-                "/"
-        },
+        externalUrl:
+            "https://www.1phim32.com/search/" +
+            toSlug(movieName) +
+            "/"
+    },
 
-        // -------------------------------------------------
-        // FALLBACK 2 — NGUONC
-        // -------------------------------------------------
+    // -------------------------------------------------
+    // FALLBACK 2 — NGUONC
+    // -------------------------------------------------
 
-        {
-            name:
-                "🌐 [Fallback] NguonC",
+    {
+        name:
+            "🌐 [Fallback] NguonC",
 
-            title:
-                "Mở trang tìm kiếm NguonC - " +
-                nguonCFallbackName,
+        title:
+            "Mở trang tìm kiếm NguonC - " +
+            nguonCFallbackName,
 
-            externalUrl:
-                "https://nguonc.com/tim-kiem?keyword=" +
-                encodeURIComponent(
-                    nguonCFallbackName
-                )
-        },
+        externalUrl:
+            "https://nguonc.com/tim-kiem?keyword=" +
+            encodeURIComponent(
+                nguonCFallbackName
+            )
+    },
 
-        // -------------------------------------------------
-        // FALLBACK 3 — MOTPHIMTV
-        // -------------------------------------------------
+    // -------------------------------------------------
+    // FALLBACK 3 — KKPHIM2
+    // -------------------------------------------------
 
-        {
-            name:
-                "🌐 [Fallback] MotPhimTV",
+    {
+        name:
+            "🌐 [Fallback] KKPhim2",
 
-            title:
-                "Mở trang tìm kiếm MotPhimTV - " +
-                movieName,
+        title:
+            "Mở trang tìm kiếm KKPhim2 - " +
+            movieName,
 
-            externalUrl:
-                "https://motphimtv.run/?search=" +
-                encodeURIComponent(
-                    movieName
-                )
-        },
+        externalUrl:
+            "https://www.kkphim2.com/tim-kiem?keyword=" +
+            encodeURIComponent(
+                movieName
+            )
+    }
 
-        // -------------------------------------------------
-        // FALLBACK 4 — KKPHIM2
-        // -------------------------------------------------
-
-        {
-            name:
-                "🌐 [Fallback] KKPhim2",
-
-            title:
-                "Mở trang tìm kiếm KKPhim2 - " +
-                movieName,
-
-            externalUrl:
-                "https://www.kkphim2.com/tim-kiem?keyword=" +
-                encodeURIComponent(
-                    movieName
-                )
-        }
-
-    ];
+];
 
     // =====================================================
     // 13. LỌC DIRECT STREAM
