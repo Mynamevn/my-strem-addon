@@ -8688,60 +8688,60 @@ if (
     // =================================================
 
     selectedEntry =
-        ranked.find(function (entry) {
+    ranked.find(function (entry) {
 
-            const item =
-                entry.item || {};
+        const item =
+            entry.item || {};
 
-            const itemYear =
+        const itemYear =
+            Number(
+                item?.year ||
+                item?.release_year ||
+                item?.releaseYear ||
+                0
+            );
+
+        // 1. API year
+        if (itemYear === MOVIE_YEAR) {
+            return true;
+        }
+
+        // 2. Year nằm ở cuối tên phim
+        const rawName =
+            String(
+                item?.name ||
+                ""
+            ).trim();
+
+        const yearMatch =
+            rawName.match(
+                /\((19|20)\d{2}\)\s*$/
+            );
+
+        if (yearMatch) {
+
+            const nameYear =
                 Number(
-                    item?.year ||
-                    item?.release_year ||
-                    item?.releaseYear ||
-                    0
+                    yearMatch[0].slice(
+                        1,
+                        -1
+                    )
                 );
 
-            // 1. API year
-            if (itemYear === MOVIE_YEAR) {
-                return true;
-            }
+            console.log(
+                "[NGUONC CLIENT] MATCH NAME YEAR:",
+                rawName,
+                "=>",
+                nameYear
+            );
 
-            // 2. Year nằm ở cuối tên phim
-            const rawName =
-                String(
-                    item?.name ||
-                    ""
-                ).trim();
+            return (
+                nameYear === MOVIE_YEAR
+            );
+        }
 
-            const yearMatch =
-                rawName.match(
-                    /\((19|20)\d{2}\)\s*$/
-                );
-
-            if (yearMatch) {
-
-                const nameYear =
-                    Number(
-                        yearMatch[0].slice(
-                            1,
-                            -1
-                        )
-                    );
-
-                console.log(
-                    "[NGUONC CLIENT] MATCH NAME YEAR:",
-                    rawName,
-                    "=>",
-                    nameYear
-                );
-
-                return (
-                    nameYear === MOVIE_YEAR
-                );
-            }
-
-            return false;
-        });
+        return false;
+    });
 
 
 // =================================================
