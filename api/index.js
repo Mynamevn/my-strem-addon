@@ -5242,9 +5242,28 @@ for (
 // 13. GIẢI MÃ SERVER URL
 // ====================================================
 
-if (
-    oxData
+for (
+    const data
+    of episodeData
 ) {
+
+    const oxData =
+        data?.oxData;
+
+    if (
+        !oxData ||
+        typeof oxData !==
+        "object"
+    ) {
+
+        console.log(
+            "[PHIMHDCS] NO oxData:",
+            data?.server
+        );
+
+        continue;
+
+    }
 
     function decodeKey(
         key
@@ -5386,34 +5405,32 @@ if (
 
         console.log(
             "[PHIMHDCS] DECODED SERVER:",
-            cleanUrl,
-            "TYPE:",
-            isDirect
-                ? "DIRECT"
-                : "EMBED"
+            {
+                server:
+                    data?.server,
+
+                url:
+                    cleanUrl,
+
+                type:
+                    isDirect
+                        ? "DIRECT"
+                        : "EMBED"
+            }
         );
 
     }
 
     console.log(
         "[PHIMHDCS] DECODED SERVERS:",
-        decodedServers.length
-    );
+        {
+            server:
+                data?.server,
 
-    /*
-     * KHÔNG HEALTH-CHECK SERVER Ở ĐÂY.
-     *
-     * Lý do:
-     * - HEAD có thể trả 404 dù GET/player vẫn hoạt động.
-     * - Vercel không phải môi trường playback của Stremio.
-     * - Embed có thể bị 403 từ Vercel nhưng vẫn chạy trong browser/Stremio.
-     * - Direct HLS cũng có thể có hành vi khác nhau giữa HEAD và GET.
-     *
-     * Vì vậy:
-     *   giải mã được URL hợp lệ
-     *       =>
-     *   trả URL đó cho Stremio.
-     */
+            count:
+                decodedServers.length
+        }
+    );
 
     for (
         let index = 0;
@@ -5425,7 +5442,13 @@ if (
             decodedServers[index];
 
         const serverNumber =
-            index + 1;
+            streams.length + 1;
+
+        const languageName =
+            String(
+                data?.server ||
+                "PhimHDCS"
+            ).trim();
 
         if (
             server.isDirect
@@ -5433,21 +5456,34 @@ if (
 
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
-                "Server " +
-                serverNumber,
-                "DIRECT",
-                server.url
+                {
+                    language:
+                        languageName,
+
+                    number:
+                        serverNumber,
+
+                    type:
+                        "DIRECT",
+
+                    url:
+                        server.url
+                }
             );
 
             streams.push({
 
                 name:
-                    "📺 [PhimHDCS] Server " +
+                    "📺 [PhimHDCS] " +
+                    languageName +
+                    " - Server " +
                     serverNumber,
 
                 title:
                     movieName +
-                    " - PhimHDCS Server " +
+                    " - " +
+                    languageName +
+                    " - Server " +
                     serverNumber,
 
                 url:
@@ -5467,21 +5503,34 @@ if (
 
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
-                "Server " +
-                serverNumber,
-                "EMBED",
-                server.url
+                {
+                    language:
+                        languageName,
+
+                    number:
+                        serverNumber,
+
+                    type:
+                        "EMBED",
+
+                    url:
+                        server.url
+                }
             );
 
             streams.push({
 
                 name:
-                    "▶️ [PhimHDCS] Server " +
+                    "▶️ [PhimHDCS] " +
+                    languageName +
+                    " - Server " +
                     serverNumber,
 
                 title:
                     movieName +
-                    " - PhimHDCS Server " +
+                    " - " +
+                    languageName +
+                    " - Server " +
                     serverNumber,
 
                 externalUrl:
