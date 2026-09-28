@@ -8298,7 +8298,7 @@ function playM3U8(
 
 
 // =====================================================
-// SEARCH NGUONC
+// SEARCH
 // =====================================================
 
 async function searchNguonC() {
@@ -8318,20 +8318,41 @@ async function searchNguonC() {
         }
     }
 
-    // Từ khóa gốc
+    // =================================================
+    // TỪ KHÓA GỐC
+    // =================================================
+
     addKeyword(MOVIE_TITLE);
 
-    // Các biến thể dành cho Journey to the West
-    const normalized =
-        normalizeTitle(MOVIE_TITLE);
+    // =================================================
+    // BIẾN THỂ CHO JOURNEY TO THE WEST
+    // Không dùng normalizeTitle() ở đây.
+    // =================================================
+
+    const rawTitle =
+        String(
+            MOVIE_TITLE || ""
+        )
+            .trim()
+            .toLowerCase();
 
     if (
-        normalized === "journey to the west" ||
-        normalized.includes("journey to the west")
+        rawTitle.includes(
+            "journey to the west"
+        )
     ) {
-        addKeyword("Tây Du Ký");
-        addKeyword("Tây Du Ký Phần 1");
-        addKeyword("Tây Du Ký 1996");
+
+        addKeyword(
+            "Tây Du Ký"
+        );
+
+        addKeyword(
+            "Tây Du Ký Phần 1"
+        );
+
+        addKeyword(
+            "Tây Du Ký 1996"
+        );
     }
 
     console.log(
@@ -8341,12 +8362,20 @@ async function searchNguonC() {
 
     let allItems = [];
 
-    for (const keyword of keywords) {
+    // =================================================
+    // CHẠY TỪNG TỪ KHÓA
+    // =================================================
+
+    for (
+        const keyword of keywords
+    ) {
 
         const searchUrl =
             API_BASE +
             "/films/search?keyword=" +
-            encodeURIComponent(keyword) +
+            encodeURIComponent(
+                keyword
+            ) +
             "&page=1";
 
         console.log(
@@ -8360,18 +8389,21 @@ async function searchNguonC() {
                 {
                     method: "GET",
                     headers: {
-                        "Accept": "application/json"
+                        "Accept":
+                            "application/json"
                     },
                     cache: "no-store"
                 }
             );
 
         if (!response.ok) {
+
             console.warn(
                 "[NGUONC CLIENT] SEARCH FAILED:",
                 keyword,
                 response.status
             );
+
             continue;
         }
 
@@ -8385,22 +8417,25 @@ async function searchNguonC() {
                 data?.items
             )
         ) {
-            items = data.items;
-        }
 
-        else if (
+            items =
+                data.items;
+
+        } else if (
             Array.isArray(
                 data?.data
             )
         ) {
-            items = data.data;
-        }
 
-        else if (
+            items =
+                data.data;
+
+        } else if (
             Array.isArray(
                 data?.data?.items
             )
         ) {
+
             items =
                 data.data.items;
         }
@@ -8417,14 +8452,19 @@ async function searchNguonC() {
             );
     }
 
-    // Loại bỏ phim trùng slug
+    // =================================================
+    // LOẠI BỎ KẾT QUẢ TRÙNG
+    // =================================================
+
     const unique =
         [];
 
     const seen =
         new Set();
 
-    for (const item of allItems) {
+    for (
+        const item of allItems
+    ) {
 
         const slug =
             String(
@@ -8434,7 +8474,9 @@ async function searchNguonC() {
 
         const key =
             slug ||
-            JSON.stringify(item);
+            JSON.stringify(
+                item
+            );
 
         if (
             seen.has(key)
@@ -8444,7 +8486,9 @@ async function searchNguonC() {
 
         seen.add(key);
 
-        unique.push(item);
+        unique.push(
+            item
+        );
     }
 
     console.log(
@@ -8454,6 +8498,7 @@ async function searchNguonC() {
 
     return unique;
 }
+
 
 // =====================================================
 // LOAD DETAIL
