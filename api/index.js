@@ -5242,29 +5242,9 @@ for (
 // 13. GIẢI MÃ SERVER URL
 // ====================================================
 
-for (
-    const data
-    of episodeData
+if (
+    oxData
 ) {
-
-    const oxData =
-        data.oxData;
-
-    const saltString =
-        data.salt;
-
-    if (
-        !oxData
-    ) {
-
-        console.log(
-            "[PHIMHDCS] NO OXDATA:",
-            data.server
-        );
-
-        continue;
-
-    }
 
     function decodeKey(
         key
@@ -5320,84 +5300,6 @@ for (
         }
 
         return decoded;
-
-    }
-
-    async function checkDirectServerAlive(
-        url
-    ) {
-
-        try {
-
-            const response =
-                await axios.head(
-                    url,
-                    {
-                        timeout: 8000,
-
-                        maxRedirects:
-                            5,
-
-                        validateStatus:
-                            function () {
-                                return true;
-                            }
-                    }
-                );
-
-            const status =
-                Number(
-                    response?.status ||
-                    0
-                );
-
-            console.log(
-                "[PHIMHDCS] DIRECT CHECK:",
-                {
-                    server:
-                        data.server,
-
-                    url:
-                        url,
-
-                    status:
-                        status
-                }
-            );
-
-            if (
-                status === 404 ||
-                status === 410
-            ) {
-
-                return false;
-
-            }
-
-            return true;
-
-        } catch (
-            directCheckError
-        ) {
-
-            console.warn(
-                "[PHIMHDCS] DIRECT CHECK ERROR - KEEP:",
-                {
-                    server:
-                        data.server,
-
-                    url:
-                        url,
-
-                    error:
-                        directCheckError?.message ||
-                        directCheckError
-                }
-            );
-
-            return true;
-
-        }
 
     }
 
@@ -5484,146 +5386,46 @@ for (
 
         console.log(
             "[PHIMHDCS] DECODED SERVER:",
-            {
-                server:
-                    data.server,
-
-                url:
-                    cleanUrl,
-
-                type:
-                    isDirect
-                        ? "DIRECT"
-                        : "EMBED"
-            }
+            cleanUrl,
+            "TYPE:",
+            isDirect
+                ? "DIRECT"
+                : "EMBED"
         );
 
     }
 
     console.log(
         "[PHIMHDCS] DECODED SERVERS:",
-        {
-            server:
-                data.server,
-
-            count:
-                decodedServers.length
-        }
+        decodedServers.length
     );
 
-    const activeServers = [];
+    /*
+     * KHÔNG HEALTH-CHECK SERVER Ở ĐÂY.
+     *
+     * Lý do:
+     * - HEAD có thể trả 404 dù GET/player vẫn hoạt động.
+     * - Vercel không phải môi trường playback của Stremio.
+     * - Embed có thể bị 403 từ Vercel nhưng vẫn chạy trong browser/Stremio.
+     * - Direct HLS cũng có thể có hành vi khác nhau giữa HEAD và GET.
+     *
+     * Vì vậy:
+     *   giải mã được URL hợp lệ
+     *       =>
+     *   trả URL đó cho Stremio.
+     */
 
     for (
-        const server
-        of decodedServers
-    ) {
-
-        // --------------------------------------------
-        // EMBED
-        // --------------------------------------------
-
-        if (
-            !server.isDirect
-        ) {
-
-            activeServers.push(
-                server
-            );
-
-            console.log(
-                "[PHIMHDCS] KEEP EMBED:",
-                {
-                    server:
-                        data.server,
-
-                    url:
-                        server.url
-                }
-            );
-
-            continue;
-
-        }
-
-        // --------------------------------------------
-        // DIRECT
-        // --------------------------------------------
-
-        const alive =
-            await checkDirectServerAlive(
-                server.url
-            );
-
-        if (
-            alive
-        ) {
-
-            activeServers.push(
-                server
-            );
-
-            console.log(
-                "[PHIMHDCS] KEEP DIRECT:",
-                {
-                    server:
-                        data.server,
-
-                    url:
-                        server.url
-                }
-            );
-
-        } else {
-
-            console.log(
-                "[PHIMHDCS] SERVER DEAD:",
-                {
-                    server:
-                        data.server,
-
-                    url:
-                        server.url
-                }
-            );
-
-        }
-
-    }
-
-    console.log(
-        "[PHIMHDCS] KEEP SERVERS:",
-        {
-            server:
-                data.server,
-
-            count:
-                activeServers.length
-        }
-    );
-
-    // --------------------------------------------
-    // ADD TẤT CẢ SERVER CỦA SERVER GROUP NÀY
-    // --------------------------------------------
-
-    for (
-        let index =
-            0;
-
-        index <
-            activeServers.length;
-
+        let index = 0;
+        index < decodedServers.length;
         index++
     ) {
 
         const server =
-            activeServers[index];
+            decodedServers[index];
 
         const serverNumber =
             index + 1;
-
-        const displayName =
-            data.server ||
-            "Server";
 
         if (
             server.isDirect
@@ -5631,34 +5433,21 @@ for (
 
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
-                {
-                    group:
-                        displayName,
-
-                    number:
-                        serverNumber,
-
-                    type:
-                        "DIRECT",
-
-                    url:
-                        server.url
-                }
+                "Server " +
+                serverNumber,
+                "DIRECT",
+                server.url
             );
 
             streams.push({
 
                 name:
-                    "📺 [PhimHDCS] " +
-                    displayName +
-                    " #" +
+                    "📺 [PhimHDCS] Server " +
                     serverNumber,
 
                 title:
                     movieName +
-                    " - PhimHDCS - " +
-                    displayName +
-                    " #" +
+                    " - PhimHDCS Server " +
                     serverNumber,
 
                 url:
@@ -5668,8 +5457,6 @@ for (
 
                     bingeGroup:
                         "phimhdcs-" +
-                        displayName +
-                        "-" +
                         serverNumber
 
                 }
@@ -5680,34 +5467,21 @@ for (
 
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
-                {
-                    group:
-                        displayName,
-
-                    number:
-                        serverNumber,
-
-                    type:
-                        "EMBED",
-
-                    url:
-                        server.url
-                }
+                "Server " +
+                serverNumber,
+                "EMBED",
+                server.url
             );
 
             streams.push({
 
                 name:
-                    "▶️ [PhimHDCS] " +
-                    displayName +
-                    " #" +
+                    "▶️ [PhimHDCS] Server " +
                     serverNumber,
 
                 title:
                     movieName +
-                    " - PhimHDCS - " +
-                    displayName +
-                    " #" +
+                    " - PhimHDCS Server " +
                     serverNumber,
 
                 externalUrl:
@@ -5717,8 +5491,6 @@ for (
 
                     bingeGroup:
                         "phimhdcs-" +
-                        displayName +
-                        "-" +
                         serverNumber
 
                 }
