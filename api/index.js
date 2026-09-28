@@ -5009,238 +5009,589 @@ console.log(
         }
 
         // ====================================================
-        // 13. GIẢI MÃ SERVER URL
-        // ====================================================
+// 13. GIẢI MÃ + KIỂM TRA TẤT CẢ SERVER
+// ====================================================
+
+if (
+    oxData
+) {
+
+    function decodeKey(
+        key
+    ) {
 
         if (
-            oxData
+            !key ||
+            !oxData[key] ||
+            !Array.isArray(
+                oxData[key]
+            )
         ) {
 
-            function decodeKey(
-                key
-            ) {
+            return null;
 
-                if (
-                    !key ||
-                    !oxData[key] ||
-                    !Array.isArray(
-                        oxData[key]
-                    )
-                ) {
+        }
 
-                    return null;
+        let decoded =
+            decodeChunksWithSalt(
+                oxData[key],
+                saltString
+            );
 
-                }
+        if (
+            decoded &&
+            decoded.includes(
+                "player.php?"
+            )
+        ) {
 
-                let decoded =
-                    decodeChunksWithSalt(
-                        oxData[key],
-                        saltString
-                    );
-
-                if (
-                    decoded &&
-                    decoded.includes(
-                        "player.php?"
-                    )
-                ) {
-
-                    const match =
-                        decoded.match(
-                            /[?&](?:link|url)=([^&]+)/
-                        );
-
-                    if (
-                        match
-                    ) {
-
-                        try {
-
-                            decoded =
-                                decodeURIComponent(
-                                    match[1]
-                                );
-
-                        } catch (
-                            decodeUrlError
-                        ) {}
-
-                    }
-
-                }
-
-                return decoded;
-
-            }
-
-            let directServerUrl =
-                null;
-
-            let streamXemPhimHdUrl =
-                null;
-
-            let fallbackServerUrl =
-                null;
-
-            for (
-                const serverKey
-                of Object.keys(
-                    oxData
-                )
-            ) {
-
-                const decoded =
-                    decodeKey(
-                        serverKey
-                    );
-
-                if (
-                    !decoded ||
-                    !decoded.startsWith(
-                        "http"
-                    )
-                ) {
-
-                    continue;
-
-                }
-
-                console.log(
-                    "[PHIMHDCS] SERVER:",
-                    decoded
+            const match =
+                decoded.match(
+                    /[?&](?:link|url)=([^&]+)/
                 );
 
-                const isDirect =
-                    decoded.includes(
-                        ".m3u8"
-                    ) ||
-                    decoded.includes(
-                        ".mp4"
-                    );
-
-                if (
-                    isDirect &&
-                    !directServerUrl
-                ) {
-
-                    directServerUrl =
-                        decoded;
-
-                } else if (
-                    decoded.includes(
-                        "streamxemphimhd.site"
-                    ) &&
-                    !streamXemPhimHdUrl
-                ) {
-
-                    streamXemPhimHdUrl =
-                        decoded;
-
-                } else if (
-                    !fallbackServerUrl &&
-                    !decoded.includes(
-                        "tiktok"
-                    )
-                ) {
-
-                    fallbackServerUrl =
-                        decoded;
-
-                }
-
-            }
-
-            // ------------------------------------------------
-            // ƯU TIÊN:
-            // 1. DIRECT M3U8 / MP4
-            // 2. STREAMXEMPHIMHD EMBED
-            // 3. SERVER EMBED KHÁC
-            // ------------------------------------------------
-
             if (
-                directServerUrl
+                match
             ) {
 
-                streams.push({
+                try {
 
-                    name:
-                        "📺 [PhimHDCS] Direct",
+                    decoded =
+                        decodeURIComponent(
+                            match[1]
+                        );
 
-                    title:
-                        streamType ===
-                        "series"
-                            ? "Tập " +
-                              String(
-                                  targetEpisode
-                              ).padStart(
-                                  2,
-                                  "0"
-                              ) +
-                              " - PhimHDCS"
-                            : "PhimHDCS",
-
-                    url:
-                        directServerUrl
-
-                });
-
-            } else if (
-                streamXemPhimHdUrl
-            ) {
-
-                streams.push({
-
-                    name:
-                        "▶️ [PhimHDCS] Stream",
-
-                    title:
-                        streamType ===
-                        "series"
-                            ? "Tập " +
-                              String(
-                                  targetEpisode
-                              ).padStart(
-                                  2,
-                                  "0"
-                              ) +
-                              " - PhimHDCS"
-                            : "PhimHDCS",
-
-                    externalUrl:
-                        streamXemPhimHdUrl
-
-                });
-
-            } else if (
-                fallbackServerUrl
-            ) {
-
-                streams.push({
-
-                    name:
-                        "▶️ [PhimHDCS] Player",
-
-                    title:
-                        streamType ===
-                        "series"
-                            ? "Tập " +
-                              String(
-                                  targetEpisode
-                              ).padStart(
-                                  2,
-                                  "0"
-                              ) +
-                              " - PhimHDCS"
-                            : "PhimHDCS",
-
-                    externalUrl:
-                        fallbackServerUrl
-
-                });
+                } catch (
+                    decodeUrlError
+                ) {}
 
             }
 
         }
+
+        return decoded;
+
+    }
+
+    // ------------------------------------------------
+    // KIỂM TRA SERVER
+    // ------------------------------------------------
+
+    async function checkServerAlive(
+        url
+    ) {
+
+        const targetUrl =
+            String(
+                url ||
+                ""
+            ).trim();
+
+        if (
+            !targetUrl ||
+            !targetUrl.startsWith(
+                "http"
+            )
+        ) {
+
+            return false;
+
+        }
+
+        const isMedia =
+            /\.m3u8(?:[?#]|$)/i.test(
+                targetUrl
+            ) ||
+            /\.mp4(?:[?#]|$)/i.test(
+                targetUrl
+            );
+
+        try {
+
+            // --------------------------------------------
+            // MEDIA:
+            // kiểm tra HEAD trước
+            // --------------------------------------------
+
+            if (
+                isMedia
+            ) {
+
+                try {
+
+                    const headResponse =
+                        await axios.head(
+                            targetUrl,
+                            {
+                                timeout:
+                                    7000,
+
+                                maxRedirects:
+                                    5,
+
+                                validateStatus:
+                                    function (
+                                        status
+                                    ) {
+
+                                        return (
+                                            status >=
+                                            200 &&
+                                            status <
+                                            400
+                                        );
+
+                                    }
+                            }
+                        );
+
+                    if (
+                        headResponse?.status >=
+                            200 &&
+                        headResponse?.status <
+                            400
+                    ) {
+
+                        console.log(
+                            "[PHIMHDCS] SERVER ALIVE:",
+                            targetUrl
+                        );
+
+                        return true;
+
+                    }
+
+                } catch (
+                    headError
+                ) {
+
+                    console.log(
+                        "[PHIMHDCS] HEAD FAILED:",
+                        targetUrl,
+                        headError?.response?.status ||
+                        headError?.message ||
+                        headError
+                    );
+
+                }
+
+                // ----------------------------------------
+                // Một số CDN không hỗ trợ HEAD.
+                // Thử GET với Range nhỏ.
+                // ----------------------------------------
+
+                try {
+
+                    const getResponse =
+                        await axios.get(
+                            targetUrl,
+                            {
+                                timeout:
+                                    7000,
+
+                                maxRedirects:
+                                    5,
+
+                                headers: {
+                                    Range:
+                                        "bytes=0-1023"
+                                },
+
+                                responseType:
+                                    "stream",
+
+                                validateStatus:
+                                    function (
+                                        status
+                                    ) {
+
+                                        return (
+                                            status >=
+                                            200 &&
+                                            status <
+                                            400
+                                        );
+
+                                    }
+                            }
+                        );
+
+                    try {
+
+                        getResponse?.data?.destroy?.();
+
+                    } catch (
+                        destroyError
+                    ) {}
+
+                    if (
+                        getResponse?.status >=
+                            200 &&
+                        getResponse?.status <
+                            400
+                    ) {
+
+                        console.log(
+                            "[PHIMHDCS] SERVER ALIVE:",
+                            targetUrl
+                        );
+
+                        return true;
+
+                    }
+
+                } catch (
+                    getError
+                ) {
+
+                    console.log(
+                        "[PHIMHDCS] MEDIA GET FAILED:",
+                        targetUrl,
+                        getError?.response?.status ||
+                        getError?.message ||
+                        getError
+                    );
+
+                }
+
+                console.log(
+                    "[PHIMHDCS] SERVER DEAD:",
+                    targetUrl
+                );
+
+                return false;
+
+            }
+
+            // --------------------------------------------
+            // EMBED / PLAYER:
+            // chỉ cần xác nhận trang player còn tồn tại
+            // --------------------------------------------
+
+            const response =
+                await axios.get(
+                    targetUrl,
+                    {
+                        timeout:
+                            7000,
+
+                        maxRedirects:
+                            5,
+
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0"
+                        },
+
+                        validateStatus:
+                            function (
+                                status
+                            ) {
+
+                                return (
+                                    status >=
+                                    200 &&
+                                    status <
+                                    400
+                                );
+
+                            }
+                    }
+                );
+
+            if (
+                response?.status >=
+                    200 &&
+                response?.status <
+                    400
+            ) {
+
+                console.log(
+                    "[PHIMHDCS] SERVER ALIVE:",
+                    targetUrl
+                );
+
+                return true;
+
+            }
+
+        } catch (
+            serverError
+        ) {
+
+            console.log(
+                "[PHIMHDCS] SERVER CHECK FAILED:",
+                targetUrl,
+                serverError?.response?.status ||
+                serverError?.message ||
+                serverError
+            );
+
+        }
+
+        console.log(
+            "[PHIMHDCS] SERVER DEAD:",
+            targetUrl
+        );
+
+        return false;
+
+    }
+
+    // ------------------------------------------------
+    // THU THẬP TẤT CẢ SERVER
+    // ------------------------------------------------
+
+    const decodedServers =
+        [];
+
+    const seenServers =
+        new Set();
+
+    for (
+        const serverKey
+        of Object.keys(
+            oxData
+        )
+    ) {
+
+        const decoded =
+            decodeKey(
+                serverKey
+            );
+
+        if (
+            !decoded ||
+            !decoded.startsWith(
+                "http"
+            )
+        ) {
+
+            continue;
+
+        }
+
+        const serverUrl =
+            String(
+                decoded
+            ).trim();
+
+        if (
+            !serverUrl
+        ) {
+
+            continue;
+
+        }
+
+        // --------------------------------------------
+        // LOẠI URL TRÙNG
+        // --------------------------------------------
+
+        const normalizedUrl =
+            serverUrl
+                .replace(
+                    /\/+$/,
+                    ""
+                );
+
+        if (
+            seenServers.has(
+                normalizedUrl
+            )
+        ) {
+
+            continue;
+
+        }
+
+        seenServers.add(
+            normalizedUrl
+        );
+
+        console.log(
+            "[PHIMHDCS] SERVER:",
+            serverUrl
+        );
+
+        decodedServers.push(
+            serverUrl
+        );
+
+    }
+
+    console.log(
+        "[PHIMHDCS] DECODED SERVERS:",
+        decodedServers.length
+    );
+
+    // ------------------------------------------------
+    // KIỂM TRA TẤT CẢ SERVER SONG SONG
+    // ------------------------------------------------
+
+    const serverChecks =
+        await Promise.all(
+            decodedServers.map(
+                async function (
+                    serverUrl
+                ) {
+
+                    const alive =
+                        await checkServerAlive(
+                            serverUrl
+                        );
+
+                    return {
+                        url:
+                            serverUrl,
+                        alive:
+                            alive
+                    };
+
+                }
+            )
+        );
+
+    // ------------------------------------------------
+    // CHỈ GIỮ SERVER CÒN HOẠT ĐỘNG
+    // ------------------------------------------------
+
+    const aliveServers =
+        serverChecks.filter(
+            function (
+                server
+            ) {
+
+                return (
+                    server.alive ===
+                    true
+                );
+
+            }
+        );
+
+    console.log(
+        "[PHIMHDCS] ALIVE SERVERS:",
+        aliveServers.length
+    );
+
+    // ------------------------------------------------
+    // TRẢ VỀ TẤT CẢ SERVER HOẠT ĐỘNG
+    // ------------------------------------------------
+
+    for (
+        let index = 0;
+        index <
+        aliveServers.length;
+        index++
+    ) {
+
+        const server =
+            aliveServers[index];
+
+        const serverUrl =
+            server.url;
+
+        const isDirect =
+            /\.m3u8(?:[?#]|$)/i.test(
+                serverUrl
+            ) ||
+            /\.mp4(?:[?#]|$)/i.test(
+                serverUrl
+            );
+
+        const serverNumber =
+            index + 1;
+
+        console.log(
+            "[PHIMHDCS] ADD SERVER:",
+            {
+                number:
+                    serverNumber,
+                type:
+                    isDirect
+                        ? "direct"
+                        : "embed",
+                url:
+                    serverUrl
+            }
+        );
+
+        if (
+            isDirect
+        ) {
+
+            streams.push({
+
+                name:
+                    "📺 [PhimHDCS] Server " +
+                    String(
+                        serverNumber
+                    ),
+
+                title:
+                    streamType ===
+                    "series"
+                        ? "Tập " +
+                          String(
+                              targetEpisode
+                          ).padStart(
+                              2,
+                              "0"
+                          ) +
+                          " - PhimHDCS Server " +
+                          String(
+                              serverNumber
+                          )
+                        : "PhimHDCS Server " +
+                          String(
+                              serverNumber
+                          ),
+
+                url:
+                    serverUrl
+
+            });
+
+        } else {
+
+            streams.push({
+
+                name:
+                    "▶️ [PhimHDCS] Server " +
+                    String(
+                        serverNumber
+                    ),
+
+                title:
+                    streamType ===
+                    "series"
+                        ? "Tập " +
+                          String(
+                              targetEpisode
+                          ).padStart(
+                              2,
+                              "0"
+                          ) +
+                          " - PhimHDCS Server " +
+                          String(
+                              serverNumber
+                          )
+                        : "PhimHDCS Server " +
+                          String(
+                              serverNumber
+                          ),
+
+                externalUrl:
+                    serverUrl
+
+            });
+
+        }
+
+    }
+
+}
 
         // ====================================================
         // 14. IFRAME TĨNH
