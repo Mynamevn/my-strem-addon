@@ -4095,7 +4095,7 @@ const servers =
 
 
 // ----------------------------------------------------
-// HELPER: LẤY TÊN SERVER TỪ CÁC NODE CHA
+// HELPER: LẤY TÊN SERVER
 // ----------------------------------------------------
 
 function detectServerName(
@@ -4142,15 +4142,15 @@ function detectServerName(
             serverName =
                 serverName
                     .replace(
+                        /^Server\s+/i,
+                        ""
+                    )
+                    .replace(
                         /^x/i,
                         ""
                     )
                     .replace(
                         /^z/i,
-                        ""
-                    )
-                    .replace(
-                        /^Server\s+/i,
                         ""
                     )
                     .replace(
@@ -4168,6 +4168,7 @@ function detectServerName(
 
         node =
             node.parent;
+
     }
 
     return "PhimHDCS";
@@ -4176,13 +4177,19 @@ function detectServerName(
 
 
 // ----------------------------------------------------
-// HELPER: KIỂM TRA LINK TẬP
+// HELPER: CHỈ NHẬN LINK EPISODE THỰC SỰ
 //
-// PhimHDCS hiện tại dùng dạng:
+// PhimHDCS hiện dùng:
 //
-// /bien-nien-su-giang-sinh/tap-full-104812
-// /am-anh-2026/tap-full-803669
-// /tay-du-ky-phan-1-1996/tap-1-647092
+// /phim-slug/tap-1-123456
+// /phim-slug/tap-full-123456
+// /phim-slug/tap-30-123456
+//
+// TUYỆT ĐỐI KHÔNG nhận:
+// /phim-slug-123456
+// /quoc-gia/...
+// /the-loai/...
+// /tu-khoa/...
 // ----------------------------------------------------
 
 function isEpisodeLink(
@@ -4205,11 +4212,35 @@ function isEpisodeLink(
     if (
         !url
     ) {
+
         return false;
+
     }
 
+    // -----------------------------------------------
+    // Đây là điều kiện quan trọng nhất.
+    //
+    // Episode URL của PhimHDCS luôn có:
+    //
+    // /tap-
+    // -----------------------------------------------
+
     if (
-        /\/tap-[^/?#]+/i.test(
+        !/\/tap-[^/?#]+/i.test(
+            url
+        )
+    ) {
+
+        return false;
+
+    }
+
+    // -----------------------------------------------
+    // Chỉ chấp nhận đúng dạng episode.
+    // -----------------------------------------------
+
+    if (
+        /\/tap-(?:full|\d+)(?:[-/?#]|$)/i.test(
             url
         )
     ) {
@@ -4217,6 +4248,11 @@ function isEpisodeLink(
         return true;
 
     }
+
+    // -----------------------------------------------
+    // Một số trường hợp site có thể dùng tên tập
+    // khác nhưng URL vẫn bắt đầu bằng /tap-
+    // -----------------------------------------------
 
     if (
         /(?:tập|tap|episode|ep\.?|part|phần)/i.test(
@@ -4234,7 +4270,7 @@ function isEpisodeLink(
 
 
 // ----------------------------------------------------
-// QUÉT TOÀN BỘ LINK TẬP TRÊN DETAIL PAGE
+// QUÉT TOÀN BỘ LINK EPISODE
 // ----------------------------------------------------
 
 const serverMap =
@@ -4394,7 +4430,7 @@ parseDetail(
 
 
 // ----------------------------------------------------
-// CHUYỂN MAP → SERVERS
+// MAP → SERVERS
 // ----------------------------------------------------
 
 for (
@@ -4413,10 +4449,9 @@ for (
 
     }
 
-    // ------------------------------------------------
-    // Nếu có số tập → sắp xếp tăng dần.
-    // Tập Full giữ nguyên.
-    // ------------------------------------------------
+    // -----------------------------------------------
+    // Có số tập → sắp xếp tăng dần
+    // -----------------------------------------------
 
     const numbered =
         episodes.every(
@@ -4471,190 +4506,8 @@ for (
 
 
 // ----------------------------------------------------
-// FALLBACK PHỤ:
-//
-// Nếu cấu trúc server không được nhận diện,
-// vẫn lấy toàn bộ link /tap-* làm một server.
+// LOG
 // ----------------------------------------------------
-
-if (
-    servers.length === 0
-) {
-
-    const fallbackEpisodes =
-        [];
-
-    parseDetail(
-        "a[href]"
-    ).each(
-        function () {
-
-            const node =
-                parseDetail(
-                    this
-                );
-
-            const href =
-                String(
-                    node.attr(
-                        "href"
-                    ) ||
-                    ""
-                ).trim();
-
-            const title =
-                String(
-                    node.attr(
-                        "title"
-                    ) ||
-                    ""
-                ).trim();
-
-            const text =
-                String(
-                    node.text() ||
-                    ""
-                ).trim();
-
-            const name =
-                title ||
-                text;
-
-            if (
-                !isEpisodeLink(
-                    href,
-                    name
-                )
-            ) {
-
-                return;
-
-            }
-
-            const absoluteUrl =
-                makeAbsoluteUrl(
-                    href
-                );
-
-            if (
-                !absoluteUrl
-            ) {
-
-                return;
-
-            }
-
-            const episodeNumber =
-                extractEpisodeNumber(
-                    name
-                );
-
-            const exists =
-                fallbackEpisodes.some(
-                    function (
-                        episode
-                    ) {
-
-                        return (
-                            episode.url ===
-                            absoluteUrl
-                        );
-
-                    }
-                );
-
-            if (
-                exists
-            ) {
-
-                return;
-
-            }
-
-            fallbackEpisodes.push({
-
-                url:
-                    absoluteUrl,
-
-                name:
-                    name ||
-                    (
-                        episodeNumber
-                            ? "Tập " +
-                              episodeNumber
-                            : "Tập Full"
-                    ),
-
-                number:
-                    episodeNumber
-
-            });
-
-        }
-    );
-
-    if (
-        fallbackEpisodes.length > 0
-    ) {
-
-        const numbered =
-            fallbackEpisodes.every(
-                function (
-                    episode
-                ) {
-
-                    return (
-                        Number(
-                            episode.number
-                        ) > 0
-                    );
-
-                }
-            );
-
-        if (
-            numbered
-        ) {
-
-            fallbackEpisodes.sort(
-                function (
-                    a,
-                    b
-                ) {
-
-                    return (
-                        Number(
-                            a.number
-                        ) -
-                        Number(
-                            b.number
-                        )
-                    );
-
-                }
-            );
-
-        }
-
-        servers.push({
-
-            name:
-                "PhimHDCS",
-
-            episodes:
-                fallbackEpisodes
-
-        });
-
-        console.log(
-            "[PHIMHDCS] EPISODE FALLBACK SERVER:",
-            fallbackEpisodes.length
-        );
-
-    }
-
-}
-
 
 console.log(
     "[PHIMHDCS] SERVERS:",
@@ -4678,6 +4531,7 @@ console.log(
                         ) {
 
                             return {
+
                                 name:
                                     episode.name,
 
@@ -4686,6 +4540,7 @@ console.log(
 
                                 url:
                                     episode.url
+
                             };
 
                         }
