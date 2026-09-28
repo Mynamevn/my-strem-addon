@@ -5282,10 +5282,10 @@ for (
         }
 
         let decoded =
-            decodeChunksWithSalt(
-                oxData[key],
-                saltString
-            );
+    decodeChunksWithSalt(
+        oxData[key],
+        data.salt
+    );
 
         if (
             decoded &&
@@ -5322,6 +5322,23 @@ for (
 
     }
 
+console.log(
+    "[PHIMHDCS] DECODE CONTEXT:",
+    {
+        server:
+            data.server,
+
+        saltFound:
+            Boolean(
+                data.salt
+            ),
+
+        oxDataKeys:
+            Object.keys(
+                oxData
+            ).length
+    }
+);
     const decodedServers = [];
 
     const seenServerUrls =
