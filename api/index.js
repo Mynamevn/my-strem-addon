@@ -5462,13 +5462,30 @@ console.log(
 // NGUONC CLIENT WIDGET
 // =====================================================
 // Không gọi NguonC từ Vercel.
-// Client sẽ mở trang NguonC trong widget/player.
+// Browser sẽ mở NguonC Client và tự tìm đúng phim/năm/tập.
 // =====================================================
 
 const nguoncClientUrl =
-    "https://my-strem-addon.vercel.app/nguonc-player?title=" +
+    "https://my-strem-addon.vercel.app/nguonc-player" +
+    "?title=" +
     encodeURIComponent(
         movieName
+    ) +
+    "&year=" +
+    encodeURIComponent(
+        movieYear || 0
+    ) +
+    "&type=" +
+    encodeURIComponent(
+        streamType || "movie"
+    ) +
+    "&season=" +
+    encodeURIComponent(
+        seasonNumber || 0
+    ) +
+    "&episode=" +
+    encodeURIComponent(
+        episodeNumber || 0
     );
 
 const nguoncClientStream = {
@@ -5478,7 +5495,10 @@ const nguoncClientStream = {
 
     title:
         "NguonC - " +
-        movieName,
+        movieName +
+        " (" +
+        (movieYear || "") +
+        ")",
 
     externalUrl:
         nguoncClientUrl,
@@ -5491,6 +5511,11 @@ const nguoncClientStream = {
     ]
 
 };
+
+console.log(
+    "[NGUONC CLIENT] URL:",
+    nguoncClientUrl
+);
 
 // =====================================================
 // 11. GỘP STREAM TRỰC TIẾP
