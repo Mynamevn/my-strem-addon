@@ -8731,10 +8731,10 @@ selectedEntry =
 
         // Kiểm tra năm nằm trong tên:
         // Tây Du Ký Phần 1 (1996)
-        const yearMatch =
-            rawName.match(
-                /\((19|20)\d{2}\)\s*$/
-            );
+       const yearMatch =
+    rawName.match(
+        /\((19|20)[0-9]{2}\)/
+    );
 
         if (yearMatch) {
 
