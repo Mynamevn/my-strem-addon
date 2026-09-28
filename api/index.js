@@ -5008,8 +5008,8 @@ console.log(
 
         }
 
-        // ====================================================
-// 13. GIẢI MÃ + KIỂM TRA TẤT CẢ SERVER
+// ====================================================
+// 13. GIẢI MÃ SERVER URL
 // ====================================================
 
 if (
@@ -5074,279 +5074,94 @@ if (
     }
 
     // ------------------------------------------------
-    // KIỂM TRA SERVER
+    // Chỉ dùng HTTP check cho DIRECT MEDIA.
+    //
+    // Embed không được check từ server Vercel vì:
+    // - 403 có thể chỉ là anti-bot / WAF
+    // - TLS hostname mismatch có thể chỉ xảy ra
+    //   ở server-side request
+    // - Browser/Stremio có thể vẫn mở được embed
+    //
+    // Vì vậy:
+    // - Embed hợp lệ => GIỮ
+    // - Direct 404/410 => LOẠI
+    // - Direct 403 / 5xx / TLS / network error => GIỮ
     // ------------------------------------------------
 
-    async function checkServerAlive(
+    async function checkDirectServerAlive(
         url
     ) {
 
-        const targetUrl =
-            String(
-                url ||
-                ""
-            ).trim();
-
-        if (
-            !targetUrl ||
-            !targetUrl.startsWith(
-                "http"
-            )
-        ) {
-
-            return false;
-
-        }
-
-        const isMedia =
-            /\.m3u8(?:[?#]|$)/i.test(
-                targetUrl
-            ) ||
-            /\.mp4(?:[?#]|$)/i.test(
-                targetUrl
-            );
-
         try {
 
-            // --------------------------------------------
-            // MEDIA:
-            // kiểm tra HEAD trước
-            // --------------------------------------------
-
-            if (
-                isMedia
-            ) {
-
-                try {
-
-                    const headResponse =
-                        await axios.head(
-                            targetUrl,
-                            {
-                                timeout:
-                                    7000,
-
-                                maxRedirects:
-                                    5,
-
-                                validateStatus:
-                                    function (
-                                        status
-                                    ) {
-
-                                        return (
-                                            status >=
-                                            200 &&
-                                            status <
-                                            400
-                                        );
-
-                                    }
+            const response =
+                await axios.head(
+                    url,
+                    {
+                        timeout: 8000,
+                        maxRedirects: 5,
+                        validateStatus:
+                            function () {
+                                return true;
                             }
-                        );
-
-                    if (
-                        headResponse?.status >=
-                            200 &&
-                        headResponse?.status <
-                            400
-                    ) {
-
-                        console.log(
-                            "[PHIMHDCS] SERVER ALIVE:",
-                            targetUrl
-                        );
-
-                        return true;
-
                     }
-
-                } catch (
-                    headError
-                ) {
-
-                    console.log(
-                        "[PHIMHDCS] HEAD FAILED:",
-                        targetUrl,
-                        headError?.response?.status ||
-                        headError?.message ||
-                        headError
-                    );
-
-                }
-
-                // ----------------------------------------
-                // Một số CDN không hỗ trợ HEAD.
-                // Thử GET với Range nhỏ.
-                // ----------------------------------------
-
-                try {
-
-                    const getResponse =
-                        await axios.get(
-                            targetUrl,
-                            {
-                                timeout:
-                                    7000,
-
-                                maxRedirects:
-                                    5,
-
-                                headers: {
-                                    Range:
-                                        "bytes=0-1023"
-                                },
-
-                                responseType:
-                                    "stream",
-
-                                validateStatus:
-                                    function (
-                                        status
-                                    ) {
-
-                                        return (
-                                            status >=
-                                            200 &&
-                                            status <
-                                            400
-                                        );
-
-                                    }
-                            }
-                        );
-
-                    try {
-
-                        getResponse?.data?.destroy?.();
-
-                    } catch (
-                        destroyError
-                    ) {}
-
-                    if (
-                        getResponse?.status >=
-                            200 &&
-                        getResponse?.status <
-                            400
-                    ) {
-
-                        console.log(
-                            "[PHIMHDCS] SERVER ALIVE:",
-                            targetUrl
-                        );
-
-                        return true;
-
-                    }
-
-                } catch (
-                    getError
-                ) {
-
-                    console.log(
-                        "[PHIMHDCS] MEDIA GET FAILED:",
-                        targetUrl,
-                        getError?.response?.status ||
-                        getError?.message ||
-                        getError
-                    );
-
-                }
-
-                console.log(
-                    "[PHIMHDCS] SERVER DEAD:",
-                    targetUrl
                 );
+
+            const status =
+                Number(
+                    response?.status ||
+                    0
+                );
+
+            console.log(
+                "[PHIMHDCS] DIRECT CHECK:",
+                url,
+                "STATUS:",
+                status
+            );
+
+            // Chỉ xác nhận chết khi server
+            // trả về 404 hoặc 410.
+            if (
+                status === 404 ||
+                status === 410
+            ) {
 
                 return false;
 
             }
 
-            // --------------------------------------------
-            // EMBED / PLAYER:
-            // chỉ cần xác nhận trang player còn tồn tại
-            // --------------------------------------------
-
-            const response =
-                await axios.get(
-                    targetUrl,
-                    {
-                        timeout:
-                            7000,
-
-                        maxRedirects:
-                            5,
-
-                        headers: {
-                            "User-Agent":
-                                "Mozilla/5.0"
-                        },
-
-                        validateStatus:
-                            function (
-                                status
-                            ) {
-
-                                return (
-                                    status >=
-                                    200 &&
-                                    status <
-                                    400
-                                );
-
-                            }
-                    }
-                );
-
-            if (
-                response?.status >=
-                    200 &&
-                response?.status <
-                    400
-            ) {
-
-                console.log(
-                    "[PHIMHDCS] SERVER ALIVE:",
-                    targetUrl
-                );
-
-                return true;
-
-            }
+            // 200 / 3xx / 403 / 429 / 5xx
+            // đều giữ lại vì HEAD không đủ
+            // để kết luận stream chết.
+            return true;
 
         } catch (
-            serverError
+            directCheckError
         ) {
 
-            console.log(
-                "[PHIMHDCS] SERVER CHECK FAILED:",
-                targetUrl,
-                serverError?.response?.status ||
-                serverError?.message ||
-                serverError
+            console.warn(
+                "[PHIMHDCS] DIRECT CHECK ERROR - KEEP:",
+                url,
+                directCheckError?.message ||
+                directCheckError
             );
+
+            // Không thể kiểm tra => vẫn giữ.
+            return true;
 
         }
 
-        console.log(
-            "[PHIMHDCS] SERVER DEAD:",
-            targetUrl
-        );
-
-        return false;
-
     }
 
-    // ------------------------------------------------
-    // THU THẬP TẤT CẢ SERVER
-    // ------------------------------------------------
+    const decodedServers = [];
 
-    const decodedServers =
-        [];
-
-    const seenServers =
+    const seenServerUrls =
         new Set();
+
+    // ------------------------------------------------
+    // GIẢI MÃ TẤT CẢ SERVER
+    // ------------------------------------------------
 
     for (
         const serverKey
@@ -5371,33 +5186,15 @@ if (
 
         }
 
-        const serverUrl =
+        const cleanUrl =
             String(
                 decoded
             ).trim();
 
         if (
-            !serverUrl
-        ) {
-
-            continue;
-
-        }
-
-        // --------------------------------------------
-        // LOẠI URL TRÙNG
-        // --------------------------------------------
-
-        const normalizedUrl =
-            serverUrl
-                .replace(
-                    /\/+$/,
-                    ""
-                );
-
-        if (
-            seenServers.has(
-                normalizedUrl
+            !cleanUrl ||
+            seenServerUrls.has(
+                cleanUrl
             )
         ) {
 
@@ -5405,17 +5202,50 @@ if (
 
         }
 
-        seenServers.add(
-            normalizedUrl
+        // Bỏ các URL rõ ràng không phải
+        // server video cần đưa vào Stremio.
+        if (
+            cleanUrl.includes(
+                "tiktok"
+            )
+        ) {
+
+            console.log(
+                "[PHIMHDCS] SKIP TIKTOK:",
+                cleanUrl
+            );
+
+            continue;
+
+        }
+
+        seenServerUrls.add(
+            cleanUrl
         );
+
+        const isDirect =
+            /\.m3u8(?:[?#]|$)/i.test(
+                cleanUrl
+            ) ||
+            /\.mp4(?:[?#]|$)/i.test(
+                cleanUrl
+            );
+
+        decodedServers.push({
+            url:
+                cleanUrl,
+
+            isDirect:
+                isDirect
+        });
 
         console.log(
-            "[PHIMHDCS] SERVER:",
-            serverUrl
-        );
-
-        decodedServers.push(
-            serverUrl
+            "[PHIMHDCS] DECODED SERVER:",
+            cleanUrl,
+            "TYPE:",
+            isDirect
+                ? "DIRECT"
+                : "EMBED"
         );
 
     }
@@ -5426,164 +5256,164 @@ if (
     );
 
     // ------------------------------------------------
-    // KIỂM TRA TẤT CẢ SERVER SONG SONG
+    // GIỮ / LOẠI SERVER
     // ------------------------------------------------
 
-    const serverChecks =
-        await Promise.all(
-            decodedServers.map(
-                async function (
-                    serverUrl
-                ) {
+    const activeServers = [];
 
-                    const alive =
-                        await checkServerAlive(
-                            serverUrl
-                        );
+    for (
+        const server
+        of decodedServers
+    ) {
 
-                    return {
-                        url:
-                            serverUrl,
-                        alive:
-                            alive
-                    };
+        // --------------------------------------------
+        // EMBED:
+        // Không health-check server-side.
+        // URL hợp lệ thì giữ nguyên.
+        // --------------------------------------------
 
-                }
-            )
-        );
+        if (
+            !server.isDirect
+        ) {
 
-    // ------------------------------------------------
-    // CHỈ GIỮ SERVER CÒN HOẠT ĐỘNG
-    // ------------------------------------------------
-
-    const aliveServers =
-        serverChecks.filter(
-            function (
+            activeServers.push(
                 server
-            ) {
+            );
 
-                return (
-                    server.alive ===
-                    true
-                );
+            console.log(
+                "[PHIMHDCS] KEEP EMBED:",
+                server.url
+            );
 
-            }
-        );
+            continue;
+
+        }
+
+        // --------------------------------------------
+        // DIRECT:
+        // Chỉ loại khi chắc chắn 404 / 410.
+        // --------------------------------------------
+
+        const alive =
+            await checkDirectServerAlive(
+                server.url
+            );
+
+        if (
+            alive
+        ) {
+
+            activeServers.push(
+                server
+            );
+
+            console.log(
+                "[PHIMHDCS] KEEP DIRECT:",
+                server.url
+            );
+
+        } else {
+
+            console.log(
+                "[PHIMHDCS] SERVER DEAD:",
+                server.url
+            );
+
+        }
+
+    }
 
     console.log(
-        "[PHIMHDCS] ALIVE SERVERS:",
-        aliveServers.length
+        "[PHIMHDCS] KEEP SERVERS:",
+        activeServers.length
     );
 
     // ------------------------------------------------
-    // TRẢ VỀ TẤT CẢ SERVER HOẠT ĐỘNG
+    // ADD TẤT CẢ SERVER
+    //
+    // Không còn priority / else-if.
+    // Mỗi server được trả về độc lập.
     // ------------------------------------------------
 
     for (
         let index = 0;
-        index <
-        aliveServers.length;
+        index < activeServers.length;
         index++
     ) {
 
         const server =
-            aliveServers[index];
-
-        const serverUrl =
-            server.url;
-
-        const isDirect =
-            /\.m3u8(?:[?#]|$)/i.test(
-                serverUrl
-            ) ||
-            /\.mp4(?:[?#]|$)/i.test(
-                serverUrl
-            );
+            activeServers[index];
 
         const serverNumber =
             index + 1;
 
-        console.log(
-            "[PHIMHDCS] ADD SERVER:",
-            {
-                number:
-                    serverNumber,
-                type:
-                    isDirect
-                        ? "direct"
-                        : "embed",
-                url:
-                    serverUrl
-            }
-        );
-
         if (
-            isDirect
+            server.isDirect
         ) {
+
+            console.log(
+                "[PHIMHDCS] ADD SERVER:",
+                "Server " +
+                serverNumber,
+                "DIRECT",
+                server.url
+            );
 
             streams.push({
 
                 name:
                     "📺 [PhimHDCS] Server " +
-                    String(
-                        serverNumber
-                    ),
+                    serverNumber,
 
                 title:
-                    streamType ===
-                    "series"
-                        ? "Tập " +
-                          String(
-                              targetEpisode
-                          ).padStart(
-                              2,
-                              "0"
-                          ) +
-                          " - PhimHDCS Server " +
-                          String(
-                              serverNumber
-                          )
-                        : "PhimHDCS Server " +
-                          String(
-                              serverNumber
-                          ),
+                    movieName +
+                    " - PhimHDCS Server " +
+                    serverNumber,
 
                 url:
-                    serverUrl
+                    server.url,
+
+                behaviorHints: {
+
+                    bingeGroup:
+                        "phimhdcs-" +
+                        serverNumber
+
+                }
 
             });
 
         } else {
 
+            console.log(
+                "[PHIMHDCS] ADD SERVER:",
+                "Server " +
+                serverNumber,
+                "EMBED",
+                server.url
+            );
+
             streams.push({
 
                 name:
                     "▶️ [PhimHDCS] Server " +
-                    String(
-                        serverNumber
-                    ),
+                    serverNumber,
 
                 title:
-                    streamType ===
-                    "series"
-                        ? "Tập " +
-                          String(
-                              targetEpisode
-                          ).padStart(
-                              2,
-                              "0"
-                          ) +
-                          " - PhimHDCS Server " +
-                          String(
-                              serverNumber
-                          )
-                        : "PhimHDCS Server " +
-                          String(
-                              serverNumber
-                          ),
+                    movieName +
+                    " - PhimHDCS Server " +
+                    serverNumber,
 
                 externalUrl:
-                    serverUrl
+                    server.url,
+
+                behaviorHints: {
+
+                    bingeGroup:
+                        "phimhdcs-" +
+                        serverNumber
+
+                }
 
             });
 
