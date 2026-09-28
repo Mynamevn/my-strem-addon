@@ -8615,12 +8615,12 @@ async function startNguonC() {
     );
 
     statusEl.textContent =
-        "Đã tìm thấy: " +
-        (
-            selected.name ||
-            MOVIE_TITLE
-        ) +
-        "\nĐang tải video...";
+    "Đã tìm thấy: " +
+    (
+        selected.name ||
+        MOVIE_TITLE
+    ) +
+    " - Đang tải video...";
 
     const detail =
         await loadDetail(
