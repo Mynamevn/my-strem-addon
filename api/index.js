@@ -8712,7 +8712,6 @@ selectedEntry =
             }
         );
 
-        // API có year đúng
         if (
             MOVIE_YEAR > 0 &&
             itemYear === MOVIE_YEAR
@@ -8725,20 +8724,18 @@ selectedEntry =
             return true;
         }
 
-        // Kiểm tra năm nằm trong tên:
-        // Tây Du Ký Phần 1 (1996)
-       const yearMatch =
-    rawName.match(
-        /\((19|20)[0-9]{2}\)/
-    );
+        const yearMatch =
+            rawName.match(
+                /\((19|20)[0-9]{2}\)/
+            );
 
         if (yearMatch) {
 
             const nameYear =
                 Number(
-                    yearMatch[0].slice(
-                        1,
-                        -1
+                    yearMatch[0].replace(
+                        /[^0-9]/g,
+                        ""
                     )
                 );
 
@@ -8785,12 +8782,7 @@ console.log(
 //    THÌ KIỂM TRA DETAIL
 // =================================================
 
-    // =================================================
-    // 2. NẾU SEARCH KHÔNG CÓ YEAR
-    //    THÌ KIỂM TRA DETAIL
-    // =================================================
-
-    if (
+     if (
         !selectedEntry
     ) {
 
