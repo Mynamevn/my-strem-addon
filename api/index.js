@@ -8951,7 +8951,17 @@ else {
         null;
 
 }
+const selected =
+    selectedEntry?.item ||
+    null;
 
+if (!selected?.slug) {
+
+    throw new Error(
+        "Không tìm được slug phim trên NguonC."
+    );
+
+}
     console.log(
         "[NGUONC CLIENT] SELECTED:",
         {
