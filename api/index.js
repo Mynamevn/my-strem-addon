@@ -8688,24 +8688,66 @@ if (
     // =================================================
 
     selectedEntry =
-        ranked.find(
-            function (entry) {
+        ranked.find(function (entry) {
 
-                const year =
-                    Number(
-                        entry.item?.year ||
-                        entry.item?.release_year ||
-                        entry.item?.releaseYear ||
-                        0
-                    );
+            const item =
+                entry.item || {};
 
-                return (
-                    year ===
-                    MOVIE_YEAR
+            const itemYear =
+                Number(
+                    item?.year ||
+                    item?.release_year ||
+                    item?.releaseYear ||
+                    0
                 );
 
+            // 1. API year
+            if (itemYear === MOVIE_YEAR) {
+                return true;
             }
-        );
+
+            // 2. Year nằm ở cuối tên phim
+            const rawName =
+                String(
+                    item?.name ||
+                    ""
+                ).trim();
+
+            const yearMatch =
+                rawName.match(
+                    /\((19|20)\d{2}\)\s*$/
+                );
+
+            if (yearMatch) {
+
+                const nameYear =
+                    Number(
+                        yearMatch[0].slice(
+                            1,
+                            -1
+                        )
+                    );
+
+                console.log(
+                    "[NGUONC CLIENT] MATCH NAME YEAR:",
+                    rawName,
+                    "=>",
+                    nameYear
+                );
+
+                return (
+                    nameYear === MOVIE_YEAR
+                );
+            }
+
+            return false;
+        });
+
+
+// =================================================
+// 2. NẾU SEARCH KHÔNG CÓ YEAR
+//    THÌ KIỂM TRA DETAIL
+// =================================================
 
     // =================================================
     // 2. NẾU SEARCH KHÔNG CÓ YEAR
