@@ -7778,67 +7778,69 @@ function scoreMovie(
     }
 
     // =================================================
-    // YEAR MATCH
+// YEAR MATCH
+// =================================================
+
+if (
+    MOVIE_YEAR > 0
+) {
+
+    if (
+        itemYear === MOVIE_YEAR
+    ) {
+
+        score += 5000;
+
+    } else if (
+        itemYear > 0
+    ) {
+
+        score -= 10000;
+    }
+
+    // =================================================
+    // ĐỌC NĂM TRONG TÊN PHIM
+    //
+    // Tây Du Ký Phần 1 (1996)
+    // Tây Du Ký Phần 2 (1998)
     // =================================================
 
-    if (
-        MOVIE_YEAR > 0
-    ) {
-
-        if (
-            itemYear === MOVIE_YEAR
-        ) {
-
-            score += 5000;
-
-        } else if (
-            itemYear > 0
-        ) {
-
-            score -= 10000;
-        }
-
-        // =================================================
-        // ĐỌC NĂM TRONG TÊN PHIM
-        //
-        // Tây Du Ký Phần 1 (1996)
-        // Tây Du Ký Phần 2 (1998)
-        // =================================================
-
-        const yearMatch =
-    rawName.match(
-        /\((19|20)[0-9]{2}\)/
-    );
-
-if (yearMatch) {
-
-    const nameYear =
-        Number(
-            yearMatch[0].replace(
-                /[^0-9]/g,
-                ""
-            )
+    const yearMatch =
+        rawName.match(
+            /((19|20)[0-9]{2})/
         );
 
-    console.log(
-        "[NGUONC CLIENT] NAME YEAR:",
-        rawName,
-        "=>",
-        nameYear
-    );
+    if (yearMatch) {
 
-    if (
-        nameYear === MOVIE_YEAR
-    ) {
+        const nameYear =
+            Number(
+                yearMatch[0].replace(
+                    /[^0-9]/g,
+                    ""
+                )
+            );
+
         console.log(
-            "[NGUONC CLIENT] MATCH NAME YEAR:",
+            "[NGUONC CLIENT] NAME YEAR:",
             rawName,
             "=>",
             nameYear
         );
 
-        return true;
+        if (
+            nameYear === MOVIE_YEAR
+        ) {
+
+            score += 20000;
+
+        } else {
+
+            score -= 20000;
+        }
     }
+}
+
+return score;
 }
 
 
