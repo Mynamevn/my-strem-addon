@@ -4552,119 +4552,167 @@ console.log(
     )
 );
 
-        // ====================================================
-        // 6. CHỌN EPISODE
-        // ====================================================
+       // ====================================================
+// 6. CHỌN TẤT CẢ EPISODE THEO TỪNG SERVER
+// ====================================================
 
-        let selectedEpisode =
-            null;
+const targetEpisode =
+    Number(
+        episodeNumber
+    ) || 1;
 
-        const targetEpisode =
-            Number(
-                episodeNumber
-            ) || 1;
+const selectedEpisodes = [];
 
-        if (
-            streamType ===
-            "series"
-        ) {
+if (
+    streamType ===
+    "series"
+) {
 
-            for (
-                const server
-                of servers
-            ) {
+    for (
+        const server
+        of servers
+    ) {
 
-                const found =
-                    server.episodes.find(
-                        function (
-                            episode
-                        ) {
-
-                            return (
-                                Number(
-                                    episode.number
-                                ) ===
-                                targetEpisode
-                            );
-
-                        }
-                    );
-
-                if (
-                    found
+        const found =
+            server.episodes.find(
+                function (
+                    episode
                 ) {
 
-                    selectedEpisode = {
-
-                        server:
-                            server.name,
-
-                        episode:
-                            found
-
-                    };
-
-                    break;
+                    return (
+                        Number(
+                            episode.number
+                        ) ===
+                        targetEpisode
+                    );
 
                 }
+            );
 
-            }
+        if (
+            found
+        ) {
+
+            selectedEpisodes.push({
+
+                server:
+                    server.name,
+
+                episode:
+                    found
+
+            });
+
+            console.log(
+                "[PHIMHDCS] SELECTED EPISODE:",
+                {
+                    server:
+                        server.name,
+
+                    name:
+                        found.name,
+
+                    url:
+                        found.url
+                }
+            );
 
         } else {
 
-            if (
-                servers.length > 0 &&
-                servers[0].episodes.length > 0
-            ) {
-
-                selectedEpisode = {
-
-                    server:
-                        servers[0].name,
-
-                    episode:
-                        servers[0].episodes[0]
-
-                };
-
-            }
-
-        }
-
-        if (
-            !selectedEpisode
-        ) {
-
             console.log(
-                "[PHIMHDCS] EPISODE NOT FOUND:",
-                targetEpisode
+                "[PHIMHDCS] EPISODE NOT FOUND ON SERVER:",
+                {
+                    server:
+                        server.name,
+
+                    target:
+                        targetEpisode
+                }
             );
 
-            addFallback();
-
-            return streams;
         }
 
-        console.log(
-            "[PHIMHDCS] SELECTED EPISODE:",
-            {
+    }
+
+} else {
+
+    for (
+        const server
+        of servers
+    ) {
+
+        if (
+            server.episodes.length >
+            0
+        ) {
+
+            const found =
+                server.episodes[0];
+
+            selectedEpisodes.push({
+
                 server:
-                    selectedEpisode.server,
+                    server.name,
 
-                name:
-                    selectedEpisode.episode.name,
+                episode:
+                    found
 
-                url:
-                    selectedEpisode.episode.url
-            }
-        );
+            });
+
+            console.log(
+                "[PHIMHDCS] SELECTED MOVIE SERVER:",
+                {
+                    server:
+                        server.name,
+
+                    name:
+                        found.name,
+
+                    url:
+                        found.url
+                }
+            );
+
+        }
+
+    }
+
+}
+
+if (
+    selectedEpisodes.length === 0
+) {
+
+    console.log(
+        "[PHIMHDCS] EPISODE NOT FOUND:",
+        targetEpisode
+    );
+
+    addFallback();
+
+    return streams;
+}
+
+console.log(
+    "[PHIMHDCS] TOTAL SELECTED EPISODES:",
+    selectedEpisodes.length
+);
 
         // ====================================================
-        // 7. LOAD EPISODE PAGE
-        // ====================================================
+// 7. LOAD TẤT CẢ EPISODE PAGE
+// ====================================================
+
+const episodePages = [];
+
+for (
+    const selected
+    of selectedEpisodes
+) {
+
+    try {
 
         const episodeUrl =
-            selectedEpisode
+            selected
                 .episode
                 .url;
 
@@ -4675,9 +4723,11 @@ console.log(
                     headers: {
                         "User-Agent":
                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+
                         "Referer":
                             selectedMovie.url
                     },
+
                     timeout: 10000
                 }
             );
@@ -4688,89 +4738,226 @@ console.log(
                 ""
             );
 
-        // ====================================================
-        // 8. DIRECT M3U8 / MP4 TRONG HTML
-        // ====================================================
+        episodePages.push({
 
-        const directMatches =
-            episodeHtml.match(
-                /https?:\/\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/gi
-            ) ||
-            [];
+            server:
+                selected.server,
 
-        const directUrls =
-            [
-                ...new Set(
-                    directMatches
-                )
-            ];
+            episode:
+                selected.episode,
+
+            url:
+                episodeUrl,
+
+            html:
+                episodeHtml
+
+        });
 
         console.log(
-            "[PHIMHDCS] DIRECT HTML:",
-            directUrls.length
-        );
+            "[PHIMHDCS] LOADED EPISODE PAGE:",
+            {
+                server:
+                    selected.server,
 
-        for (
-            const videoUrl
-            of directUrls
-        ) {
-
-            streams.push({
-
-                name:
-                    "📺 [PhimHDCS] Direct",
-
-                title:
-                    streamType ===
-                    "series"
-                        ? "Tập " +
-                          String(
-                              targetEpisode
-                          ).padStart(
-                              2,
-                              "0"
-                          ) +
-                          " - PhimHDCS"
-                        : "PhimHDCS",
+                episode:
+                    selected.episode.name,
 
                 url:
-                    videoUrl
+                    episodeUrl
+            }
+        );
 
-            });
+    } catch (
+        episodeLoadError
+    ) {
 
-        }
+        console.warn(
+            "[PHIMHDCS] EPISODE LOAD ERROR:",
+            {
+                server:
+                    selected.server,
 
-        if (
-            streams.length > 0
-        ) {
+                url:
+                    selected?.episode?.url,
 
-            console.log(
-                "[PHIMHDCS] DIRECT STREAM FOUND"
-            );
+                error:
+                    episodeLoadError?.message ||
+                    episodeLoadError
+            }
+        );
 
-            return streams;
-        }
+    }
+
+}
+
+console.log(
+    "[PHIMHDCS] LOADED EPISODE PAGES:",
+    episodePages.length
+);
+
+if (
+    episodePages.length === 0
+) {
+
+    console.log(
+        "[PHIMHDCS] NO EPISODE PAGE LOADED"
+    );
+
+    addFallback();
+
+    return streams;
+}
 
         // ====================================================
-        // 9. ĐỌC _0xS
-        // ====================================================
+// 8. DIRECT M3U8 / MP4 TRONG HTML
+// ====================================================
 
-        let saltString =
-            "";
+for (
+    const page
+    of episodePages
+) {
 
-        const saltMatch =
-            episodeHtml.match(
-                /(?:const|let|var)\s+_0xS\s*=\s*["']([^"']+)["']/
-            );
+    const episodeHtml =
+        page.html;
 
-        if (
-            saltMatch
-        ) {
+    const directMatches =
+        episodeHtml.match(
+            /https?:\/\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/gi
+        ) ||
+        [];
 
-            saltString =
-                saltMatch[1];
+    const directUrls =
+        [
+            ...new Set(
+                directMatches
+            )
+        ];
 
+    console.log(
+        "[PHIMHDCS] DIRECT HTML:",
+        {
+            server:
+                page.server,
+
+            count:
+                directUrls.length
         }
+    );
+
+    for (
+        const videoUrl
+        of directUrls
+    ) {
+
+        streams.push({
+
+            name:
+                "📺 [PhimHDCS] " +
+                page.server +
+                " Direct",
+
+            title:
+                streamType ===
+                "series"
+                    ? "Tập " +
+                      String(
+                          targetEpisode
+                      ).padStart(
+                          2,
+                          "0"
+                      ) +
+                      " - " +
+                      page.server +
+                      " - PhimHDCS"
+                    : page.server +
+                      " - PhimHDCS",
+
+            url:
+                videoUrl,
+
+            behaviorHints: {
+
+                bingeGroup:
+                    "phimhdcs-" +
+                    page.server +
+                    "-direct"
+
+            }
+
+        });
+
+    }
+
+}
+
+        // ====================================================
+// 9. ĐỌC _0xS
+// ====================================================
+
+const episodeData = [];
+
+for (
+    const page
+    of episodePages
+) {
+
+    const episodeHtml =
+        page.html;
+
+    let saltString =
+        "";
+
+    const saltMatch =
+        episodeHtml.match(
+            /(?:const|let|var)\s+_0xS\s*=\s*["']([^"']+)["']/
+        );
+
+    if (
+        saltMatch
+    ) {
+
+        saltString =
+            saltMatch[1];
+
+    }
+
+    console.log(
+        "[PHIMHDCS] SALT:",
+        {
+            server:
+                page.server,
+
+            found:
+                Boolean(
+                    saltMatch
+                )
+        }
+    );
+
+    episodeData.push({
+
+        server:
+            page.server,
+
+        episode:
+            page.episode,
+
+        url:
+            page.url,
+
+        html:
+            episodeHtml,
+
+        salt:
+            saltString,
+
+        oxData:
+            null
+
+    });
+
+}
 
         // ====================================================
         // 10. BASE64 DECODER
@@ -4850,171 +5037,234 @@ console.log(
         }
 
         // ====================================================
-        // 11. ĐỌC realObj
-        // ====================================================
+// 11. ĐỌC realObj
+// ====================================================
 
-        let oxData =
-            null;
+for (
+    const data
+    of episodeData
+) {
 
-        const realObjMatch =
-            episodeHtml.match(
-                /(?:const|let|var)\s+realObj\s*=\s*JSON\.parse\(\s*atob\(\s*["']([^"']+)["']\s*\)\s*\)/i
-            );
+    const episodeHtml =
+        data.html;
 
-        if (
-            realObjMatch
-        ) {
+    let oxData =
+        null;
 
-            try {
+    const realObjMatch =
+        episodeHtml.match(
+            /(?:const|let|var)\s+realObj\s*=\s*JSON\.parse\(\s*atob\(\s*["']([^"']+)["']\s*\)\s*\)/i
+        );
 
-                const decoded =
-                    decodeBase64(
-                        realObjMatch[1]
-                    );
+    if (
+        realObjMatch
+    ) {
 
-                if (
-                    decoded
-                ) {
+        try {
 
-                    oxData =
-                        JSON.parse(
-                            decoded
-                        );
-
-                    console.log(
-                        "[PHIMHDCS] realObj FOUND"
-                    );
-
-                }
-
-            } catch (
-                realObjError
-            ) {
-
-                console.log(
-                    "[PHIMHDCS] realObj ERROR:",
-                    realObjError?.message ||
-                    realObjError
-                );
-
-            }
-
-        }
-
-        // ====================================================
-        // 12. FALLBACK _0xData
-        // ====================================================
-
-        if (
-            !oxData
-        ) {
-
-            const dataMatch =
-                episodeHtml.match(
-                    /(?:const|let|var)\s+_0xData\s*=\s*(\{[\s\S]*?\})\s*;/
+            const decoded =
+                decodeBase64(
+                    realObjMatch[1]
                 );
 
             if (
-                dataMatch
+                decoded
             ) {
 
-                try {
+                oxData =
+                    JSON.parse(
+                        decoded
+                    );
 
-                    const startIndex =
-                        dataMatch.index +
-                        dataMatch[0].indexOf(
-                            "{"
-                        );
+                console.log(
+                    "[PHIMHDCS] realObj FOUND:",
+                    data.server
+                );
 
-                    let braceCount =
-                        0;
+            }
 
-                    let jsonEnd =
-                        -1;
+        } catch (
+            realObjError
+        ) {
 
-                    for (
-                        let i =
-                            startIndex;
-                        i <
-                            episodeHtml.length &&
-                        i <
-                            startIndex +
-                            100000;
-                        i++
-                    ) {
+            console.log(
+                "[PHIMHDCS] realObj ERROR:",
+                {
+                    server:
+                        data.server,
 
-                        if (
-                            episodeHtml[i] ===
-                            "{"
-                        ) {
+                    error:
+                        realObjError?.message ||
+                        realObjError
+                }
+            );
 
-                            braceCount++;
+        }
 
-                        } else if (
-                            episodeHtml[i] ===
-                            "}"
-                        ) {
+    }
 
-                            braceCount--;
+    data.oxData =
+        oxData;
 
-                            if (
-                                braceCount ===
-                                0
-                            ) {
+}
 
-                                jsonEnd =
-                                    i + 1;
+        // ====================================================
+// 12. FALLBACK _0xData
+// ====================================================
 
-                                break;
+for (
+    const data
+    of episodeData
+) {
 
-                            }
+    if (
+        data.oxData
+    ) {
 
-                        }
+        continue;
 
-                    }
+    }
 
-                    if (
-                        jsonEnd >
-                        0
-                    ) {
+    const episodeHtml =
+        data.html;
 
-                        oxData =
-                            JSON.parse(
-                                episodeHtml.substring(
-                                    startIndex,
-                                    jsonEnd
-                                )
-                            );
+    const dataMatch =
+        episodeHtml.match(
+            /(?:const|let|var)\s+_0xData\s*=\s*(\{[\s\S]*?\})\s*;/
+        );
 
-                        console.log(
-                            "[PHIMHDCS] _0xData FOUND"
-                        );
+    if (
+        !dataMatch
+    ) {
 
-                    }
+        continue;
 
-                } catch (
-                    dataError
+    }
+
+    try {
+
+        const startIndex =
+            dataMatch.index +
+            dataMatch[0].indexOf(
+                "{"
+            );
+
+        let braceCount =
+            0;
+
+        let jsonEnd =
+            -1;
+
+        for (
+            let i =
+                startIndex;
+
+            i <
+                episodeHtml.length &&
+            i <
+                startIndex +
+                100000;
+
+            i++
+        ) {
+
+            if (
+                episodeHtml[i] ===
+                "{"
+            ) {
+
+                braceCount++;
+
+            } else if (
+                episodeHtml[i] ===
+                "}"
+            ) {
+
+                braceCount--;
+
+                if (
+                    braceCount ===
+                    0
                 ) {
 
-                    console.log(
-                        "[PHIMHDCS] _0xData ERROR:",
-                        dataError?.message ||
-                        dataError
-                    );
+                    jsonEnd =
+                        i + 1;
+
+                    break;
 
                 }
 
             }
 
         }
+
+        if (
+            jsonEnd >
+            0
+        ) {
+
+            data.oxData =
+                JSON.parse(
+                    episodeHtml.substring(
+                        startIndex,
+                        jsonEnd
+                    )
+                );
+
+            console.log(
+                "[PHIMHDCS] _0xData FOUND:",
+                data.server
+            );
+
+        }
+
+    } catch (
+        dataError
+    ) {
+
+        console.log(
+            "[PHIMHDCS] _0xData ERROR:",
+            {
+                server:
+                    data.server,
+
+                error:
+                    dataError?.message ||
+                    dataError
+            }
+        );
+
+    }
+
+}
 
 // ====================================================
 // 13. GIẢI MÃ SERVER URL
 // ====================================================
 
-if (
-    oxData
+for (
+    const data
+    of episodeData
 ) {
+
+    const oxData =
+        data.oxData;
+
+    const saltString =
+        data.salt;
+
+    if (
+        !oxData
+    ) {
+
+        console.log(
+            "[PHIMHDCS] NO OXDATA:",
+            data.server
+        );
+
+        continue;
+
+    }
 
     function decodeKey(
         key
@@ -5073,21 +5323,6 @@ if (
 
     }
 
-    // ------------------------------------------------
-    // Chỉ dùng HTTP check cho DIRECT MEDIA.
-    //
-    // Embed không được check từ server Vercel vì:
-    // - 403 có thể chỉ là anti-bot / WAF
-    // - TLS hostname mismatch có thể chỉ xảy ra
-    //   ở server-side request
-    // - Browser/Stremio có thể vẫn mở được embed
-    //
-    // Vì vậy:
-    // - Embed hợp lệ => GIỮ
-    // - Direct 404/410 => LOẠI
-    // - Direct 403 / 5xx / TLS / network error => GIỮ
-    // ------------------------------------------------
-
     async function checkDirectServerAlive(
         url
     ) {
@@ -5099,7 +5334,10 @@ if (
                     url,
                     {
                         timeout: 8000,
-                        maxRedirects: 5,
+
+                        maxRedirects:
+                            5,
+
                         validateStatus:
                             function () {
                                 return true;
@@ -5115,13 +5353,18 @@ if (
 
             console.log(
                 "[PHIMHDCS] DIRECT CHECK:",
-                url,
-                "STATUS:",
-                status
+                {
+                    server:
+                        data.server,
+
+                    url:
+                        url,
+
+                    status:
+                        status
+                }
             );
 
-            // Chỉ xác nhận chết khi server
-            // trả về 404 hoặc 410.
             if (
                 status === 404 ||
                 status === 410
@@ -5131,9 +5374,6 @@ if (
 
             }
 
-            // 200 / 3xx / 403 / 429 / 5xx
-            // đều giữ lại vì HEAD không đủ
-            // để kết luận stream chết.
             return true;
 
         } catch (
@@ -5142,12 +5382,19 @@ if (
 
             console.warn(
                 "[PHIMHDCS] DIRECT CHECK ERROR - KEEP:",
-                url,
-                directCheckError?.message ||
-                directCheckError
+                {
+                    server:
+                        data.server,
+
+                    url:
+                        url,
+
+                    error:
+                        directCheckError?.message ||
+                        directCheckError
+                }
             );
 
-            // Không thể kiểm tra => vẫn giữ.
             return true;
 
         }
@@ -5158,10 +5405,6 @@ if (
 
     const seenServerUrls =
         new Set();
-
-    // ------------------------------------------------
-    // GIẢI MÃ TẤT CẢ SERVER
-    // ------------------------------------------------
 
     for (
         const serverKey
@@ -5202,8 +5445,6 @@ if (
 
         }
 
-        // Bỏ các URL rõ ràng không phải
-        // server video cần đưa vào Stremio.
         if (
             cleanUrl.includes(
                 "tiktok"
@@ -5232,32 +5473,43 @@ if (
             );
 
         decodedServers.push({
+
             url:
                 cleanUrl,
 
             isDirect:
                 isDirect
+
         });
 
         console.log(
             "[PHIMHDCS] DECODED SERVER:",
-            cleanUrl,
-            "TYPE:",
-            isDirect
-                ? "DIRECT"
-                : "EMBED"
+            {
+                server:
+                    data.server,
+
+                url:
+                    cleanUrl,
+
+                type:
+                    isDirect
+                        ? "DIRECT"
+                        : "EMBED"
+            }
         );
 
     }
 
     console.log(
         "[PHIMHDCS] DECODED SERVERS:",
-        decodedServers.length
-    );
+        {
+            server:
+                data.server,
 
-    // ------------------------------------------------
-    // GIỮ / LOẠI SERVER
-    // ------------------------------------------------
+            count:
+                decodedServers.length
+        }
+    );
 
     const activeServers = [];
 
@@ -5267,9 +5519,7 @@ if (
     ) {
 
         // --------------------------------------------
-        // EMBED:
-        // Không health-check server-side.
-        // URL hợp lệ thì giữ nguyên.
+        // EMBED
         // --------------------------------------------
 
         if (
@@ -5282,7 +5532,13 @@ if (
 
             console.log(
                 "[PHIMHDCS] KEEP EMBED:",
-                server.url
+                {
+                    server:
+                        data.server,
+
+                    url:
+                        server.url
+                }
             );
 
             continue;
@@ -5290,8 +5546,7 @@ if (
         }
 
         // --------------------------------------------
-        // DIRECT:
-        // Chỉ loại khi chắc chắn 404 / 410.
+        // DIRECT
         // --------------------------------------------
 
         const alive =
@@ -5309,14 +5564,26 @@ if (
 
             console.log(
                 "[PHIMHDCS] KEEP DIRECT:",
-                server.url
+                {
+                    server:
+                        data.server,
+
+                    url:
+                        server.url
+                }
             );
 
         } else {
 
             console.log(
                 "[PHIMHDCS] SERVER DEAD:",
-                server.url
+                {
+                    server:
+                        data.server,
+
+                    url:
+                        server.url
+                }
             );
 
         }
@@ -5325,19 +5592,26 @@ if (
 
     console.log(
         "[PHIMHDCS] KEEP SERVERS:",
-        activeServers.length
+        {
+            server:
+                data.server,
+
+            count:
+                activeServers.length
+        }
     );
 
-    // ------------------------------------------------
-    // ADD TẤT CẢ SERVER
-    //
-    // Không còn priority / else-if.
-    // Mỗi server được trả về độc lập.
-    // ------------------------------------------------
+    // --------------------------------------------
+    // ADD TẤT CẢ SERVER CỦA SERVER GROUP NÀY
+    // --------------------------------------------
 
     for (
-        let index = 0;
-        index < activeServers.length;
+        let index =
+            0;
+
+        index <
+            activeServers.length;
+
         index++
     ) {
 
@@ -5347,27 +5621,44 @@ if (
         const serverNumber =
             index + 1;
 
+        const displayName =
+            data.server ||
+            "Server";
+
         if (
             server.isDirect
         ) {
 
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
-                "Server " +
-                serverNumber,
-                "DIRECT",
-                server.url
+                {
+                    group:
+                        displayName,
+
+                    number:
+                        serverNumber,
+
+                    type:
+                        "DIRECT",
+
+                    url:
+                        server.url
+                }
             );
 
             streams.push({
 
                 name:
-                    "📺 [PhimHDCS] Server " +
+                    "📺 [PhimHDCS] " +
+                    displayName +
+                    " #" +
                     serverNumber,
 
                 title:
                     movieName +
-                    " - PhimHDCS Server " +
+                    " - PhimHDCS - " +
+                    displayName +
+                    " #" +
                     serverNumber,
 
                 url:
@@ -5377,6 +5668,8 @@ if (
 
                     bingeGroup:
                         "phimhdcs-" +
+                        displayName +
+                        "-" +
                         serverNumber
 
                 }
@@ -5387,21 +5680,34 @@ if (
 
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
-                "Server " +
-                serverNumber,
-                "EMBED",
-                server.url
+                {
+                    group:
+                        displayName,
+
+                    number:
+                        serverNumber,
+
+                    type:
+                        "EMBED",
+
+                    url:
+                        server.url
+                }
             );
 
             streams.push({
 
                 name:
-                    "▶️ [PhimHDCS] Server " +
+                    "▶️ [PhimHDCS] " +
+                    displayName +
+                    " #" +
                     serverNumber,
 
                 title:
                     movieName +
-                    " - PhimHDCS Server " +
+                    " - PhimHDCS - " +
+                    displayName +
+                    " #" +
                     serverNumber,
 
                 externalUrl:
@@ -5411,6 +5717,8 @@ if (
 
                     bingeGroup:
                         "phimhdcs-" +
+                        displayName +
+                        "-" +
                         serverNumber
 
                 }
