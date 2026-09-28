@@ -7727,72 +7727,58 @@ function scoreMovie(
             0
         );
 
+    const rawName =
+        String(
+            item?.name ||
+            ""
+        ).trim();
+
     let score = 0;
 
     // =================================================
-    // TITLE
+    // TITLE MATCH
     // =================================================
 
     if (
         name === target
     ) {
-
         score += 1000;
-
     }
 
     if (
         origin === target
     ) {
-
         score += 1000;
-
     }
 
     if (
-        name.includes(
-            target
-        )
+        name.includes(target)
     ) {
-
         score += 300;
-
     }
 
     if (
-        target.includes(
-            name
-        ) &&
+        target.includes(name) &&
         name.length >= 4
     ) {
-
         score += 250;
-
     }
 
     if (
-        origin.includes(
-            target
-        )
+        origin.includes(target)
     ) {
-
         score += 300;
-
     }
 
     if (
-        target.includes(
-            origin
-        ) &&
+        target.includes(origin) &&
         origin.length >= 4
     ) {
-
         score += 250;
-
     }
 
     // =================================================
-    // YEAR
+    // YEAR MATCH
     // =================================================
 
     if (
@@ -7800,25 +7786,63 @@ function scoreMovie(
     ) {
 
         if (
-            itemYear ===
-            MOVIE_YEAR
+            itemYear === MOVIE_YEAR
         ) {
 
             score += 5000;
 
-        }
-        else if (
+        } else if (
             itemYear > 0
         ) {
 
             score -= 10000;
-
         }
 
+        // =================================================
+        // ĐỌC NĂM TRONG TÊN PHIM
+        //
+        // Tây Du Ký Phần 1 (1996)
+        // Tây Du Ký Phần 2 (1998)
+        // =================================================
+
+        const yearMatch =
+            rawName.match(
+                /\((19|20)\d{2}\)\s*$/
+            );
+
+        if (
+            yearMatch
+        ) {
+
+            const nameYear =
+                Number(
+                    yearMatch[0].slice(
+                        1,
+                        -1
+                    )
+                );
+
+            console.log(
+                "[NGUONC CLIENT] NAME YEAR:",
+                rawName,
+                "=>",
+                nameYear
+            );
+
+            if (
+                nameYear === MOVIE_YEAR
+            ) {
+
+                score += 20000;
+
+            } else {
+
+                score -= 20000;
+            }
+        }
     }
 
     return score;
-
 }
 
 
