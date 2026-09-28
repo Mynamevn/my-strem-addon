@@ -7605,8 +7605,35 @@ button {
 
 <script>
 
+const params =
+    new URLSearchParams(
+        window.location.search
+    );
+
 const MOVIE_TITLE =
     \`${safeTitle}\`;
+
+const MOVIE_YEAR =
+    Number(
+        params.get("year") ||
+        0
+    );
+
+const STREAM_TYPE =
+    params.get("type") ||
+    "movie";
+
+const SEASON_NUMBER =
+    Number(
+        params.get("season") ||
+        0
+    );
+
+const EPISODE_NUMBER =
+    Number(
+        params.get("episode") ||
+        0
+    );
 
 const API_BASE =
     "https://phim.nguonc.com/api";
@@ -7669,7 +7696,7 @@ function normalizeTitle(
 
 
 // =====================================================
-// TITLE SCORE
+// TITLE + YEAR SCORE
 // =====================================================
 
 function scoreMovie(
@@ -7688,16 +7715,29 @@ function scoreMovie(
 
     const origin =
         normalizeTitle(
+            item?.origin_name ||
             item?.original_name
         );
 
+    const itemYear =
+        Number(
+            item?.year ||
+            item?.release_year ||
+            item?.releaseYear ||
+            0
+        );
+
     let score = 0;
+
+    // =================================================
+    // TITLE
+    // =================================================
 
     if (
         name === target
     ) {
 
-        score += 100;
+        score += 1000;
 
     }
 
@@ -7705,7 +7745,7 @@ function scoreMovie(
         origin === target
     ) {
 
-        score += 100;
+        score += 1000;
 
     }
 
@@ -7715,7 +7755,7 @@ function scoreMovie(
         )
     ) {
 
-        score += 60;
+        score += 300;
 
     }
 
@@ -7726,7 +7766,7 @@ function scoreMovie(
         name.length >= 4
     ) {
 
-        score += 50;
+        score += 250;
 
     }
 
@@ -7736,7 +7776,7 @@ function scoreMovie(
         )
     ) {
 
-        score += 50;
+        score += 300;
 
     }
 
@@ -7747,7 +7787,33 @@ function scoreMovie(
         origin.length >= 4
     ) {
 
-        score += 40;
+        score += 250;
+
+    }
+
+    // =================================================
+    // YEAR
+    // =================================================
+
+    if (
+        MOVIE_YEAR > 0
+    ) {
+
+        if (
+            itemYear ===
+            MOVIE_YEAR
+        ) {
+
+            score += 5000;
+
+        }
+        else if (
+            itemYear > 0
+        ) {
+
+            score -= 10000;
+
+        }
 
     }
 
@@ -7799,8 +7865,11 @@ openNguonC.onclick =
 // FIND EMBED / M3U8
 // =====================================================
 
-function findVideoUrl(
-    detail
+function findVideoUrlForEpisode(
+    detail,
+    seasonNumber,
+    episodeNumber,
+    streamType
 ) {
 
     const movie =
@@ -7816,59 +7885,321 @@ function findVideoUrl(
         detail?.data?.episodes ||
         [];
 
+    if (
+        !Array.isArray(
+            episodes
+        )
+    ) {
+
+        return null;
+
+    }
+
+    // =================================================
+    // MOVIE
+    // =================================================
+
+    if (
+        streamType !==
+        "series"
+    ) {
+
+        for (
+            const server
+            of episodes
+        ) {
+
+            const items =
+                server?.items ||
+                server?.server_data ||
+                [];
+
+            if (
+                !Array.isArray(
+                    items
+                )
+            ) {
+
+                continue;
+
+            }
+
+            for (
+                const episode
+                of items
+            ) {
+
+                const m3u8 =
+                    String(
+                        episode?.m3u8 ||
+                        episode?.link_m3u8 ||
+                        ""
+                    ).trim();
+
+                if (
+                    m3u8
+                ) {
+
+                    return {
+                        type:
+                            "m3u8",
+
+                        url:
+                            m3u8
+                    };
+
+                }
+
+                const embed =
+                    String(
+                        episode?.embed ||
+                        episode?.link_embed ||
+                        ""
+                    ).trim();
+
+                if (
+                    embed
+                ) {
+
+                    return {
+                        type:
+                            "embed",
+
+                        url:
+                            embed
+                    };
+
+                }
+
+            }
+
+        }
+
+        return null;
+
+    }
+
+    // =================================================
+    // SERIES
+    // =================================================
+
+    const targetEpisode =
+        Number(
+            episodeNumber
+        ) || 1;
+
+    console.log(
+        "[NGUONC CLIENT] TARGET:",
+        {
+            season:
+                seasonNumber,
+
+            episode:
+                targetEpisode
+        }
+    );
+
+    // =================================================
+    // DUYỆT SERVER
+    // =================================================
+
     for (
         const server
         of episodes
     ) {
+
+        const serverName =
+            String(
+                server?.server_name ||
+                server?.name ||
+                "NguonC"
+            ).trim();
 
         const items =
             server?.items ||
             server?.server_data ||
             [];
 
-        for (
-            const episode
-            of items
+        if (
+            !Array.isArray(
+                items
+            )
         ) {
 
+            continue;
+
+        }
+
+        console.log(
+            "[NGUONC CLIENT] SERVER:",
+            serverName,
+            "EPISODES:",
+            items.length
+        );
+
+        // =================================================
+        // TÌM EPISODE
+        // =================================================
+
+        for (
+            let index = 0;
+            index < items.length;
+            index++
+        ) {
+
+            const episode =
+                items[index];
+
+            const episodeName =
+                String(
+                    episode?.name ||
+                    episode?.episode_name ||
+                    episode?.slug ||
+                    episode?.filename ||
+                    ""
+                ).trim();
+
+            let detectedEpisode =
+                0;
+
+            // Ví dụ: "01"
+            const directNumber =
+                episodeName.match(
+                    /^\s*0*(\d+)\s*$/
+                );
+
+            if (
+                directNumber
+            ) {
+
+                detectedEpisode =
+                    Number(
+                        directNumber[1]
+                    ) || 0;
+
+            }
+
+            // Ví dụ:
+            // Tập 1
+            // Tap 01
+            // Episode 1
+            // Ep 1
+            // Part 1
+            // Phần 1
+
+            if (
+                !detectedEpisode
+            ) {
+
+                const episodeMatch =
+                    episodeName.match(
+                        /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*(\d+)/i
+                    );
+
+                if (
+                    episodeMatch
+                ) {
+
+                    detectedEpisode =
+                        Number(
+                            episodeMatch[1]
+                        ) || 0;
+
+                }
+
+            }
+
+            // =================================================
+            // NẾU NGUONC KHÔNG GHI SỐ TẬP
+            // DÙNG VỊ TRÍ TRONG DANH SÁCH
+            // =================================================
+
+            if (
+                !detectedEpisode
+            ) {
+
+                detectedEpisode =
+                    index + 1;
+
+            }
+
+            console.log(
+                "[NGUONC CLIENT] CHECK EPISODE:",
+                {
+                    server:
+                        serverName,
+
+                    name:
+                        episodeName,
+
+                    detected:
+                        detectedEpisode,
+
+                    target:
+                        targetEpisode
+                }
+            );
+
+            if (
+                detectedEpisode !==
+                targetEpisode
+            ) {
+
+                continue;
+
+            }
+
+            console.log(
+                "[NGUONC CLIENT] MATCH EPISODE:",
+                episodeName
+            );
+
+            // =================================================
+            // M3U8
+            // =================================================
+
             const m3u8 =
-                episode?.m3u8 ||
-                episode?.link_m3u8 ||
-                "";
+                String(
+                    episode?.m3u8 ||
+                    episode?.link_m3u8 ||
+                    ""
+                ).trim();
 
             if (
                 m3u8
             ) {
 
                 return {
-
                     type:
                         "m3u8",
 
                     url:
                         m3u8
-
                 };
 
             }
 
+            // =================================================
+            // EMBED
+            // =================================================
+
             const embed =
-                episode?.embed ||
-                episode?.link_embed ||
-                "";
+                String(
+                    episode?.embed ||
+                    episode?.link_embed ||
+                    ""
+                ).trim();
 
             if (
                 embed
             ) {
 
                 return {
-
                     type:
                         "embed",
 
                     url:
                         embed
-
                 };
 
             }
@@ -8166,8 +8497,92 @@ async function startNguonC() {
                 }
             );
 
+    console.log(
+        "[NGUONC CLIENT] SEARCH RESULTS:",
+        ranked.map(
+            function (entry) {
+
+                return {
+
+                    name:
+                        entry.item?.name,
+
+                    origin_name:
+                        entry.item?.origin_name ||
+                        entry.item?.original_name,
+
+                    year:
+                        entry.item?.year ||
+                        entry.item?.release_year ||
+                        entry.item?.releaseYear,
+
+                    slug:
+                        entry.item?.slug,
+
+                    score:
+                        entry.score
+
+                };
+
+            }
+        )
+    );
+
+    // =================================================
+    // BẮT BUỘC ĐÚNG NĂM
+    // =================================================
+
+    let selectedEntry =
+        null;
+
+    if (
+        MOVIE_YEAR > 0
+    ) {
+
+        selectedEntry =
+            ranked.find(
+                function (entry) {
+
+                    const year =
+                        Number(
+                            entry.item?.year ||
+                            entry.item?.release_year ||
+                            entry.item?.releaseYear ||
+                            0
+                        );
+
+                    return (
+                        year ===
+                        MOVIE_YEAR
+                    );
+
+                }
+            );
+
+        if (
+            !selectedEntry
+        ) {
+
+            throw new Error(
+                "NguonC có kết quả nhưng không tìm thấy phim đúng năm " +
+                MOVIE_YEAR +
+                "."
+            );
+
+        }
+
+    }
+    else {
+
+        selectedEntry =
+            ranked[0] ||
+            null;
+
+    }
+
     const selected =
-        ranked[0]?.item;
+        selectedEntry?.item ||
+        null;
 
     if (
         !selected?.slug
@@ -8179,13 +8594,33 @@ async function startNguonC() {
 
     }
 
+    console.log(
+        "[NGUONC CLIENT] SELECTED:",
+        {
+            name:
+                selected?.name,
+
+            origin_name:
+                selected?.origin_name ||
+                selected?.original_name,
+
+            year:
+                selected?.year ||
+                selected?.release_year ||
+                selected?.releaseYear,
+
+            slug:
+                selected?.slug
+        }
+    );
+
     statusEl.textContent =
         "Đã tìm thấy: " +
         (
             selected.name ||
             MOVIE_TITLE
         ) +
-        "\\\\nĐang tải video...";
+        "\nĐang tải video...";
 
     const detail =
         await loadDetail(
@@ -8193,8 +8628,11 @@ async function startNguonC() {
         );
 
     const video =
-        findVideoUrl(
-            detail
+        findVideoUrlForEpisode(
+            detail,
+            SEASON_NUMBER,
+            EPISODE_NUMBER,
+            STREAM_TYPE
         );
 
     if (
@@ -8202,7 +8640,12 @@ async function startNguonC() {
     ) {
 
         throw new Error(
-            "Phim có trên NguonC nhưng không tìm thấy link phát."
+            "Phim có trên NguonC nhưng không tìm thấy link phát cho tập " +
+            (
+                EPISODE_NUMBER ||
+                1
+            ) +
+            "."
         );
 
     }
