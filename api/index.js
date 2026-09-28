@@ -7806,43 +7806,39 @@ function scoreMovie(
         // =================================================
 
         const yearMatch =
-            rawName.match(
-                /\((19|20)\d{2}\)\s*$/
-            );
+    rawName.match(
+        /\((19|20)[0-9]{2}\)/
+    );
 
-        if (
-            yearMatch
-        ) {
+if (yearMatch) {
 
-            const nameYear =
-                Number(
-                    yearMatch[0].slice(
-                        1,
-                        -1
-                    )
-                );
+    const nameYear =
+        Number(
+            yearMatch[0].replace(
+                /[^0-9]/g,
+                ""
+            )
+        );
 
-            console.log(
-                "[NGUONC CLIENT] NAME YEAR:",
-                rawName,
-                "=>",
-                nameYear
-            );
+    console.log(
+        "[NGUONC CLIENT] NAME YEAR:",
+        rawName,
+        "=>",
+        nameYear
+    );
 
-            if (
-                nameYear === MOVIE_YEAR
-            ) {
+    if (
+        nameYear === MOVIE_YEAR
+    ) {
+        console.log(
+            "[NGUONC CLIENT] MATCH NAME YEAR:",
+            rawName,
+            "=>",
+            nameYear
+        );
 
-                score += 20000;
-
-            } else {
-
-                score -= 20000;
-            }
-        }
+        return true;
     }
-
-    return score;
 }
 
 
