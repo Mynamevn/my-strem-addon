@@ -4931,7 +4931,10 @@ for (
             found:
                 Boolean(
                     saltMatch
-                )
+                ),
+
+            saltLength:
+                saltString.length
         }
     );
 
@@ -4949,7 +4952,7 @@ for (
         html:
             episodeHtml,
 
-        salt:
+        saltString:
             saltString,
 
         oxData:
@@ -5283,9 +5286,9 @@ for (
 
         let decoded =
     decodeChunksWithSalt(
-        oxData[key],
-        data.salt
-    );
+    oxData[key],
+    data.saltString
+);
 
         if (
             decoded &&
