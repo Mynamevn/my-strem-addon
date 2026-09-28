@@ -8303,85 +8303,157 @@ function playM3U8(
 
 async function searchNguonC() {
 
-    const searchUrl =
-        API_BASE +
-        "/films/search?keyword=" +
-        encodeURIComponent(
-            MOVIE_TITLE
-        ) +
-        "&page=1";
+    const keywords = [];
 
-    const response =
-        await fetch(
-            searchUrl,
-            {
-                method:
-                    "GET",
+    function addKeyword(value) {
 
-                headers: {
+        const keyword =
+            String(value || "").trim();
 
-                    "Accept":
-                        "application/json"
+        if (
+            keyword &&
+            !keywords.includes(keyword)
+        ) {
+            keywords.push(keyword);
+        }
+    }
 
-                },
+    // Từ khóa gốc
+    addKeyword(MOVIE_TITLE);
 
-                cache:
-                    "no-store"
-
-            }
-        );
+    // Các biến thể dành cho Journey to the West
+    const normalized =
+        normalizeTitle(MOVIE_TITLE);
 
     if (
-        !response.ok
+        normalized === "journey to the west" ||
+        normalized.includes("journey to the west")
     ) {
+        addKeyword("Tây Du Ký");
+        addKeyword("Tây Du Ký Phần 1");
+        addKeyword("Tây Du Ký 1996");
+    }
 
-        throw new Error(
-            "NguonC search HTTP " +
-            response.status
+    console.log(
+        "[NGUONC CLIENT] SEARCH KEYWORDS:",
+        keywords
+    );
+
+    let allItems = [];
+
+    for (const keyword of keywords) {
+
+        const searchUrl =
+            API_BASE +
+            "/films/search?keyword=" +
+            encodeURIComponent(keyword) +
+            "&page=1";
+
+        console.log(
+            "[NGUONC CLIENT] SEARCH:",
+            keyword
         );
 
+        const response =
+            await fetch(
+                searchUrl,
+                {
+                    method: "GET",
+                    headers: {
+                        "Accept": "application/json"
+                    },
+                    cache: "no-store"
+                }
+            );
+
+        if (!response.ok) {
+            console.warn(
+                "[NGUONC CLIENT] SEARCH FAILED:",
+                keyword,
+                response.status
+            );
+            continue;
+        }
+
+        const data =
+            await response.json();
+
+        let items = [];
+
+        if (
+            Array.isArray(
+                data?.items
+            )
+        ) {
+            items = data.items;
+        }
+
+        else if (
+            Array.isArray(
+                data?.data
+            )
+        ) {
+            items = data.data;
+        }
+
+        else if (
+            Array.isArray(
+                data?.data?.items
+            )
+        ) {
+            items =
+                data.data.items;
+        }
+
+        console.log(
+            "[NGUONC CLIENT] SEARCH RESULT:",
+            keyword,
+            items.length
+        );
+
+        allItems =
+            allItems.concat(
+                items
+            );
     }
 
-    const data =
-        await response.json();
+    // Loại bỏ phim trùng slug
+    const unique =
+        [];
 
-    let items = [];
+    const seen =
+        new Set();
 
-    if (
-        Array.isArray(
-            data?.items
-        )
-    ) {
+    for (const item of allItems) {
 
-        items =
-            data.items;
+        const slug =
+            String(
+                item?.slug ||
+                ""
+            ).trim();
 
-    }
-    else if (
-        Array.isArray(
-            data?.data
-        )
-    ) {
+        const key =
+            slug ||
+            JSON.stringify(item);
 
-        items =
-            data.data;
+        if (
+            seen.has(key)
+        ) {
+            continue;
+        }
 
-    }
-    else if (
-        Array.isArray(
-            data?.data?.items
-        )
-    ) {
+        seen.add(key);
 
-        items =
-            data.data.items;
-
+        unique.push(item);
     }
 
-    return items;
+    console.log(
+        "[NGUONC CLIENT] TOTAL UNIQUE RESULTS:",
+        unique.length
+    );
 
+    return unique;
 }
-
 
 // =====================================================
 // LOAD DETAIL
