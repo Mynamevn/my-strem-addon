@@ -4087,232 +4087,615 @@ async function scrapePhimHDCS(
             );
 
         // ====================================================
-        // 5. LẤY SERVER + EPISODE
-        // ====================================================
+// 5. LẤY SERVER + EPISODE
+// ====================================================
 
-        const servers =
-            [];
+const servers =
+    [];
 
-        parseDetail(
-            ".server-episode-block"
-        ).each(
-            function () {
 
-                const block =
-                    parseDetail(
-                        this
-                    );
+// ----------------------------------------------------
+// HELPER: LẤY TÊN SERVER TỪ CÁC NODE CHA
+// ----------------------------------------------------
 
-                const blockText =
-                    String(
-                        block.text() ||
+function detectServerName(
+    anchor
+) {
+
+    let node =
+        anchor;
+
+    for (
+        let level = 0;
+        level < 8 && node;
+        level++
+    ) {
+
+        const text =
+            String(
+                parseDetail(
+                    node
+                ).text() ||
+                ""
+            )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+        const match =
+            text.match(
+                /Danh sách\s+Server\s+([^:]+):/i
+            );
+
+        if (
+            match
+        ) {
+
+            let serverName =
+                String(
+                    match[1] ||
+                    ""
+                ).trim();
+
+            serverName =
+                serverName
+                    .replace(
+                        /^x/i,
                         ""
-                    ).trim();
-
-                const serverMatch =
-                    blockText.match(
-                        /Danh sách\s*(?:Sever)?\s*([^:]+):/i
-                    );
-
-                let serverName =
-                    serverMatch
-                        ? String(
-                            serverMatch[1]
-                        ).trim()
-                        : "PhimHDCS";
-
-                serverName =
-                    serverName
-                        .replace(
-                            /^Server\s+/i,
-                            ""
-                        )
-                        .replace(
-                            /^z/i,
-                            ""
-                        )
-                        .replace(
-                            /\s*#\d+$/,
-                            ""
-                        )
-                        .trim();
-
-                const episodes =
-                    [];
-
-                block
-                    .find(
-                        "a#no-link[href]"
                     )
-                    .each(
-                        function () {
+                    .replace(
+                        /^z/i,
+                        ""
+                    )
+                    .replace(
+                        /^Server\s+/i,
+                        ""
+                    )
+                    .replace(
+                        /\s*#\d+$/,
+                        ""
+                    )
+                    .trim();
 
-                            const node =
-                                block.find(
-                                    this
-                                );
+            return (
+                serverName ||
+                "PhimHDCS"
+            );
 
-                            const href =
-                                String(
-                                    node.attr(
-                                        "href"
-                                    ) ||
-                                    ""
-                                ).trim();
+        }
 
-                            const name =
-                                String(
-                                    node.attr(
-                                        "title"
-                                    ) ||
-                                    node.text() ||
-                                    ""
-                                ).trim();
+        node =
+            node.parent;
+    }
 
-                            if (
-                                !href
-                            ) {
-                                return;
-                            }
+    return "PhimHDCS";
 
-                            episodes.push({
+}
 
-                                url:
-                                    makeAbsoluteUrl(
-                                        href
-                                    ),
 
-                                name:
-                                    name,
+// ----------------------------------------------------
+// HELPER: KIỂM TRA LINK TẬP
+//
+// PhimHDCS hiện tại dùng dạng:
+//
+// /bien-nien-su-giang-sinh/tap-full-104812
+// /am-anh-2026/tap-full-803669
+// /tay-du-ky-phan-1-1996/tap-1-647092
+// ----------------------------------------------------
 
-                                number:
-                                    extractEpisodeNumber(
-                                        name
-                                    )
+function isEpisodeLink(
+    href,
+    text
+) {
 
-                            });
+    const url =
+        String(
+            href ||
+            ""
+        ).trim();
 
-                        }
+    const name =
+        String(
+            text ||
+            ""
+        ).trim();
+
+    if (
+        !url
+    ) {
+        return false;
+    }
+
+    if (
+        /\/tap-[^/?#]+/i.test(
+            url
+        )
+    ) {
+
+        return true;
+
+    }
+
+    if (
+        /(?:tập|tap|episode|ep\.?|part|phần)/i.test(
+            name
+        )
+    ) {
+
+        return true;
+
+    }
+
+    return false;
+
+}
+
+
+// ----------------------------------------------------
+// QUÉT TOÀN BỘ LINK TẬP TRÊN DETAIL PAGE
+// ----------------------------------------------------
+
+const serverMap =
+    new Map();
+
+parseDetail(
+    "a[href]"
+).each(
+    function () {
+
+        const anchor =
+            this;
+
+        const node =
+            parseDetail(
+                anchor
+            );
+
+        const href =
+            String(
+                node.attr(
+                    "href"
+                ) ||
+                ""
+            ).trim();
+
+        const title =
+            String(
+                node.attr(
+                    "title"
+                ) ||
+                ""
+            ).trim();
+
+        const text =
+            String(
+                node.text() ||
+                ""
+            ).trim();
+
+        const name =
+            title ||
+            text;
+
+        if (
+            !isEpisodeLink(
+                href,
+                name
+            )
+        ) {
+
+            return;
+
+        }
+
+        const absoluteUrl =
+            makeAbsoluteUrl(
+                href
+            );
+
+        if (
+            !absoluteUrl
+        ) {
+
+            return;
+
+        }
+
+        const episodeNumber =
+            extractEpisodeNumber(
+                name
+            );
+
+        const serverName =
+            detectServerName(
+                anchor
+            );
+
+        if (
+            !serverMap.has(
+                serverName
+            )
+        ) {
+
+            serverMap.set(
+                serverName,
+                []
+            );
+
+        }
+
+        const episodes =
+            serverMap.get(
+                serverName
+            );
+
+        const exists =
+            episodes.some(
+                function (
+                    episode
+                ) {
+
+                    return (
+                        episode.url ===
+                        absoluteUrl
                     );
 
-                // ------------------------------------------------
-                // FALLBACK: REGEX TRỰC TIẾP
-                // ------------------------------------------------
-
-                if (
-                    episodes.length === 0
-                ) {
-
-                    const blockHtml =
-                        String(
-                            parseDetail.html(
-                                this
-                            ) ||
-                            ""
-                        );
-
-                    const epPattern =
-                        /<a\s+href="([^"]+)"\s+id=['"]no-link['"][\s\S]*?title="([^"]+)"/gi;
-
-                    let epMatch;
-
-                    while (
-                        (
-                            epMatch =
-                            epPattern.exec(
-                                blockHtml
-                            )
-                        ) !== null
-                    ) {
-
-                        episodes.push({
-
-                            url:
-                                makeAbsoluteUrl(
-                                    epMatch[1]
-                                ),
-
-                            name:
-                                String(
-                                    epMatch[2] ||
-                                    ""
-                                ).trim(),
-
-                            number:
-                                extractEpisodeNumber(
-                                    epMatch[2]
-                                )
-
-                        });
-
-                    }
-
                 }
+            );
 
-                if (
-                    episodes.length > 0
-                ) {
+        if (
+            exists
+        ) {
 
-                    // PhimHDCS thường để tập mới nhất trước.
-                    // Đưa về thứ tự tăng dần.
+            return;
 
-                    const first =
-                        episodes[0].number;
+        }
 
-                    const last =
-                        episodes[
-                            episodes.length - 1
-                        ].number;
+        episodes.push({
 
-                    if (
-                        first > 0 &&
-                        last > 0 &&
-                        first > last
-                    ) {
+            url:
+                absoluteUrl,
 
-                        episodes.reverse();
+            name:
+                name ||
+                (
+                    episodeNumber
+                        ? "Tập " +
+                          episodeNumber
+                        : "Tập Full"
+                ),
 
-                    } else if (
-                        !first ||
-                        !last
-                    ) {
+            number:
+                episodeNumber
 
-                        episodes.reverse();
+        });
 
-                    }
+        console.log(
+            "[PHIMHDCS] EPISODE LINK:",
+            {
+                server:
+                    serverName,
 
-                    servers.push({
+                name:
+                    name,
 
-                        name:
-                            serverName,
+                number:
+                    episodeNumber,
 
-                        episodes:
-                            episodes
+                url:
+                    absoluteUrl
+            }
+        );
 
-                    });
+    }
+);
 
-                }
+
+// ----------------------------------------------------
+// CHUYỂN MAP → SERVERS
+// ----------------------------------------------------
+
+for (
+    const [
+        serverName,
+        episodes
+    ]
+    of serverMap.entries()
+) {
+
+    if (
+        episodes.length === 0
+    ) {
+
+        continue;
+
+    }
+
+    // ------------------------------------------------
+    // Nếu có số tập → sắp xếp tăng dần.
+    // Tập Full giữ nguyên.
+    // ------------------------------------------------
+
+    const numbered =
+        episodes.every(
+            function (
+                episode
+            ) {
+
+                return (
+                    Number(
+                        episode.number
+                    ) > 0
+                );
 
             }
         );
 
-        console.log(
-            "[PHIMHDCS] SERVERS:",
-            servers.map(
+    if (
+        numbered
+    ) {
+
+        episodes.sort(
+            function (
+                a,
+                b
+            ) {
+
+                return (
+                    Number(
+                        a.number
+                    ) -
+                    Number(
+                        b.number
+                    )
+                );
+
+            }
+        );
+
+    }
+
+    servers.push({
+
+        name:
+            serverName,
+
+        episodes:
+            episodes
+
+    });
+
+}
+
+
+// ----------------------------------------------------
+// FALLBACK PHỤ:
+//
+// Nếu cấu trúc server không được nhận diện,
+// vẫn lấy toàn bộ link /tap-* làm một server.
+// ----------------------------------------------------
+
+if (
+    servers.length === 0
+) {
+
+    const fallbackEpisodes =
+        [];
+
+    parseDetail(
+        "a[href]"
+    ).each(
+        function () {
+
+            const node =
+                parseDetail(
+                    this
+                );
+
+            const href =
+                String(
+                    node.attr(
+                        "href"
+                    ) ||
+                    ""
+                ).trim();
+
+            const title =
+                String(
+                    node.attr(
+                        "title"
+                    ) ||
+                    ""
+                ).trim();
+
+            const text =
+                String(
+                    node.text() ||
+                    ""
+                ).trim();
+
+            const name =
+                title ||
+                text;
+
+            if (
+                !isEpisodeLink(
+                    href,
+                    name
+                )
+            ) {
+
+                return;
+
+            }
+
+            const absoluteUrl =
+                makeAbsoluteUrl(
+                    href
+                );
+
+            if (
+                !absoluteUrl
+            ) {
+
+                return;
+
+            }
+
+            const episodeNumber =
+                extractEpisodeNumber(
+                    name
+                );
+
+            const exists =
+                fallbackEpisodes.some(
+                    function (
+                        episode
+                    ) {
+
+                        return (
+                            episode.url ===
+                            absoluteUrl
+                        );
+
+                    }
+                );
+
+            if (
+                exists
+            ) {
+
+                return;
+
+            }
+
+            fallbackEpisodes.push({
+
+                url:
+                    absoluteUrl,
+
+                name:
+                    name ||
+                    (
+                        episodeNumber
+                            ? "Tập " +
+                              episodeNumber
+                            : "Tập Full"
+                    ),
+
+                number:
+                    episodeNumber
+
+            });
+
+        }
+    );
+
+    if (
+        fallbackEpisodes.length > 0
+    ) {
+
+        const numbered =
+            fallbackEpisodes.every(
                 function (
-                    server
+                    episode
                 ) {
 
-                    return {
-                        name:
-                            server.name,
-                        episodes:
-                            server.episodes.length
-                    };
+                    return (
+                        Number(
+                            episode.number
+                        ) > 0
+                    );
 
                 }
-            )
+            );
+
+        if (
+            numbered
+        ) {
+
+            fallbackEpisodes.sort(
+                function (
+                    a,
+                    b
+                ) {
+
+                    return (
+                        Number(
+                            a.number
+                        ) -
+                        Number(
+                            b.number
+                        )
+                    );
+
+                }
+            );
+
+        }
+
+        servers.push({
+
+            name:
+                "PhimHDCS",
+
+            episodes:
+                fallbackEpisodes
+
+        });
+
+        console.log(
+            "[PHIMHDCS] EPISODE FALLBACK SERVER:",
+            fallbackEpisodes.length
         );
+
+    }
+
+}
+
+
+console.log(
+    "[PHIMHDCS] SERVERS:",
+    servers.map(
+        function (
+            server
+        ) {
+
+            return {
+
+                name:
+                    server.name,
+
+                episodes:
+                    server.episodes.length,
+
+                list:
+                    server.episodes.map(
+                        function (
+                            episode
+                        ) {
+
+                            return {
+                                name:
+                                    episode.name,
+
+                                number:
+                                    episode.number,
+
+                                url:
+                                    episode.url
+                            };
+
+                        }
+                    )
+
+            };
+
+        }
+    )
+);
 
         // ====================================================
         // 6. CHỌN EPISODE
