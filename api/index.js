@@ -3425,59 +3425,77 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
     }
 
         function addStream(url, title, referer, sourceLabel) {
-        if (!url) return;
+    if (!url) return;
 
-        url = decodeHtml(url).trim();
+    url = decodeHtml(url).trim();
 
-        if (!/^https?:\/\//i.test(url)) {
-            url = absUrl(
-                url,
-                referer || "https://www.1phim34.com/"
-            );
-        }
-
-        if (!url) return;
-
-        const key = url.trim();
-
-        if (seen.has(key)) return;
-        seen.add(key);
-
-        const isM3U8 =
-            /\.m3u8(?:[?#]|$)/i.test(url);
-
-        const streamReferer =
-            "https://www.1phim34.com/";
-
-        console.log(
-            "[PHIMLONGTIENG] ADD STREAM:",
-            sourceLabel,
-            title,
-            url
-        );
-
-        streams.push({
-            name: `⚡ [PhimLongTieng] ${sourceLabel}`,
-            title: title || sourceLabel,
+    if (!/^https?:\/\//i.test(url)) {
+        url = absUrl(
             url,
+            referer || "https://www.1phim34.com/"
+        );
+    }
 
-            behaviorHints: {
-                bingeGroup:
-                    `phimlongtieng-${sourceLabel
-                        .toLowerCase()
-                        .replace(/[^a-z0-9]+/g, "-")}`,
+    if (!url) return;
 
-                notWebReady: true,
+    const key = url.trim();
 
-                proxyHeaders: {
-                    request: {
-                        Referer: streamReferer,
-                        Accept: "*/*"
-                    }
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const isM3U8 =
+        /\.m3u8(?:[?#]|$)/i.test(url);
+
+    const streamReferer =
+        referer ||
+        "https://www.1phim34.com/";
+
+    console.log(
+        "[PHIMLONGTIENG] ADD STREAM:",
+        sourceLabel,
+        title,
+        url
+    );
+
+    streams.push({
+        name:
+            `⚡ [PhimLongTieng] ${sourceLabel}`,
+
+        title:
+            title || sourceLabel,
+
+        url,
+
+        behaviorHints: {
+
+            bingeGroup:
+                `phimlongtieng-${sourceLabel
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, "-")}`,
+
+            notWebReady:
+                true,
+
+            proxyHeaders: {
+
+                request: {
+
+                    Referer:
+                        streamReferer,
+
+                    Origin:
+                        "https://www.1phim34.com",
+
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+
+                    Accept:
+                        "*/*"
                 }
             }
-        });
-    }
+        }
+    });
+}
 
     async function get(url, headers = {}) {
         const controller = new AbortController();
