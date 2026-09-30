@@ -3449,14 +3449,22 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
             isM3U8
         });
 
-        streams.push({
-            name: `⚡ [PhimLongTieng] ${sourceLabel}`,
-            title: title || sourceLabel,
-            url,
-            behaviorHints: {
-                bingeGroup: `phimlongtieng-${sourceLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+streams.push({
+    name: `⚡ [PhimLongTieng] ${sourceLabel}`,
+    title: title || sourceLabel,
+    url,
+    behaviorHints: {
+        bingeGroup: `phimlongtieng-${sourceLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        notWebReady: true,
+        proxyHeaders: {
+            request: {
+                Referer: "https://www.1phim34.com/",
+                Accept: "*/*"
             }
-        });
+        }
+    }
+});
+
     }
 
     async function get(url, headers = {}) {
