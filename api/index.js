@@ -3387,7 +3387,6 @@ for (
    ============================================================ */
 
 async function scrapePhimLongTieng(movieName, episodeNumber = null) {
-
     const streams = [];
 
     const UA =
@@ -3402,115 +3401,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
     const timeout = 15000;
     const mainUrl = "https://phimlongtieng.link";
 
-    /* ------------------------------------------------------------
-       Exact Cloudstream cryptoJSAesDecrypt()
-       PBKDF2WithHmacSHA512
-       iterations = 999
-       key length = 256 bit
-       AES/CBC/PKCS5Padding
-       ------------------------------------------------------------ */
-    function cryptoJSAesDecrypt(passphrase, encryptedJsonString) {
-
-        const obj = JSON.parse(encryptedJsonString);
-
-        const encrypted = Buffer.from(
-            obj.ciphertext,
-            "base64"
-        );
-
-        const salt = Buffer.from(
-            obj.salt,
-            "hex"
-        );
-
-        const iv = Buffer.from(
-            obj.iv,
-            "hex"
-        );
-
-        const crypto = require("crypto");
-
-        const key = crypto.pbkdf2Sync(
-            Buffer.from(passphrase, "utf8"),
-            salt,
-            999,
-            32,
-            "sha512"
-        );
-
-        const decipher = crypto.createDecipheriv(
-            "aes-256-cbc",
-            key,
-            iv
-        );
-
-        const decrypted = Buffer.concat([
-            decipher.update(encrypted),
-            decipher.final()
-        ]);
-
-        return decrypted.toString("utf8");
-    }
-
-    function addStream(source, url, referer) {
-
-        if (!url) return;
-
-        url = String(url).trim();
-
-        if (!url) return;
-
-        if (streams.some(s => s.url === url)) {
-            console.log(
-                "[PHIMLONGTIENG] Duplicate stream:",
-                url
-            );
-            return;
-        }
-
-        streams.push({
-            name: "🔊 [PhimLongTieng] " + source,
-            title: "PhimLongTieng - " + source,
-            url,
-            headers: {
-                "Referer": referer || mainUrl + "/",
-                "User-Agent": UA
-            }
-        });
-
-        console.log(
-            "[PHIMLONGTIENG] STREAM:",
-            source,
-            url
-        );
-    }
-
-    function getBaseUrl(url) {
-        try {
-            return new URL(url).origin;
-        } catch (_) {
-            return mainUrl;
-        }
-    }
-
-    async function getServer(url, referer) {
-
-        return axios.get(url, {
-            headers: {
-                ...headers,
-                "Referer": referer || mainUrl + "/"
-            },
-            timeout,
-            maxRedirects: 5
-        });
-    }
-
     try {
-
-        console.log(
-            "[PHIMLONGTIENG] ================================="
-        );
-
         console.log(
             "[PHIMLONGTIENG] Search:",
             movieName,
@@ -3518,12 +3409,10 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             episodeNumber
         );
 
-        /* ========================================================
-           1. SEARCH
-           ======================================================== */
-
+        // =========================================================
+        // 1. SEARCH
+        // =========================================================
         const searchSlug = toSlug(movieName);
-
         const searchUrl =
             mainUrl +
             "/search/" +
@@ -3535,48 +3424,61 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             searchUrl
         );
 
-        const searchRes = await axios.get(
-            searchUrl,
-            {
-                headers,
-                timeout,
-                maxRedirects: 5
+        const searchRes = await axios.get(searchUrl, {
+            headers,
+            timeout,
+            maxRedirects: 5
+        });
+
+        const $ = cheerio.load(searchRes.data);
+
+        const results = [];
+
+        $("ul.list-film > li").each(function () {
+            const a = $(this).find("a").first();
+
+            const title =
+                (a.attr("title") || a.text() || "")
+                    .trim();
+
+            const href = a.attr("href") || "";
+
+            const status =
+                $(this)
+                    .find("div.inner > div.status")
+                    .first()
+                    .text()
+                    .trim();
+
+            if (href) {
+                results.push({
+                    title,
+                    href,
+                    status
+                });
             }
+        });
+
+        console.log(
+            "[PHIMLONGTIENG] Search results:",
+            results.slice(0, 10)
         );
 
-        const $search = cheerio.load(searchRes.data);
-
-        let movieLink =
-            $search(
-                "ul.list-film > li"
-            )
-                .first()
-                .find("a")
-                .first()
-                .attr("href");
-
-        if (!movieLink) {
-
-            movieLink =
-                $search(
-                    ".list-films .item a"
-                )
-                    .first()
-                    .attr("href");
-        }
-
-        if (!movieLink) {
-
+        if (!results.length) {
             console.log(
-                "[PHIMLONGTIENG] ERROR: Không tìm thấy phim"
+                "[PHIMLONGTIENG] ERROR: Không có search result"
             );
-
             return streams;
         }
 
+        // Tạm thời chọn kết quả đầu tiên như provider.
+        // Sau khi có log, nếu đang chọn sai phim thì mình sẽ sửa
+        // phần matching title/year riêng.
+        let movieLink = results[0].href;
+
         movieLink = new URL(
             movieLink,
-            mainUrl
+            searchRes.request?.res?.responseUrl || mainUrl
         ).href;
 
         console.log(
@@ -3584,95 +3486,81 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             movieLink
         );
 
-        /* ========================================================
-           2. LOAD MOVIE / EPISODES
-           ======================================================== */
-
-        const movieRes = await axios.get(
-            movieLink,
-            {
-                headers,
-                timeout,
-                maxRedirects: 5
-            }
-        );
-
-        const $movie = cheerio.load(movieRes.data);
-
-        const episodes = [];
-
-        $movie(
-            "div.page-tap > ul > li"
-        ).each(function () {
-
-            const a =
-                $movie(this)
-                    .find("a")
-                    .first();
-
-            const href = a.attr("href");
-
-            if (!href) return;
-
-            const text =
-                a.text()
-                    .trim();
-
-            let episodeName =
-                text
-                    .replace(/^Tập\s*/i, "")
-                    .replace(/-End$/i, "")
-                    .trim();
-
-            const numeric =
-                /^\d+$/.test(episodeName);
-
-            episodes.push({
-                number: numeric
-                    ? Number(episodeName)
-                    : null,
-
-                href:
-                    new URL(
-                        href,
-                        movieLink
-                    ).href,
-
-                text
-            });
+        // =========================================================
+        // 2. LOAD MOVIE PAGE
+        // =========================================================
+        const movieRes = await axios.get(movieLink, {
+            headers,
+            timeout,
+            maxRedirects: 5
         });
 
-        if (!episodes.length) {
+        const movieDoc = cheerio.load(movieRes.data);
 
-            console.log(
-                "[PHIMLONGTIENG] ERROR: Không tìm thấy episode"
-            );
+        // =========================================================
+        // 3. FIND EPISODE
+        // =========================================================
+        const episodes = [];
 
-            return streams;
-        }
+        movieDoc("div.page-tap > ul > li").each(function () {
+            const a = movieDoc(this).find("a").first();
+
+            const href = a.attr("href") || "";
+            let name = a.text().trim();
+
+            name = name.replace(/-End$/i, "").trim();
+
+            let number = null;
+
+            const match = name.match(/Tập\s*(\d+)/i);
+
+            if (match) {
+                number = Number(match[1]);
+            } else if (/^\d+$/.test(name)) {
+                number = Number(name);
+            } else if (/^full$/i.test(name)) {
+                number = null;
+            }
+
+            if (href) {
+                episodes.push({
+                    name,
+                    number,
+                    href: new URL(
+                        href,
+                        movieRes.request?.res?.responseUrl || movieLink
+                    ).href
+                });
+            }
+        });
+
+        console.log(
+            "[PHIMLONGTIENG] Episodes:",
+            episodes.slice(0, 20)
+        );
 
         let episode = null;
 
-        if (
-            episodeNumber !== null &&
-            episodeNumber !== undefined
-        ) {
-
-            episode =
-                episodes.find(
-                    e =>
-                        e.number ===
-                        Number(episodeNumber)
-                );
+        if (episodeNumber != null) {
+            episode = episodes.find(
+                e => e.number === Number(episodeNumber)
+            );
         }
 
         if (!episode) {
-            episode = episodes[0];
+            episode = episodes[0] || null;
+        }
+
+        if (!episode) {
+            console.log(
+                "[PHIMLONGTIENG] ERROR: Không tìm thấy episode"
+            );
+            return streams;
         }
 
         console.log(
             "[PHIMLONGTIENG] Episode:",
-            episode.text
+            episode.name
         );
 
         console.log(
@@ -3680,44 +3568,29 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             episode.href
         );
 
-        /* ========================================================
-           3. directUrl
-
-           Provider uses its directUrl field.
-           Initially mainUrl = phimlongtieng.link.
-           It may redirect.
-           ======================================================== */
-
+        // =========================================================
+        // 4. GET FINAL DOMAIN = directUrl
+        // =========================================================
         let directUrl = mainUrl;
 
         try {
-
-            const rootRes =
-                await axios.get(
-                    mainUrl + "/",
-                    {
-                        headers,
-                        timeout,
-                        maxRedirects: 5
-                    }
-                );
+            const rootRes = await axios.get(mainUrl + "/", {
+                headers,
+                timeout,
+                maxRedirects: 5
+            });
 
             const finalUrl =
-                rootRes.request &&
-                rootRes.request.res &&
-                rootRes.request.res.responseUrl;
+                rootRes.request?.res?.responseUrl || "";
 
             if (finalUrl) {
-
                 directUrl =
                     new URL(finalUrl).origin;
             }
-
         } catch (e) {
-
             console.log(
-                "[PHIMLONGTIENG] directUrl redirect error:",
-                e?.message || e
+                "[PHIMLONGTIENG] Root redirect error:",
+                e.message
             );
         }
 
@@ -3726,1000 +3599,137 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             directUrl
         );
 
-        /* ========================================================
-           4. LOAD directUrl + "/"
-
-           Find:
-
-           CryptoJSAesDecrypt('Encrypt', `...`)
-           ======================================================== */
-
-        const directRes =
-            await axios.get(
-                directUrl + "/",
-                {
-                    headers,
-                    timeout,
-                    maxRedirects: 5
-                }
-            );
-
-        const $direct =
-            cheerio.load(
-                directRes.data
-            );
-
-        const cryptoMarker =
-            "CryptoJSAesDecrypt('Encrypt', `";
-
-        let encryptValue = null;
-
-        $direct("script").each(function () {
-
-            const data =
-                $direct(this).html() || "";
-
-            if (
-                data.includes(
-                    cryptoMarker
-                )
-            ) {
-
-                const start =
-                    data.indexOf(
-                        cryptoMarker
-                    );
-
-                if (start < 0) return;
-
-                let value =
-                    data.substring(
-                        start +
-                        cryptoMarker.length
-                    );
-
-                const end =
-                    value.indexOf("`");
-
-                if (end >= 0) {
-
-                    value =
-                        value.substring(
-                            0,
-                            end
-                        );
-                }
-
-                if (value) {
-                    encryptValue = value;
-                }
+        // =========================================================
+        // 5. GET ROOT PAGE
+        // =========================================================
+        const directRes = await axios.get(
+            directUrl + "/",
+            {
+                headers,
+                timeout,
+                maxRedirects: 5
             }
-        });
-
-        if (!encryptValue) {
-
-            console.log(
-                "[PHIMLONGTIENG] ERROR: Không tìm thấy encrypted URL"
-            );
-
-            return streams;
-        }
-
-        console.log(
-            "[PHIMLONGTIENG] encrypted value found"
         );
 
-        /* ========================================================
-           5. EXACT AES DECRYPT
-           ======================================================== */
+        const rootHtml =
+            String(directRes.data || "");
 
-        let iframeUrl;
+        const directDoc =
+            cheerio.load(rootHtml);
 
-        try {
-
-            iframeUrl =
-                cryptoJSAesDecrypt(
-                    "Encrypt",
-                    encryptValue
-                );
-
-        } catch (e) {
-
-            console.log(
-                "[PHIMLONGTIENG] AES decrypt ERROR:",
-                e?.message || e
-            );
-
-            return streams;
-        }
-
-        iframeUrl =
-            String(iframeUrl || "")
-                .trim();
-
-        if (!iframeUrl) {
-
-            console.log(
-                "[PHIMLONGTIENG] ERROR: decrypted URL empty"
-            );
-
-            return streams;
-        }
-
-        iframeUrl =
-            new URL(
-                iframeUrl,
-                directUrl
-            ).href;
-
+        // =========================================================
+        // DEBUG ROOT
+        // =========================================================
         console.log(
-            "[PHIMLONGTIENG] Decrypted URL:",
-            iframeUrl
+            "[PHIMLONGTIENG] ROOT status:",
+            directRes.status
         );
 
-        /* ========================================================
-           6. LOAD IFRAME
-           ======================================================== */
-
-        const iframeRes =
-            await axios.get(
-                iframeUrl,
-                {
-                    headers: {
-                        ...headers,
-                        "Referer":
-                            directUrl + "/"
-                    },
-                    timeout,
-                    maxRedirects: 5
-                }
-            );
-
-        const $iframe =
-            cheerio.load(
-                iframeRes.data
-            );
-
-        const serverElements =
-            $iframe(
-                "#vb_server_list span"
-            );
-
         console.log(
-            "[PHIMLONGTIENG] Servers:",
-            serverElements.length
+            "[PHIMLONGTIENG] ROOT final URL:",
+            directRes.request?.res?.responseUrl ||
+            directUrl + "/"
         );
 
-        if (!serverElements.length) {
-
-            console.log(
-                "[PHIMLONGTIENG] WARNING: #vb_server_list span = 0"
-            );
-        }
-
-        /* ========================================================
-           7. EXTRACT SERVER LINKS
-           ======================================================== */
-
-        const serverJobs = [];
-
-        serverElements.each(function () {
-
-            const element =
-                $iframe(this);
-
-            const source =
-                element
-                    .text()
-                    .trim();
-
-            const onclick =
-                element.attr("onclick") || "";
-
-            if (!onclick) return;
-
-            const marker =
-                "vb_load_player(this,'";
-
-            const start =
-                onclick.indexOf(marker);
-
-            if (start < 0) return;
-
-            let linkEmbed =
-                onclick.substring(
-                    start + marker.length
-                );
-
-            const end =
-                linkEmbed.indexOf("'");
-
-            if (end >= 0) {
-
-                linkEmbed =
-                    linkEmbed.substring(
-                        0,
-                        end
-                    );
-            }
-
-            if (
-                !linkEmbed ||
-                !/^https?:\/\//i.test(linkEmbed)
-            ) {
-                return;
-            }
-
-            serverJobs.push({
-                source,
-                linkEmbed
-            });
-
-            console.log(
-                "[PHIMLONGTIENG] SERVER:",
-                source,
-                linkEmbed
-            );
-        });
-
-        /* ========================================================
-           8. PROCESS SERVERS
-           ======================================================== */
-
-        await Promise.all(
-            serverJobs.map(
-                async ({
-                    source,
-                    linkEmbed
-                }) => {
-
-                    try {
-
-                        console.log(
-                            "[PHIMLONGTIENG] -----------------------------"
-                        );
-
-                        console.log(
-                            "[PHIMLONGTIENG] Processing:",
-                            source
-                        );
-
-                        console.log(
-                            "[PHIMLONGTIENG] linkEmbed:",
-                            linkEmbed
-                        );
-
-                        /* =================================================
-                           HELVID
-                           ================================================= */
-
-                        if (
-                            linkEmbed.includes(
-                                "https://helvid"
-                            )
-                        ) {
-
-                            console.log(
-                                "[PHIMLONGTIENG] Branch: HELVID"
-                            );
-
-                            const baseUrl =
-                                getBaseUrl(
-                                    linkEmbed
-                                );
-
-                            const res =
-                                await getServer(
-                                    linkEmbed,
-                                    directUrl + "/"
-                                );
-
-                            const $server =
-                                cheerio.load(
-                                    res.data
-                                );
-
-                            let file = null;
-
-                            $server(
-                                'script:containsData(playerInstance.setup)'
-                            )
-                                .each(function () {
-
-                                    const data =
-                                        $server(this)
-                                            .html() || "";
-
-                                    const marker =
-                                        'file: "';
-
-                                    const start =
-                                        data.indexOf(
-                                            marker
-                                        );
-
-                                    if (start >= 0) {
-
-                                        let value =
-                                            data.substring(
-                                                start +
-                                                marker.length
-                                            );
-
-                                        const end =
-                                            value.indexOf(
-                                                '"'
-                                            );
-
-                                        if (end >= 0) {
-                                            value =
-                                                value.substring(
-                                                    0,
-                                                    end
-                                                );
-                                        }
-
-                                        if (value) {
-                                            file = value;
-                                        }
-                                    }
-                                });
-
-                            if (file) {
-
-                                const link =
-                                    new URL(
-                                        file,
-                                        baseUrl
-                                    ).href;
-
-                                addStream(
-                                    source,
-                                    link,
-                                    linkEmbed
-                                );
-                            }
-
-                            return;
-                        }
-
-                        /* =================================================
-                           VEVO CLOUD
-                           ================================================= */
-
-                        if (
-                            linkEmbed.includes(
-                                "https://vevocloud.com"
-                            )
-                        ) {
-
-                            console.log(
-                                "[PHIMLONGTIENG] Branch: VEVOCLOUD"
-                            );
-
-                            const res =
-                                await getServer(
-                                    linkEmbed,
-                                    directUrl + "/"
-                                );
-
-                            const $server =
-                                cheerio.load(
-                                    res.data
-                                );
-
-                            let link = null;
-
-                            $server("script")
-                                .each(function () {
-
-                                    const data =
-                                        $server(this)
-                                            .html() || "";
-
-                                    const marker =
-                                        "const videoUrl = new URL('";
-
-                                    if (
-                                        data.includes(
-                                            marker
-                                        )
-                                    ) {
-
-                                        const start =
-                                            data.indexOf(
-                                                marker
-                                            );
-
-                                        let value =
-                                            data.substring(
-                                                start +
-                                                marker.length
-                                            );
-
-                                        const end =
-                                            value.indexOf(
-                                                "'"
-                                            );
-
-                                        if (end >= 0) {
-
-                                            value =
-                                                value.substring(
-                                                    0,
-                                                    end
-                                                );
-                                        }
-
-                                        if (value) {
-                                            link = value;
-                                        }
-                                    }
-                                });
-
-                            if (link) {
-
-                                addStream(
-                                    source,
-                                    link,
-                                    linkEmbed
-                                );
-                            }
-
-                            return;
-                        }
-
-                        /* =================================================
-                           CDN.LOADVID
-                           ================================================= */
-
-                        if (
-                            linkEmbed.includes(
-                                "https://cdn.loadvid.com"
-                            )
-                        ) {
-
-                            console.log(
-                                "[PHIMLONGTIENG] Branch: CDN.LOADVID"
-                            );
-
-                            const res =
-                                await getServer(
-                                    linkEmbed,
-                                    directUrl + "/"
-                                );
-
-                            const $server =
-                                cheerio.load(
-                                    res.data
-                                );
-
-                            let link = null;
-
-                            $server("script")
-                                .each(function () {
-
-                                    const data =
-                                        $server(this)
-                                            .html() || "";
-
-                                    const marker =
-                                        "videoUrl = '";
-
-                                    if (
-                                        data.includes(
-                                            marker
-                                        )
-                                    ) {
-
-                                        const start =
-                                            data.indexOf(
-                                                marker
-                                            );
-
-                                        let value =
-                                            data.substring(
-                                                start +
-                                                marker.length
-                                            );
-
-                                        const end =
-                                            value.indexOf(
-                                                "'"
-                                            );
-
-                                        if (end >= 0) {
-
-                                            value =
-                                                value.substring(
-                                                    0,
-                                                    end
-                                                );
-                                        }
-
-                                        if (value) {
-                                            link = value;
-                                        }
-                                    }
-                                });
-
-                            if (link) {
-
-                                addStream(
-                                    source,
-                                    link,
-                                    getBaseUrl(
-                                        linkEmbed
-                                    )
-                                );
-                            }
-
-                            return;
-                        }
-
-                        /* =================================================
-                           SSPLAY
-
-                           Exact provider condition:
-                           linkEmbed.contains("https://ssplay.net")
-                           ================================================= */
-
-                        if (
-                            linkEmbed.includes(
-                                "https://ssplay.net"
-                            )
-                        ) {
-
-                            console.log(
-                                "[PHIMLONGTIENG] Branch: SSPLAY"
-                            );
-
-                            const res =
-                                await getServer(
-                                    linkEmbed,
-                                    directUrl + "/"
-                                );
-
-                            const $server =
-                                cheerio.load(
-                                    res.data
-                                );
-
-                            const iframe =
-                                $server(
-                                    "iframe#ssPlayer"
-                                )
-                                    .first();
-
-                            const src =
-                                iframe.attr("src") ||
-                                "";
-
-                            console.log(
-                                "[PHIMLONGTIENG] SSPlay iframe:",
-                                src
-                            );
-
-                            if (
-                                src &&
-                                !src.includes(
-                                    "https://short.ink"
-                                )
-                            ) {
-
-                                const script =
-                                    $server(
-                                        "body script:containsData(function(p,a,c,k,e,d))"
-                                    )
-                                        .first();
-
-                                let scriptData = "";
-
-                                if (script.length) {
-
-                                    scriptData =
-                                        script.html() || "";
-                                }
-
-                                let unpacked = "";
-
-                                /*
-                                 * Cloudstream uses:
-                                 * ExtractorApiKt.getAndUnpack(script)
-                                 *
-                                 * Keep compatibility with the
-                                 * existing addon if global unpack()
-                                 * is available.
-                                 */
-                                if (scriptData) {
-
-                                    try {
-
-                                        if (
-                                            typeof unpack ===
-                                            "function"
-                                        ) {
-
-                                            unpacked =
-                                                unpack(
-                                                    scriptData
-                                                ) || "";
-                                        }
-
-                                    } catch (e) {
-
-                                        console.log(
-                                            "[PHIMLONGTIENG] SSPlay unpack ERROR:",
-                                            e?.message || e
-                                        );
-                                    }
-                                }
-
-                                const marker =
-                                    '[{"file":"';
-
-                                if (unpacked) {
-
-                                    const start =
-                                        unpacked.indexOf(
-                                            marker
-                                        );
-
-                                    if (start >= 0) {
-
-                                        let link =
-                                            unpacked.substring(
-                                                start +
-                                                marker.length
-                                            );
-
-                                        /*
-                                         * Exact provider:
-                                         * substringBefore(link, v36)
-                                         *
-                                         * v36 is register-reused.
-                                         * First try the normal JSON quote,
-                                         * then clean the result.
-                                         */
-                                        const end =
-                                            link.indexOf(
-                                                '"'
-                                            );
-
-                                        if (end >= 0) {
-
-                                            link =
-                                                link.substring(
-                                                    0,
-                                                    end
-                                                );
-                                        }
-
-                                        if (link) {
-
-                                            const fixed =
-                                                new URL(
-                                                    link,
-                                                    getBaseUrl(
-                                                        linkEmbed
-                                                    )
-                                                ).href;
-
-                                            addStream(
-                                                source,
-                                                fixed,
-                                                linkEmbed
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            /*
-                             * IMPORTANT:
-                             * Provider continues after SSPlay branch.
-                             * Do not return here because the same
-                             * linkEmbed may also match the later
-                             * Base64 / player processing.
-                             */
-                        }
-
-                        /* =================================================
-                           BASE64 BRANCH
-
-                           Exact provider logic:
-
-                           if (linkEmbed.contains(p1)) {
-                               encodedString =
-                                   substringAfter(
-                                       linkEmbed,
-                                       p1
-                                   );
-
-                               encodedString =
-                                   substringBefore(
-                                       encodedString,
-                                       v26
-                                   );
-
-                               Base64.decode(...)
-                           }
-
-                           We log the values first because p1/v26
-                           are register-reused in the smali.
-                           ================================================= */
-
-                        console.log(
-                            "[PHIMLONGTIENG] Base64 check linkEmbed:",
-                            linkEmbed
-                        );
-
-                        /*
-                         * The Cloudstream bytecode shows that p1 is
-                         * the exact marker and v26 the exact delimiter.
-                         *
-                         * At this stage we do NOT guess them with
-                         * a broad regex.
-                         *
-                         * Try the most likely encoded URL forms,
-                         * while logging which one matched.
-                         */
-
-                        const base64Candidates = [
-                            {
-                                start: "base64,",
-                                end: "'"
-                            },
-                            {
-                                start: "data=",
-                                end: "'"
-                            },
-                            {
-                                start: "hash=",
-                                end: "'"
-                            },
-                            {
-                                start: "url=",
-                                end: "'"
-                            },
-                            {
-                                start: "src=",
-                                end: "'"
-                            }
-                        ];
-
-                        for (
-                            const candidate
-                            of base64Candidates
-                        ) {
-
-                            if (
-                                !linkEmbed.includes(
-                                    candidate.start
-                                )
-                            ) {
-                                continue;
-                            }
-
-                            let encodedString =
-                                linkEmbed.substring(
-                                    linkEmbed.indexOf(
-                                        candidate.start
-                                    ) +
-                                    candidate.start.length
-                                );
-
-                            const end =
-                                encodedString.indexOf(
-                                    candidate.end
-                                );
-
-                            if (end >= 0) {
-
-                                encodedString =
-                                    encodedString.substring(
-                                        0,
-                                        end
-                                    );
-                            }
-
-                            if (
-                                !encodedString ||
-                                encodedString.length < 8
-                            ) {
-                                continue;
-                            }
-
-                            try {
-
-                                const decoded =
-                                    Buffer.from(
-                                        encodedString,
-                                        "base64"
-                                    ).toString(
-                                        "utf8"
-                                    );
-
-                                if (
-                                    /^https?:\/\//i.test(
-                                        decoded
-                                    )
-                                ) {
-
-                                    console.log(
-                                        "[PHIMLONGTIENG] Base64 candidate matched:",
-                                        candidate.start,
-                                        "=>",
-                                        decoded
-                                    );
-
-                                    addStream(
-                                        source,
-                                        decoded,
-                                        directUrl + "/"
-                                    );
-
-                                    break;
-                                }
-
-                            } catch (_) {}
-                        }
-
-                        /* =================================================
-                           HTML5 PLAYER / S2#
-
-                           Exact provider check:
-                           document.getElementById(
-                             "mediaplayer_html5_api"
-                           ).src =
-                           ================================================= */
-
-                        const pageText =
-                            String(
-                                res.data || ""
-                            );
-
-                        const playerMarker =
-                            'document.getElementById("mediaplayer_html5_api").src = ';
-
-                        if (
-                            pageText.includes(
-                                playerMarker
-                            )
-                        ) {
-
-                            console.log(
-                                "[PHIMLONGTIENG] Branch: HTML5 PLAYER"
-                            );
-
-                            let playerUrl = null;
-
-                            const start =
-                                pageText.indexOf(
-                                    ".src = '"
-                                );
-
-                            if (start >= 0) {
-
-                                let value =
-                                    pageText.substring(
-                                        start +
-                                        ".src = '".length
-                                    );
-
-                                const end =
-                                    value.indexOf(
-                                        "'"
-                                    );
-
-                                if (end >= 0) {
-
-                                    value =
-                                        value.substring(
-                                            0,
-                                            end
-                                        );
-                                }
-
-                                playerUrl = value;
-                            }
-
-                            if (
-                                playerUrl &&
-                                playerUrl.includes(
-                                    "/play2.php?hash="
-                                )
-                            ) {
-
-                                let encoded =
-                                    playerUrl.split(
-                                        "/play2.php?hash="
-                                    )[1];
-
-                                if (encoded) {
-
-                                    encoded =
-                                        encoded.split(
-                                            "&"
-                                        )[0];
-
-                                    try {
-
-                                        const link =
-                                            Buffer.from(
-                                                encoded,
-                                                "base64"
-                                            ).toString(
-                                                "utf8"
-                                            );
-
-                                        if (link) {
-
-                                            addStream(
-                                                "S2#",
-                                                link,
-                                                directUrl + "/"
-                                            );
-                                        }
-
-                                    } catch (e) {
-
-                                        console.log(
-                                            "[PHIMLONGTIENG] S2# decode ERROR:",
-                                            e?.message || e
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                    } catch (e) {
-
-                        console.log(
-                            "[PHIMLONGTIENG] Server ERROR:",
-                            source,
-                            e?.message || e
-                        );
-                    }
-                }
+        console.log(
+            "[PHIMLONGTIENG] ROOT length:",
+            rootHtml.length
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] ROOT CryptoJSAesDecrypt:",
+            rootHtml.includes("CryptoJSAesDecrypt")
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] ROOT Encrypt marker:",
+            rootHtml.includes(
+                "CryptoJSAesDecrypt('Encrypt', `"
             )
         );
 
         console.log(
-            "[PHIMLONGTIENG] ================================="
+            "[PHIMLONGTIENG] ROOT vb_server_list:",
+            rootHtml.includes("vb_server_list")
         );
 
         console.log(
-            "[PHIMLONGTIENG] Total streams:",
-            streams.length
+            "[PHIMLONGTIENG] ROOT iframe:",
+            rootHtml.includes("iframe")
         );
 
-        streams.forEach(
-            (s, i) => {
+        console.log(
+            "[PHIMLONGTIENG] ROOT title:",
+            directDoc("title")
+                .first()
+                .text()
+                .trim()
+        );
 
+        // =========================================================
+        // 6. FIND ALL CryptoJSAesDecrypt POSITIONS
+        // =========================================================
+        const markerPositions = [];
+
+        let pos = 0;
+
+        while (
+            (pos = rootHtml.indexOf(
+                "CryptoJSAesDecrypt",
+                pos
+            )) !== -1
+        ) {
+            markerPositions.push(pos);
+            pos += 20;
+        }
+
+        console.log(
+            "[PHIMLONGTIENG] Crypto positions:",
+            markerPositions.slice(0, 10)
+        );
+
+        // =========================================================
+        // 7. PRINT SNIPPETS AROUND EACH OCCURRENCE
+        // =========================================================
+        if (markerPositions.length) {
+            for (
+                const p of markerPositions.slice(0, 5)
+            ) {
                 console.log(
-                    `[PHIMLONGTIENG] #${i + 1}`,
-                    s.title,
-                    s.url
+                    "[PHIMLONGTIENG] Crypto snippet:",
+                    rootHtml.substring(
+                        Math.max(0, p - 150),
+                        p + 500
+                    )
                 );
             }
+        }
+
+        // =========================================================
+        // 8. STOP HERE FOR DEBUG
+        // =========================================================
+        console.log(
+            "[PHIMLONGTIENG] DEBUG STOP - chưa xử lý encrypted URL"
         );
+
+        return streams;
 
     } catch (e) {
-
-        console.log(
-            "[PHIMLONGTIENG] FATAL ERROR:",
-            e?.message || e
+        console.error(
+            "[PHIMLONGTIENG] ERROR:",
+            e.message
         );
 
-        if (e?.stack) {
-            console.log(
-                e.stack
+        if (e.response) {
+            console.error(
+                "[PHIMLONGTIENG] HTTP:",
+                e.response.status,
+                e.response.statusText
             );
         }
-    }
 
-    return streams;
+        return streams;
+    }
 }
 
 
