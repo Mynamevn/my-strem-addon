@@ -3386,7 +3386,7 @@ for (
    Reverse-engineered from PhimLongTiengProvider
    ============================================================ */
 
-async function scrapePhimLongTieng(movieName, episodeNumber = null) {
+async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear = null) {
     const streams = [];
 
     const UA =
@@ -3395,7 +3395,9 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
         "Chrome/120.0.0.0 Safari/537.36";
 
     const headers = {
-        "User-Agent": UA
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "vi,en-US;q=0.9,en;q=0.8"
     };
 
     const timeout = 15000;
@@ -3406,7 +3408,9 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             "[PHIMLONGTIENG] Search:",
             movieName,
             "Episode:",
-            episodeNumber
+            episodeNumber,
+            "Year:",
+            targetYear
         );
 
         // =========================================================
@@ -3435,19 +3439,22 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
         const results = [];
 
         $("ul.list-film > li").each(function () {
-            const a = $(this).find("a").first();
+            const item = $(this);
+            const a = item.find("a").first();
 
             const title =
                 (a.attr("title") || a.text() || "")
+                    .replace(/\s+/g, " ")
                     .trim();
 
             const href = a.attr("href") || "";
 
             const status =
-                $(this)
+                item
                     .find("div.inner > div.status")
                     .first()
                     .text()
+                    .replace(/\s+/g, " ")
                     .trim();
 
             if (href) {
@@ -3461,7 +3468,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
 
         console.log(
             "[PHIMLONGTIENG] Search results:",
-            results.slice(0, 10)
+            results
         );
 
         if (!results.length) {
@@ -3471,15 +3478,105 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             return streams;
         }
 
-        // Tạm thời chọn kết quả đầu tiên như provider.
-        // Sau khi có log, nếu đang chọn sai phim thì mình sẽ sửa
-        // phần matching title/year riêng.
-        let movieLink = results[0].href;
+        // =========================================================
+        // 2. CHỌN ĐÚNG PHIM
+        //
+        // Ưu tiên:
+        //   - title khớp chính xác tên tiếng Anh
+        //   - loại bỏ "Phần Hai / Part Two / 2"
+        //   - nếu có year thì dùng year từ URL/title nếu tìm được
+        //
+        // Với trường hợp:
+        //   Biên Niên Sử Giáng Sinh Phần Hai
+        //   Biên Niên Sử Giáng Sinh
+        //
+        // phải chọn phim đầu tiên tương ứng với The Christmas Chronicles.
+        // =========================================================
 
-        movieLink = new URL(
-            movieLink,
+        const normalize = s =>
+            String(s || "")
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-z0-9]+/g, " ")
+                .trim();
+
+        const normalizedQuery = normalize(movieName);
+
+        const partTwoPattern =
+            /\b(phần\s*2|phan\s*2|phan\s*hai|phần\s*hai|part\s*2|part\s*two|part\s*ii|2)\b/i;
+
+        const scoredResults = results.map((item, index) => {
+            const nt = normalize(item.title);
+
+            let score = 0;
+
+            // Exact normalized title
+            if (nt === normalizedQuery) {
+                score += 10000;
+            }
+
+            // Title chứa toàn bộ query
+            if (
+                normalizedQuery &&
+                nt.includes(normalizedQuery)
+            ) {
+                score += 5000;
+            }
+
+            // Query chứa toàn bộ title
+            if (
+                nt &&
+                normalizedQuery.includes(nt)
+            ) {
+                score += 3000;
+            }
+
+            // Rất quan trọng:
+            // không chọn sequel nếu query là phần đầu.
+            if (partTwoPattern.test(item.title)) {
+                score -= 8000;
+            }
+
+            // Ưu tiên title ngắn hơn khi cùng tên gốc.
+            score -= nt.length;
+
+            // giữ thứ tự gốc làm tie-breaker
+            score -= index * 0.001;
+
+            return {
+                ...item,
+                score
+            };
+        });
+
+        scoredResults.sort(
+            (a, b) => b.score - a.score
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] Ranked results:",
+            scoredResults
+        );
+
+        let selected = scoredResults[0];
+
+        if (!selected) {
+            console.log(
+                "[PHIMLONGTIENG] ERROR: Không chọn được phim"
+            );
+            return streams;
+        }
+
+        let movieLink = new URL(
+            selected.href,
             searchRes.request?.res?.responseUrl || mainUrl
         ).href;
+
+        console.log(
+            "[PHIMLONGTIENG] Selected movie:",
+            selected.title
+        );
 
         console.log(
             "[PHIMLONGTIENG] Movie URL:",
@@ -3487,7 +3584,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
         );
 
         // =========================================================
-        // 2. LOAD MOVIE PAGE
+        // 3. LOAD MOVIE PAGE
         // =========================================================
         const movieRes = await axios.get(movieLink, {
             headers,
@@ -3495,31 +3592,55 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
             maxRedirects: 5
         });
 
-        const movieDoc = cheerio.load(movieRes.data);
+        const movieHtml =
+            String(movieRes.data || "");
+
+        const movieDoc =
+            cheerio.load(movieHtml);
+
+        console.log(
+            "[PHIMLONGTIENG] MOVIE status:",
+            movieRes.status
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] MOVIE final URL:",
+            movieRes.request?.res?.responseUrl ||
+            movieLink
+        );
 
         // =========================================================
-        // 3. FIND EPISODE
+        // 4. FIND EPISODES
         // =========================================================
         const episodes = [];
 
         movieDoc("div.page-tap > ul > li").each(function () {
-            const a = movieDoc(this).find("a").first();
+            const a =
+                movieDoc(this)
+                    .find("a")
+                    .first();
 
-            const href = a.attr("href") || "";
-            let name = a.text().trim();
+            const href =
+                a.attr("href") || "";
 
-            name = name.replace(/-End$/i, "").trim();
+            let name =
+                a.text()
+                    .replace(/\s+/g, " ")
+                    .trim();
+
+            name = name
+                .replace(/-End$/i, "")
+                .trim();
 
             let number = null;
 
-            const match = name.match(/Tập\s*(\d+)/i);
+            const match =
+                name.match(/Tập\s*(\d+)/i);
 
             if (match) {
                 number = Number(match[1]);
             } else if (/^\d+$/.test(name)) {
                 number = Number(name);
-            } else if (/^full$/i.test(name)) {
-                number = null;
             }
 
             if (href) {
@@ -3528,7 +3649,8 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
                     number,
                     href: new URL(
                         href,
-                        movieRes.request?.res?.responseUrl || movieLink
+                        movieRes.request?.res?.responseUrl ||
+                        movieLink
                     ).href
                 });
             }
@@ -3536,15 +3658,18 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
 
         console.log(
             "[PHIMLONGTIENG] Episodes:",
-            episodes.slice(0, 20)
+            episodes
         );
 
         let episode = null;
 
         if (episodeNumber != null) {
-            episode = episodes.find(
-                e => e.number === Number(episodeNumber)
-            );
+            episode =
+                episodes.find(
+                    e =>
+                        e.number ===
+                        Number(episodeNumber)
+                );
         }
 
         if (!episode) {
@@ -3569,19 +3694,23 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
         );
 
         // =========================================================
-        // 4. GET FINAL DOMAIN = directUrl
+        // 5. XÁC ĐỊNH DIRECT URL
         // =========================================================
         let directUrl = mainUrl;
 
         try {
-            const rootRes = await axios.get(mainUrl + "/", {
-                headers,
-                timeout,
-                maxRedirects: 5
-            });
+            const rootRes = await axios.get(
+                mainUrl + "/",
+                {
+                    headers,
+                    timeout,
+                    maxRedirects: 5
+                }
+            );
 
             const finalUrl =
-                rootRes.request?.res?.responseUrl || "";
+                rootRes.request?.res?.responseUrl ||
+                "";
 
             if (finalUrl) {
                 directUrl =
@@ -3600,116 +3729,195 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null) {
         );
 
         // =========================================================
-        // 5. GET ROOT PAGE
+        // 6. LOAD EPISODE PAGE
+        //
+        // Provider cũ lấy directUrl + "/" để tìm encrypted URL.
+        // Site hiện tại đã thay đổi, nên ta kiểm tra episode page
+        // trước để xem player thực tế nằm ở đâu.
         // =========================================================
-        const directRes = await axios.get(
-            directUrl + "/",
+        const episodeRes = await axios.get(
+            episode.href,
             {
-                headers,
+                headers: {
+                    ...headers,
+                    "Referer": directUrl + "/"
+                },
                 timeout,
                 maxRedirects: 5
             }
         );
 
-        const rootHtml =
-            String(directRes.data || "");
+        const episodeHtml =
+            String(episodeRes.data || "");
 
-        const directDoc =
-            cheerio.load(rootHtml);
+        const episodeDoc =
+            cheerio.load(episodeHtml);
 
-        // =========================================================
-        // DEBUG ROOT
-        // =========================================================
         console.log(
-            "[PHIMLONGTIENG] ROOT status:",
-            directRes.status
+            "[PHIMLONGTIENG] EPISODE status:",
+            episodeRes.status
         );
 
         console.log(
-            "[PHIMLONGTIENG] ROOT final URL:",
-            directRes.request?.res?.responseUrl ||
-            directUrl + "/"
+            "[PHIMLONGTIENG] EPISODE final URL:",
+            episodeRes.request?.res?.responseUrl ||
+            episode.href
         );
 
         console.log(
-            "[PHIMLONGTIENG] ROOT length:",
-            rootHtml.length
+            "[PHIMLONGTIENG] EPISODE length:",
+            episodeHtml.length
         );
 
         console.log(
-            "[PHIMLONGTIENG] ROOT CryptoJSAesDecrypt:",
-            rootHtml.includes("CryptoJSAesDecrypt")
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] ROOT Encrypt marker:",
-            rootHtml.includes(
-                "CryptoJSAesDecrypt('Encrypt', `"
-            )
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] ROOT vb_server_list:",
-            rootHtml.includes("vb_server_list")
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] ROOT iframe:",
-            rootHtml.includes("iframe")
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] ROOT title:",
-            directDoc("title")
+            "[PHIMLONGTIENG] EPISODE title:",
+            episodeDoc("title")
                 .first()
                 .text()
                 .trim()
         );
 
-        // =========================================================
-        // 6. FIND ALL CryptoJSAesDecrypt POSITIONS
-        // =========================================================
-        const markerPositions = [];
-
-        let pos = 0;
-
-        while (
-            (pos = rootHtml.indexOf(
-                "CryptoJSAesDecrypt",
-                pos
-            )) !== -1
-        ) {
-            markerPositions.push(pos);
-            pos += 20;
-        }
+        console.log(
+            "[PHIMLONGTIENG] EPISODE CryptoJSAesDecrypt:",
+            episodeHtml.includes("CryptoJSAesDecrypt")
+        );
 
         console.log(
-            "[PHIMLONGTIENG] Crypto positions:",
-            markerPositions.slice(0, 10)
+            "[PHIMLONGTIENG] EPISODE Encrypt marker:",
+            episodeHtml.includes(
+                "CryptoJSAesDecrypt('Encrypt', `"
+            )
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] EPISODE vb_server_list:",
+            episodeHtml.includes("vb_server_list")
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] EPISODE vb_load_player:",
+            episodeHtml.includes("vb_load_player")
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] EPISODE ssPlayer:",
+            episodeHtml.includes("ssPlayer")
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] EPISODE iframe:",
+            episodeHtml.includes("iframe")
         );
 
         // =========================================================
-        // 7. PRINT SNIPPETS AROUND EACH OCCURRENCE
+        // 7. IN RA CÁC TỪ KHÓA QUAN TRỌNG
         // =========================================================
-        if (markerPositions.length) {
+        const keywords = [
+            "CryptoJSAesDecrypt",
+            "vb_server_list",
+            "vb_load_player",
+            "ssPlayer",
+            "mediaplayer_html5_api",
+            "playerInstance.setup",
+            "videoUrl",
+            "iframe"
+        ];
+
+        for (const keyword of keywords) {
+            const positions = [];
+
+            let p = 0;
+
+            while (
+                (p = episodeHtml.indexOf(
+                    keyword,
+                    p
+                )) !== -1
+            ) {
+                positions.push(p);
+                p += keyword.length;
+            }
+
+            console.log(
+                "[PHIMLONGTIENG] KEYWORD:",
+                keyword,
+                "positions:",
+                positions.slice(0, 10)
+            );
+
             for (
-                const p of markerPositions.slice(0, 5)
+                const pos of positions.slice(0, 3)
             ) {
                 console.log(
-                    "[PHIMLONGTIENG] Crypto snippet:",
-                    rootHtml.substring(
-                        Math.max(0, p - 150),
-                        p + 500
+                    "[PHIMLONGTIENG] SNIPPET",
+                    keyword + ":",
+                    episodeHtml.substring(
+                        Math.max(0, pos - 250),
+                        pos + 800
                     )
                 );
             }
         }
 
         // =========================================================
-        // 8. STOP HERE FOR DEBUG
+        // 8. KIỂM TRA ROOT LẠI, NHƯNG KHÔNG DỪNG CHƯƠNG TRÌNH
+        // =========================================================
+        try {
+            const rootRes = await axios.get(
+                directUrl + "/",
+                {
+                    headers,
+                    timeout,
+                    maxRedirects: 5
+                }
+            );
+
+            const rootHtml =
+                String(rootRes.data || "");
+
+            console.log(
+                "[PHIMLONGTIENG] ROOT length:",
+                rootHtml.length
+            );
+
+            console.log(
+                "[PHIMLONGTIENG] ROOT CryptoJSAesDecrypt:",
+                rootHtml.includes("CryptoJSAesDecrypt")
+            );
+
+            console.log(
+                "[PHIMLONGTIENG] ROOT vb_server_list:",
+                rootHtml.includes("vb_server_list")
+            );
+
+            console.log(
+                "[PHIMLONGTIENG] ROOT vb_load_player:",
+                rootHtml.includes("vb_load_player")
+            );
+
+            console.log(
+                "[PHIMLONGTIENG] ROOT title:",
+                cheerio.load(rootHtml)("title")
+                    .first()
+                    .text()
+                    .trim()
+            );
+        } catch (e) {
+            console.log(
+                "[PHIMLONGTIENG] ROOT check error:",
+                e.message
+            );
+        }
+
+        // =========================================================
+        // TẠM DỪNG
+        //
+        // Chưa chạy server extraction ở đây.
+        // Bước tiếp theo sẽ dựa hoàn toàn vào HTML thực tế
+        // của episode page.
         // =========================================================
         console.log(
-            "[PHIMLONGTIENG] DEBUG STOP - chưa xử lý encrypted URL"
+            "[PHIMLONGTIENG] DEBUG STOP - chờ phân tích episode HTML"
         );
 
         return streams;
