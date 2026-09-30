@@ -8497,7 +8497,7 @@ console.log(
 );
 
 console.log(
-    "[STREAM] 1Phim32 streams:",
+    "[STREAM] PhimLongTieng streams:",
     longtieng.length
 );
 
@@ -8751,7 +8751,17 @@ const externalStreams = [
 
             }
         );
-
+console.log(
+    "[DEBUG] PhimLongTieng FINAL:",
+    JSON.stringify(
+        uniqueStreams.filter(
+            stream =>
+                stream?.name?.includes("[PhimLongTieng]")
+        ),
+        null,
+        2
+    )
+);
     // =====================================================
     // 17. LOG CUỐI
     // =====================================================
