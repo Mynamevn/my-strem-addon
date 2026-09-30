@@ -4241,10 +4241,23 @@ if (numMatch) {
 
         const episodeHtml = await episodeRes.text();
 
-        console.log(
-            "[PHIMLONGTIENG] EPISODE length:",
-            episodeHtml.length
-        );
+      // =====================================================
+// DEBUG EPISODE HTML
+// =====================================================
+
+console.log(
+    "[PHIMLONGTIENG] EPISODE length:",
+    episodeHtml.length
+);
+
+console.log(
+    "[PHIMLONGTIENG] EPISODE HTML PREVIEW:",
+    episodeHtml.slice(0, 2000)
+);
+
+// =====================================================
+// END DEBUG EPISODE HTML
+// =====================================================
 
         // ========================================================
         // DECRYPT trailer()
