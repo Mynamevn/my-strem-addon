@@ -5253,6 +5253,12 @@ for (
     const oxData =
         data?.oxData;
 
+    const saltString =
+        String(
+            data?.saltString ||
+            ""
+        ).trim();
+
     if (
         !oxData ||
         typeof oxData !==
@@ -5261,6 +5267,19 @@ for (
 
         console.log(
             "[PHIMHDCS] NO oxData:",
+            data?.server
+        );
+
+        continue;
+
+    }
+
+    if (
+        !saltString
+    ) {
+
+        console.log(
+            "[PHIMHDCS] NO SALT:",
             data?.server
         );
 
@@ -5285,10 +5304,10 @@ for (
         }
 
         let decoded =
-    decodeChunksWithSalt(
-    oxData[key],
-    data.saltString
-);
+            decodeChunksWithSalt(
+                oxData[key],
+                saltString
+            );
 
         if (
             decoded &&
@@ -5325,23 +5344,6 @@ for (
 
     }
 
-console.log(
-    "[PHIMHDCS] DECODE CONTEXT:",
-    {
-        server:
-            data.server,
-
-        saltFound:
-            Boolean(
-                data.salt
-            ),
-
-        oxDataKeys:
-            Object.keys(
-                oxData
-            ).length
-    }
-);
     const decodedServers = [];
 
     const seenServerUrls =
