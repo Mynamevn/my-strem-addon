@@ -4247,17 +4247,34 @@ if (numMatch) {
 
 try {
 
+    // episodeUrl đã được tạo và đang có đúng episode cần test
+    const currentEpisodeUrl =
+        episodeUrl || "";
+
+
+    // =====================================================
+    // SUY RA MOVIE URL TỪ EPISODE URL
+    // Ví dụ:
+    // /phim/dau-xuan-tuoi-sang-thuyet-minh/tap-7
+    // ->
+    // /phim/dau-xuan-tuoi-sang-thuyet-minh
+    // =====================================================
+
     const baseMovieUrl =
-        selectedMovie?.href ||
-        "";
+        currentEpisodeUrl
+            .replace(/\/tap-\d+\/?$/, "")
+            .replace(/\/$/, "");
+
 
     const tap1Url =
-        `${baseMovieUrl.replace(/\/$/, "")}/tap-1`;
+        `${baseMovieUrl}/tap-1`;
+
 
     console.log(
         "[PHIMLONGTIENG] TEST TAP-1 URL:",
         tap1Url
     );
+
 
     console.log(
         "[PHIMLONGTIENG] MOVIE URL FOR TEST:",
@@ -4275,15 +4292,20 @@ try {
             {
                 headers: {
                     Referer:
-                        `${baseMovieUrl.replace(/\/$/, "")}/`,
+                        `${baseMovieUrl}/`,
+
                     "User-Agent":
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+
                     Accept:
                         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+
                     "Accept-Language":
                         "en-US,en;q=0.9,vi;q=0.8",
+
                     "Cache-Control":
                         "no-cache",
+
                     Pragma:
                         "no-cache"
                 },
@@ -4297,7 +4319,9 @@ try {
 
 
     const tap1Html =
-        tap1Response.data || "";
+        typeof tap1Response.data === "string"
+            ? tap1Response.data
+            : String(tap1Response.data || "");
 
 
     console.log(
@@ -4358,9 +4382,24 @@ try {
 
 
     console.log(
+        "[PHIMLONGTIENG] TAP-1 challenge marker:",
+        tap1Html.includes(
+            "Attention Required"
+        ) ||
+        tap1Html.includes(
+            "Just a moment"
+        ) ||
+        tap1Html.includes(
+            "challenge-platform"
+        )
+    );
+
+
+    console.log(
         "[PHIMLONGTIENG] TAP-1 PREVIEW:",
         tap1Html.slice(0, 2500)
     );
+
 
 } catch (e) {
 
