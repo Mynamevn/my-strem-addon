@@ -3536,11 +3536,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
     }
 
     // ============================================================
-    // Extract encrypted JSON từ:
-    //
-    // CryptoJSAesDecrypt('Encrypt', `{"ciphertext":...}`)
-    //
-    // Có thể xuất hiện nhiều lần -> lấy candidate cuối cùng hợp lệ.
+    // Extract encrypted JSON
     // ============================================================
 
     function extractEncryptedJson(html) {
@@ -3591,12 +3587,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
     // ============================================================
     // Tìm URL play2.php?hash=...
-    //
-    // Đây chính là phần log đã cho thấy:
-    //
-    // play2.php?hash=BASE64_M3U8&token=...
-    //
-    // hash -> Base64 -> m3u8 thật
     // ============================================================
 
     function extractPlay2Streams(html, baseUrl, labelPrefix = "PLAY2") {
@@ -3608,7 +3598,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         while ((m = regex.exec(html)) !== null) {
             let url = decodeHtml(m[0]);
 
-            // Dừng các ký tự HTML thừa nếu regex ăn vào
             url = url.replace(/[)"';,]+$/g, "");
 
             if (!found.includes(url)) {
@@ -3712,8 +3701,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
     // Tìm URL trong onclick:
     //
     // onclick="vb_load_player(this,'https://...')"
-    //
-    // Đặc biệt S1# và HY3#
     // ============================================================
 
     function extractVBPlayers(html, baseUrl) {
@@ -3747,10 +3734,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
                 url
             );
 
-            // ----------------------------------------------------
-            // Nếu là play2.php -> decode hash
-            // ----------------------------------------------------
-
             try {
                 const parsed = new URL(url);
 
@@ -3782,10 +3765,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
                 }
             } catch (_) {}
 
-            // ----------------------------------------------------
-            // Nếu onclick chứa URL .m3u8 trực tiếp
-            // ----------------------------------------------------
-
             if (/\.m3u8(?:[?#]|$)/i.test(url)) {
                 addStream(
                     url,
@@ -3800,7 +3779,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
     }
 
     // ============================================================
-    // data-url của server đầu tiên
+    // data-url của server
     // ============================================================
 
     function extractDataUrls(html, baseUrl) {
@@ -3886,7 +3865,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
         const finalSearchUrl = searchRes.url || searchUrl;
 
-        // Provider cũ dùng domain redirect.
         try {
             directUrl = new URL(finalSearchUrl).origin;
         } catch (_) {}
@@ -3899,10 +3877,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         const searchHtml = await searchRes.text();
 
         const candidates = [];
-
-        // --------------------------------------------------------
-        // <ul class="list-film"> ... <li> ... <a ...>
-        // --------------------------------------------------------
 
         const liRegex =
             /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
@@ -3969,9 +3943,9 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
             return [];
         }
 
-        // --------------------------------------------------------
+        // ========================================================
         // RANK
-        // --------------------------------------------------------
+        // ========================================================
 
         const target = normalizeText(movieName);
 
@@ -3992,7 +3966,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
                 score += 500;
             }
 
-            // Phần Hai / Part Two phải bị trừ mạnh
             if (
                 /phần\s*hai|phan\s*hai|part\s*two|part\s*2/i.test(
                     item.title
@@ -4001,7 +3974,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
                 score -= 8000;
             }
 
-            // Ưu tiên Lồng Tiếng vì đây chính là provider
             if (/lồng tiếng/i.test(item.status)) {
                 score += 100;
             }
@@ -4107,22 +4079,112 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
             return [];
         }
 
-        // Movie hiện tại chỉ có Tập Full / Lồng Tiếng.
-        let selectedEpisode = episodes[0];
+        // ========================================================
+        // FIX QUAN TRỌNG:
+        //
+        // Trang phim có rất nhiều <li> là menu/navigation:
+        //
+        //   1phim1 -> /
+        //   Thể loại -> /the-loai/...
+        //   Quốc gia -> /quoc-gia/...
+        //   ...
+        //
+        // Không được lấy episodes[0].
+        //
+        // Episode thật có dạng:
+        //
+        //   /phim/<slug>/tap-1
+        //   /phim/<slug>/tap-2
+        //   /phim/<slug>/tap-full
+        //
+        // ========================================================
+
+        const realEpisodes = episodes.filter(e => {
+            if (!e || !e.href) return false;
+
+            try {
+                const u = new URL(e.href);
+
+                return /^\/phim\/[^/]+\/tap-[^/?#]+/i.test(
+                    u.pathname
+                );
+            } catch (_) {
+                return false;
+            }
+        });
+
+        console.log(
+            "[PHIMLONGTIENG] REAL episode candidates:",
+            realEpisodes
+        );
+
+        if (!realEpisodes.length) {
+            console.log(
+                "[PHIMLONGTIENG] No REAL episode links found"
+            );
+            return [];
+        }
+
+        // ========================================================
+        // CHỌN EPISODE
+        //
+        // Series:
+        //   ưu tiên đúng số tập được yêu cầu.
+        //
+        // Movie:
+        //   ưu tiên /tap-full
+        //   sau đó Lồng Tiếng
+        //   sau đó Xem Online
+        // ========================================================
+
+        let selectedEpisode = null;
 
         if (
             episodeNumber !== null &&
             episodeNumber !== undefined &&
-            episodeNumber > 0
+            Number(episodeNumber) > 0
         ) {
-            const match = episodes.find(
-                e => e.number === episodeNumber
+            const wantedNumber = Number(episodeNumber);
+
+            selectedEpisode = realEpisodes.find(
+                e => e.number === wantedNumber
             );
 
-            if (match) {
-                selectedEpisode = match;
+            if (!selectedEpisode) {
+                selectedEpisode = realEpisodes.find(e => {
+                    const text = String(e.name || "");
+
+                    return new RegExp(
+                        `(?:tập|tap|episode|ep)\\s*0*${wantedNumber}\\b`,
+                        "i"
+                    ).test(text);
+                });
             }
         }
+
+        // Movie / Full
+        if (!selectedEpisode) {
+            selectedEpisode =
+                realEpisodes.find(e =>
+                    /\/tap-full(?:[/?#]|$)/i.test(e.href)
+                ) ||
+                realEpisodes.find(e =>
+                    /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
+                        String(e.name || "")
+                    )
+                ) ||
+                realEpisodes.find(e =>
+                    /xem\s*online/i.test(
+                        String(e.name || "")
+                    )
+                ) ||
+                realEpisodes[0];
+        }
+
+        console.log(
+            "[PHIMLONGTIENG] Selected REAL episode:",
+            selectedEpisode
+        );
 
         console.log(
             "[PHIMLONGTIENG] Episode:",
@@ -4164,8 +4226,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
         // ========================================================
         // DECRYPT trailer()
-        //
-        // -> https://www.1phim34.com/vpm.php?v=...&h=US3015
         // ========================================================
 
         const encryptedEpisode =
@@ -4246,12 +4306,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         );
 
         // ========================================================
-        // 1. S2 / default player:
-        //
-        // document.getElementById("mediaplayer_html5_api").src =
-        // "https://www.1phim34.com/play2.php?hash=..."
-        //
-        // -> hash -> Base64 -> m3u8
+        // 1. S2 / default player
         // ========================================================
 
         extractPlay2Streams(
@@ -4262,12 +4317,6 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
         // ========================================================
         // 2. onclick="vb_load_player(this,'URL')"
-        //
-        // S1#:
-        // https://www.1phim34.com/play2.php?hash=...
-        //
-        // HY3#:
-        // https://player-cdn.com/?v=...
         // ========================================================
 
         extractVBPlayers(
@@ -4285,7 +4334,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         );
 
         // ========================================================
-        // 4. Nếu có .m3u8 trực tiếp trong player HTML
+        // 4. .m3u8 trực tiếp
         // ========================================================
 
         extractDirectM3U8(
@@ -4295,15 +4344,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         );
 
         // ========================================================
-        // 5. urls = decrypted URL
-        //
-        // Trong HTML:
-        //
-        // onclick="vb_load_player(this,urls);"
-        //
-        // urls chính là playerUrl đã decrypt.
-        //
-        // Nếu playerUrl cuối cùng là m3u8 thì add luôn.
+        // 5. Nếu playerUrl đã là m3u8
         // ========================================================
 
         if (/\.m3u8(?:[?#]|$)/i.test(playerUrl)) {
@@ -4316,7 +4357,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         }
 
         // ========================================================
-        // 6. Log server list để kiểm tra TA5 / HY3
+        // 6. Log server buttons
         // ========================================================
 
         const serverMatches = [
@@ -4327,6 +4368,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
         for (const match of serverMatches) {
             const argument = match[1];
+
             const label = match[2]
                 .replace(/<[^>]+>/g, " ")
                 .replace(/\s+/g, " ")
