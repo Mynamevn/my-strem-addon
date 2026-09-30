@@ -8400,7 +8400,11 @@ try {
                 streamType
             ),
 
-            scrapePhimLongTieng(movieName),
+            scrapePhimLongTieng(
+                movieName,
+                episodeNumber,
+                movieYear
+            ),
 
             scrapePhimHDCS(
                 movieName,
