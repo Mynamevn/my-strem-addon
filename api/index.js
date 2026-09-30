@@ -4057,12 +4057,26 @@ streams.push({
 
             if (!href) continue;
 
-            let number = null;
+         let number = null;
 
-            const numMatch =
-                rawText.match(
-                    /(?:tập|tap)\s*(\d+)/i
-                );
+// Ví dụ:
+// "Xem tập 8" → 8
+// "Tập 8"     → 8
+// "Tap 8"     → 8
+// "08"        → 8
+// "8"         → 8
+
+const numMatch =
+    rawText.match(
+        /(?:tập|tap|episode|ep)\s*0*(\d+)\b/i
+    ) ||
+    rawText.match(
+        /^\s*0*(\d+)\s*$/
+    );
+
+if (numMatch) {
+    number = Number(numMatch[1]);
+}
 
             if (numMatch) {
                 number = Number(numMatch[1]);
