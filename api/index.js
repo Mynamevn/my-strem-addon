@@ -3424,13 +3424,16 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         }
     }
 
-    function addStream(url, title, referer, sourceLabel) {
+        function addStream(url, title, referer, sourceLabel) {
         if (!url) return;
 
         url = decodeHtml(url).trim();
 
         if (!/^https?:\/\//i.test(url)) {
-            url = absUrl(url, referer || "https://www.1phim34.com/");
+            url = absUrl(
+                url,
+                referer || "https://www.1phim34.com/"
+            );
         }
 
         if (!url) return;
@@ -3440,31 +3443,40 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         if (seen.has(key)) return;
         seen.add(key);
 
-        const isM3U8 = /\.m3u8(?:[?#]|$)/i.test(url);
+        const isM3U8 =
+            /\.m3u8(?:[?#]|$)/i.test(url);
 
-        console.log("[PHIMLONGTIENG] ADD STREAM:", {
-            server: sourceLabel,
+        const streamReferer =
+            "https://www.1phim34.com/";
+
+        console.log(
+            "[PHIMLONGTIENG] ADD STREAM:",
+            sourceLabel,
             title,
+            url
+        );
+
+        streams.push({
+            name: `⚡ [PhimLongTieng] ${sourceLabel}`,
+            title: title || sourceLabel,
             url,
-            isM3U8
-        });
 
-streams.push({
-    name: `⚡ [PhimLongTieng] ${sourceLabel}`,
-    title: title || sourceLabel,
-    url,
-    behaviorHints: {
-        bingeGroup: `phimlongtieng-${sourceLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-        notWebReady: true,
-        proxyHeaders: {
-            request: {
-                Referer: "https://www.1phim34.com/",
-                Accept: "*/*"
+            behaviorHints: {
+                bingeGroup:
+                    `phimlongtieng-${sourceLabel
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")}`,
+
+                notWebReady: true,
+
+                proxyHeaders: {
+                    request: {
+                        Referer: streamReferer,
+                        Accept: "*/*"
+                    }
+                }
             }
-        }
-    }
-});
-
+        });
     }
 
     async function get(url, headers = {}) {
@@ -3613,9 +3625,9 @@ streams.push({
             }
         }
 
-        console.log(
-            `[PHIMLONGTIENG] ${labelPrefix} play2 URLs:`,
-            found
+                console.log(
+            `[PHIMLONGTIENG] ${labelPrefix} play2 count:`,
+            found.length
         );
 
         for (const play2Url of found) {
@@ -3634,10 +3646,10 @@ streams.push({
 
                 const decoded = decodeBase64Url(hash);
 
-                console.log("[PHIMLONGTIENG] play2 hash decoded:", {
-                    play2: play2Url,
+                                console.log(
+                    "[PHIMLONGTIENG] play2 decoded:",
                     decoded
-                });
+                );
 
                 if (
                     decoded &&
@@ -3937,11 +3949,24 @@ streams.push({
                 href: absUrl(href, directUrl),
                 status
             });
-        }
+        }        console.log(
+            "[PHIMLONGTIENG] Search candidates:",
+            candidates.length
+        );
 
         console.log(
-            "[PHIMLONGTIENG] Search results:",
+            "[PHIMLONGTIENG] Relevant candidates:",
             candidates
+                .filter(c =>
+                    normalizeText(c.title).includes(
+                        normalizeText(movieName)
+                    )
+                )
+                .map(c => ({
+                    title: c.title,
+                    status: c.status,
+                    href: c.href
+                }))
         );
 
         if (!candidates.length) {
@@ -3993,10 +4018,15 @@ streams.push({
         });
 
         ranked.sort((a, b) => b.score - a.score);
-
         console.log(
-            "[PHIMLONGTIENG] Ranked results:",
+            "[PHIMLONGTIENG] Ranked:",
             ranked
+                .slice(0, 5)
+                .map(r => ({
+                    title: r.title,
+                    score: r.score,
+                    status: r.status
+                }))
         );
 
         const selected = ranked[0];
@@ -4057,26 +4087,22 @@ streams.push({
 
             if (!href) continue;
 
-         let number = null;
+                     let number = null;
 
-// Ví dụ:
-// "Xem tập 8" → 8
-// "Tập 8"     → 8
-// "Tap 8"     → 8
-// "08"        → 8
-// "8"         → 8
+            // Ví dụ:
+            // "Xem tập 8" → 8
+            // "Tập 8"     → 8
+            // "Tap 8"     → 8
+            // "08"        → 8
+            // "8"         → 8
 
-const numMatch =
-    rawText.match(
-        /(?:tập|tap|episode|ep)\s*0*(\d+)\b/i
-    ) ||
-    rawText.match(
-        /^\s*0*(\d+)\s*$/
-    );
-
-if (numMatch) {
-    number = Number(numMatch[1]);
-}
+            const numMatch =
+                rawText.match(
+                    /(?:tập|tap|episode|ep)\s*0*(\d+)\b/i
+                ) ||
+                rawText.match(
+                    /^\s*0*(\d+)\s*$/
+                );
 
             if (numMatch) {
                 number = Number(numMatch[1]);
@@ -4089,9 +4115,9 @@ if (numMatch) {
             });
         }
 
-        console.log(
-            "[PHIMLONGTIENG] Episodes:",
-            episodes
+                console.log(
+            "[PHIMLONGTIENG] Episodes parsed:",
+            episodes.length
         );
 
         if (!episodes.length) {
@@ -4102,23 +4128,7 @@ if (numMatch) {
         }
 
         // ========================================================
-        // FIX QUAN TRỌNG:
-        //
-        // Trang phim có rất nhiều <li> là menu/navigation:
-        //
-        //   1phim1 -> /
-        //   Thể loại -> /the-loai/...
-        //   Quốc gia -> /quoc-gia/...
-        //   ...
-        //
-        // Không được lấy episodes[0].
-        //
-        // Episode thật có dạng:
-        //
-        //   /phim/<slug>/tap-1
-        //   /phim/<slug>/tap-2
-        //   /phim/<slug>/tap-full
-        //
+        // CHỈ GIỮ CÁC EPISODE THẬT
         // ========================================================
 
         const realEpisodes = episodes.filter(e => {
@@ -4136,8 +4146,12 @@ if (numMatch) {
         });
 
         console.log(
-            "[PHIMLONGTIENG] REAL episode candidates:",
-            realEpisodes
+            "[PHIMLONGTIENG] REAL episodes:",
+            realEpisodes.map(e => ({
+                name: e.name,
+                number: e.number,
+                href: e.href
+            }))
         );
 
         if (!realEpisodes.length) {
@@ -4241,181 +4255,7 @@ if (numMatch) {
 
         const episodeHtml = await episodeRes.text();
 
-      // =====================================================
-// DEBUG CLOUDFLARE EPISODE / SESSION TEST
-// =====================================================
-
-try {
-
-    // episodeUrl đã được tạo và đang có đúng episode cần test
-    const currentEpisodeUrl =
-        episodeUrl || "";
-
-
-    // =====================================================
-    // SUY RA MOVIE URL TỪ EPISODE URL
-    // Ví dụ:
-    // /phim/dau-xuan-tuoi-sang-thuyet-minh/tap-7
-    // ->
-    // /phim/dau-xuan-tuoi-sang-thuyet-minh
-    // =====================================================
-
-    const baseMovieUrl =
-        currentEpisodeUrl
-            .replace(/\/tap-\d+\/?$/, "")
-            .replace(/\/$/, "");
-
-
-    const tap1Url =
-        `${baseMovieUrl}/tap-1`;
-
-
-    console.log(
-        "[PHIMLONGTIENG] TEST TAP-1 URL:",
-        tap1Url
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] MOVIE URL FOR TEST:",
-        baseMovieUrl
-    );
-
-
-    // =====================================================
-    // TEST TAP-1
-    // =====================================================
-
-    const tap1Response =
-        await axios.get(
-            tap1Url,
-            {
-                headers: {
-                    Referer:
-                        `${baseMovieUrl}/`,
-
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-
-                    Accept:
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-
-                    "Accept-Language":
-                        "en-US,en;q=0.9,vi;q=0.8",
-
-                    "Cache-Control":
-                        "no-cache",
-
-                    Pragma:
-                        "no-cache"
-                },
-
-                maxRedirects: 10,
-
-                validateStatus:
-                    () => true
-            }
-        );
-
-
-    const tap1Html =
-        typeof tap1Response.data === "string"
-            ? tap1Response.data
-            : String(tap1Response.data || "");
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 status:",
-        tap1Response.status
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 final URL:",
-        tap1Response.request?.res?.responseUrl ||
-        tap1Url
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 length:",
-        tap1Html.length
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 content-type:",
-        tap1Response.headers?.["content-type"] ||
-        ""
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 set-cookie:",
-        tap1Response.headers?.["set-cookie"] ||
-        []
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 encrypted marker:",
-        tap1Html.includes(
-            "CryptoJSAesDecrypt"
-        )
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 cloudflare marker:",
-        tap1Html.includes(
-            "cdn-cgi/content"
-        )
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 please-stand-by:",
-        tap1Html.includes(
-            "Please stand by"
-        )
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 challenge marker:",
-        tap1Html.includes(
-            "Attention Required"
-        ) ||
-        tap1Html.includes(
-            "Just a moment"
-        ) ||
-        tap1Html.includes(
-            "challenge-platform"
-        )
-    );
-
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 PREVIEW:",
-        tap1Html.slice(0, 2500)
-    );
-
-
-} catch (e) {
-
-    console.log(
-        "[PHIMLONGTIENG] TAP-1 TEST ERROR:",
-        e?.message ||
-        e
-    );
-
-}
-
-
-// =====================================================
-// END DEBUG CLOUDFLARE EPISODE / SESSION TEST
-// =====================================================
-
+      
         // ========================================================
         // DECRYPT trailer()
         // ========================================================
@@ -4584,9 +4424,13 @@ try {
             streams.length
         );
 
-        console.log(
+                console.log(
             "[PHIMLONGTIENG] FINAL STREAMS:",
-            JSON.stringify(streams)
+            streams.map(s => ({
+                name: s.name,
+                title: s.title,
+                url: s.url
+            }))
         );
 
         return streams;
