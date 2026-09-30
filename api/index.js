@@ -3425,6 +3425,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
     }
 
         function addStream(url, title, referer, sourceLabel) {
+
     if (!url) return;
 
     url = decodeHtml(url).trim();
@@ -3443,21 +3444,91 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
     if (seen.has(key)) return;
     seen.add(key);
 
-    const isM3U8 =
-        /\.m3u8(?:[?#]|$)/i.test(url);
+    // =================================================
+    // XÁC ĐỊNH HOST THỰC TẾ CỦA STREAM
+    // =================================================
 
-    const streamReferer =
-        referer ||
-        "https://www.1phim34.com/";
+    let streamUrl;
+
+    try {
+        streamUrl = new URL(url);
+    } catch (e) {
+        console.log(
+            "[PHIMLONGTIENG] Invalid stream URL:",
+            url
+        );
+        return;
+    }
+
+    const streamHost =
+        streamUrl.hostname.toLowerCase();
+
+    // =================================================
+    // REFERER THEO ĐÚNG SERVER STREAM
+    // =================================================
+
+    let streamReferer;
+
+    if (
+        streamHost === "play.cbplay.cc" ||
+        streamHost.endsWith(".cbplay.cc")
+    ) {
+        streamReferer =
+            "https://play.cbplay.cc/";
+    } else {
+        streamReferer =
+            "https://www.1phim34.com/";
+    }
+
+    // =================================================
+    // USER-AGENT
+    // =================================================
+
+    const streamUserAgent =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/131.0.0.0 Safari/537.36";
+
+    // =================================================
+    // ACCEPT
+    // =================================================
+
+    const streamAccept =
+        "application/vnd.apple.mpegurl, " +
+        "application/x-mpegURL, " +
+        "video/mp2t, */*";
+
+    // =================================================
+    // LOG
+    // =================================================
 
     console.log(
         "[PHIMLONGTIENG] ADD STREAM:",
         sourceLabel,
-        title,
+        title
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] HOST:",
+        streamHost
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] REFERER:",
+        streamReferer
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] URL:",
         url
     );
 
+    // =================================================
+    // STREAM
+    // =================================================
+
     streams.push({
+
         name:
             `⚡ [PhimLongTieng] ${sourceLabel}`,
 
@@ -3468,13 +3539,10 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
         behaviorHints: {
 
-            bingeGroup:
-                `phimlongtieng-${sourceLabel
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]+/g, "-")}`,
+            notWebReady: true,
 
-            notWebReady:
-                true,
+            bingeGroup:
+                `phimlongtieng-${streamHost}`,
 
             proxyHeaders: {
 
@@ -3483,14 +3551,14 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
                     Referer:
                         streamReferer,
 
-                    Origin:
-                        "https://www.1phim34.com",
-
                     "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                        streamUserAgent,
 
                     Accept:
-                        "*/*"
+                        streamAccept,
+
+                    Connection:
+                        "keep-alive"
                 }
             }
         }
