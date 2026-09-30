@@ -4242,7 +4242,7 @@ if (numMatch) {
         const episodeHtml = await episodeRes.text();
 
       // =====================================================
-// DEBUG EPISODE HTML
+// DEBUG CLOUDFLARE EPISODE
 // =====================================================
 
 console.log(
@@ -4255,8 +4255,80 @@ console.log(
     episodeHtml.slice(0, 2000)
 );
 
+
 // =====================================================
-// END DEBUG EPISODE HTML
+// TEST TAP-1
+// =====================================================
+
+try {
+
+    const tap1Url =
+        `${movieUrl.replace(/\/$/, "")}/tap-1`;
+
+    console.log(
+        "[PHIMLONGTIENG] TEST TAP-1 URL:",
+        tap1Url
+    );
+
+    const tap1Response =
+        await axios.get(
+            tap1Url,
+            {
+                headers: {
+                    Referer: movieUrl,
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                    Accept:
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                },
+                maxRedirects: 10,
+                validateStatus: () => true
+            }
+        );
+
+    const tap1Html =
+        tap1Response.data || "";
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 status:",
+        tap1Response.status
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 final URL:",
+        tap1Response.request?.res?.responseUrl ||
+        tap1Url
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 length:",
+        tap1Html.length
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 PREVIEW:",
+        tap1Html.slice(0, 2000)
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 encrypted marker:",
+        tap1Html.includes(
+            "CryptoJSAesDecrypt"
+        )
+    );
+
+} catch (e) {
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 TEST ERROR:",
+        e?.message || e
+    );
+
+}
+
+
+// =====================================================
+// END DEBUG CLOUDFLARE EPISODE
 // =====================================================
 
         // ========================================================
