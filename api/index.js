@@ -4242,57 +4242,69 @@ if (numMatch) {
         const episodeHtml = await episodeRes.text();
 
       // =====================================================
-// DEBUG CLOUDFLARE EPISODE
-// =====================================================
-
-console.log(
-    "[PHIMLONGTIENG] EPISODE length:",
-    episodeHtml.length
-);
-
-console.log(
-    "[PHIMLONGTIENG] EPISODE HTML PREVIEW:",
-    episodeHtml.slice(0, 2000)
-);
-
-
-// =====================================================
-// TEST TAP-1
+// DEBUG CLOUDFLARE EPISODE / SESSION TEST
 // =====================================================
 
 try {
 
+    const baseMovieUrl =
+        selectedMovie?.href ||
+        "";
+
     const tap1Url =
-        `${movieUrl.replace(/\/$/, "")}/tap-1`;
+        `${baseMovieUrl.replace(/\/$/, "")}/tap-1`;
 
     console.log(
         "[PHIMLONGTIENG] TEST TAP-1 URL:",
         tap1Url
     );
 
+    console.log(
+        "[PHIMLONGTIENG] MOVIE URL FOR TEST:",
+        baseMovieUrl
+    );
+
+
+    // =====================================================
+    // TEST TAP-1
+    // =====================================================
+
     const tap1Response =
         await axios.get(
             tap1Url,
             {
                 headers: {
-                    Referer: movieUrl,
+                    Referer:
+                        `${baseMovieUrl.replace(/\/$/, "")}/`,
                     "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                     Accept:
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept-Language":
+                        "en-US,en;q=0.9,vi;q=0.8",
+                    "Cache-Control":
+                        "no-cache",
+                    Pragma:
+                        "no-cache"
                 },
+
                 maxRedirects: 10,
-                validateStatus: () => true
+
+                validateStatus:
+                    () => true
             }
         );
 
+
     const tap1Html =
         tap1Response.data || "";
+
 
     console.log(
         "[PHIMLONGTIENG] TAP-1 status:",
         tap1Response.status
     );
+
 
     console.log(
         "[PHIMLONGTIENG] TAP-1 final URL:",
@@ -4300,15 +4312,26 @@ try {
         tap1Url
     );
 
+
     console.log(
         "[PHIMLONGTIENG] TAP-1 length:",
         tap1Html.length
     );
 
+
     console.log(
-        "[PHIMLONGTIENG] TAP-1 PREVIEW:",
-        tap1Html.slice(0, 2000)
+        "[PHIMLONGTIENG] TAP-1 content-type:",
+        tap1Response.headers?.["content-type"] ||
+        ""
     );
+
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 set-cookie:",
+        tap1Response.headers?.["set-cookie"] ||
+        []
+    );
+
 
     console.log(
         "[PHIMLONGTIENG] TAP-1 encrypted marker:",
@@ -4317,18 +4340,41 @@ try {
         )
     );
 
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 cloudflare marker:",
+        tap1Html.includes(
+            "cdn-cgi/content"
+        )
+    );
+
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 please-stand-by:",
+        tap1Html.includes(
+            "Please stand by"
+        )
+    );
+
+
+    console.log(
+        "[PHIMLONGTIENG] TAP-1 PREVIEW:",
+        tap1Html.slice(0, 2500)
+    );
+
 } catch (e) {
 
     console.log(
         "[PHIMLONGTIENG] TAP-1 TEST ERROR:",
-        e?.message || e
+        e?.message ||
+        e
     );
 
 }
 
 
 // =====================================================
-// END DEBUG CLOUDFLARE EPISODE
+// END DEBUG CLOUDFLARE EPISODE / SESSION TEST
 // =====================================================
 
         // ========================================================
