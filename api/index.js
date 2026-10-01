@@ -3549,30 +3549,51 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         );
 
         // ============================================================
-        // ADD STREAM
-        // ============================================================
+// ADD STREAM
+// ============================================================
 
-        streams.push({
-            name:
-                `⚡ [PhimLongTieng] ${sourceLabel}`,
+const streamObject = {
 
-            title:
-                title || `${sourceLabel} - Direct`,
+    name:
+        `⚡ [PhimLongTieng] ${sourceLabel}`,
 
-            url:
-                proxyUrl,
+    title:
+        title ||
+        `${sourceLabel} - Direct`,
 
-            behaviorHints: {
-                bingeGroup:
-                    `phimlongtieng-${streamHost}`
-            }
-        });
+    url:
+        proxyUrl,
 
-        console.log(
-            "[PHIMLONGTIENG] STREAM ADDED:",
-            proxyUrl
-        );
+    behaviorHints: {
+
+        // WebStremio có thể phát trực tiếp
+        // thông qua URL proxy Vercel.
+        notWebReady: false,
+
+        // Cho phép Stremio gom các tập
+        // của cùng nguồn vào một nhóm.
+        bingeGroup:
+            `phimlongtieng-${streamHost}`
+
     }
+
+};
+
+streams.push(
+    streamObject
+);
+
+console.log(
+    "[PHIMLONGTIENG] STREAM ADDED:"
+);
+
+console.log(
+    JSON.stringify(
+        streamObject,
+        null,
+        2
+    )
+);
 
     async function get(url, headers = {}) {
         const controller = new AbortController();
@@ -12126,6 +12147,44 @@ startNguonC()
 //     upstream M3U8 / segment
 //
 // ============================================================
+
+// ============================================================
+// PHIM LONG TIẾNG - HLS HEAD CHECK
+//
+// Một số web player kiểm tra URL bằng HEAD trước khi GET.
+// Không cần fetch upstream ở đây.
+// Chỉ xác nhận endpoint tồn tại và cho phép CORS.
+// ============================================================
+
+app.head(
+    "/phimlongtieng/hls",
+    (req, res) => {
+
+        console.log(
+            "[PLT PROXY] HEAD REQUEST:",
+            req.query?.url || ""
+        );
+
+        res.setHeader(
+            "Access-Control-Allow-Origin",
+            "*"
+        );
+
+        res.setHeader(
+            "Access-Control-Allow-Headers",
+            "*"
+        );
+
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.apple.mpegurl"
+        );
+
+        return res
+            .status(200)
+            .end();
+    }
+);
 
 app.get(
     "/phimlongtieng/hls",
