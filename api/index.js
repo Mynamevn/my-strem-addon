@@ -4019,6 +4019,15 @@ try {
 
     // ========================================================
     // 1. LẤY TẤT CẢ SEARCH CANDIDATES
+    //
+    // Không loại candidate chỉ vì:
+    //
+    //   Journey to the West
+    //        ≠
+    //   Tây Du Ký
+    //
+    // Search chỉ có nhiệm vụ tìm ứng viên.
+    // Detail page mới xác nhận phim.
     // ========================================================
 
     const candidates = [];
@@ -4112,8 +4121,21 @@ try {
                 directUrl
             );
 
+        if (!absoluteHref) {
+            continue;
+        }
+
+        // Chỉ giữ trang phim thật.
+        //
+        // Loại:
+        // /the-loai/...
+        // /tim-phim-vietsub
+        // /search/...
+        //
         if (
-            !absoluteHref
+            !/\/phim\//i.test(
+                new URL(absoluteHref).pathname
+            )
         ) {
             continue;
         }
@@ -4152,7 +4174,7 @@ try {
         );
 
     console.log(
-        "[PHIMLONGTIENG] Search candidates:",
+        "[PHIMLONGTIENG] Movie candidates:",
         uniqueCandidates.length
     );
 
@@ -4161,7 +4183,7 @@ try {
     ) {
 
         console.log(
-            "[PHIMLONGTIENG] No search candidates"
+            "[PHIMLONGTIENG] No movie candidates"
         );
 
         return [];
@@ -4169,7 +4191,7 @@ try {
     }
 
     // ========================================================
-    // 3. NORMALIZE TITLE
+    // 3. NORMALIZE
     // ========================================================
 
     const normalizePLT =
@@ -4214,7 +4236,26 @@ try {
             );
 
     // ========================================================
-    // 4. RANK CANDIDATES
+    // 4. RANK SEARCH RESULT
+    //
+    // Giống tư duy VSMov / PhimHDCS:
+    //
+    // - exact
+    // - contains
+    // - reverse
+    // - word overlap
+    //
+    // NHƯNG:
+    //
+    // Không dùng ranking để loại các tên Việt hóa.
+    //
+    // Ví dụ:
+    //
+    // Journey to the West
+    //        ↓
+    // Tây Du Ký
+    //
+    // vẫn được đưa vào detail validation.
     // ========================================================
 
     const ranked =
@@ -4227,12 +4268,13 @@ try {
                             item.title
                         );
 
+                    const hrefNorm =
+                        normalizePLT(
+                            item.href
+                        );
+
                     let score =
                         0;
-
-                    // ------------------------------------------------
-                    // EXACT TITLE
-                    // ------------------------------------------------
 
                     if (
                         titleNorm ===
@@ -4244,11 +4286,7 @@ try {
 
                     }
 
-                    // ------------------------------------------------
-                    // TITLE CONTAINS TARGET
-                    // ------------------------------------------------
-
-                    else if (
+                    if (
                         titleNorm.includes(
                             target
                         ) &&
@@ -4260,11 +4298,7 @@ try {
 
                     }
 
-                    // ------------------------------------------------
-                    // TARGET CONTAINS TITLE
-                    // ------------------------------------------------
-
-                    else if (
+                    if (
                         target.includes(
                             titleNorm
                         ) &&
@@ -4276,10 +4310,7 @@ try {
 
                     }
 
-                    // ------------------------------------------------
-                    // WORD OVERLAP
-                    // ------------------------------------------------
-
+                    // Word overlap
                     let overlap =
                         0;
 
@@ -4303,10 +4334,42 @@ try {
                     score +=
                         overlap * 100;
 
-                    // ------------------------------------------------
-                    // LOẠI CÁC TỪ BIỂU THỊ PHẦN KHÁC
-                    // ------------------------------------------------
+                    // URL cũng được dùng để hỗ trợ nhận diện.
+                    for (
+                        const word
+                        of targetWords
+                    ) {
 
+                        if (
+                            word.length >= 3 &&
+                            hrefNorm.includes(
+                                word
+                            )
+                        ) {
+
+                            score +=
+                                50;
+
+                        }
+
+                    }
+
+                    // Ưu tiên title có dấu hiệu phiên bản
+                    // rõ ràng nhưng không dùng nó để loại phim.
+                    if (
+                        /lồng tiếng|thuyết minh|uslt|vietsub|phụ đề|ffvn/i.test(
+                            item.title +
+                            " " +
+                            item.status
+                        )
+                    ) {
+
+                        score +=
+                            10;
+
+                    }
+
+                    // Hạn chế phần/season khác.
                     if (
                         /(?:phần|phan)\s*(?:hai|2|ba|3|bon|4|năm|5)\b/i.test(
                             item.title
@@ -4329,91 +4392,15 @@ try {
 
                     }
 
-                    // ------------------------------------------------
-                    // KHÔNG DÙNG LỒNG TIẾNG ĐỂ ĐÈ PHIM ĐÚNG TÊN/NĂM
-                    //
-                    // Status chỉ dùng để nhận diện phiên bản.
-                    // ------------------------------------------------
-
-                    if (
-                        /lồng tiếng|thuyết minh|vietsub|phụ đề/i.test(
-                            item.title +
-                            " " +
-                            item.status
-                        )
-                    ) {
-
-                        score +=
-                            10;
-
-                    }
-
-                    // ------------------------------------------------
-                    // YEAR TRONG TITLE / URL
-                    //
-                    // Search của PhimLongTieng không luôn trả
-                    // field year như VSMov.
-                    // Vì vậy lấy năm từ title + URL.
-                    // ------------------------------------------------
-
-                    const yearText =
-                        (
-                            String(
-                                item.title ||
-                                ""
-                            ) +
-                            " " +
-                            String(
-                                item.href ||
-                                ""
-                            )
-                        );
-
-                    const yearMatch =
-                        yearText.match(
-                            /\b(19\d{2}|20\d{2})\b/
-                        );
-
-                    const candidateYear =
-                        yearMatch
-                            ? Number(
-                                yearMatch[1]
-                            )
-                            : 0;
-
-                    if (
-                        targetYear &&
-                        candidateYear
-                    ) {
-
-                        if (
-                            candidateYear ===
-                            Number(
-                                targetYear
-                            )
-                        ) {
-
-                            score +=
-                                6000;
-
-                        } else {
-
-                            score -=
-                                5000;
-
-                        }
-
-                    }
-
                     return {
 
                         ...item,
 
                         score,
 
-                        candidateYear,
+                        titleNorm,
 
-                        titleNorm
+                        hrefNorm
 
                     };
 
@@ -4429,11 +4416,11 @@ try {
             );
 
     console.log(
-        "[PHIMLONGTIENG] Ranked:",
+        "[PHIMLONGTIENG] Ranked movie candidates:",
         ranked
             .slice(
                 0,
-                15
+                20
             )
             .map(
                 item => ({
@@ -4442,9 +4429,6 @@ try {
 
                     status:
                         item.status,
-
-                    year:
-                        item.candidateYear,
 
                     score:
                         item.score,
@@ -4456,182 +4440,229 @@ try {
     );
 
     // ========================================================
-    // 5. CHỈ GIỮ CANDIDATE THỰC SỰ LIÊN QUAN
+    // 5. GIỚI HẠN CANDIDATE
     //
-    // QUAN TRỌNG:
+    // Search của site thường đưa category/navigation vào.
+    // Ta đã loại /the-loai/ ở trên.
     //
-    // Không còn:
+    // Không test vô hạn.
     //
-    //     const selected = ranked[0];
+    // 20 candidate đầu đủ để xử lý:
     //
-    // Vì chính điều đó làm:
+    // Tây Du Ký:
+    //   Tây Du Ký
+    //   Tây Du Kí 96 USLT
+    //   Tây Du Ký Thuyết Minh
     //
-    // Tây Du Ký 1996
-    //      ↓
-    // Tân Tây Du Ký 2011
+    // Đầu Xuân:
+    //   2 version
     //
     // ========================================================
 
-    const relevantCandidates =
-        ranked.filter(
-            item => {
-
-                const exact =
-                    item.titleNorm ===
-                    target;
-
-                const contains =
-                    item.titleNorm.includes(
-                        target
-                    );
-
-                const reverse =
-                    target.includes(
-                        item.titleNorm
-                    );
-
-                const overlap =
-                    targetWords.filter(
-                        word =>
-                            item.titleNorm.includes(
-                                word
-                            )
-                    ).length;
-
-                return (
-                    exact ||
-                    contains ||
-                    reverse ||
-                    (
-                        overlap >=
-                        Math.max(
-                            1,
-                            Math.ceil(
-                                targetWords.length *
-                                0.6
-                            )
-                        )
-                    )
-                );
-
-            }
+    const candidatesToTest =
+        ranked.slice(
+            0,
+            20
         );
 
     console.log(
-        "[PHIMLONGTIENG] Relevant candidates:",
-        relevantCandidates.map(
-            item => ({
-                title:
-                    item.title,
-
-                status:
-                    item.status,
-
-                year:
-                    item.candidateYear,
-
-                score:
-                    item.score,
-
-                href:
-                    item.href
-            })
-        )
+        "[PHIMLONGTIENG] Candidates to validate:",
+        candidatesToTest.length
     );
 
-    if (
-        !relevantCandidates.length
-    ) {
-
-        console.log(
-            "[PHIMLONGTIENG] NO RELEVANT CANDIDATE"
-        );
-
-        return [];
-
-    }
-
     // ========================================================
-    // 6. ƯU TIÊN ĐÚNG NĂM
+    // 6. HỖ TRỢ ĐỌC NĂM TỪ DETAIL PAGE
     //
-    // Nếu có targetYear và search result có năm rõ ràng,
-    // KHÔNG chọn version khác năm.
+    // Search result của PhimLongTieng thường không có year.
+    //
+    // Vì vậy:
+    //
+    // SEARCH
+    //   ↓
+    // DETAIL
+    //   ↓
+    // YEAR
+    //
+    // Ngoài năm 4 chữ số, hỗ trợ cả:
+    //
+    //   Tây Du Kí 96 USLT
+    //
+    // → 1996
     // ========================================================
 
-    let candidatesToTest =
-        relevantCandidates;
-
-    if (
-        targetYear
+    function extractYearFromText(
+        value
     ) {
 
-        const yearMatches =
-            relevantCandidates.filter(
-                item =>
-                    item.candidateYear ===
-                    Number(
-                        targetYear
-                    )
+        const text =
+            String(
+                value || ""
             );
 
-        console.log(
-            "[PHIMLONGTIENG] Exact year matches:",
-            yearMatches.length
-        );
+        // Năm 4 chữ số
+        const fullYear =
+            text.match(
+                /\b(19\d{2}|20\d{2})\b/
+            );
 
         if (
-            yearMatches.length
+            fullYear
         ) {
 
-            candidatesToTest =
-                yearMatches;
-
-        } else {
-
-            // Nếu candidate có năm nhưng không có
-            // candidate đúng năm → không lấy bừa.
-            const candidatesWithKnownYear =
-                relevantCandidates.filter(
-                    item =>
-                        item.candidateYear > 0
-                );
-
-            if (
-                candidatesWithKnownYear.length
-            ) {
-
-                console.log(
-                    "[PHIMLONGTIENG] Known years exist but none match target year:",
-                    targetYear
-                );
-
-                return [];
-
-            }
-
-            console.log(
-                "[PHIMLONGTIENG] No explicit candidate year; will validate detail/player"
+            return Number(
+                fullYear[1]
             );
 
         }
 
+        // Hỗ trợ năm 2 chữ số:
+        //
+        // 96 → 1996
+        // 11 → 2011
+        //
+        const shortYear =
+            text.match(
+                /(?:^|[\s\-_.(])(\d{2})(?:[\s\-_.),]|$)/
+            );
+
+        if (
+            shortYear
+        ) {
+
+            const n =
+                Number(
+                    shortYear[1]
+                );
+
+            if (
+                n >= 40 &&
+                n <= 99
+            ) {
+
+                return 1900 + n;
+
+            }
+
+            if (
+                n >= 0 &&
+                n <= 39
+            ) {
+
+                return 2000 + n;
+
+            }
+
+        }
+
+        return 0;
+
+    }
+
+    function extractDetailYear(
+        html,
+        url,
+        title
+    ) {
+
+        const htmlText =
+            String(
+                html || ""
+            )
+                .replace(
+                    /<script[\s\S]*?<\/script>/gi,
+                    " "
+                )
+                .replace(
+                    /<style[\s\S]*?<\/style>/gi,
+                    " "
+                )
+                .replace(
+                    /<[^>]+>/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                );
+
+        // Ưu tiên các khu vực có chữ "Năm".
+        const yearPatterns = [
+
+            /năm\s*(?:sản xuất|phát hành)[^0-9]{0,80}(19\d{2}|20\d{2})/i,
+
+            /(?:năm|year)[^0-9]{0,50}(19\d{2}|20\d{2})/i,
+
+            /datePublished["']?\s*[:=]\s*["'](19\d{2}|20\d{2})/i,
+
+            /releaseDate["']?\s*[:=]\s*["'](19\d{2}|20\d{2})/i
+
+        ];
+
+        for (
+            const regex
+            of yearPatterns
+        ) {
+
+            const match =
+                htmlText.match(
+                    regex
+                );
+
+            if (
+                match
+            ) {
+
+                return Number(
+                    match[1]
+                );
+
+            }
+
+        }
+
+        // Sau đó thử title.
+        const titleYear =
+            extractYearFromText(
+                title
+            );
+
+        if (
+            titleYear
+        ) {
+
+            return titleYear;
+
+        }
+
+        // Cuối cùng thử URL.
+        return extractYearFromText(
+            url
+        );
+
     }
 
     // ========================================================
-    // 7. TEST TỪNG VERSION
+    // 7. TEST TỪNG MOVIE DETAIL
     //
-    // Đây là phần quan trọng nhất.
+    // Đây là bước quan trọng nhất.
     //
-    // Không chỉ nhìn search result.
+    // Không còn:
     //
-    // Candidate phải:
+    //   Relevant candidates = []
+    //        ↓
+    //      return []
     //
-    //   1. mở được movie page
-    //   2. có episode thật
-    //   3. tìm được episode cần thiết
-    //   4. episode có encrypted JSON
+    // Mà:
     //
-    // Nếu một phiên bản hỏng → thử phiên bản kế tiếp.
+    //   candidate
+    //      ↓
+    //   movie detail
+    //      ↓
+    //   year
+    //      ↓
+    //   episodes
+    //      ↓
+    //   encrypted JSON
     // ========================================================
 
     const candidateResults =
@@ -4651,9 +4682,6 @@ try {
                 status:
                     selected.status,
 
-                year:
-                    selected.candidateYear,
-
                 score:
                     selected.score,
 
@@ -4671,7 +4699,7 @@ try {
         try {
 
             // ====================================================
-            // MOVIE PAGE
+            // MOVIE DETAIL
             // ====================================================
 
             const movieRes =
@@ -4706,6 +4734,97 @@ try {
 
             const movieHtml =
                 await movieRes.text();
+
+            // ====================================================
+            // DETAIL TITLE
+            // ====================================================
+
+            const detailTitleMatch =
+                movieHtml.match(
+                    /<title[^>]*>([\s\S]*?)<\/title>/i
+                );
+
+            const detailTitle =
+                detailTitleMatch
+                    ? detailTitleMatch[1]
+                        .replace(
+                            /<[^>]+>/g,
+                            " "
+                        )
+                        .replace(
+                            /\s+/g,
+                            " "
+                        )
+                        .trim()
+                    : selected.title;
+
+            const detailYear =
+                extractDetailYear(
+                    movieHtml,
+                    selected.href,
+                    selected.title
+                );
+
+            console.log(
+                "[PHIMLONGTIENG] DETAIL:",
+                {
+                    searchTitle:
+                        selected.title,
+
+                    detailTitle:
+                        detailTitle,
+
+                    detailYear:
+                        detailYear
+                }
+            );
+
+            // ====================================================
+            // YEAR VALIDATION
+            //
+            // Chỉ loại khi detail page xác nhận rõ năm khác.
+            //
+            // Nếu detail không có năm:
+            //   KHÔNG loại.
+            //
+            // Đây là điểm quan trọng để không mất Tây Du Ký.
+            // ====================================================
+
+            if (
+                targetYear &&
+                detailYear
+            ) {
+
+                if (
+                    detailYear !==
+                    Number(
+                        targetYear
+                    )
+                ) {
+
+                    console.log(
+                        "[PHIMLONGTIENG] Reject candidate: DETAIL YEAR MISMATCH",
+                        {
+                            targetYear:
+                                Number(
+                                    targetYear
+                                ),
+
+                            detailYear:
+                                detailYear
+                        }
+                    );
+
+                    continue;
+
+                }
+
+                console.log(
+                    "[PHIMLONGTIENG] DETAIL YEAR MATCH:",
+                    detailYear
+                );
+
+            }
 
             // ====================================================
             // EPISODES
@@ -4748,6 +4867,12 @@ try {
                         selected.href
                     );
 
+                if (
+                    !href
+                ) {
+                    continue;
+                }
+
                 const rawText =
                     block
                         .replace(
@@ -4759,12 +4884,6 @@ try {
                             " "
                         )
                         .trim();
-
-                if (
-                    !href
-                ) {
-                    continue;
-                }
 
                 let number =
                     null;
@@ -4995,6 +5114,9 @@ try {
                     status:
                         selected.status,
 
+                    detailYear:
+                        detailYear,
+
                     episode:
                         selectedEpisode.name,
 
@@ -5041,10 +5163,7 @@ try {
                 await episodeRes.text();
 
             // ====================================================
-            // VALIDATE ENCRYPTED JSON
-            //
-            // Chưa decrypt ở đây.
-            // Chỉ cần xác nhận episode thực sự có player data.
+            // ENCRYPTED JSON
             // ====================================================
 
             const encryptedEpisode =
@@ -5065,7 +5184,7 @@ try {
             }
 
             console.log(
-                "[PHIMLONGTIENG] Valid candidate:",
+                "[PHIMLONGTIENG] VALID CANDIDATE:",
                 {
                     title:
                         selected.title,
@@ -5073,8 +5192,8 @@ try {
                     status:
                         selected.status,
 
-                    year:
-                        selected.candidateYear,
+                    detailYear:
+                        detailYear,
 
                     episode:
                         selectedEpisode.name
@@ -5084,7 +5203,13 @@ try {
             candidateResults.push({
 
                 candidate:
-                    selected,
+                    {
+                        ...selected,
+
+                        detailTitle,
+
+                        detailYear
+                    },
 
                 selectedEpisode,
 
@@ -5137,8 +5262,11 @@ try {
                 status:
                     result.candidate.status,
 
+                detailTitle:
+                    result.candidate.detailTitle,
+
                 year:
-                    result.candidate.candidateYear,
+                    result.candidate.detailYear,
 
                 episode:
                     result.selectedEpisode.name,
@@ -5151,21 +5279,6 @@ try {
 
     // ========================================================
     // 9. DECRYPT + PLAYER CHO TỪNG VERSION
-    //
-    // Đây là điểm khác biệt quan trọng:
-    //
-    // Không còn chỉ:
-    //
-    //     const selected = ranked[0]
-    //
-    // mà xử lý từng version hợp lệ.
-    //
-    // Nhờ vậy Stremio có thể nhận nhiều stream:
-    //
-    //   Lồng Tiếng
-    //   Thuyết Minh
-    //   Vietsub
-    //
     // ========================================================
 
     for (
@@ -5191,8 +5304,11 @@ try {
                 status:
                     selected.status,
 
-                year:
-                    selected.candidateYear,
+                detailTitle:
+                    selected.detailTitle,
+
+                detailYear:
+                    selected.detailYear,
 
                 movieUrl:
                     selected.href,
@@ -5206,7 +5322,7 @@ try {
         );
 
         // ====================================================
-        // DECRYPT trailer()
+        // DECRYPT
         // ====================================================
 
         let playerUrl =
@@ -5326,9 +5442,6 @@ try {
 
         // ====================================================
         // STREAM LABEL
-        //
-        // Gắn version vào tên stream để Stremio cho biết
-        // nguồn nào là Lồng Tiếng / Vietsub / Thuyết Minh.
         // ====================================================
 
         const versionLabel =
@@ -5350,7 +5463,7 @@ try {
             `▶️ [PhimLongTieng] ${versionLabel}`;
 
         // ====================================================
-        // 1. S2 / default player
+        // 1. S2 / DEFAULT PLAYER
         // ====================================================
 
         const beforeS2 =
@@ -5363,7 +5476,7 @@ try {
         );
 
         // ====================================================
-        // 2. onclick="vb_load_player(this,'URL')"
+        // 2. vb_load_player
         // ====================================================
 
         extractVBPlayers(
@@ -5372,7 +5485,7 @@ try {
         );
 
         // ====================================================
-        // 3. data-url="play2.php?hash=..."
+        // 3. data-url
         // ====================================================
 
         extractDataUrls(
@@ -5381,7 +5494,7 @@ try {
         );
 
         // ====================================================
-        // 4. .m3u8 trực tiếp
+        // 4. DIRECT M3U8
         // ====================================================
 
         extractDirectM3U8(
@@ -5391,7 +5504,7 @@ try {
         );
 
         // ====================================================
-        // 5. Nếu playerUrl đã là m3u8
+        // 5. playerUrl ĐÃ LÀ M3U8
         // ====================================================
 
         if (
@@ -5461,6 +5574,9 @@ try {
 
                 title:
                     selected.title,
+
+                detailYear:
+                    selected.detailYear,
 
                 before:
                     beforeS2,
