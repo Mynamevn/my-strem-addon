@@ -4382,14 +4382,14 @@ try {
                             : 0;
 
                     if (
-                        movieYear &&
+                        targetYear &&
                         candidateYear
                     ) {
 
                         if (
                             candidateYear ===
                             Number(
-                                movieYear
+                                targetYear
                             )
                         ) {
 
@@ -4554,7 +4554,7 @@ try {
     // ========================================================
     // 6. ƯU TIÊN ĐÚNG NĂM
     //
-    // Nếu có movieYear và search result có năm rõ ràng,
+    // Nếu có targetYear và search result có năm rõ ràng,
     // KHÔNG chọn version khác năm.
     // ========================================================
 
@@ -4562,7 +4562,7 @@ try {
         relevantCandidates;
 
     if (
-        movieYear
+        targetYear
     ) {
 
         const yearMatches =
@@ -4570,7 +4570,7 @@ try {
                 item =>
                     item.candidateYear ===
                     Number(
-                        movieYear
+                        targetYear
                     )
             );
 
@@ -4602,7 +4602,7 @@ try {
 
                 console.log(
                     "[PHIMLONGTIENG] Known years exist but none match target year:",
-                    movieYear
+                    targetYear
                 );
 
                 return [];
