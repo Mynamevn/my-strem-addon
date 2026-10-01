@@ -3557,31 +3557,24 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         proxyUrl
     );
 
-    // =================================================
-    // STREAM
-    // =================================================
+    // ============================================================
+// ADD STREAM
+// ============================================================
 
-    streams.push({
+streams.push({
+    name: `⚡ [PhimLongTieng] ${source}`,
 
-        name:
-            `⚡ [PhimLongTieng] ${sourceLabel}`,
+    title:
+        `${source} - Direct`,
 
-        title:
-            title || sourceLabel,
+    url:
+        proxyUrl,
 
-        url:
-            proxyUrl,
-
-        behaviorHints: {
-
-            notWebReady:
-                true,
-
-            bingeGroup:
-                `phimlongtieng-${streamHost}`
-
-        }
-    });
+    behaviorHints: {
+        bingeGroup:
+            `phimlongtieng-${hostname}`
+    }
+});
 }
 
     async function get(url, headers = {}) {
