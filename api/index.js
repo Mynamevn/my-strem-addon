@@ -3594,7 +3594,7 @@ console.log(
         2
     )
 );
-
+}
     async function get(url, headers = {}) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
