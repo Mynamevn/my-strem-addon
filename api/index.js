@@ -9790,41 +9790,44 @@ try {
 // =====================================================
 // 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
 // =====================================================
+let results = [];
 
-results =
-    await Promise.allSettled([
-        fetchNguonC(nguonCFallbackName),
+try {
 
-        fetchVSMov(
-            movieName,
-            movieYear,
-            seasonNumber,
-            episodeNumber,
-            streamType
-        ),
+    results =
+        await Promise.allSettled([
+            fetchNguonC(nguonCFallbackName),
 
-        scrapePhimLongTieng(
-            movieName,
-            episodeNumber,
-            movieYear
-        ),
+            fetchVSMov(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
+            ),
 
-        scrapePhimHDCS(
-            movieName,
-            movieYear,
-            seasonNumber,
-            episodeNumber,
-            streamType
-        ),
+            scrapePhimLongTieng(
+                movieName,
+                episodeNumber,
+                movieYear
+            ),
 
-        fetchVicdn(
-            movieName,
-            movieYear,
-            seasonNumber,
-            episodeNumber,
-            streamType
-        )
-    ]);
+            scrapePhimHDCS(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
+            ),
+
+            fetchVicdn(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
+            )
+        ]);
 
 } catch (e) {
 
