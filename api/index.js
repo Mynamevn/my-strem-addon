@@ -9611,225 +9611,197 @@ console.log(
         ) || 0;
 
     // ========================================================
-    // RANK SEARCH RESULTS
-    //
-    // vname = tên tiếng Việt
-    // slug  = slug
-    // year  = năm nếu có
-    // ========================================================
+// RANK SEARCH RESULTS
+//
+// QUAN TRỌNG:
+// Không được chọn một phim hoàn toàn khác chỉ vì
+// search parser trả về duy nhất 1 kết quả.
+//
+// Nếu title không có bất kỳ mức độ tương đồng nào
+// thì loại bỏ kết quả đó.
+// ========================================================
 
-    const ranked =
-        searchItems
-            .map(
-                item => {
+const ranked = searchItems
+    .map(item => {
 
-                    const vname =
-                        String(
-                            item?.vname ||
-                            item?.name ||
-                            item?.title ||
-                            ""
-                        ).trim();
+        const vname =
+            String(
+                item.vname ||
+                item.name ||
+                item.title ||
+                ""
+            ).trim();
 
-                    const origin =
-                        String(
-                            item?.origin_name ||
-                            item?.original_name ||
-                            ""
-                        ).trim();
+        const origin =
+            String(
+                item.origin_name ||
+                item.original_name ||
+                item.origin ||
+                ""
+            ).trim();
 
-                    const slug =
-                        String(
-                            item?.slug ||
-                            ""
-                        ).trim();
+        const slug =
+            String(
+                item.slug ||
+                ""
+            ).trim();
 
-                    const itemYear =
-                        Number(
-                            item?.year ||
-                            item?.release_year ||
-                            item?.releaseYear ||
-                            extractYear(
-                                vname
-                            )
-                        ) || 0;
+        const itemYear =
+            Number(
+                item.year ||
+                item.release_year ||
+                item.releaseYear ||
+                extractYear(vname) ||
+                0
+            ) || 0;
 
-                    const normalizedName =
-                        normalizeTitle(
-                            vname
-                        );
+        const normalizedName =
+            normalizeTitle(vname);
 
-                    const normalizedOrigin =
-                        normalizeTitle(
-                            origin
-                        );
+        const normalizedOrigin =
+            normalizeTitle(origin);
 
-                    let score = 0;
+        let score = 0;
 
-                    // ------------------------------------------------
-                    // EXACT TITLE
-                    // ------------------------------------------------
+        // ------------------------------------------------
+        // TITLE MATCH
+        // ------------------------------------------------
 
-                    if (
-                        normalizedName ===
-                        targetTitle
-                    ) {
+        if (
+            normalizedName === targetTitle
+        ) {
 
-                        score += 10000;
+            score += 10000;
 
-                    }
+        }
+        else if (
+            normalizedOrigin === targetTitle
+        ) {
 
-                    if (
-                        normalizedOrigin ===
-                        targetTitle
-                    ) {
+            score += 9500;
 
-                        score += 9500;
+        }
+        else if (
+            normalizedName.includes(targetTitle)
+        ) {
 
-                    }
+            score += 5000;
 
-                    // ------------------------------------------------
-                    // CONTAINS
-                    // ------------------------------------------------
+        }
+        else if (
+            targetTitle.includes(normalizedName) &&
+            normalizedName.length >= 4
+        ) {
 
-                    if (
-                        normalizedName.includes(
-                            targetTitle
-                        ) &&
-                        targetTitle.length >= 3
-                    ) {
+            score += 4000;
 
-                        score += 3000;
+        }
+        else if (
+            normalizedOrigin.includes(targetTitle)
+        ) {
 
-                    }
+            score += 4500;
 
-                    if (
-                        targetTitle.includes(
-                            normalizedName
-                        ) &&
-                        normalizedName.length >= 3
-                    ) {
+        }
+        else if (
+            targetTitle.includes(normalizedOrigin) &&
+            normalizedOrigin.length >= 4
+        ) {
 
-                        score += 2500;
+            score += 3500;
 
-                    }
+        }
+        else {
 
-                    if (
-                        normalizedOrigin.includes(
-                            targetTitle
-                        ) &&
-                        targetTitle.length >= 3
-                    ) {
+            // Không có quan hệ title nào:
+            // loại khỏi candidate thực tế.
+            score = -100000;
 
-                        score += 2800;
+        }
 
-                    }
 
-                    // ------------------------------------------------
-                    // YEAR
-                    // ------------------------------------------------
+        // ------------------------------------------------
+        // YEAR
+        // ------------------------------------------------
 
-                    if (
-                        targetYear > 0
-                    ) {
+        if (
+            targetYear &&
+            itemYear
+        ) {
 
-                        if (
-                            itemYear ===
-                            targetYear
-                        ) {
+            if (
+                itemYear === targetYear
+            ) {
 
-                            score += 5000;
+                score += 5000;
 
-                        } else if (
-                            itemYear > 0
-                        ) {
+            }
+            else {
 
-                            score -= 1000;
+                score -= 5000;
 
-                        }
+            }
 
-                    }
+        }
 
-                    // ------------------------------------------------
-                    // VALID SLUG
-                    // ------------------------------------------------
 
-                    if (
-                        slug
-                    ) {
+        // ------------------------------------------------
+        // SLUG
+        // ------------------------------------------------
 
-                        score += 100;
+        if (
+            slug &&
+            slug !== "vicdn.cc" &&
+            !/^https?:\/\//i.test(slug)
+        ) {
 
-                    }
+            score += 100;
 
-                    return {
+        }
 
-                        item,
 
-                        score,
+        return {
+            name: vname,
+            origin,
+            year: itemYear,
+            slug,
+            score
+        };
 
-                        vname,
-
-                        origin,
-
-                        slug,
-
-                        itemYear
-
-                    };
-
-                }
-            )
-            .filter(
-                entry =>
-                    Boolean(
-                        entry.slug
-                    )
-            )
-            .sort(
-                (a, b) =>
-                    b.score -
-                    a.score
-            );
-
-    console.log(
-        "[VICDN] RANKED:",
-        ranked
-            .slice(
-                0,
-                10
-            )
-            .map(
-                entry => ({
-                    name:
-                        entry.vname,
-
-                    origin:
-                        entry.origin,
-
-                    year:
-                        entry.itemYear,
-
-                    slug:
-                        entry.slug,
-
-                    score:
-                        entry.score
-                })
-            )
+    })
+    .filter(
+        item =>
+            item.score > -100000 &&
+            item.slug
+    )
+    .sort(
+        (a, b) =>
+            b.score - a.score
     );
 
-    if (
-        !ranked.length
-    ) {
+console.log(
+    "[VICDN] RANKED:",
+    ranked
+);
 
-        console.log(
-            "[VICDN] No matching movie"
-        );
 
-        return [];
+// ========================================================
+// KHÔNG CÓ KẾT QUẢ PHÙ HỢP
+// ========================================================
 
-    }
+if (
+    ranked.length === 0
+) {
+
+    console.log(
+        "[VICDN] NO MATCH FOR:",
+        movieName,
+        movieYear
+    );
+
+    return [];
+
+}
 
     // ========================================================
     // CHỌN PHIM
