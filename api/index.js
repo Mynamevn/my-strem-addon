@@ -3445,18 +3445,23 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
     seen.add(key);
 
     // =================================================
-    // XÁC ĐỊNH HOST THỰC TẾ CỦA STREAM
+    // XÁC ĐỊNH HOST STREAM THẬT
     // =================================================
 
     let streamUrl;
 
     try {
-        streamUrl = new URL(url);
+
+        streamUrl =
+            new URL(url);
+
     } catch (e) {
+
         console.log(
             "[PHIMLONGTIENG] Invalid stream URL:",
             url
         );
+
         return;
     }
 
@@ -3464,7 +3469,27 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         streamUrl.hostname.toLowerCase();
 
     // =================================================
-    // REFERER THEO ĐÚNG SERVER STREAM
+    // CHỈ PROXY CÁC SERVER PHIMLONGTIENG
+    // =================================================
+
+    const allowedHost =
+        streamHost === "1phim34.com" ||
+        streamHost === "www.1phim34.com" ||
+        streamHost === "play.cbplay.cc" ||
+        streamHost.endsWith(".cbplay.cc");
+
+    if (!allowedHost) {
+
+        console.log(
+            "[PHIMLONGTIENG] Host không nằm trong proxy:",
+            streamHost
+        );
+
+        return;
+    }
+
+    // =================================================
+    // REFERER THEO HOST
     // =================================================
 
     let streamReferer;
@@ -3473,54 +3498,63 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         streamHost === "play.cbplay.cc" ||
         streamHost.endsWith(".cbplay.cc")
     ) {
+
         streamReferer =
             "https://play.cbplay.cc/";
+
     } else {
+
         streamReferer =
             "https://www.1phim34.com/";
     }
 
     // =================================================
-    // USER-AGENT
+    // TẠO URL PROXY VERCEL
+    //
+    // Stremio sẽ KHÔNG tải M3U8 gốc trực tiếp nữa.
+    //
+    // Stremio
+    //   ↓
+    // Vercel /phimlongtieng/hls
+    //   ↓
+    // server gốc
     // =================================================
 
-    const streamUserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-        "AppleWebKit/537.36 (KHTML, like Gecko) " +
-        "Chrome/131.0.0.0 Safari/537.36";
-
-    // =================================================
-    // ACCEPT
-    // =================================================
-
-    const streamAccept =
-        "application/vnd.apple.mpegurl, " +
-        "application/x-mpegURL, " +
-        "video/mp2t, */*";
+    const proxyUrl =
+    "https://my-strem-addon.vercel.app/phimlongtieng/hls?url=" +
+    encodeURIComponent(url);
 
     // =================================================
     // LOG
     // =================================================
 
     console.log(
-        "[PHIMLONGTIENG] ADD STREAM:",
-        sourceLabel,
-        title
+        "[PHIMLONGTIENG] ADD STREAM:"
     );
 
     console.log(
-        "[PHIMLONGTIENG] HOST:",
+        "  SOURCE:",
+        sourceLabel
+    );
+
+    console.log(
+        "  HOST:",
         streamHost
     );
 
     console.log(
-        "[PHIMLONGTIENG] REFERER:",
+        "  REFERER:",
         streamReferer
     );
 
     console.log(
-        "[PHIMLONGTIENG] URL:",
+        "  ORIGINAL:",
         url
+    );
+
+    console.log(
+        "  PROXY:",
+        proxyUrl
     );
 
     // =================================================
@@ -3535,32 +3569,17 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         title:
             title || sourceLabel,
 
-        url,
+        url:
+            proxyUrl,
 
         behaviorHints: {
 
-            notWebReady: true,
+            notWebReady:
+                true,
 
             bingeGroup:
-                `phimlongtieng-${streamHost}`,
+                `phimlongtieng-${streamHost}`
 
-            proxyHeaders: {
-
-                request: {
-
-                    Referer:
-                        streamReferer,
-
-                    "User-Agent":
-                        streamUserAgent,
-
-                    Accept:
-                        streamAccept,
-
-                    Connection:
-                        "keep-alive"
-                }
-            }
         }
     });
 }
@@ -12099,6 +12118,555 @@ startNguonC()
     }
 );
 
+// ============================================================
+// PHIM LONG TIẾNG - HLS VIDEO INTERCEPTOR
+//
+// Android Provider:
+//     M3U8
+//       ↓
+//     VideoInterceptor
+//       ↓
+//     upstream server
+//
+// Vercel:
+//     Stremio
+//       ↓
+//     /phimlongtieng/hls
+//       ↓
+//     upstream M3U8 / segment
+//
+// ============================================================
+
+app.get(
+    "/phimlongtieng/hls",
+    async (req, res) => {
+
+        try {
+
+            const rawUrl =
+                String(
+                    req.query?.url || ""
+                ).trim();
+
+            if (!rawUrl) {
+
+                return res
+                    .status(400)
+                    .send(
+                        "Missing url"
+                    );
+            }
+
+            // =================================================
+            // PARSE UPSTREAM URL
+            // =================================================
+
+            let targetUrl;
+
+            try {
+
+                targetUrl =
+                    new URL(rawUrl);
+
+            } catch (_) {
+
+                return res
+                    .status(400)
+                    .send(
+                        "Invalid url"
+                    );
+            }
+
+            const hostname =
+                targetUrl.hostname
+                    .toLowerCase();
+
+            // =================================================
+            // CHỈ CHO PHÉP SERVER PHIMLONGTIENG
+            //
+            // Tránh biến endpoint này thành open proxy.
+            // =================================================
+
+            const allowedHost =
+                hostname === "1phim34.com" ||
+                hostname === "www.1phim34.com" ||
+                hostname === "play.cbplay.cc" ||
+                hostname.endsWith(".cbplay.cc");
+
+            if (!allowedHost) {
+
+                console.log(
+                    "[PLT PROXY] BLOCKED HOST:",
+                    hostname
+                );
+
+                return res
+                    .status(403)
+                    .send(
+                        "Host not allowed"
+                    );
+            }
+
+            // =================================================
+            // REFERER
+            // =================================================
+
+            let referer;
+
+            if (
+                hostname === "play.cbplay.cc" ||
+                hostname.endsWith(".cbplay.cc")
+            ) {
+
+                referer =
+                    "https://play.cbplay.cc/";
+
+            } else {
+
+                referer =
+                    "https://www.1phim34.com/";
+            }
+
+            // =================================================
+            // USER AGENT
+            // =================================================
+
+            const userAgent =
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/131.0.0.0 Safari/537.36";
+
+            // =================================================
+            // RANGE
+            //
+            // HLS segment đôi khi player gửi Range.
+            // =================================================
+
+            const requestHeaders = {
+
+                "User-Agent":
+                    userAgent,
+
+                "Accept":
+                    "*/*",
+
+                "Referer":
+                    referer,
+
+                "Origin":
+                    new URL(referer).origin,
+
+                "Connection":
+                    "keep-alive"
+
+            };
+
+            if (req.headers.range) {
+
+                requestHeaders.Range =
+                    req.headers.range;
+            }
+
+            console.log(
+                "[PLT PROXY] REQUEST:"
+            );
+
+            console.log(
+                "  HOST:",
+                hostname
+            );
+
+            console.log(
+                "  REFERER:",
+                referer
+            );
+
+            console.log(
+                "  URL:",
+                targetUrl.href
+            );
+
+            // =================================================
+            // FETCH UPSTREAM
+            // =================================================
+
+            const upstream =
+                await fetch(
+                    targetUrl.href,
+                    {
+                        method: "GET",
+
+                        redirect:
+                            "follow",
+
+                        headers:
+                            requestHeaders
+                    }
+                );
+
+            console.log(
+                "[PLT PROXY] UPSTREAM STATUS:",
+                upstream.status
+            );
+
+            console.log(
+                "[PLT PROXY] FINAL URL:",
+                upstream.url
+            );
+
+            if (
+                !upstream.ok
+            ) {
+
+                return res
+                    .status(
+                        upstream.status
+                    )
+                    .send(
+                        `Upstream HTTP ${upstream.status}`
+                    );
+            }
+
+            // =================================================
+            // CONTENT TYPE
+            // =================================================
+
+            const contentType =
+                String(
+                    upstream.headers.get(
+                        "content-type"
+                    ) || ""
+                ).toLowerCase();
+
+            const finalUrl =
+                upstream.url ||
+                targetUrl.href;
+
+            const isM3U8 =
+                contentType.includes(
+                    "mpegurl"
+                ) ||
+                /\.m3u8(?:[?#]|$)/i.test(
+                    finalUrl
+                );
+
+            // =================================================
+            // M3U8
+            //
+            // Phần quan trọng nhất:
+            //
+            // master.m3u8
+            //     ↓
+            // child.m3u8
+            //     ↓
+            // segment.ts
+            //
+            // Tất cả URL bên trong playlist
+            // đều được đưa trở lại proxy.
+            // =================================================
+
+            if (isM3U8) {
+
+                const playlist =
+                    await upstream.text();
+
+                console.log(
+                    "[PLT PROXY] M3U8 LENGTH:",
+                    playlist.length
+                );
+
+                const baseUrl =
+                    finalUrl;
+
+                // =================================================
+                // PROXY URL HELPER
+                // =================================================
+
+                function proxyChildUrl(
+                    rawChildUrl
+                ) {
+
+                    if (
+                        !rawChildUrl
+                    ) {
+                        return rawChildUrl;
+                    }
+
+                    const value =
+                        String(
+                            rawChildUrl
+                        ).trim();
+
+                    if (
+                        !value ||
+                        value.startsWith("data:")
+                    ) {
+                        return value;
+                    }
+
+                    try {
+
+                        const absolute =
+                            new URL(
+                                value,
+                                baseUrl
+                            );
+
+                        const childHost =
+                            absolute.hostname
+                                .toLowerCase();
+
+                        const childAllowed =
+                            childHost ===
+                                "1phim34.com" ||
+
+                            childHost ===
+                                "www.1phim34.com" ||
+
+                            childHost ===
+                                "play.cbplay.cc" ||
+
+                            childHost.endsWith(
+                                ".cbplay.cc"
+                            );
+
+                        if (
+                            !childAllowed
+                        ) {
+
+                            return absolute.href;
+                        }
+
+                        return (
+                            "/phimlongtieng/hls?url=" +
+                            encodeURIComponent(
+                                absolute.href
+                            )
+                        );
+
+                    } catch (_) {
+
+                        return value;
+                    }
+                }
+
+                // =================================================
+                // REWRITE URI="..."
+                //
+                // Dùng cho:
+                //
+                // #EXT-X-KEY
+                // #EXT-X-MAP
+                // #EXT-X-MEDIA
+                // ...
+                // =================================================
+
+                let rewritten =
+                    playlist.replace(
+                        /URI="([^"]+)"/gi,
+                        (full, uri) => {
+
+                            return (
+                                'URI="' +
+                                proxyChildUrl(
+                                    uri
+                                ) +
+                                '"'
+                            );
+                        }
+                    );
+
+                // =================================================
+                // REWRITE CÁC DÒNG URL
+                //
+                // Ví dụ:
+                //
+                // segment001.ts
+                // https://.../segment002.ts
+                // child/index.m3u8
+                //
+                // Không đụng vào dòng #EXT...
+                // =================================================
+
+                rewritten =
+                    rewritten
+                        .split(/\r?\n/)
+                        .map(line => {
+
+                            const trimmed =
+                                line.trim();
+
+                            if (
+                                !trimmed ||
+                                trimmed.startsWith("#")
+                            ) {
+                                return line;
+                            }
+
+                            return proxyChildUrl(
+                                trimmed
+                            );
+                        })
+                        .join("\n");
+
+                // =================================================
+                // RESPONSE
+                // =================================================
+
+                res.status(
+                    upstream.status
+                );
+
+                res.setHeader(
+                    "Content-Type",
+                    "application/vnd.apple.mpegurl"
+                );
+
+                res.setHeader(
+                    "Cache-Control",
+                    "no-store, no-cache, must-revalidate"
+                );
+
+                res.setHeader(
+                    "Access-Control-Allow-Origin",
+                    "*"
+                );
+
+                res.setHeader(
+                    "Access-Control-Allow-Headers",
+                    "*"
+                );
+
+                return res.send(
+                    rewritten
+                );
+            }
+
+            // =================================================
+            // VIDEO / TS / BINARY
+            //
+            // Ví dụ:
+            //
+            // .ts
+            // .aac
+            // .mp4
+            // key.bin
+            //
+            // Không rewrite.
+            // Chỉ relay binary về Stremio.
+            // =================================================
+
+            const buffer =
+                Buffer.from(
+                    await upstream.arrayBuffer()
+                );
+
+            // =================================================
+            // COPY MỘT SỐ RESPONSE HEADERS
+            // =================================================
+
+            const responseContentType =
+                upstream.headers.get(
+                    "content-type"
+                );
+
+            if (
+                responseContentType
+            ) {
+
+                res.setHeader(
+                    "Content-Type",
+                    responseContentType
+                );
+            }
+
+            const contentLength =
+                upstream.headers.get(
+                    "content-length"
+                );
+
+            if (
+                contentLength
+            ) {
+
+                res.setHeader(
+                    "Content-Length",
+                    contentLength
+                );
+            }
+
+            const contentRange =
+                upstream.headers.get(
+                    "content-range"
+                );
+
+            if (
+                contentRange
+            ) {
+
+                res.setHeader(
+                    "Content-Range",
+                    contentRange
+                );
+            }
+
+            const acceptRanges =
+                upstream.headers.get(
+                    "accept-ranges"
+                );
+
+            if (
+                acceptRanges
+            ) {
+
+                res.setHeader(
+                    "Accept-Ranges",
+                    acceptRanges
+                );
+            }
+
+            res.setHeader(
+                "Cache-Control",
+                "no-store"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+            return res
+                .status(
+                    upstream.status
+                )
+                .send(buffer);
+
+        } catch (e) {
+
+            console.log(
+                "[PLT PROXY] ERROR:",
+                e?.message ||
+                e
+            );
+
+            if (
+                !res.headersSent
+            ) {
+
+                return res
+                    .status(502)
+                    .send(
+                        "PhimLongTieng proxy error"
+                    );
+            }
+        }
+    }
+);
 
 // =====================================================
 // STREMIO ADDON ROUTER
