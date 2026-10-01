@@ -3595,27 +3595,203 @@ console.log(
     )
 );
 }
-    async function get(url, headers = {}) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // ============================================================
+// HTTP GET + SESSION COOKIE
+//
+// Giữ cookie xuyên suốt:
+// Search → Movie → Episode → Player
+//
+// Một số trang 1phim34 có thể yêu cầu session/cookie
+// trước khi trả player thật.
+// ============================================================
 
-        try {
-            return await fetch(url, {
-                method: "GET",
-                redirect: "follow",
-                signal: controller.signal,
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-                    "Accept":
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    ...headers
-                }
-            });
-        } finally {
-            clearTimeout(timer);
+const cookieJar = new Map();
+
+function storeCookies(response) {
+
+    try {
+
+        let setCookies = [];
+
+        // Node.js / Undici hỗ trợ getSetCookie()
+        if (
+            response.headers &&
+            typeof response.headers.getSetCookie === "function"
+        ) {
+
+            setCookies =
+                response.headers.getSetCookie();
+
+        } else {
+
+            const raw =
+                response.headers.get("set-cookie");
+
+            if (raw) {
+                setCookies = [raw];
+            }
         }
+
+        if (!setCookies.length) {
+            return;
+        }
+
+        for (const setCookie of setCookies) {
+
+            if (!setCookie) continue;
+
+            // Chỉ lấy phần:
+            // name=value
+            const firstPart =
+                setCookie.split(";")[0].trim();
+
+            const separator =
+                firstPart.indexOf("=");
+
+            if (separator <= 0) {
+                continue;
+            }
+
+            const name =
+                firstPart
+                    .slice(0, separator)
+                    .trim();
+
+            const value =
+                firstPart
+                    .slice(separator + 1)
+                    .trim();
+
+            if (!name) continue;
+
+            cookieJar.set(
+                name,
+                value
+            );
+
+            console.log(
+                "[PHIMLONGTIENG] COOKIE STORED:",
+                name
+            );
+        }
+
+    } catch (e) {
+
+        console.log(
+            "[PHIMLONGTIENG] COOKIE STORE ERROR:",
+            e.message
+        );
     }
+}
+
+function buildCookieHeader() {
+
+    if (!cookieJar.size) {
+        return "";
+    }
+
+    return Array.from(
+        cookieJar.entries()
+    )
+        .map(
+            ([name, value]) =>
+                `${name}=${value}`
+        )
+        .join("; ");
+}
+
+async function get(url, headers = {}) {
+
+    const controller =
+        new AbortController();
+
+    const timer =
+        setTimeout(
+            () => controller.abort(),
+            timeoutMs
+        );
+
+    try {
+
+        const cookieHeader =
+            buildCookieHeader();
+
+        const requestHeaders = {
+
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/131.0.0.0 Safari/537.36",
+
+            "Accept":
+                "text/html,application/xhtml+xml,application/xml;q=0.9," +
+                "image/avif,image/webp,image/apng,*/*;q=0.8",
+
+            "Accept-Language":
+                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+            ...headers
+        };
+
+        // Không ghi đè Cookie do caller truyền vào.
+        if (
+            cookieHeader &&
+            !Object.keys(requestHeaders)
+                .some(
+                    key =>
+                        key.toLowerCase() === "cookie"
+                )
+        ) {
+
+            requestHeaders.Cookie =
+                cookieHeader;
+
+            console.log(
+                "[PHIMLONGTIENG] SEND COOKIES:",
+                cookieHeader
+                    .split(";")
+                    .map(x =>
+                        x.split("=")[0].trim()
+                    )
+                    .join("; ")
+            );
+        }
+
+        console.log(
+            "[PHIMLONGTIENG] GET:",
+            url
+        );
+
+        const response =
+            await fetch(url, {
+
+                method: "GET",
+
+                redirect: "follow",
+
+                signal:
+                    controller.signal,
+
+                headers:
+                    requestHeaders
+            });
+
+        // Lưu cookie ngay sau mỗi response.
+        storeCookies(response);
+
+        console.log(
+            "[PHIMLONGTIENG] GET RESULT:",
+            response.status,
+            response.url
+        );
+
+        return response;
+
+    } finally {
+
+        clearTimeout(timer);
+    }
+}
 
     // ============================================================
     // CryptoJSAesDecrypt chính xác như site / Cloudstream
