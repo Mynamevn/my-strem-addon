@@ -1459,16 +1459,26 @@ builder.defineMetaHandler(async (args) => {
 
     try {
 
-        let movieName = "";
-
         const rawId =
-            String(args.id || "");
+            String(args.id || "").trim();
+
+        if (!rawId) {
+            return { meta: null };
+        }
+
+        // =====================================================
+        // 1. GIẢI MÃ TÊN PHIM
+        // =====================================================
+
+        let movieName = "";
 
         if (rawId.startsWith("vnwpsw:")) {
 
             movieName =
                 decodeURIComponent(
-                    rawId.substring("vnwpsw:".length)
+                    rawId.substring(
+                        "vnwpsw:".length
+                    )
                 );
 
         } else if (rawId.startsWith("tt")) {
@@ -1476,41 +1486,59 @@ builder.defineMetaHandler(async (args) => {
             const imdbId =
                 rawId.split(":")[0];
 
-            const cleanType =
-                args.type === "series"
-                    ? "series"
-                    : "movie";
-
             try {
 
-                const res =
+                const cinemetaRes =
                     await axios.get(
-                        "https://stremio.com/" +
-                        cleanType +
+                        "https://v3-cinemeta.strem.io/meta/" +
+                        (
+                            args.type === "series"
+                                ? "series"
+                                : "movie"
+                        ) +
                         "/" +
-                        imdbId +
+                        encodeURIComponent(imdbId) +
                         ".json",
                         {
-                            timeout: 5000
+                            timeout: 8000,
+
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0",
+                                "Accept":
+                                    "application/json"
+                            }
                         }
                     );
 
                 movieName =
-                    res.data?.meta?.name || "";
+                    cinemetaRes.data?.meta?.name ||
+                    "";
 
             } catch (e) {
 
                 console.log(
-                    "[META IMDB ERROR]",
-                    e?.message || e
+                    "[META CINEMETA ERROR]",
+                    e?.response?.status ||
+                    e?.message ||
+                    e
                 );
+
             }
 
         } else {
 
             movieName =
-                decodeURIComponent(rawId);
+                decodeMovieName(
+                    rawId
+                );
+
         }
+
+        movieName =
+            String(movieName || "")
+                .replace(/\s+/g, " ")
+                .trim();
 
         console.log(
             "[META] Movie:",
@@ -1521,118 +1549,771 @@ builder.defineMetaHandler(async (args) => {
             return { meta: null };
         }
 
+        // =====================================================
+        // 2. TÌM PHIM TRÊN PHIMAPI
+        // =====================================================
+
         const searchUrl =
             "https://phimapi.com/v1/api/tim-kiem?keyword=" +
             encodeURIComponent(movieName) +
             "&limit=10";
 
-        const res =
+        console.log(
+            "[META] Search URL:",
+            searchUrl
+        );
+
+        const searchRes =
             await axios.get(
                 searchUrl,
                 {
                     timeout: 8000,
+
                     headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
+                        "User-Agent":
+                            "Mozilla/5.0",
+                        "Accept":
+                            "application/json"
                     }
                 }
             );
 
         const items =
-            res.data?.data?.items ||
-            res.data?.items ||
+            searchRes.data?.data?.items ||
+            searchRes.data?.items ||
             [];
 
-        let item =
-            items.find(
-                x =>
-                    x &&
-                    x.name &&
-                    x.name.toLowerCase() ===
-                    movieName.toLowerCase()
-            );
+        console.log(
+            "[META] Search items:",
+            Array.isArray(items)
+                ? items.length
+                : 0
+        );
 
-        if (!item && items.length > 0) {
-            item = items[0];
+        // =====================================================
+        // 3. CHỌN KẾT QUẢ KHỚP TÊN
+        // =====================================================
+
+        const normalizedName =
+            movieName
+                .toLowerCase()
+                .replace(/[^\p{L}\p{N}]+/gu, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+
+        let item = null;
+
+        if (Array.isArray(items)) {
+
+            // -------------------------------------------------
+            // A. TÊN VIỆT KHỚP CHÍNH XÁC
+            // -------------------------------------------------
+
+            item =
+                items.find(x => {
+
+                    const name =
+                        String(
+                            x?.name || ""
+                        )
+                            .toLowerCase()
+                            .replace(
+                                /[^\p{L}\p{N}]+/gu,
+                                " "
+                            )
+                            .replace(
+                                /\s+/g,
+                                " "
+                            )
+                            .trim();
+
+                    return (
+                        name &&
+                        name === normalizedName
+                    );
+
+                });
+
+            // -------------------------------------------------
+            // B. TÊN GỐC KHỚP CHÍNH XÁC
+            // -------------------------------------------------
+
+            if (!item) {
+
+                item =
+                    items.find(x => {
+
+                        const origin =
+                            String(
+                                x?.origin_name ||
+                                x?.original_name ||
+                                ""
+                            )
+                                .toLowerCase()
+                                .replace(
+                                    /[^\p{L}\p{N}]+/gu,
+                                    " "
+                                )
+                                .replace(
+                                    /\s+/g,
+                                    " "
+                                )
+                                .trim();
+
+                        return (
+                            origin &&
+                            origin === normalizedName
+                        );
+
+                    });
+
+            }
+
+            // -------------------------------------------------
+            // C. alternative_names
+            // -------------------------------------------------
+
+            if (!item) {
+
+                item =
+                    items.find(x => {
+
+                        const alternatives =
+                            Array.isArray(
+                                x?.alternative_names
+                            )
+                                ? x.alternative_names
+                                : [];
+
+                        return alternatives.some(
+                            alt => {
+
+                                const normalizedAlt =
+                                    String(
+                                        alt || ""
+                                    )
+                                        .toLowerCase()
+                                        .replace(
+                                            /[^\p{L}\p{N}]+/gu,
+                                            " "
+                                        )
+                                        .replace(
+                                            /\s+/g,
+                                            " "
+                                        )
+                                        .trim();
+
+                                return (
+                                    normalizedAlt ===
+                                    normalizedName
+                                );
+
+                            }
+                        );
+
+                    });
+
+            }
+
+            // -------------------------------------------------
+            // D. KHÔNG CÓ KHỚP TUYỆT ĐỐI
+            //    → chỉ dùng kết quả đầu nếu tìm kiếm
+            //      thực sự trả về.
+            // -------------------------------------------------
+
+            if (!item && items.length > 0) {
+                item = items[0];
+            }
+
         }
 
         if (!item) {
 
+            console.log(
+                "[META] Không tìm thấy:",
+                movieName
+            );
+
             return {
                 meta: {
-                    id: args.id,
+                    id: rawId,
+
                     type:
                         args.type === "series"
                             ? "series"
                             : "movie",
-                    name: movieName
+
+                    name:
+                        movieName
                 }
             };
+
         }
+
+        console.log(
+            "[META] Selected:",
+            item.name,
+            "|",
+            item.origin_name || "",
+            "|",
+            item.year || ""
+        );
+
+        // =====================================================
+        // 4. LẤY DETAIL PHIM
+        // =====================================================
+
+        let detail = item;
+
+        const slug =
+            item.slug ||
+            "";
+
+        if (slug) {
+
+            try {
+
+                const detailRes =
+                    await axios.get(
+                        "https://phimapi.com/v1/api/phim/" +
+                        encodeURIComponent(slug),
+                        {
+                            timeout: 10000,
+
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0",
+                                "Accept":
+                                    "application/json"
+                            }
+                        }
+                    );
+
+                detail =
+                    detailRes.data?.data?.item ||
+                    detailRes.data?.item ||
+                    detail;
+
+                console.log(
+                    "[META] Detail OK:",
+                    detail?.name ||
+                    item.name
+                );
+
+            } catch (e) {
+
+                console.log(
+                    "[META DETAIL ERROR]",
+                    e?.response?.status ||
+                    e?.message ||
+                    e
+                );
+
+            }
+
+        }
+
+        // =====================================================
+        // 5. XÁC ĐỊNH TYPE THỰC
+        // =====================================================
+
+        const sourceType =
+            String(
+                detail?.type ||
+                item?.type ||
+                ""
+            ).toLowerCase();
+
+        const isSeries =
+            args.type === "series" ||
+            sourceType === "series" ||
+            sourceType === "tvshows";
+
+        const metaType =
+            isSeries
+                ? "series"
+                : "movie";
+
+        // =====================================================
+        // 6. POSTER
+        // =====================================================
+
+        const poster =
+            makePosterUrl(detail) ||
+            makePosterUrl(item);
+
+        // =====================================================
+        // 7. BACKGROUND
+        // =====================================================
+
+        let background = "";
+
+        if (
+            detail?.thumb_url &&
+            typeof detail.thumb_url === "string"
+        ) {
+
+            if (
+                detail.thumb_url.startsWith("http")
+            ) {
+
+                background =
+                    detail.thumb_url;
+
+            }
+
+        }
+
+        // =====================================================
+        // 8. NỘI DUNG THẬT
+        // =====================================================
+
+        let description =
+            detail?.content ||
+            item?.content ||
+            "";
+
+        description =
+            String(description || "")
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/<\/p>/gi, "\n")
+                .replace(/<[^>]*>/g, "")
+                .replace(/&nbsp;/gi, " ")
+                .replace(/&amp;/gi, "&")
+                .replace(/&quot;/gi, '"')
+                .replace(/&#39;/gi, "'")
+                .replace(/\n{3,}/g, "\n\n")
+                .trim();
+
+        if (!description) {
+
+            description =
+                "Đang cập nhật nội dung phim.";
+
+        }
+
+        // =====================================================
+        // 9. IMDb
+        // =====================================================
+
+        let imdbRating = null;
+
+        let imdbId =
+            detail?.imdb?.id ||
+            item?.imdb?.id ||
+            "";
+
+        const rawImdbRating =
+            detail?.imdb?.vote_average ??
+            item?.imdb?.vote_average ??
+            null;
+
+        if (
+            rawImdbRating !== null &&
+            rawImdbRating !== undefined &&
+            rawImdbRating !== ""
+        ) {
+
+            const parsed =
+                Number(
+                    rawImdbRating
+                );
+
+            if (
+                Number.isFinite(parsed) &&
+                parsed > 0
+            ) {
+
+                imdbRating =
+                    Math.round(
+                        parsed * 10
+                    ) / 10;
+
+            }
+
+        }
+
+        // =====================================================
+        // 10. NẾU PHIMAPI KHÔNG CÓ IMDb
+        //     → THỬ CINEMETA BẰNG IMDb ID
+        // =====================================================
+
+        if (
+            imdbId &&
+            imdbRating === null
+        ) {
+
+            try {
+
+                const cmRes =
+                    await axios.get(
+                        "https://v3-cinemeta.strem.io/meta/" +
+                        metaType +
+                        "/" +
+                        encodeURIComponent(imdbId) +
+                        ".json",
+                        {
+                            timeout: 8000
+                        }
+                    );
+
+                const cmMeta =
+                    cmRes.data?.meta ||
+                    {};
+
+                const cmRating =
+                    Number(
+                        cmMeta.imdbRating
+                    );
+
+                if (
+                    Number.isFinite(cmRating) &&
+                    cmRating > 0
+                ) {
+
+                    imdbRating =
+                        cmRating;
+
+                }
+
+            } catch (e) {
+
+                console.log(
+                    "[META IMDb ERROR]",
+                    e?.response?.status ||
+                    e?.message ||
+                    e
+                );
+
+            }
+
+        }
+
+        console.log(
+            "[META] IMDb:",
+            imdbId ||
+            "N/A",
+            "| rating:",
+            imdbRating ??
+            "N/A"
+        );
+
+        // =====================================================
+        // 11. THỂ LOẠI
+        // =====================================================
+
+        const genres =
+            Array.isArray(
+                detail?.category
+            )
+                ? detail.category
+                    .map(x =>
+                        typeof x === "string"
+                            ? x
+                            : x?.name
+                    )
+                    .filter(Boolean)
+                : (
+                    Array.isArray(
+                        item?.category
+                    )
+                        ? item.category
+                            .map(x =>
+                                typeof x === "string"
+                                    ? x
+                                    : x?.name
+                            )
+                            .filter(Boolean)
+                        : undefined
+                );
+
+        // =====================================================
+        // 12. VIDEOS CHO SERIES
+        //
+        // Đây là phần QUAN TRỌNG nhất:
+        //
+        // Stremio sẽ hiển thị:
+        //
+        //   Mùa 1
+        //      Tập 1
+        //      Tập 2
+        //      Tập 3
+        //
+        // Sau khi chọn tập → mới gọi STREAM.
+        // =====================================================
+
+        let videos = undefined;
+
+        if (isSeries) {
+
+            const episodeMap =
+                new Map();
+
+            const episodeGroups =
+                Array.isArray(
+                    detail?.episodes
+                )
+                    ? detail.episodes
+                    : [];
+
+            for (
+                const group
+                of episodeGroups
+            ) {
+
+                const serverData =
+                    Array.isArray(
+                        group?.server_data
+                    )
+                        ? group.server_data
+                        : [];
+
+                for (
+                    const ep
+                    of serverData
+                ) {
+
+                    const rawEpisodeName =
+                        String(
+                            ep?.name ||
+                            ep?.slug ||
+                            ""
+                        ).trim();
+
+                    if (!rawEpisodeName) {
+                        continue;
+                    }
+
+                    // -------------------------------------------------
+                    // Lấy số tập:
+                    // "Tập 1"
+                    // "01"
+                    // "Episode 1"
+                    // "Ep 1"
+                    // "1"
+                    // -------------------------------------------------
+
+                    const match =
+                        rawEpisodeName.match(
+                            /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
+                        );
+
+                    if (!match) {
+
+                        // "Full" không phải episode của series
+                        continue;
+
+                    }
+
+                    const episodeNumber =
+                        Number(
+                            match[1]
+                        );
+
+                    if (
+                        !Number.isFinite(
+                            episodeNumber
+                        ) ||
+                        episodeNumber <= 0
+                    ) {
+                        continue;
+                    }
+
+                    if (
+                        !episodeMap.has(
+                            episodeNumber
+                        )
+                    ) {
+
+                        episodeMap.set(
+                            episodeNumber,
+                            {
+                                number:
+                                    episodeNumber,
+
+                                name:
+                                    rawEpisodeName
+                            }
+                        );
+
+                    }
+
+                }
+
+            }
+
+            videos =
+                Array.from(
+                    episodeMap.values()
+                )
+                    .sort(
+                        (a, b) =>
+                            a.number -
+                            b.number
+                    )
+                    .map(ep => {
+
+                        const videoId =
+                            rawId +
+                            ":1:" +
+                            ep.number;
+
+                        return {
+
+                            id:
+                                videoId,
+
+                            title:
+                                "Tập " +
+                                ep.number,
+
+                            season:
+                                1,
+
+                            number:
+                                ep.number,
+
+                            name:
+                                "Tập " +
+                                ep.number
+                        };
+
+                    });
+
+            console.log(
+                "[META] Series episodes:",
+                videos.length
+            );
+
+        }
+
+        // =====================================================
+        // 13. META HOÀN CHỈNH
+        // =====================================================
 
         const meta = {
 
-            id: args.id,
+            id:
+                rawId,
 
             type:
-                args.type === "series"
-                    ? "series"
-                    : "movie",
+                metaType,
 
             name:
-                item.name ||
+                detail?.name ||
+                item?.name ||
                 movieName,
 
             poster:
-                makePosterUrl(item),
+                poster,
+
+            posterShape:
+                "poster",
+
+            background:
+                background ||
+                undefined,
 
             description:
-                "Original: " +
-                (
-                    item.origin_name ||
-                    item.original_name ||
-                    item.name ||
-                    movieName
-                ) +
-                " (" +
-                (
-                    item.year ||
-                    "New"
-                ) +
-                ")",
+                description,
 
             releaseInfo:
-                item.year
-                    ? String(item.year)
+                detail?.year
+                    ? String(
+                        detail.year
+                    )
+                    : (
+                        item?.year
+                            ? String(
+                                item.year
+                            )
+                            : undefined
+                    ),
+
+            imdbRating:
+                imdbRating !== null
+                    ? imdbRating
                     : undefined,
 
             genres:
-                Array.isArray(item.category)
-                    ? item.category.map(
-                        x =>
+                genres,
+
+            country:
+                Array.isArray(
+                    detail?.country
+                )
+                    ? detail.country
+                        .map(x =>
                             typeof x === "string"
                                 ? x
-                                : x.name
-                    )
-                    : undefined
+                                : x?.name
+                        )
+                        .filter(Boolean)
+                    : undefined,
+
+            director:
+                Array.isArray(
+                    detail?.director
+                )
+                    ? detail.director
+                        .filter(Boolean)
+                    : undefined,
+
+            cast:
+                Array.isArray(
+                    detail?.actor
+                )
+                    ? detail.actor
+                        .filter(Boolean)
+                    : undefined,
+
+            runtime:
+                detail?.time ||
+                undefined
         };
+
+        if (
+            isSeries &&
+            Array.isArray(videos)
+        ) {
+
+            meta.videos =
+                videos;
+
+        }
 
         console.log(
             "[META] OK:",
-            meta.name
+            meta.name,
+            "| type:",
+            meta.type,
+            "| episodes:",
+            Array.isArray(meta.videos)
+                ? meta.videos.length
+                : 0,
+            "| IMDb:",
+            meta.imdbRating ??
+            "N/A"
         );
 
-        return { meta };
+        return {
+            meta
+        };
 
     } catch (e) {
 
         console.error(
             "[META ERROR]",
-            e?.message || e
+            e?.message ||
+            e
         );
 
-        return { meta: null };
+        return {
+            meta: null
+        };
+
     }
+
 });
 
 
@@ -10265,7 +10946,7 @@ builder.defineStreamHandler(async (args) => {
         JSON.stringify(args || {})
     );
 
-    // =====================================================
+        // =====================================================
     // 1. LẤY ID + TYPE
     // =====================================================
 
@@ -10297,107 +10978,170 @@ builder.defineStreamHandler(async (args) => {
     }
 
     // =====================================================
-// 2. XÁC ĐỊNH TÊN + NĂM + SEASON + EPISODE
-// =====================================================
+    // 2. XÁC ĐỊNH TÊN + NĂM + SEASON + EPISODE
+    // =====================================================
 
-let movieName = "";
+    let movieName = "";
 
-let movieYear = 0;
+    let movieYear = 0;
 
-let seasonNumber = 0;
+    let seasonNumber = 0;
 
-let episodeNumber = 0;
+    let episodeNumber = 0;
 
-// -----------------------------------------------------
-// A. LẤY SEASON + EPISODE TỪ STREAM ID
-// -----------------------------------------------------
-
-if (
-    streamType === "series" &&
-    rawId.startsWith("tt")
-) {
-
-    const idParts =
-        rawId.split(":");
-
-    seasonNumber =
-        Number(
-            idParts[1]
-        ) || 1;
-
-    episodeNumber =
-        Number(
-            idParts[2]
-        ) || 1;
-
-    console.log(
-        "[STREAM] Season:",
-        seasonNumber
-    );
-
-    console.log(
-        "[STREAM] Episode:",
-        episodeNumber
-    );
-
-}
-
-// -----------------------------------------------------
-// B. ID CỦA MOVINA
-// -----------------------------------------------------
-
-try {
+    // =====================================================
+    // A. MOVINA SERIES VIDEO ID
+    //
+    // Ví dụ:
+    //
+    // vnwpsw:Tên phim:1:6
+    //
+    // => movieName    = Tên phim
+    // => seasonNumber = 1
+    // => episodeNumber= 6
+    // =====================================================
 
     if (
         rawId.startsWith("vnwpsw:")
     ) {
 
-        const encodedPart =
-            rawId
-                .substring("vnwpsw:".length)
-                .split(":")[0];
-
-        movieName =
-            decodeURIComponent(
-                encodedPart
+        const movinaRaw =
+            rawId.substring(
+                "vnwpsw:".length
             );
 
-        console.log(
-            "[STREAM] MOVINA name:",
-            movieName
-        );
+        const idParts =
+            movinaRaw.split(":");
+
+        // -------------------------------------------------
+        // Nếu là series video:
+        //
+        // vnwpsw:Tên phim:season:episode
+        // -------------------------------------------------
+
+        if (
+            streamType === "series" &&
+            idParts.length >= 3
+        ) {
+
+            const episodePart =
+                idParts[
+                    idParts.length - 1
+                ];
+
+            const seasonPart =
+                idParts[
+                    idParts.length - 2
+                ];
+
+            episodeNumber =
+                Number(
+                    episodePart
+                ) || 0;
+
+            seasonNumber =
+                Number(
+                    seasonPart
+                ) || 1;
+
+            // Tên phim có thể chứa ":"
+            // nên ghép tất cả phần còn lại
+            // trước season + episode.
+
+            const nameParts =
+                idParts.slice(
+                    0,
+                    -2
+                );
+
+            movieName =
+                decodeURIComponent(
+                    nameParts.join(":")
+                );
+
+            console.log(
+                "[STREAM] MOVINA series name:",
+                movieName
+            );
+
+            console.log(
+                "[STREAM] MOVINA season:",
+                seasonNumber
+            );
+
+            console.log(
+                "[STREAM] MOVINA episode:",
+                episodeNumber
+            );
+
+        } else {
+
+            // -------------------------------------------------
+            // MOVIE:
+            //
+            // vnwpsw:Tên phim
+            // -------------------------------------------------
+
+            movieName =
+                decodeURIComponent(
+                    movinaRaw
+                );
+
+            console.log(
+                "[STREAM] MOVINA movie name:",
+                movieName
+            );
+
+        }
 
     }
 
-    // -------------------------------------------------
-    // C. IMDb ID TỪ BOARD / DISCOVER
-    // -------------------------------------------------
+    // =====================================================
+    // B. IMDb SERIES
+    //
+    // Ví dụ:
+    //
+    // tt1234567:1:6
+    // =====================================================
 
     else if (
+        streamType === "series" &&
         rawId.startsWith("tt")
     ) {
 
-        const imdbId =
-            rawId.split(":")[0];
+        const idParts =
+            rawId.split(":");
+
+        seasonNumber =
+            Number(
+                idParts[1]
+            ) || 1;
+
+        episodeNumber =
+            Number(
+                idParts[2]
+            ) || 1;
 
         console.log(
-            "[STREAM] IMDb ID:",
-            imdbId
+            "[STREAM] IMDb season:",
+            seasonNumber
         );
 
-        const metadataType =
-            streamType === "series"
-                ? "series"
-                : "movie";
+        console.log(
+            "[STREAM] IMDb episode:",
+            episodeNumber
+        );
+
+        const imdbId =
+            idParts[0];
 
         // =================================================
-        // C1. THỬ CINEMETA
+        // IMDb → CINEMETA
         // =================================================
 
         const cinemetaUrl =
             "https://v3-cinemeta.strem.io/meta/" +
-            metadataType +
-            "/" +
+            "series/" +
             encodeURIComponent(
                 imdbId
             ) +
@@ -10429,17 +11173,9 @@ try {
                 metaRes.data?.meta ||
                 {};
 
-            // -------------------------------------------------
-            // TÊN
-            // -------------------------------------------------
-
             movieName =
                 cinemetaMeta.name ||
                 "";
-
-            // -------------------------------------------------
-            // NĂM
-            // -------------------------------------------------
 
             const rawYear =
                 cinemetaMeta.year ||
@@ -10461,16 +11197,6 @@ try {
                     )
                     : 0;
 
-            console.log(
-                "[STREAM] Cinemeta name:",
-                movieName
-            );
-
-            console.log(
-                "[STREAM] Cinemeta year:",
-                movieYear
-            );
-
         } catch (e) {
 
             console.log(
@@ -10482,25 +11208,102 @@ try {
 
         }
 
-        // =================================================
-        // C2. NẾU CINEMETA KHÔNG CÓ → IMDb SUGGESTION
-        // =================================================
+    }
 
-        if (!movieName) {
+    // =====================================================
+    // C. IMDb MOVIE
+    // =====================================================
 
-            const imdbSuggestionUrl =
-                "https://v3.sg.media-imdb.com/suggestion/x/" +
+    else if (
+        rawId.startsWith("tt")
+    ) {
+
+        const imdbId =
+            rawId.split(":")[0];
+
+        console.log(
+            "[STREAM] IMDb ID:",
+            imdbId
+        );
+
+        try {
+
+            const cinemetaUrl =
+                "https://v3-cinemeta.strem.io/meta/" +
+                "movie/" +
                 encodeURIComponent(
                     imdbId
                 ) +
                 ".json";
 
+            const metaRes =
+                await axios.get(
+                    cinemetaUrl,
+                    {
+                        timeout: 8000,
+
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0",
+                            "Accept":
+                                "application/json"
+                        }
+                    }
+                );
+
+            const cinemetaMeta =
+                metaRes.data?.meta ||
+                {};
+
+            movieName =
+                cinemetaMeta.name ||
+                "";
+
+            const rawYear =
+                cinemetaMeta.year ||
+                cinemetaMeta.releaseInfo ||
+                cinemetaMeta.released ||
+                "";
+
+            const yearMatch =
+                String(
+                    rawYear
+                ).match(
+                    /\b(19|20)\d{2}\b/
+                );
+
+            movieYear =
+                yearMatch
+                    ? Number(
+                        yearMatch[0]
+                    )
+                    : 0;
+
+        } catch (e) {
+
             console.log(
-                "[STREAM] IMDb Suggestion URL:",
-                imdbSuggestionUrl
+                "[STREAM] Cinemeta movie error:",
+                e?.response?.status ||
+                e?.message ||
+                e
             );
 
+        }
+
+        // =================================================
+        // IMDb Suggestion fallback
+        // =================================================
+
+        if (!movieName) {
+
             try {
+
+                const imdbSuggestionUrl =
+                    "https://v3.sg.media-imdb.com/suggestion/x/" +
+                    encodeURIComponent(
+                        imdbId
+                    ) +
+                    ".json";
 
                 const imdbRes =
                     await axios.get(
@@ -10528,7 +11331,8 @@ try {
                     imdbItems.find(
                         item =>
                             String(
-                                item?.id || ""
+                                item?.id ||
+                                ""
                             ) === imdbId
                     ) ||
                     imdbItems[0];
@@ -10537,7 +11341,6 @@ try {
                     imdbMovie?.l ||
                     "";
 
-                // IMDb suggestion thường có year
                 if (
                     !movieYear &&
                     imdbMovie?.y
@@ -10549,16 +11352,6 @@ try {
                         ) || 0;
 
                 }
-
-                console.log(
-                    "[STREAM] IMDb Suggestion name:",
-                    movieName
-                );
-
-                console.log(
-                    "[STREAM] IMDb Suggestion year:",
-                    movieYear
-                );
 
             } catch (e) {
 
@@ -10575,9 +11368,9 @@ try {
 
     }
 
-    // -------------------------------------------------
+    // =====================================================
     // D. ID KHÁC
-    // -------------------------------------------------
+    // =====================================================
 
     else {
 
@@ -10593,48 +11386,38 @@ try {
 
     }
 
-} catch (e) {
+    // =====================================================
+    // E. LOG THÔNG TIN ĐÃ RESOLVE
+    // =====================================================
 
     console.log(
-        "[STREAM] Resolve movie metadata error:",
-        e?.message ||
-        e
+        "[STREAM] Resolved movie:",
+        movieName
     );
 
-    movieName = "";
+    console.log(
+        "[STREAM] Resolved year:",
+        movieYear
+    );
 
-}
+    console.log(
+        "[STREAM] Resolved season:",
+        seasonNumber
+    );
 
-// =====================================================
-// E. LOG TOÀN BỘ THÔNG TIN ĐÃ RESOLVE
-// =====================================================
-
-console.log(
-    "[STREAM] Resolved movie:",
-    movieName
-);
-
-console.log(
-    "[STREAM] Resolved year:",
-    movieYear
-);
-
-console.log(
-    "[STREAM] Resolved season:",
-    seasonNumber
-);
-
-console.log(
-    "[STREAM] Resolved episode:",
-    episodeNumber
-);
+    console.log(
+        "[STREAM] Resolved episode:",
+        episodeNumber
+    );
 
     // =====================================================
-    // 3. CHUẨN HÓA TÊN
+    // F. CHUẨN HÓA TÊN
     // =====================================================
 
     movieName =
-        String(movieName || "")
+        String(
+            movieName || ""
+        )
             .replace(/\s+/g, " ")
             .trim();
 
@@ -10644,7 +11427,7 @@ console.log(
     );
 
     // =====================================================
-    // 4. NẾU VẪN KHÔNG CÓ TÊN
+    // G. NẾU VẪN KHÔNG CÓ TÊN
     // =====================================================
 
     if (!movieName) {
@@ -10652,14 +11435,6 @@ console.log(
         console.log(
             "[STREAM] KHÔNG LẤY ĐƯỢC TÊN PHIM"
         );
-
-        /*
-         * Không thể tạo chính xác URL tìm kiếm
-         * theo tên phim nếu chưa biết tên.
-         *
-         * Trả về một fallback thông báo bằng IMDb ID
-         * để Stream Handler vẫn không hoàn toàn rỗng.
-         */
 
         return {
             streams: [
@@ -10684,41 +11459,41 @@ console.log(
     }
 
     // =====================================================
-// 5. TẠO TÊN RIÊNG CHO FALLBACK NGUONC
-// =====================================================
+    // H. TÊN RIÊNG CHO FALLBACK NGUONC
+    // =====================================================
 
-let nguonCFallbackName =
-    movieName;
+    let nguonCFallbackName =
+        movieName;
 
-const slashParts =
-    String(movieName)
-        .split("/");
+    const slashParts =
+        String(movieName)
+            .split("/");
 
-if (
-    slashParts.length > 1 &&
-    String(
-        slashParts[0]
-    ).trim().length >= 3
-) {
-
-    nguonCFallbackName =
+    if (
+        slashParts.length > 1 &&
         String(
             slashParts[0]
-        )
-            .replace(/\s+/g, " ")
-            .trim();
+        ).trim().length >= 3
+    ) {
 
-}
+        nguonCFallbackName =
+            String(
+                slashParts[0]
+            )
+                .replace(/\s+/g, " ")
+                .trim();
 
-console.log(
-    "[NGUONC FALLBACK] Original:",
-    movieName
-);
+    }
 
-console.log(
-    "[NGUONC FALLBACK] Selected:",
-    nguonCFallbackName
-);
+    console.log(
+        "[NGUONC FALLBACK] Original:",
+        movieName
+    );
+
+    console.log(
+        "[NGUONC FALLBACK] Selected:",
+        nguonCFallbackName
+    );
 
 
 // =====================================================
