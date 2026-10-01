@@ -3424,158 +3424,155 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         }
     }
 
-        function addStream(url, title, referer, sourceLabel) {
+            function addStream(url, title, referer, sourceLabel) {
 
-    if (!url) return;
+        if (!url) return;
 
-    url = decodeHtml(url).trim();
+        url = decodeHtml(url).trim();
 
-    if (!/^https?:\/\//i.test(url)) {
-        url = absUrl(
-            url,
-            referer || "https://www.1phim34.com/"
-        );
-    }
+        if (!/^https?:\/\//i.test(url)) {
+            url = absUrl(
+                url,
+                referer || "https://www.1phim34.com/"
+            );
+        }
 
-    if (!url) return;
+        if (!url) return;
 
-    const key = url.trim();
+        const key = url.trim();
 
-    if (seen.has(key)) return;
-    seen.add(key);
+        if (seen.has(key)) return;
+        seen.add(key);
 
-    // =================================================
-    // XÁC ĐỊNH HOST STREAM THẬT
-    // =================================================
+        // =================================================
+        // XÁC ĐỊNH HOST STREAM THẬT
+        // =================================================
 
-    let streamUrl;
+        let streamUrl;
 
-    try {
+        try {
 
-        streamUrl =
-            new URL(url);
+            streamUrl = new URL(url);
 
-    } catch (e) {
+        } catch (e) {
+
+            console.log(
+                "[PHIMLONGTIENG] Invalid stream URL:",
+                url
+            );
+
+            return;
+        }
+
+        const streamHost =
+            streamUrl.hostname.toLowerCase();
+
+        // =================================================
+        // CHỈ PROXY CÁC SERVER PHIMLONGTIENG
+        // =================================================
+
+        const allowedHost =
+            streamHost === "1phim34.com" ||
+            streamHost === "www.1phim34.com" ||
+            streamHost === "play.cbplay.cc" ||
+            streamHost.endsWith(".cbplay.cc");
+
+        if (!allowedHost) {
+
+            console.log(
+                "[PHIMLONGTIENG] Host không nằm trong proxy:",
+                streamHost
+            );
+
+            return;
+        }
+
+        // =================================================
+        // REFERER THEO HOST
+        // =================================================
+
+        let streamReferer;
+
+        if (
+            streamHost === "play.cbplay.cc" ||
+            streamHost.endsWith(".cbplay.cc")
+        ) {
+
+            streamReferer =
+                "https://play.cbplay.cc/";
+
+        } else {
+
+            streamReferer =
+                "https://www.1phim34.com/";
+        }
+
+        // =================================================
+        // TẠO URL PROXY VERCEL
+        // =================================================
+
+        const proxyUrl =
+            "https://my-strem-addon.vercel.app/phimlongtieng/hls?url=" +
+            encodeURIComponent(url);
+
+        // =================================================
+        // LOG
+        // =================================================
 
         console.log(
-            "[PHIMLONGTIENG] Invalid stream URL:",
-            url
+            "[PHIMLONGTIENG] ADD STREAM:"
         );
 
-        return;
-    }
-
-    const streamHost =
-        streamUrl.hostname.toLowerCase();
-
-    // =================================================
-    // CHỈ PROXY CÁC SERVER PHIMLONGTIENG
-    // =================================================
-
-    const allowedHost =
-        streamHost === "1phim34.com" ||
-        streamHost === "www.1phim34.com" ||
-        streamHost === "play.cbplay.cc" ||
-        streamHost.endsWith(".cbplay.cc");
-
-    if (!allowedHost) {
+        console.log(
+            "  SOURCE:",
+            sourceLabel
+        );
 
         console.log(
-            "[PHIMLONGTIENG] Host không nằm trong proxy:",
+            "  HOST:",
             streamHost
         );
 
-        return;
+        console.log(
+            "  REFERER:",
+            streamReferer
+        );
+
+        console.log(
+            "  ORIGINAL:",
+            url
+        );
+
+        console.log(
+            "  PROXY:",
+            proxyUrl
+        );
+
+        // ============================================================
+        // ADD STREAM
+        // ============================================================
+
+        streams.push({
+            name:
+                `⚡ [PhimLongTieng] ${sourceLabel}`,
+
+            title:
+                title || `${sourceLabel} - Direct`,
+
+            url:
+                proxyUrl,
+
+            behaviorHints: {
+                bingeGroup:
+                    `phimlongtieng-${streamHost}`
+            }
+        });
+
+        console.log(
+            "[PHIMLONGTIENG] STREAM ADDED:",
+            proxyUrl
+        );
     }
-
-    // =================================================
-    // REFERER THEO HOST
-    // =================================================
-
-    let streamReferer;
-
-    if (
-        streamHost === "play.cbplay.cc" ||
-        streamHost.endsWith(".cbplay.cc")
-    ) {
-
-        streamReferer =
-            "https://play.cbplay.cc/";
-
-    } else {
-
-        streamReferer =
-            "https://www.1phim34.com/";
-    }
-
-    // =================================================
-    // TẠO URL PROXY VERCEL
-    //
-    // Stremio sẽ KHÔNG tải M3U8 gốc trực tiếp nữa.
-    //
-    // Stremio
-    //   ↓
-    // Vercel /phimlongtieng/hls
-    //   ↓
-    // server gốc
-    // =================================================
-
-    const proxyUrl =
-    "https://my-strem-addon.vercel.app/phimlongtieng/hls?url=" +
-    encodeURIComponent(url);
-
-    // =================================================
-    // LOG
-    // =================================================
-
-    console.log(
-        "[PHIMLONGTIENG] ADD STREAM:"
-    );
-
-    console.log(
-        "  SOURCE:",
-        sourceLabel
-    );
-
-    console.log(
-        "  HOST:",
-        streamHost
-    );
-
-    console.log(
-        "  REFERER:",
-        streamReferer
-    );
-
-    console.log(
-        "  ORIGINAL:",
-        url
-    );
-
-    console.log(
-        "  PROXY:",
-        proxyUrl
-    );
-
-    // ============================================================
-// ADD STREAM
-// ============================================================
-
-streams.push({
-    name: `⚡ [PhimLongTieng] ${source}`,
-
-    title:
-        `${source} - Direct`,
-
-    url:
-        proxyUrl,
-
-    behaviorHints: {
-        bingeGroup:
-            `phimlongtieng-${hostname}`
-    }
-});
-}
 
     async function get(url, headers = {}) {
         const controller = new AbortController();
