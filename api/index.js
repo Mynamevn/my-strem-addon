@@ -9749,9 +9749,6 @@ async function fetchVicdn(
 
 }
 
-console.log(
-    "######## MOVINA VICDN TEST DEPLOY 2026-10-01 ########"
-);
 
 // =====================================================
 // 6. CHẠY KKPHIM TRƯỚC
