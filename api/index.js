@@ -8472,6 +8472,1282 @@ console.log(
     nguonCFallbackName
 );
 
+// ============================================================
+// VICDN
+//
+// Luồng:
+//   MOVINA movieName
+//        ↓
+//   https://vicdn.cc/?q=movieName
+//        ↓
+//   tìm slug phù hợp
+//        ↓
+//   https://vicdn.cc/api/info/{slug}
+//        ↓
+//   list_episodes
+//        ↓
+//   chọn đúng episode
+//        ↓
+//   streamUrl + "?episodes=" + infoUrl
+//
+// Reverse-engineered from vicdn_plugin.js
+// https://github.com/youngbi/repo/blob/main/plugins/vicdn_plugin.js
+// ============================================================
+
+async function fetchVicdn(
+    movieName,
+    movieYear = null,
+    seasonNumber = 1,
+    episodeNumber = 1,
+    streamType = "movie"
+) {
+
+    console.log(
+        "============================================================"
+    );
+
+    console.log(
+        "[VICDN] START"
+    );
+
+    console.log(
+        "[VICDN] Movie:",
+        movieName
+    );
+
+    console.log(
+        "[VICDN] Year:",
+        movieYear
+    );
+
+    console.log(
+        "[VICDN] Type:",
+        streamType
+    );
+
+    console.log(
+        "[VICDN] Season:",
+        seasonNumber
+    );
+
+    console.log(
+        "[VICDN] Episode:",
+        episodeNumber
+    );
+
+    // ========================================================
+    // CONSTANTS
+    // ========================================================
+
+    const BASE_URL =
+        "https://vicdn.cc";
+
+    const BASE_API =
+        BASE_URL +
+        "/api";
+
+    const USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/120.0.0.0 Safari/537.36";
+
+    const REFERER =
+        BASE_URL + "/";
+
+    // ========================================================
+    // HELPERS
+    // ========================================================
+
+    function normalizeTitle(
+        value
+    ) {
+
+        return String(
+            value ||
+            ""
+        )
+            .normalize("NFD")
+            .replace(
+                /[\u0300-\u036f]/g,
+                ""
+            )
+            .toLowerCase()
+            .replace(
+                /[^a-z0-9]+/g,
+                " "
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+
+    }
+
+    function decodeHtml(
+        value
+    ) {
+
+        return String(
+            value ||
+            ""
+        )
+            .replace(
+                /&amp;/gi,
+                "&"
+            )
+            .replace(
+                /&quot;/gi,
+                '"'
+            )
+            .replace(
+                /&#39;/gi,
+                "'"
+            )
+            .replace(
+                /&lt;/gi,
+                "<"
+            )
+            .replace(
+                /&gt;/gi,
+                ">"
+            );
+
+    }
+
+    function extractYear(
+        value
+    ) {
+
+        const match =
+            String(
+                value ||
+                ""
+            ).match(
+                /\b((?:19|20)\d{2})\b/
+            );
+
+        return match
+            ? Number(
+                match[1]
+            )
+            : 0;
+
+    }
+
+    function absoluteUrl(
+        value,
+        base
+    ) {
+
+        if (!value) {
+            return "";
+        }
+
+        try {
+
+            return new URL(
+                String(value),
+                base
+            ).href;
+
+        } catch (_) {
+
+            return String(
+                value
+            );
+
+        }
+
+    }
+
+    // ========================================================
+    // HTTP GET
+    // ========================================================
+
+    async function get(
+        url,
+        referer = REFERER
+    ) {
+
+        console.log(
+            "[VICDN] GET:",
+            url
+        );
+
+        const response =
+            await axios.get(
+                url,
+                {
+                    timeout: 20000,
+
+                    maxRedirects: 5,
+
+                    headers: {
+
+                        "User-Agent":
+                            USER_AGENT,
+
+                        "Accept":
+                            "text/html,application/json,application/xhtml+xml,*/*",
+
+                        "Accept-Language":
+                            "vi,en-US;q=0.9,en;q=0.8",
+
+                        "Referer":
+                            referer
+
+                    },
+
+                    validateStatus:
+                        () => true
+                }
+            );
+
+        console.log(
+            "[VICDN] HTTP:",
+            response.status,
+            url
+        );
+
+        if (
+            response.status < 200 ||
+            response.status >= 400
+        ) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+
+        }
+
+        return response;
+
+    }
+
+    // ========================================================
+    // SEARCH
+    //
+    // vicdn_plugin.js hiện tại dùng:
+    //
+    // https://vicdn.cc/?q=...
+    //
+    // và lấy mảng const allData trong HTML.
+    // ========================================================
+
+    const keyword =
+        String(
+            movieName ||
+            ""
+        ).trim();
+
+    if (!keyword) {
+
+        console.log(
+            "[VICDN] Empty movie name"
+        );
+
+        return [];
+
+    }
+
+    const searchUrl =
+        BASE_URL +
+        "/?q=" +
+        encodeURIComponent(
+            keyword
+        );
+
+    let searchResponse;
+
+    try {
+
+        searchResponse =
+            await get(
+                searchUrl,
+                REFERER
+            );
+
+    } catch (e) {
+
+        console.log(
+            "[VICDN] SEARCH ERROR:",
+            e?.message ||
+            e
+        );
+
+        return [];
+
+    }
+
+    const searchHtml =
+        String(
+            searchResponse.data ||
+            ""
+        );
+
+    console.log(
+        "[VICDN] SEARCH HTML LENGTH:",
+        searchHtml.length
+    );
+
+    // ========================================================
+    // EXTRACT const allData = [...]
+    // ========================================================
+
+    let searchItems = [];
+
+    try {
+
+        /*
+         * Plugin gốc đọc:
+         *
+         * const allData = [...]
+         *
+         * Sau đó JSON.parse phần [...].
+         *
+         * Dùng bracket scanner thay vì regex ngắn
+         * để tránh cắt nhầm khi object có [] bên trong.
+         */
+
+        const markerMatch =
+            searchHtml.match(
+                /(?:const|let|var)\s+allData\s*=\s*/i
+            );
+
+        if (
+            markerMatch
+        ) {
+
+            const start =
+                markerMatch.index +
+                markerMatch[0].length;
+
+            let depth = 0;
+            let inString = false;
+            let quote = "";
+            let escaped = false;
+            let end = -1;
+
+            for (
+                let i = start;
+                i < searchHtml.length;
+                i++
+            ) {
+
+                const ch =
+                    searchHtml[i];
+
+                if (
+                    inString
+                ) {
+
+                    if (
+                        escaped
+                    ) {
+
+                        escaped = false;
+
+                    } else if (
+                        ch === "\\"
+                    ) {
+
+                        escaped = true;
+
+                    } else if (
+                        ch === quote
+                    ) {
+
+                        inString = false;
+                        quote = "";
+
+                    }
+
+                    continue;
+
+                }
+
+                if (
+                    ch === '"' ||
+                    ch === "'" ||
+                    ch === "`"
+                ) {
+
+                    inString = true;
+                    quote = ch;
+
+                    continue;
+
+                }
+
+                if (
+                    ch === "["
+                ) {
+
+                    depth++;
+
+                } else if (
+                    ch === "]"
+                ) {
+
+                    depth--;
+
+                    if (
+                        depth === 0
+                    ) {
+
+                        end = i + 1;
+
+                        break;
+
+                    }
+
+                }
+
+            }
+
+            if (
+                end > start
+            ) {
+
+                const jsonText =
+                    searchHtml.slice(
+                        start,
+                        end
+                    );
+
+                try {
+
+                    searchItems =
+                        JSON.parse(
+                            jsonText
+                        );
+
+                } catch (jsonError) {
+
+                    console.log(
+                        "[VICDN] allData JSON ERROR:",
+                        jsonError?.message ||
+                        jsonError
+                    );
+
+                }
+
+            }
+
+        }
+
+    } catch (e) {
+
+        console.log(
+            "[VICDN] SEARCH PARSE ERROR:",
+            e?.message ||
+            e
+        );
+
+    }
+
+    if (
+        !Array.isArray(
+            searchItems
+        )
+    ) {
+
+        searchItems = [];
+
+    }
+
+    console.log(
+        "[VICDN] SEARCH RESULTS:",
+        searchItems.length
+    );
+
+    // ========================================================
+    // FALLBACK:
+    // Một số phiên bản trang có thể dùng API response
+    // trực tiếp hoặc cấu trúc khác.
+    // ========================================================
+
+    if (
+        !searchItems.length
+    ) {
+
+        try {
+
+            const text =
+                searchHtml.trim();
+
+            if (
+                text.startsWith("[") &&
+                text.endsWith("]")
+            ) {
+
+                const parsed =
+                    JSON.parse(
+                        text
+                    );
+
+                if (
+                    Array.isArray(
+                        parsed
+                    )
+                ) {
+
+                    searchItems =
+                        parsed;
+
+                }
+
+            } else if (
+                text.startsWith("{")
+            ) {
+
+                const parsed =
+                    JSON.parse(
+                        text
+                    );
+
+                if (
+                    Array.isArray(
+                        parsed?.data
+                    )
+                ) {
+
+                    searchItems =
+                        parsed.data;
+
+                }
+
+            }
+
+        } catch (_) {}
+
+    }
+
+    if (
+        !searchItems.length
+    ) {
+
+        console.log(
+            "[VICDN] No search items"
+        );
+
+        return [];
+
+    }
+
+    // ========================================================
+    // TARGET NORMALIZATION
+    // ========================================================
+
+    const targetTitle =
+        normalizeTitle(
+            movieName
+        );
+
+    const targetYear =
+        Number(
+            movieYear
+        ) || 0;
+
+    // ========================================================
+    // RANK SEARCH RESULTS
+    //
+    // vname = tên tiếng Việt
+    // slug  = slug
+    // year  = năm nếu có
+    // ========================================================
+
+    const ranked =
+        searchItems
+            .map(
+                item => {
+
+                    const vname =
+                        String(
+                            item?.vname ||
+                            item?.name ||
+                            item?.title ||
+                            ""
+                        ).trim();
+
+                    const origin =
+                        String(
+                            item?.origin_name ||
+                            item?.original_name ||
+                            ""
+                        ).trim();
+
+                    const slug =
+                        String(
+                            item?.slug ||
+                            ""
+                        ).trim();
+
+                    const itemYear =
+                        Number(
+                            item?.year ||
+                            item?.release_year ||
+                            item?.releaseYear ||
+                            extractYear(
+                                vname
+                            )
+                        ) || 0;
+
+                    const normalizedName =
+                        normalizeTitle(
+                            vname
+                        );
+
+                    const normalizedOrigin =
+                        normalizeTitle(
+                            origin
+                        );
+
+                    let score = 0;
+
+                    // ------------------------------------------------
+                    // EXACT TITLE
+                    // ------------------------------------------------
+
+                    if (
+                        normalizedName ===
+                        targetTitle
+                    ) {
+
+                        score += 10000;
+
+                    }
+
+                    if (
+                        normalizedOrigin ===
+                        targetTitle
+                    ) {
+
+                        score += 9500;
+
+                    }
+
+                    // ------------------------------------------------
+                    // CONTAINS
+                    // ------------------------------------------------
+
+                    if (
+                        normalizedName.includes(
+                            targetTitle
+                        ) &&
+                        targetTitle.length >= 3
+                    ) {
+
+                        score += 3000;
+
+                    }
+
+                    if (
+                        targetTitle.includes(
+                            normalizedName
+                        ) &&
+                        normalizedName.length >= 3
+                    ) {
+
+                        score += 2500;
+
+                    }
+
+                    if (
+                        normalizedOrigin.includes(
+                            targetTitle
+                        ) &&
+                        targetTitle.length >= 3
+                    ) {
+
+                        score += 2800;
+
+                    }
+
+                    // ------------------------------------------------
+                    // YEAR
+                    // ------------------------------------------------
+
+                    if (
+                        targetYear > 0
+                    ) {
+
+                        if (
+                            itemYear ===
+                            targetYear
+                        ) {
+
+                            score += 5000;
+
+                        } else if (
+                            itemYear > 0
+                        ) {
+
+                            score -= 1000;
+
+                        }
+
+                    }
+
+                    // ------------------------------------------------
+                    // VALID SLUG
+                    // ------------------------------------------------
+
+                    if (
+                        slug
+                    ) {
+
+                        score += 100;
+
+                    }
+
+                    return {
+
+                        item,
+
+                        score,
+
+                        vname,
+
+                        origin,
+
+                        slug,
+
+                        itemYear
+
+                    };
+
+                }
+            )
+            .filter(
+                entry =>
+                    Boolean(
+                        entry.slug
+                    )
+            )
+            .sort(
+                (a, b) =>
+                    b.score -
+                    a.score
+            );
+
+    console.log(
+        "[VICDN] RANKED:",
+        ranked
+            .slice(
+                0,
+                10
+            )
+            .map(
+                entry => ({
+                    name:
+                        entry.vname,
+
+                    origin:
+                        entry.origin,
+
+                    year:
+                        entry.itemYear,
+
+                    slug:
+                        entry.slug,
+
+                    score:
+                        entry.score
+                })
+            )
+    );
+
+    if (
+        !ranked.length
+    ) {
+
+        console.log(
+            "[VICDN] No matching movie"
+        );
+
+        return [];
+
+    }
+
+    // ========================================================
+    // CHỌN PHIM
+    // ========================================================
+
+    let selected =
+        ranked[0];
+
+    // ========================================================
+    // Nếu có targetYear, ưu tiên bản đúng năm.
+    // ========================================================
+
+    if (
+        targetYear > 0
+    ) {
+
+        const exactYear =
+            ranked.find(
+                entry =>
+                    entry.itemYear ===
+                    targetYear
+            );
+
+        if (
+            exactYear
+        ) {
+
+            selected =
+                exactYear;
+
+        }
+
+    }
+
+    console.log(
+        "[VICDN] SELECTED:",
+        {
+            name:
+                selected.vname,
+
+            origin:
+                selected.origin,
+
+            year:
+                selected.itemYear,
+
+            slug:
+                selected.slug,
+
+            score:
+                selected.score
+        }
+    );
+
+    // ========================================================
+    // DETAIL API
+    //
+    // Plugin gốc:
+    //
+    // BASEAPI + "/info/" + slug
+    // ========================================================
+
+    const infoUrl =
+        BASE_API +
+        "/info/" +
+        encodeURIComponent(
+            selected.slug
+        );
+
+    let detailResponse;
+
+    try {
+
+        detailResponse =
+            await get(
+                infoUrl,
+                REFERER
+            );
+
+    } catch (e) {
+
+        console.log(
+            "[VICDN] DETAIL ERROR:",
+            e?.message ||
+            e
+        );
+
+        return [];
+
+    }
+
+    let detail;
+
+    try {
+
+        if (
+            typeof detailResponse.data ===
+            "object"
+        ) {
+
+            detail =
+                detailResponse.data;
+
+        } else {
+
+            detail =
+                JSON.parse(
+                    String(
+                        detailResponse.data ||
+                        "{}"
+                    )
+                );
+
+        }
+
+    } catch (e) {
+
+        console.log(
+            "[VICDN] DETAIL JSON ERROR:",
+            e?.message ||
+            e
+        );
+
+        return [];
+
+    }
+
+    const data =
+        detail?.data ||
+        {};
+
+    const listEpisodes =
+        Array.isArray(
+            data?.list_episodes
+        )
+            ? data.list_episodes
+            : [];
+
+    console.log(
+        "[VICDN] LIST EPISODES:",
+        listEpisodes.length
+    );
+
+    if (
+        !listEpisodes.length
+    ) {
+
+        console.log(
+            "[VICDN] No episodes"
+        );
+
+        return [];
+
+    }
+
+    // ========================================================
+    // CHỌN EPISODE
+    // ========================================================
+
+    let targetEpisode =
+        Number(
+            episodeNumber
+        ) || 1;
+
+    /*
+     * Với movie:
+     *
+     * Plugin gốc mặc định current = 1.
+     *
+     * Với series:
+     * dùng episodeNumber từ Stremio.
+     */
+
+    if (
+        streamType !==
+        "series"
+    ) {
+
+        targetEpisode = 1;
+
+    }
+
+    console.log(
+        "[VICDN] TARGET EPISODE:",
+        targetEpisode
+    );
+
+    let selectedEpisode =
+        null;
+
+    let selectedEpisodeNumber =
+        0;
+
+    for (
+        const rawEpisode
+        of listEpisodes
+    ) {
+
+        const value =
+            String(
+                rawEpisode ||
+                ""
+            ).trim();
+
+        const parts =
+            value.split("|");
+
+        if (
+            parts.length < 2
+        ) {
+
+            continue;
+
+        }
+
+        const number =
+            Number(
+                String(
+                    parts[0] ||
+                    ""
+                ).trim()
+            );
+
+        const streamBase =
+            String(
+                parts
+                    .slice(
+                        1
+                    )
+                    .join("|") ||
+                    ""
+            ).trim();
+
+        console.log(
+            "[VICDN] EPISODE ENTRY:",
+            {
+                number,
+                stream:
+                    streamBase
+            }
+        );
+
+        if (
+            number ===
+            targetEpisode
+        ) {
+
+            selectedEpisode =
+                streamBase;
+
+            selectedEpisodeNumber =
+                number;
+
+            break;
+
+        }
+
+    }
+
+    // ========================================================
+    // FALLBACK:
+    // Nếu episode không match nhưng có đúng index,
+    // dùng phần tử tương ứng.
+    // ========================================================
+
+    if (
+        !selectedEpisode
+    ) {
+
+        const fallbackIndex =
+            Math.max(
+                0,
+                targetEpisode - 1
+            );
+
+        const fallbackRaw =
+            listEpisodes[
+                fallbackIndex
+            ];
+
+        if (
+            fallbackRaw
+        ) {
+
+            const fallbackParts =
+                String(
+                    fallbackRaw
+                )
+                    .split("|");
+
+            if (
+                fallbackParts.length >= 2
+            ) {
+
+                selectedEpisode =
+                    fallbackParts
+                        .slice(
+                            1
+                        )
+                        .join("|")
+                        .trim();
+
+                selectedEpisodeNumber =
+                    Number(
+                        fallbackParts[0]
+                    ) ||
+                    targetEpisode;
+
+            }
+
+        }
+
+    }
+
+    if (
+        !selectedEpisode
+    ) {
+
+        console.log(
+            "[VICDN] Episode not found:",
+            targetEpisode
+        );
+
+        return [];
+
+    }
+
+    // ========================================================
+    // GHÉP URL THEO CƠ CHẾ CỦA PLUGIN GỐC
+    //
+    // stream = split[1] + "?episodes=" + url
+    //
+    // url ở plugin gốc là:
+    // BASEAPI + "/info/" + slug + "?current=" + episode
+    // ========================================================
+
+    const episodeInfoUrl =
+        infoUrl +
+        "?current=" +
+        encodeURIComponent(
+            selectedEpisodeNumber ||
+            targetEpisode
+        );
+
+    let streamUrl;
+
+    try {
+
+        streamUrl =
+            absoluteUrl(
+                selectedEpisode,
+                BASE_URL
+            );
+
+        const separator =
+            streamUrl.includes("?")
+                ? "&"
+                : "?";
+
+        streamUrl =
+            streamUrl +
+            separator +
+            "episodes=" +
+            encodeURIComponent(
+                episodeInfoUrl
+            );
+
+    } catch (e) {
+
+        console.log(
+            "[VICDN] STREAM URL ERROR:",
+            e?.message ||
+            e
+        );
+
+        return [];
+
+    }
+
+    if (
+        !/^https?:\/\//i.test(
+            streamUrl
+        )
+    ) {
+
+        console.log(
+            "[VICDN] Invalid stream URL:",
+            streamUrl
+        );
+
+        return [];
+
+    }
+
+    console.log(
+        "[VICDN] FINAL STREAM:",
+        streamUrl
+    );
+
+    // ========================================================
+    // STREMIO HEADER SYNTAX
+    //
+    // Vicdn plugin yêu cầu:
+    // Referer = https://vicdn.cc
+    // User-Agent = Chrome
+    //
+    // Đưa header vào URL để Stremio/WebStremio có thể gửi
+    // cùng request stream.
+    // ========================================================
+
+    const streamUrlWithHeaders =
+        streamUrl +
+        "|" +
+        "Referer=" +
+        encodeURIComponent(
+            REFERER
+        ) +
+        "&" +
+        "User-Agent=" +
+        encodeURIComponent(
+            USER_AGENT
+        );
+
+    // ========================================================
+    // RETURN
+    // ========================================================
+
+    return [
+
+        {
+
+            name:
+                "🎬 [Vicdn]",
+
+            title:
+                (
+                    streamType ===
+                    "series"
+                )
+                    ? (
+                        "Vicdn • Tập " +
+                        (
+                            selectedEpisodeNumber ||
+                            targetEpisode
+                        ) +
+                        " • " +
+                        (
+                            selected.vname ||
+                            movieName
+                        )
+                    )
+                    : (
+                        "Vicdn • " +
+                        (
+                            selected.vname ||
+                            movieName
+                        )
+                    ),
+
+            url:
+                streamUrlWithHeaders,
+
+            behaviorHints: {
+
+                notWebReady:
+                    false,
+
+                bingeGroup:
+                    "vicdn"
+
+            }
+
+        }
+
+    ];
+
+}
 
 // =====================================================
 // 6. CHẠY KKPHIM TRƯỚC
@@ -8514,36 +9790,40 @@ try {
 // 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
 // =====================================================
 
-let results = [];
+results =
+    await Promise.allSettled([
+        fetchNguonC(nguonCFallbackName),
 
-try {
+        fetchVSMov(
+            movieName,
+            movieYear,
+            seasonNumber,
+            episodeNumber,
+            streamType
+        ),
 
-    results =
-        await Promise.allSettled([
-            fetchNguonC(nguonCFallbackName),
+        scrapePhimLongTieng(
+            movieName,
+            episodeNumber,
+            movieYear
+        ),
 
-            fetchVSMov(
-                movieName,
-                movieYear,
-                seasonNumber,
-                episodeNumber,
-                streamType
-            ),
+        scrapePhimHDCS(
+            movieName,
+            movieYear,
+            seasonNumber,
+            episodeNumber,
+            streamType
+        ),
 
-            scrapePhimLongTieng(
-                movieName,
-                episodeNumber,
-                movieYear
-            ),
-
-            scrapePhimHDCS(
-                movieName,
-                movieYear,
-                seasonNumber,
-                episodeNumber,
-                streamType
-            )
-        ]);
+        fetchVicdn(
+            movieName,
+            movieYear,
+            seasonNumber,
+            episodeNumber,
+            streamType
+        )
+    ]);
 
 } catch (e) {
 
@@ -8592,6 +9872,13 @@ const phimhdcs =
         ? results[3].value
         : [];
 
+const vicdn =
+    results[4]?.status === "fulfilled" &&
+    Array.isArray(
+        results[4].value
+    )
+        ? results[4].value
+        : [];
 
 // =====================================================
 // 10. LOG
@@ -8620,6 +9907,11 @@ console.log(
 console.log(
     "[STREAM] PhimHDCS streams:",
     phimhdcs.length
+);
+
+console.log(
+    "[STREAM] Vicdn streams:",
+    vicdn.length
 );
 
 // =====================================================
@@ -8695,6 +9987,8 @@ const directStreams = [
     ...longtieng,
 
     ...phimhdcs,
+
+    ...vicdn,
 
     nguoncClientStream
 ];
