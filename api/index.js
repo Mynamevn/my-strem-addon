@@ -4978,7 +4978,7 @@ const episodeResponse =
         selectedEpisode.href,
         {
             Referer:
-                movieUrl
+                selected.href
         }
     );
 
@@ -5104,7 +5104,6 @@ if (
 
     return [];
 }
-
         // ========================================================
         // PLAYER PAGE
         // ========================================================
