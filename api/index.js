@@ -4371,9 +4371,23 @@ console.log(
 
 const episodeHtml = await episodeRes.text();
 
+// ========================================================
+// DEBUG EPISODE HTML
+// ========================================================
+
 console.log(
     "[PHIMLONGTIENG] EPISODE HTML LENGTH:",
     episodeHtml.length
+);
+
+console.log(
+    "[PHIMLONGTIENG] EPISODE HTML FIRST 3000:",
+    episodeHtml.slice(0, 3000)
+);
+
+console.log(
+    "[PHIMLONGTIENG] EPISODE HTML LAST 1000:",
+    episodeHtml.slice(-1000)
 );
 
 console.log(
@@ -4397,12 +4411,37 @@ console.log(
 );
 
 console.log(
+    "[PHIMLONGTIENG] HAS iframe:",
+    episodeHtml.includes("iframe")
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS player:",
+    episodeHtml.toLowerCase().includes("player")
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS script:",
+    episodeHtml.toLowerCase().includes("<script")
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS cloudflare:",
+    episodeHtml.toLowerCase().includes("cloudflare")
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS access denied:",
+    episodeHtml.toLowerCase().includes("access denied")
+);
+
+console.log(
     "[PHIMLONGTIENG] PLAYER RELATED:",
     episodeHtml
         .match(
-            /(?:vpm\.php|play2|vb_load_player|data-url|player|iframe)[^"'<>]*/gi
+            /(?:vpm\.php|play2|vb_load_player|data-url|player|iframe|script|captcha|cloudflare|denied)[^"'<>]*/gi
         )
-        ?.slice(0, 30)
+        ?.slice(0, 50)
 );
 
    
