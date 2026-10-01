@@ -10158,104 +10158,236 @@ console.log(
     }
 
     // ========================================================
-    // GHÉP URL THEO CƠ CHẾ CỦA PLUGIN GỐC
-    //
-    // stream = split[1] + "?episodes=" + url
-    //
-    // url ở plugin gốc là:
-    // BASEAPI + "/info/" + slug + "?current=" + episode
-    // ========================================================
+// 10. RESOLVE PLAYER PAGE → M3U8
+// ========================================================
 
-    const episodeInfoUrl =
-        infoUrl +
-        "?current=" +
-        encodeURIComponent(
-            selectedEpisodeNumber ||
-            targetEpisode
+const episodeInfoUrl =
+    infoUrl +
+    "?current=" +
+    encodeURIComponent(
+        selectedEpisodeNumber || targetEpisode
+    );
+
+let playerUrl =
+    absoluteUrl(
+        selectedEpisode,
+        BASE_URL
+    );
+
+const playerSeparator =
+    playerUrl.includes("?")
+        ? "&"
+        : "?";
+
+playerUrl =
+    playerUrl +
+    playerSeparator +
+    "episodes=" +
+    encodeURIComponent(
+        episodeInfoUrl
+    );
+
+console.log(
+    "[VICDN] PLAYER URL:",
+    playerUrl
+);
+
+let playerHtml = "";
+
+try {
+
+    const playerResponse =
+        await get(
+            playerUrl,
+            BASE_URL + "/"
         );
 
-    let streamUrl;
-
-    try {
-
-        streamUrl =
-            absoluteUrl(
-                selectedEpisode,
-                BASE_URL
-            );
-
-        const separator =
-            streamUrl.includes("?")
-                ? "&"
-                : "?";
-
-        streamUrl =
-            streamUrl +
-            separator +
-            "episodes=" +
-            encodeURIComponent(
-                episodeInfoUrl
-            );
-
-    } catch (e) {
-
-        console.log(
-            "[VICDN] STREAM URL ERROR:",
-            e?.message ||
-            e
+    playerHtml =
+        String(
+            playerResponse.data || ""
         );
 
-        return [];
+    console.log(
+        "[VICDN] PLAYER HTML LENGTH:",
+        playerHtml.length
+    );
 
+} catch (e) {
+
+    console.log(
+        "[VICDN] PLAYER GET ERROR:",
+        e?.message || e
+    );
+
+    return [];
+
+}
+
+
+// ========================================================
+// TÌM M3U8 TRONG PLAYER HTML
+// ========================================================
+
+const m3u8Candidates = [];
+
+function addM3u8(value) {
+
+    if (!value) return;
+
+    let url = String(value)
+        .trim()
+        .replace(/&amp;/g, "&")
+        .replace(/\\\//g, "/")
+        .replace(/^["']|["']$/g, "");
+
+    if (!url) return;
+
+    if (
+        url.startsWith("//")
+    ) {
+        url = "https:" + url;
     }
 
     if (
-        !/^https?:\/\//i.test(
-            streamUrl
-        )
+        url.startsWith("/")
     ) {
-
-        console.log(
-            "[VICDN] Invalid stream URL:",
-            streamUrl
-        );
-
-        return [];
-
+        url = BASE_URL + url;
     }
 
-    console.log(
-        "[VICDN] FINAL STREAM:",
-        streamUrl
+    if (
+        /^https?:\/\/.+\.m3u8/i.test(url) ||
+        /\.m3u8(?:[?#]|$)/i.test(url)
+    ) {
+        if (!m3u8Candidates.includes(url)) {
+            m3u8Candidates.push(url);
+        }
+    }
+}
+
+
+// ========================================================
+// 1. URL M3U8 TRỰC TIẾP
+// ========================================================
+
+const directM3u8Regex =
+    /https?:\/\/[^"'\\\s<>]+?\.m3u8(?:\?[^"'\\\s<>]*)?/gi;
+
+for (
+    const match of
+    playerHtml.matchAll(directM3u8Regex)
+) {
+
+    addM3u8(match[0]);
+
+}
+
+
+// ========================================================
+// 2. URL ĐƯỢC ESCAPE TRONG JAVASCRIPT
+// ========================================================
+
+const escapedM3u8Regex =
+    /https?:\\\/\\\/[^"'\\\s<>]+?\\\.m3u8(?:\\?[^"'\\\s<>]*)?/gi;
+
+for (
+    const match of
+    playerHtml.matchAll(escapedM3u8Regex)
+) {
+
+    addM3u8(
+        match[0]
+            .replace(/\\\//g, "/")
     );
 
-    // ========================================================
-    // STREMIO HEADER SYNTAX
-    //
-    // Vicdn plugin yêu cầu:
-    // Referer = https://vicdn.cc
-    // User-Agent = Chrome
-    //
-    // Đưa header vào URL để Stremio/WebStremio có thể gửi
-    // cùng request stream.
-    // ========================================================
+}
 
-    const streamUrlWithHeaders =
-        streamUrl +
-        "|" +
-        "Referer=" +
-        encodeURIComponent(
-            REFERER
-        ) +
-        "&" +
-        "User-Agent=" +
-        encodeURIComponent(
-            USER_AGENT
-        );
+
+// ========================================================
+// 3. M3U8 NẰM TRONG JSON / SCRIPT
+// ========================================================
+
+const genericM3u8Regex =
+    /["'`](https?:\/\/[^"'`\\\s<>]+\.m3u8(?:\?[^"'`\\\s<>]*)?)["'`]/gi;
+
+for (
+    const match of
+    playerHtml.matchAll(genericM3u8Regex)
+) {
+
+    addM3u8(match[1]);
+
+}
+
+
+console.log(
+    "[VICDN] M3U8 CANDIDATES:",
+    m3u8Candidates
+);
+
+
+// ========================================================
+// KHÔNG TÌM THẤY M3U8
+// ========================================================
+
+if (
+    m3u8Candidates.length === 0
+) {
+
+    console.log(
+        "[VICDN] NO M3U8 FOUND IN PLAYER HTML"
+    );
+
+    console.log(
+        "[VICDN] PLAYER HTML HEAD:",
+        playerHtml.substring(0, 5000)
+    );
+
+    return [];
+
+}
+
+
+// ========================================================
+// CHỌN M3U8
+// ========================================================
+
+const finalStreamUrl =
+    m3u8Candidates[0];
+
+console.log(
+    "[VICDN] FINAL M3U8:",
+    finalStreamUrl
+);
 
     // ========================================================
-    // RETURN
-    // ========================================================
+// STREMIO HEADER SYNTAX
+//
+// finalStreamUrl = URL M3U8 thật
+//
+// Vicdn yêu cầu:
+// Referer = https://vicdn.cc
+// User-Agent = Chrome
+//
+// Đưa header vào URL để Stremio/WebStremio có thể gửi
+// cùng request stream.
+// ========================================================
+
+const streamUrlWithHeaders =
+    finalStreamUrl +
+    "|" +
+    "Referer=" +
+    encodeURIComponent(
+        REFERER
+    ) +
+    "&" +
+    "User-Agent=" +
+    encodeURIComponent(
+        USER_AGENT
+    );
+
+// ========================================================
+// RETURN
+// ========================================================
 
     return [
 
