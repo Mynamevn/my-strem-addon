@@ -8801,6 +8801,15 @@ console.log(
     searchHtml.length
 );
 
+console.log(
+    "[VICDN] SEARCH TITLE:",
+    (
+        searchHtml.match(
+            /<title[^>]*>([\s\S]*?)<\/title>/i
+        ) || []
+    )[1] || ""
+);
+
 // ========================================================
 // HELPER: thêm item nếu có thể
 // ========================================================
@@ -9228,16 +9237,17 @@ try {
 // ========================================================
 // 4. PARSE LINK PHIM TRỰC TIẾP TỪ HTML
 //
-// Đây là fallback quan trọng.
+// QUAN TRỌNG:
+// Không coi mọi <a href="..."> là một phim.
 //
-// Nếu HTML hiện tại không còn nhúng allData,
-// vẫn có thể lấy slug từ href.
+// Parser cũ đã bắt nhầm:
+//   https://vicdn.cc/
+// thành:
+//   slug = "vicdn.cc"
 //
-// Ví dụ có thể gặp:
-//   /phim/the-christmas-chronicles
-//   /movie/the-christmas-chronicles
+// và còn bắt cả các link / object không liên quan.
 //
-// Không giả định duy nhất một cấu trúc.
+// Chỉ nhận các URL có dấu hiệu rõ ràng là URL phim.
 // ========================================================
 
 try {
@@ -9278,20 +9288,18 @@ try {
 
             } catch (_) {
 
-                absolute =
-                    href;
+                return;
 
             }
 
-            let slug =
-                "";
-
-            /*
-             * Ưu tiên các dạng:
-             * /phim/SLUG
-             * /movie/SLUG
-             * /film/SLUG
-             */
+            // ====================================================
+            // CHỈ NHẬN URL CÓ PATH PHIM
+            //
+            // Không còn fallback kiểu:
+            // /([^/?#]+)$
+            //
+            // vì chính nó đã biến vicdn.cc thành slug.
+            // ====================================================
 
             const pathMatch =
                 absolute.match(
@@ -9299,52 +9307,26 @@ try {
                 );
 
             if (
-                pathMatch
+                !pathMatch
             ) {
+
+                return;
+
+            }
+
+            let slug;
+
+            try {
 
                 slug =
                     decodeURIComponent(
                         pathMatch[1]
                     ).trim();
 
-            }
+            } catch (_) {
 
-            /*
-             * Nếu href chính nó đã là slug-like URL,
-             * thử fallback.
-             */
-
-            if (
-                !slug
-            ) {
-
-                const fallbackMatch =
-                    absolute.match(
-                        /\/([^/?#]+)\/?$/i
-                    );
-
-                if (
-                    fallbackMatch
-                ) {
-
-                    const candidate =
-                        fallbackMatch[1];
-
-                    if (
-                        candidate &&
-                        candidate !== "search" &&
-                        candidate !== "tim-kiem" &&
-                        candidate !== "api"
-                    ) {
-
-                        slug =
-                            decodeURIComponent(
-                                candidate
-                            ).trim();
-
-                    }
-
-                }
+                slug =
+                    pathMatch[1].trim();
 
             }
 
@@ -9355,6 +9337,33 @@ try {
                 return;
 
             }
+
+            // ====================================================
+            // LOẠI CÁC SLUG KHÔNG HỢP LỆ
+            // ====================================================
+
+            if (
+                slug ===
+                "search" ||
+                slug ===
+                "tim-kiem" ||
+                slug ===
+                "api" ||
+                slug ===
+                "phim" ||
+                slug ===
+                "movie" ||
+                slug ===
+                "film"
+            ) {
+
+                return;
+
+            }
+
+            // ====================================================
+            // TEXT CỦA CARD PHIM
+            // ====================================================
 
             const linkText =
                 String(
@@ -9380,11 +9389,13 @@ try {
                     )
                     .trim();
 
-            const combinedText =
-                (
-                    linkText +
-                    " " +
-                    parentText
+            const grandParentText =
+                String(
+                    $(this)
+                        .parent()
+                        .parent()
+                        .text() ||
+                    ""
                 )
                     .replace(
                         /\s+/g,
@@ -9392,47 +9403,90 @@ try {
                     )
                     .trim();
 
-            /*
-             * Tách năm nếu có.
-             */
+            const combinedText =
+                (
+                    linkText +
+                    " " +
+                    parentText +
+                    " " +
+                    grandParentText
+                )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+            // ====================================================
+            // NĂM
+            // ====================================================
 
             const itemYear =
                 extractYear(
                     combinedText
                 );
 
-            /*
-             * Chỉ thêm nếu có text.
-             * Slug sẽ được dùng làm fallback title.
-             */
+            // ====================================================
+            // TITLE
+            //
+            // Nếu link text chỉ là:
+            // "Xem phim"
+            //
+            // thì ưu tiên text của card cha.
+            // ====================================================
+
+            let title =
+                linkText;
+
+            const uselessText =
+                /^(xem|xem phim|xem ngay|chi tiết|detail|watch|play)$/i;
 
             if (
-                combinedText ||
-                slug
+                !title ||
+                uselessText.test(
+                    title
+                )
             ) {
 
-                addSearchItem(
-                    {
-
-                        vname:
-                            linkText ||
-                            combinedText ||
-                            slug,
-
-                        origin_name:
-                            "",
-
-                        slug:
-                            slug,
-
-                        year:
-                            itemYear
-
-                    },
-                    "html-link"
-                );
+                title =
+                    parentText ||
+                    grandParentText ||
+                    slug;
 
             }
+
+            // ====================================================
+            // CHỈ thêm nếu có title thực sự.
+            // ====================================================
+
+            if (
+                !title ||
+                title.length < 2
+            ) {
+
+                return;
+
+            }
+
+            addSearchItem(
+                {
+
+                    vname:
+                        title,
+
+                    origin_name:
+                        "",
+
+                    slug:
+                        slug,
+
+                    year:
+                        itemYear
+
+                },
+                "html-link"
+
+            );
 
         }
     );
