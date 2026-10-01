@@ -12400,32 +12400,67 @@ app.get(
                 );
 
             // =================================================
-            // M3U8
-            //
-            // Phần quan trọng nhất:
-            //
-            // master.m3u8
-            //     ↓
-            // child.m3u8
-            //     ↓
-            // segment.ts
-            //
-            // Tất cả URL bên trong playlist
-            // đều được đưa trở lại proxy.
-            // =================================================
+// M3U8
+//
+// Phần quan trọng nhất:
+//
+// master.m3u8
+//     ↓
+// child.m3u8
+//     ↓
+// segment.ts
+//
+// Tất cả URL bên trong playlist
+// đều được đưa trở lại proxy.
+// =================================================
 
-            if (isM3U8) {
+if (isM3U8) {
 
-                const playlist =
-                    await upstream.text();
+    const playlist =
+        await upstream.text();
 
-                console.log(
-                    "[PLT PROXY] M3U8 LENGTH:",
-                    playlist.length
-                );
+    console.log(
+        "[PLT PROXY] M3U8 LENGTH:",
+        playlist.length
+    );
 
-                const baseUrl =
-                    finalUrl;
+    // ============================================================
+    // DEBUG M3U8 CONTENT
+    // ============================================================
+
+    const m3u8Lines =
+        playlist
+            .split(/\r?\n/)
+            .filter(Boolean);
+
+    console.log(
+        "[PLT PROXY] M3U8 FIRST 10 LINES:",
+        m3u8Lines
+            .slice(0, 10)
+            .join("\n")
+    );
+
+    console.log(
+        "[PLT PROXY] M3U8 URI SAMPLE:",
+        m3u8Lines
+            .filter(line =>
+                !line.startsWith("#")
+            )
+            .slice(0, 5)
+    );
+
+    console.log(
+        "[PLT PROXY] M3U8 HAS EXTINF:",
+        playlist.includes("#EXTINF")
+    );
+
+    console.log(
+        "[PLT PROXY] M3U8 HAS M3U8:",
+        /\.m3u8/i.test(playlist)
+    );
+
+    const baseUrl =
+        finalUrl;
 
                 // =================================================
                 // PROXY URL HELPER
