@@ -3713,79 +3713,154 @@ async function get(url, headers = {}) {
 
     try {
 
-        const cookieHeader =
-            buildCookieHeader();
+        let currentUrl = url;
 
-        const requestHeaders = {
+        const maxRedirects = 5;
 
-            "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/131.0.0.0 Safari/537.36",
-
-            "Accept":
-                "text/html,application/xhtml+xml,application/xml;q=0.9," +
-                "image/avif,image/webp,image/apng,*/*;q=0.8",
-
-            "Accept-Language":
-                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-            ...headers
-        };
-
-        // Không ghi đè Cookie do caller truyền vào.
-        if (
-            cookieHeader &&
-            !Object.keys(requestHeaders)
-                .some(
-                    key =>
-                        key.toLowerCase() === "cookie"
-                )
+        for (
+            let redirectCount = 0;
+            redirectCount <= maxRedirects;
+            redirectCount++
         ) {
 
-            requestHeaders.Cookie =
-                cookieHeader;
+            const cookieHeader =
+                buildCookieHeader();
+
+            const requestHeaders = {
+
+                "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                    "Chrome/131.0.0.0 Safari/537.36",
+
+                "Accept":
+                    "text/html,application/xhtml+xml,application/xml;q=0.9," +
+                    "image/avif,image/webp,image/apng,*/*;q=0.8",
+
+                "Accept-Language":
+                    "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                ...headers
+            };
+
+            // ========================================================
+            // COOKIE
+            // ========================================================
+
+            if (
+                cookieHeader &&
+                !Object.keys(requestHeaders)
+                    .some(
+                        key =>
+                            key.toLowerCase() === "cookie"
+                    )
+            ) {
+
+                requestHeaders.Cookie =
+                    cookieHeader;
+
+                console.log(
+                    "[PHIMLONGTIENG] SEND COOKIES:",
+                    cookieHeader
+                        .split(";")
+                        .map(x =>
+                            x.split("=")[0].trim()
+                        )
+                        .join("; ")
+                );
+            }
 
             console.log(
-                "[PHIMLONGTIENG] SEND COOKIES:",
-                cookieHeader
-                    .split(";")
-                    .map(x =>
-                        x.split("=")[0].trim()
-                    )
-                    .join("; ")
+                "[PHIMLONGTIENG] GET:",
+                currentUrl
             );
+
+            // ========================================================
+            // FETCH KHÔNG TỰ FOLLOW REDIRECT
+            //
+            // Mục đích:
+            // lấy cookie ở từng response trung gian trước khi
+            // chuyển sang URL tiếp theo.
+            // ========================================================
+
+            const response =
+                await fetch(
+                    currentUrl,
+                    {
+
+                        method: "GET",
+
+                        redirect: "manual",
+
+                        signal:
+                            controller.signal,
+
+                        headers:
+                            requestHeaders
+                    }
+                );
+
+            // ========================================================
+            // LƯU COOKIE NGAY Ở MỌI RESPONSE
+            // ========================================================
+
+            storeCookies(response);
+
+            console.log(
+                "[PHIMLONGTIENG] GET RESULT:",
+                response.status,
+                response.url
+            );
+
+            // ========================================================
+            // REDIRECT
+            // ========================================================
+
+            const location =
+                response.headers.get(
+                    "location"
+                );
+
+            const isRedirect =
+                [301, 302, 303, 307, 308]
+                    .includes(
+                        response.status
+                    );
+
+            if (
+                isRedirect &&
+                location
+            ) {
+
+                const nextUrl =
+                    new URL(
+                        location,
+                        currentUrl
+                    ).href;
+
+                console.log(
+                    "[PHIMLONGTIENG] REDIRECT:",
+                    currentUrl,
+                    "=>",
+                    nextUrl
+                );
+
+                currentUrl =
+                    nextUrl;
+
+                continue;
+            }
+
+            // ========================================================
+            // KHÔNG CÒN REDIRECT
+            // ========================================================
+
+            return response;
         }
 
-        console.log(
-            "[PHIMLONGTIENG] GET:",
-            url
+        throw new Error(
+            "Too many redirects"
         );
-
-        const response =
-            await fetch(url, {
-
-                method: "GET",
-
-                redirect: "follow",
-
-                signal:
-                    controller.signal,
-
-                headers:
-                    requestHeaders
-            });
-
-        // Lưu cookie ngay sau mỗi response.
-        storeCookies(response);
-
-        console.log(
-            "[PHIMLONGTIENG] GET RESULT:",
-            response.status,
-            response.url
-        );
-
-        return response;
 
     } finally {
 
