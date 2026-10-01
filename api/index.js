@@ -8726,211 +8726,354 @@ async function fetchVicdn(
 
     }
 
-    // ========================================================
-    // SEARCH
-    //
-    // vicdn_plugin.js hiện tại dùng:
-    //
-    // https://vicdn.cc/?q=...
-    //
-    // và lấy mảng const allData trong HTML.
-    // ========================================================
+ 
+// ========================================================
+// SEARCH
+//
+// Tìm phim trên Vicdn.
+//
+// Không phụ thuộc duy nhất vào `const allData = [...]`.
+// Ưu tiên:
+//   1. allData trong JavaScript
+//   2. JSON trong các script
+//   3. link phim trong HTML
+//
+// Phần này chỉ có nhiệm vụ tìm:
+//   name / origin_name / year / slug
+//
+// Sau đó phần TARGET NORMALIZATION bên dưới sẽ xử lý
+// movie / series như nhau.
+// ========================================================
 
-    const keyword =
-        String(
-            movieName ||
-            ""
-        ).trim();
+const keyword =
+    String(
+        movieName ||
+        ""
+    ).trim();
 
-    if (!keyword) {
-
-        console.log(
-            "[VICDN] Empty movie name"
-        );
-
-        return [];
-
-    }
-
-    const searchUrl =
-        BASE_URL +
-        "/?q=" +
-        encodeURIComponent(
-            keyword
-        );
-
-    let searchResponse;
-
-    try {
-
-        searchResponse =
-            await get(
-                searchUrl,
-                REFERER
-            );
-
-    } catch (e) {
-
-        console.log(
-            "[VICDN] SEARCH ERROR:",
-            e?.message ||
-            e
-        );
-
-        return [];
-
-    }
-
-    const searchHtml =
-        String(
-            searchResponse.data ||
-            ""
-        );
+if (!keyword) {
 
     console.log(
-        "[VICDN] SEARCH HTML LENGTH:",
-        searchHtml.length
+        "[VICDN] Empty movie name"
     );
 
-    // ========================================================
-    // EXTRACT const allData = [...]
-    // ========================================================
+    return [];
 
-    let searchItems = [];
+}
 
-    try {
+const searchUrl =
+    BASE_URL +
+    "/?q=" +
+    encodeURIComponent(
+        keyword
+    );
 
-        /*
-         * Plugin gốc đọc:
-         *
-         * const allData = [...]
-         *
-         * Sau đó JSON.parse phần [...].
-         *
-         * Dùng bracket scanner thay vì regex ngắn
-         * để tránh cắt nhầm khi object có [] bên trong.
-         */
+let searchResponse;
 
-        const markerMatch =
-            searchHtml.match(
-                /(?:const|let|var)\s+allData\s*=\s*/i
-            );
+try {
+
+    searchResponse =
+        await get(
+            searchUrl,
+            REFERER
+        );
+
+} catch (e) {
+
+    console.log(
+        "[VICDN] SEARCH ERROR:",
+        e?.message ||
+        e
+    );
+
+    return [];
+
+}
+
+const searchHtml =
+    String(
+        searchResponse.data ||
+        ""
+    );
+
+console.log(
+    "[VICDN] SEARCH HTML LENGTH:",
+    searchHtml.length
+);
+
+// ========================================================
+// HELPER: thêm item nếu có thể
+// ========================================================
+
+function addSearchItem(
+    item,
+    source = ""
+) {
+
+    if (
+        !item ||
+        typeof item !== "object"
+    ) {
+
+        return;
+
+    }
+
+    const normalized = {
+
+        ...item,
+
+        vname:
+            item.vname ||
+            item.name ||
+            item.title ||
+            item.movie_name ||
+            item.movieName ||
+            "",
+
+        origin_name:
+            item.origin_name ||
+            item.original_name ||
+            item.originalName ||
+            item.origin ||
+            "",
+
+        slug:
+            item.slug ||
+            item.movie_slug ||
+            item.movieSlug ||
+            "",
+
+        year:
+            item.year ||
+            item.release_year ||
+            item.releaseYear ||
+            ""
+
+    };
+
+    if (
+        normalized.slug ||
+        normalized.vname ||
+        normalized.origin_name
+    ) {
+
+        searchItems.push(
+            normalized
+        );
+
+    }
+
+}
+
+// ========================================================
+// HELPER: parse một JSON object / array
+// ========================================================
+
+function parsePossibleJson(
+    value,
+    source = ""
+) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+
+        return;
+
+    }
+
+    if (
+        typeof value === "object"
+    ) {
 
         if (
-            markerMatch
+            Array.isArray(value)
         ) {
 
-            const start =
-                markerMatch.index +
-                markerMatch[0].length;
-
-            let depth = 0;
-            let inString = false;
-            let quote = "";
-            let escaped = false;
-            let end = -1;
-
             for (
-                let i = start;
-                i < searchHtml.length;
-                i++
+                const item
+                of value
             ) {
 
-                const ch =
-                    searchHtml[i];
-
                 if (
-                    inString
+                    item &&
+                    typeof item === "object"
                 ) {
 
-                    if (
-                        escaped
-                    ) {
-
-                        escaped = false;
-
-                    } else if (
-                        ch === "\\"
-                    ) {
-
-                        escaped = true;
-
-                    } else if (
-                        ch === quote
-                    ) {
-
-                        inString = false;
-                        quote = "";
-
-                    }
-
-                    continue;
-
-                }
-
-                if (
-                    ch === '"' ||
-                    ch === "'" ||
-                    ch === "`"
-                ) {
-
-                    inString = true;
-                    quote = ch;
-
-                    continue;
-
-                }
-
-                if (
-                    ch === "["
-                ) {
-
-                    depth++;
-
-                } else if (
-                    ch === "]"
-                ) {
-
-                    depth--;
-
-                    if (
-                        depth === 0
-                    ) {
-
-                        end = i + 1;
-
-                        break;
-
-                    }
+                    addSearchItem(
+                        item,
+                        source
+                    );
 
                 }
 
             }
 
+        } else {
+
+            // Một số API có:
+            // { data: [...] }
+
             if (
-                end > start
+                Array.isArray(
+                    value.data
+                )
             ) {
 
-                const jsonText =
-                    searchHtml.slice(
-                        start,
-                        end
-                    );
+                parsePossibleJson(
+                    value.data,
+                    source
+                );
 
-                try {
+            } else {
 
-                    searchItems =
-                        JSON.parse(
-                            jsonText
-                        );
+                addSearchItem(
+                    value,
+                    source
+                );
 
-                } catch (jsonError) {
+            }
 
-                    console.log(
-                        "[VICDN] allData JSON ERROR:",
-                        jsonError?.message ||
-                        jsonError
-                    );
+        }
+
+        return;
+
+    }
+
+    const text =
+        String(
+            value
+        ).trim();
+
+    if (
+        !text
+    ) {
+
+        return;
+
+    }
+
+    try {
+
+        const parsed =
+            JSON.parse(
+                text
+            );
+
+        parsePossibleJson(
+            parsed,
+            source
+        );
+
+    } catch (_) {}
+
+}
+
+// ========================================================
+// SEARCH RESULTS
+// ========================================================
+
+let searchItems = [];
+
+// ========================================================
+// 1. TÌM `allData`
+//
+// Giữ lại cơ chế của plugin gốc.
+// ========================================================
+
+try {
+
+    const markerMatch =
+        searchHtml.match(
+            /(?:const|let|var)\s+allData\s*=\s*/i
+        );
+
+    if (
+        markerMatch
+    ) {
+
+        const start =
+            markerMatch.index +
+            markerMatch[0].length;
+
+        let depth = 0;
+        let inString = false;
+        let quote = "";
+        let escaped = false;
+        let end = -1;
+
+        for (
+            let i = start;
+            i < searchHtml.length;
+            i++
+        ) {
+
+            const ch =
+                searchHtml[i];
+
+            if (
+                inString
+            ) {
+
+                if (
+                    escaped
+                ) {
+
+                    escaped = false;
+
+                } else if (
+                    ch === "\\"
+                ) {
+
+                    escaped = true;
+
+                } else if (
+                    ch === quote
+                ) {
+
+                    inString = false;
+                    quote = "";
+
+                }
+
+                continue;
+
+            }
+
+            if (
+                ch === '"' ||
+                ch === "'" ||
+                ch === "`"
+            ) {
+
+                inString = true;
+                quote = ch;
+
+                continue;
+
+            }
+
+            if (
+                ch === "["
+            ) {
+
+                depth++;
+
+            } else if (
+                ch === "]"
+            ) {
+
+                depth--;
+
+                if (
+                    depth === 0
+                ) {
+
+                    end = i + 1;
+
+                    break;
 
                 }
 
@@ -8938,104 +9081,466 @@ async function fetchVicdn(
 
         }
 
-    } catch (e) {
+        if (
+            end > start
+        ) {
 
-        console.log(
-            "[VICDN] SEARCH PARSE ERROR:",
-            e?.message ||
-            e
+            const jsonText =
+                searchHtml.slice(
+                    start,
+                    end
+                );
+
+            parsePossibleJson(
+                jsonText,
+                "allData"
+            );
+
+        }
+
+    }
+
+} catch (e) {
+
+    console.log(
+        "[VICDN] allData PARSE ERROR:",
+        e?.message ||
+        e
+    );
+
+}
+
+// ========================================================
+// 2. QUÉT TẤT CẢ SCRIPT TYPE=JSON
+//
+// Có những site không còn dùng `allData` mà nhúng:
+// <script type="application/json">...</script>
+// ========================================================
+
+try {
+
+    const scriptJsonRegex =
+        /<script[^>]+type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
+
+    let match;
+
+    while (
+        (
+            match =
+            scriptJsonRegex.exec(
+                searchHtml
+            )
+        ) !== null
+    ) {
+
+        parsePossibleJson(
+            match[1],
+            "application/json"
         );
 
     }
 
-    if (
-        !Array.isArray(
-            searchItems
-        )
+} catch (e) {
+
+    console.log(
+        "[VICDN] SCRIPT JSON PARSE ERROR:",
+        e?.message ||
+        e
+    );
+
+}
+
+// ========================================================
+// 3. QUÉT CÁC OBJECT JSON CÓ DẤU HIỆU PHIM
+//
+// Không parse toàn bộ HTML thành JSON.
+// Chỉ tìm những đoạn có slug / vname / origin_name.
+// ========================================================
+
+try {
+
+    const objectRegex =
+        /\{[\s\S]{0,5000}?(?:"(?:vname|name|title|origin_name|original_name|slug)"\s*:\s*"[^"]+")[\s\S]{0,5000}?\}/gi;
+
+    let match;
+
+    let objectCount = 0;
+
+    while (
+        (
+            match =
+            objectRegex.exec(
+                searchHtml
+            )
+        ) !== null
     ) {
 
-        searchItems = [];
+        objectCount++;
+
+        const fragment =
+            match[0];
+
+        /*
+         * Thử JSON.parse trực tiếp.
+         * Nếu HTML chứa escape đặc biệt thì bỏ qua,
+         * vì bước link parser phía dưới vẫn xử lý được.
+         */
+
+        try {
+
+            const parsed =
+                JSON.parse(
+                    fragment
+                );
+
+            parsePossibleJson(
+                parsed,
+                "inline-object"
+            );
+
+        } catch (_) {}
+
+        if (
+            objectCount >= 200
+        ) {
+
+            break;
+
+        }
 
     }
 
     console.log(
-        "[VICDN] SEARCH RESULTS:",
-        searchItems.length
+        "[VICDN] INLINE OBJECT CANDIDATES:",
+        objectCount
     );
 
-    // ========================================================
-    // FALLBACK:
-    // Một số phiên bản trang có thể dùng API response
-    // trực tiếp hoặc cấu trúc khác.
-    // ========================================================
+} catch (e) {
 
-    if (
-        !searchItems.length
-    ) {
+    console.log(
+        "[VICDN] INLINE OBJECT ERROR:",
+        e?.message ||
+        e
+    );
 
-        try {
+}
 
-            const text =
-                searchHtml.trim();
+// ========================================================
+// 4. PARSE LINK PHIM TRỰC TIẾP TỪ HTML
+//
+// Đây là fallback quan trọng.
+//
+// Nếu HTML hiện tại không còn nhúng allData,
+// vẫn có thể lấy slug từ href.
+//
+// Ví dụ có thể gặp:
+//   /phim/the-christmas-chronicles
+//   /movie/the-christmas-chronicles
+//
+// Không giả định duy nhất một cấu trúc.
+// ========================================================
+
+try {
+
+    const $ =
+        cheerio.load(
+            searchHtml
+        );
+
+    $("a[href]").each(
+        function () {
+
+            const href =
+                String(
+                    $(this).attr(
+                        "href"
+                    ) ||
+                    ""
+                ).trim();
 
             if (
-                text.startsWith("[") &&
-                text.endsWith("]")
+                !href
             ) {
 
-                const parsed =
-                    JSON.parse(
-                        text
+                return;
+
+            }
+
+            let absolute;
+
+            try {
+
+                absolute =
+                    new URL(
+                        href,
+                        BASE_URL
+                    ).href;
+
+            } catch (_) {
+
+                absolute =
+                    href;
+
+            }
+
+            let slug =
+                "";
+
+            /*
+             * Ưu tiên các dạng:
+             * /phim/SLUG
+             * /movie/SLUG
+             * /film/SLUG
+             */
+
+            const pathMatch =
+                absolute.match(
+                    /\/(?:phim|movie|film)\/([^/?#]+)/i
+                );
+
+            if (
+                pathMatch
+            ) {
+
+                slug =
+                    decodeURIComponent(
+                        pathMatch[1]
+                    ).trim();
+
+            }
+
+            /*
+             * Nếu href chính nó đã là slug-like URL,
+             * thử fallback.
+             */
+
+            if (
+                !slug
+            ) {
+
+                const fallbackMatch =
+                    absolute.match(
+                        /\/([^/?#]+)\/?$/i
                     );
 
                 if (
-                    Array.isArray(
-                        parsed
-                    )
+                    fallbackMatch
                 ) {
 
-                    searchItems =
-                        parsed;
+                    const candidate =
+                        fallbackMatch[1];
 
-                }
+                    if (
+                        candidate &&
+                        candidate !== "search" &&
+                        candidate !== "tim-kiem" &&
+                        candidate !== "api"
+                    ) {
 
-            } else if (
-                text.startsWith("{")
-            ) {
+                        slug =
+                            decodeURIComponent(
+                                candidate
+                            ).trim();
 
-                const parsed =
-                    JSON.parse(
-                        text
-                    );
-
-                if (
-                    Array.isArray(
-                        parsed?.data
-                    )
-                ) {
-
-                    searchItems =
-                        parsed.data;
+                    }
 
                 }
 
             }
 
-        } catch (_) {}
+            if (
+                !slug
+            ) {
 
-    }
+                return;
 
-    if (
-        !searchItems.length
-    ) {
+            }
 
-        console.log(
-            "[VICDN] No search items"
+            const linkText =
+                String(
+                    $(this).text() ||
+                    ""
+                )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+            const parentText =
+                String(
+                    $(this)
+                        .parent()
+                        .text() ||
+                    ""
+                )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+            const combinedText =
+                (
+                    linkText +
+                    " " +
+                    parentText
+                )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+            /*
+             * Tách năm nếu có.
+             */
+
+            const itemYear =
+                extractYear(
+                    combinedText
+                );
+
+            /*
+             * Chỉ thêm nếu có text.
+             * Slug sẽ được dùng làm fallback title.
+             */
+
+            if (
+                combinedText ||
+                slug
+            ) {
+
+                addSearchItem(
+                    {
+
+                        vname:
+                            linkText ||
+                            combinedText ||
+                            slug,
+
+                        origin_name:
+                            "",
+
+                        slug:
+                            slug,
+
+                        year:
+                            itemYear
+
+                    },
+                    "html-link"
+                );
+
+            }
+
+        }
+    );
+
+} catch (e) {
+
+    console.log(
+        "[VICDN] HTML LINK PARSE ERROR:",
+        e?.message ||
+        e
+    );
+
+}
+
+// ========================================================
+// 5. DEDUP SEARCH ITEMS
+// ========================================================
+
+try {
+
+    const seen =
+        new Set();
+
+    searchItems =
+        searchItems.filter(
+            item => {
+
+                const key =
+                    (
+                        String(
+                            item?.slug ||
+                            ""
+                        ).trim()
+                        +
+                        "|" +
+                        normalizeTitle(
+                            item?.vname ||
+                            item?.name ||
+                            item?.title ||
+                            ""
+                        )
+                    )
+                        .toLowerCase();
+
+                if (
+                    seen.has(
+                        key
+                    )
+                ) {
+
+                    return false;
+
+                }
+
+                seen.add(
+                    key
+                );
+
+                return true;
+
+            }
         );
 
-        return [];
+} catch (e) {
 
-    }
+    console.log(
+        "[VICDN] DEDUP ERROR:",
+        e?.message ||
+        e
+    );
+
+}
+
+console.log(
+    "[VICDN] SEARCH RESULTS:",
+    searchItems.length
+);
+
+console.log(
+    "[VICDN] SEARCH SAMPLE:",
+    searchItems
+        .slice(
+            0,
+            10
+        )
+        .map(
+            item => ({
+                name:
+                    item?.vname ||
+                    item?.name ||
+                    item?.title ||
+                    "",
+
+                origin:
+                    item?.origin_name ||
+                    item?.original_name ||
+                    "",
+
+                year:
+                    item?.year ||
+                    "",
+
+                slug:
+                    item?.slug ||
+                    ""
+            })
+        )
+);
 
     // ========================================================
     // TARGET NORMALIZATION
