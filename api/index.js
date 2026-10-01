@@ -4349,29 +4349,63 @@ console.log(
         );
 
         // ========================================================
-        // EPISODE PAGE
-        // ========================================================
+// EPISODE PAGE
+// ========================================================
 
-        const episodeRes = await get(
-            selectedEpisode.href,
-            {
-                Referer: `${directUrl}/`
-            }
-        );
+const episodeRes = await get(
+    selectedEpisode.href,
+    {
+        Referer: `${directUrl}/`
+    }
+);
 
-        console.log(
-            "[PHIMLONGTIENG] EPISODE status:",
-            episodeRes.status
-        );
+console.log(
+    "[PHIMLONGTIENG] EPISODE status:",
+    episodeRes.status
+);
 
-        console.log(
-            "[PHIMLONGTIENG] EPISODE final URL:",
-            episodeRes.url
-        );
+console.log(
+    "[PHIMLONGTIENG] EPISODE final URL:",
+    episodeRes.url
+);
 
-        const episodeHtml = await episodeRes.text();
+const episodeHtml = await episodeRes.text();
 
-      
+console.log(
+    "[PHIMLONGTIENG] EPISODE HTML LENGTH:",
+    episodeHtml.length
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS vpm.php:",
+    episodeHtml.includes("vpm.php")
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS play2:",
+    episodeHtml.includes("play2")
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS vb_load_player:",
+    episodeHtml.includes("vb_load_player")
+);
+
+console.log(
+    "[PHIMLONGTIENG] HAS data-url:",
+    episodeHtml.includes("data-url")
+);
+
+console.log(
+    "[PHIMLONGTIENG] PLAYER RELATED:",
+    episodeHtml
+        .match(
+            /(?:vpm\.php|play2|vb_load_player|data-url|player|iframe)[^"'<>]*/gi
+        )
+        ?.slice(0, 30)
+);
+
+   
         // ========================================================
         // DECRYPT trailer()
         // ========================================================
