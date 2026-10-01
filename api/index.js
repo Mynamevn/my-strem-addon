@@ -4970,12 +4970,12 @@ console.log(
     "[PHIMLONGTIENG] Episode:",
     episodeNumber,
     "|",
-    episode.href
+    selectedEpisode.href
 );
 
 const episodeResponse =
     await get(
-        episode.href,
+        selectedEpisode.href,
         {
             Referer:
                 movieUrl
