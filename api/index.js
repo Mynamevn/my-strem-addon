@@ -4962,180 +4962,151 @@ try {
             selectedEpisode.href
         );
 
-        // ========================================================
+        // =====================
 // EPISODE PAGE
-// ========================================================
-
-const episodeRes = await get(
-    selectedEpisode.href,
-    {
-        Referer: `${directUrl}/`,
-        "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/131.0.0.0 Safari/537.36",
-        Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language":
-            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Cache-Control":
-            "no-cache",
-        Pragma:
-            "no-cache",
-        "Upgrade-Insecure-Requests":
-            "1"
-    }
-);
+// =====================
 
 console.log(
-    "[PHIMLONGTIENG] EPISODE status:",
-    episodeRes.status
+    "[PHIMLONGTIENG] Episode:",
+    episodeNumber,
+    "|",
+    episodeUrl
 );
 
-console.log(
-    "[PHIMLONGTIENG] EPISODE final URL:",
-    episodeRes.url
-);
-
-console.log(
-    "[PHIMLONGTIENG] EPISODE content-type:",
-    episodeRes.headers.get("content-type")
-);
+const episodeResponse =
+    await get(
+        episodeUrl,
+        {
+            Referer:
+                movieUrl
+        }
+    );
 
 const episodeHtml =
-    await episodeRes.text();
+    await episodeResponse.text();
+
+const episodeContentType =
+    episodeResponse.headers.get(
+        "content-type"
+    ) || "";
+
+const lowerEpisodeHtml =
+    episodeHtml.toLowerCase();
+
+const isCloudflare =
+    lowerEpisodeHtml.includes(
+        "please stand by"
+    ) ||
+    lowerEpisodeHtml.includes(
+        "cdn-cgi"
+    ) ||
+    lowerEpisodeHtml.includes(
+        "cloudflareinsights"
+    );
 
 console.log(
-    "[PHIMLONGTIENG] EPISODE HTML LENGTH:",
-    episodeHtml.length
+    "[PHIMLONGTIENG] Episode HTTP:",
+    episodeResponse.status,
+    "| HTML:",
+    episodeHtml.length,
+    "| Cloudflare:",
+    isCloudflare ? "YES" : "NO"
 );
 
-// ========================================================
-// DEBUG EPISODE HTML
-// ========================================================
+// Nếu nhận Cloudflare challenge,
+// không dump HTML dài và không cố parse
+// player từ trang challenge.
+if (isCloudflare) {
+
+    console.log(
+        "[PHIMLONGTIENG] Episode blocked by Cloudflare"
+    );
+
+    return [];
+}
 
 console.log(
-    "[PHIMLONGTIENG] EPISODE HTML LENGTH:",
-    episodeHtml.length
+    "[PHIMLONGTIENG] Episode content-type:",
+    episodeContentType
 );
 
-console.log(
-    "[PHIMLONGTIENG] EPISODE HTML FIRST 3000:",
-    episodeHtml.slice(0, 3000)
-);
+// Chỉ log những dấu hiệu thật sự cần cho
+// việc xác định player nằm ở đâu.
+const playerSignals = {
 
-console.log(
-    "[PHIMLONGTIENG] EPISODE HTML LAST 1000:",
-    episodeHtml.slice(-1000)
-);
+    vpm:
+        lowerEpisodeHtml.includes(
+            "vpm.php"
+        ),
 
-console.log(
-    "[PHIMLONGTIENG] HAS vpm.php:",
-    episodeHtml.includes("vpm.php")
-);
+    play2:
+        lowerEpisodeHtml.includes(
+            "play2"
+        ),
 
-console.log(
-    "[PHIMLONGTIENG] HAS play2:",
-    episodeHtml.includes("play2")
-);
+    vbLoadPlayer:
+        lowerEpisodeHtml.includes(
+            "vb_load_player"
+        ),
 
-console.log(
-    "[PHIMLONGTIENG] HAS vb_load_player:",
-    episodeHtml.includes("vb_load_player")
-);
+    dataUrl:
+        lowerEpisodeHtml.includes(
+            "data-url"
+        ),
 
-console.log(
-    "[PHIMLONGTIENG] HAS data-url:",
-    episodeHtml.includes("data-url")
-);
+    iframe:
+        lowerEpisodeHtml.includes(
+            "<iframe"
+        ),
 
-console.log(
-    "[PHIMLONGTIENG] HAS iframe:",
-    episodeHtml.includes("iframe")
-);
-
-console.log(
-    "[PHIMLONGTIENG] HAS player:",
-    episodeHtml.toLowerCase().includes("player")
-);
-
-console.log(
-    "[PHIMLONGTIENG] HAS script:",
-    episodeHtml.toLowerCase().includes("<script")
-);
-
-console.log(
-    "[PHIMLONGTIENG] HAS cloudflare:",
-    episodeHtml.toLowerCase().includes("cloudflare")
-);
-
-console.log(
-    "[PHIMLONGTIENG] HAS access denied:",
-    episodeHtml.toLowerCase().includes("access denied")
-);
-
-console.log(
-    "[PHIMLONGTIENG] PLAYER RELATED:",
-    episodeHtml
-        .match(
-            /(?:vpm\.php|play2|vb_load_player|data-url|player|iframe|script|captcha|cloudflare|denied)[^"'<>]*/gi
+    player:
+        lowerEpisodeHtml.includes(
+            "player"
         )
-        ?.slice(0, 50)
+
+};
+
+console.log(
+    "[PHIMLONGTIENG] Player signals:",
+    Object.entries(
+        playerSignals
+    )
+        .filter(
+            ([, value]) => value
+        )
+        .map(
+            ([key]) => key
+        )
+        .join(", ") ||
+        "NONE"
 );
 
-   
-        // ========================================================
-        // DECRYPT trailer()
-        // ========================================================
+// =====================
+// ENCRYPTED JSON
+// =====================
 
-        const encryptedEpisode =
-            extractEncryptedJson(episodeHtml);
+const encryptedCandidates =
+    extractEncryptedJson(
+        episodeHtml
+    );
 
-        if (!encryptedEpisode) {
-            console.log(
-                "[PHIMLONGTIENG] Episode encrypted JSON NOT FOUND"
-            );
-            return [];
-        }
+console.log(
+    "[PHIMLONGTIENG] Encrypted JSON:",
+    encryptedCandidates.length
+        ? `FOUND (${encryptedCandidates.length})`
+        : "NOT FOUND"
+);
 
-        console.log(
-            "[PHIMLONGTIENG] Encrypted JSON length:",
-            encryptedEpisode.length
-        );
+if (
+    !encryptedCandidates.length
+) {
 
-        let playerUrl = null;
+    console.log(
+        "[PHIMLONGTIENG] Episode player data not found"
+    );
 
-        try {
-            playerUrl =
-                cryptoJSAesDecrypt(
-                    "Encrypt",
-                    encryptedEpisode
-                ).trim();
-
-            console.log(
-                "[PHIMLONGTIENG] DECRYPTED URL:",
-                playerUrl
-            );
-        } catch (e) {
-            console.log(
-                "[PHIMLONGTIENG] DECRYPT ERROR:",
-                e.message
-            );
-            return [];
-        }
-
-        playerUrl =
-            absUrl(
-                playerUrl,
-                directUrl
-            );
-
-        console.log(
-            "[PHIMLONGTIENG] PLAYER URL:",
-            playerUrl
-        );
-
-        if (!playerUrl) return [];
+    return [];
+}
 
         // ========================================================
         // PLAYER PAGE
