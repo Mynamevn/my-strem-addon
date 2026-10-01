@@ -4970,12 +4970,12 @@ console.log(
     "[PHIMLONGTIENG] Episode:",
     episodeNumber,
     "|",
-    episodeUrl
+    episode.href
 );
 
 const episodeResponse =
     await get(
-        episodeUrl,
+        episode.href,
         {
             Referer:
                 movieUrl
@@ -5010,12 +5010,11 @@ console.log(
     "| HTML:",
     episodeHtml.length,
     "| Cloudflare:",
-    isCloudflare ? "YES" : "NO"
+    isCloudflare
+        ? "YES"
+        : "NO"
 );
 
-// Nếu nhận Cloudflare challenge,
-// không dump HTML dài và không cố parse
-// player từ trang challenge.
 if (isCloudflare) {
 
     console.log(
@@ -5030,8 +5029,6 @@ console.log(
     episodeContentType
 );
 
-// Chỉ log những dấu hiệu thật sự cần cho
-// việc xác định player nằm ở đâu.
 const playerSignals = {
 
     vpm:
