@@ -4229,152 +4229,456 @@ async function get(url, headers = {}) {
     }
 
     // ============================================================
-    // SEARCH
-    // ============================================================
+// SEARCH
+// ============================================================
 
-    let directUrl = "https://phimlongtieng.link";
+let directUrl = "https://phimlongtieng.link";
+
+try {
+
+    const searchUrl =
+        `${directUrl}/search/${slugify(movieName)}/`;
+
+    console.log(
+        "[PHIMLONGTIENG] Search URL:",
+        searchUrl
+    );
+
+    const searchRes =
+        await get(searchUrl);
+
+    console.log(
+        "[PHIMLONGTIENG] Search HTTP:",
+        searchRes.status
+    );
+
+    const finalSearchUrl =
+        searchRes.url || searchUrl;
 
     try {
-        const searchUrl =
-            `${directUrl}/search/${slugify(movieName)}/`;
 
-        console.log(
-            "[PHIMLONGTIENG] Search URL:",
-            searchUrl
-        );
+        directUrl =
+            new URL(
+                finalSearchUrl
+            ).origin;
 
-        const searchRes = await get(searchUrl);
+    } catch (_) {}
 
-        console.log(
-            "[PHIMLONGTIENG] Search HTTP:",
-            searchRes.status
-        );
+    console.log(
+        "[PHIMLONGTIENG] directUrl:",
+        directUrl
+    );
 
-        const finalSearchUrl = searchRes.url || searchUrl;
+    const searchHtml =
+        await searchRes.text();
 
-        try {
-            directUrl = new URL(finalSearchUrl).origin;
-        } catch (_) {}
+    const candidates = [];
 
-        console.log(
-            "[PHIMLONGTIENG] directUrl:",
-            directUrl
-        );
+    // ========================================================
+    // PARSE SEARCH RESULT
+    //
+    // Chỉ nhận link thật dạng:
+    //   /phim/...
+    //
+    // Không nhận:
+    //   /the-loai/...
+    //   /category/...
+    //   /genre/...
+    // ========================================================
 
-        const searchHtml = await searchRes.text();
+    const seenCandidates =
+        new Set();
 
-        const candidates = [];
+    const addCandidate =
+        (href, title, block = "") => {
 
-        const liRegex =
-            /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-
-        let li;
-
-        while ((li = liRegex.exec(searchHtml)) !== null) {
-            const block = li[1];
-
-            const aMatch =
-                block.match(
-                    /<a\b[^>]*href=["']([^"']+)["'][^>]*title=["']([^"']+)["'][^>]*>/i
-                ) ||
-                block.match(
-                    /<a\b[^>]*title=["']([^"']+)["'][^>]*href=["']([^"']+)["'][^>]*>/i
-                );
-
-            if (!aMatch) continue;
-
-            let href;
-            let title;
-
-            if (
-                /href=["'][^"']+["'][^>]*title=/i.test(
-                    aMatch[0]
-                )
-            ) {
-                href = aMatch[1];
-                title = aMatch[2];
-            } else {
-                title = aMatch[1];
-                href = aMatch[2];
+            if (!href || !title) {
+                return;
             }
 
-            const text = block
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
+            const absolute =
+                absUrl(
+                    href,
+                    directUrl
+                );
+
+            if (!absolute) {
+                return;
+            }
+
+            let parsed;
+
+            try {
+
+                parsed =
+                    new URL(absolute);
+
+            } catch (_) {
+
+                return;
+            }
+
+            const pathname =
+                parsed.pathname;
+
+            // ------------------------------------------------
+            // CHỈ NHẬN TRANG PHIM
+            // ------------------------------------------------
+
+            if (
+                !/^\/phim\/[^/]+/i.test(
+                    pathname
+                )
+            ) {
+
+                return;
+            }
+
+            // ------------------------------------------------
+            // LOẠI CÁC URL KHÔNG PHẢI PHIM
+            // ------------------------------------------------
+
+            if (
+                /^\/(?:the-loai|category|genre|tag|search)\//i.test(
+                    pathname
+                )
+            ) {
+
+                return;
+            }
+
+            const cleanTitle =
+                decodeHtml(title)
+                    .replace(/<[^>]+>/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
+
+            if (!cleanTitle) {
+                return;
+            }
+
+            const key =
+                absolute
+                    .toLowerCase();
+
+            if (
+                seenCandidates.has(key)
+            ) {
+
+                return;
+            }
+
+            seenCandidates.add(key);
+
+            const text =
+                String(block || "")
+                    .replace(/<[^>]+>/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
 
             let status = "";
 
-            if (/lồng tiếng|thuyết minh|uslt|ffvn/i.test(text)) {
-                status = "Lồng Tiếng";
-            } else if (/vietsub|phụ đề/i.test(text)) {
-                status = "Vietsub";
+            if (
+                /lồng tiếng|thuyết minh|uslt|ffvn/i.test(
+                    text
+                )
+            ) {
+
+                status =
+                    "Lồng Tiếng";
+
+            } else if (
+                /vietsub|phụ đề/i.test(
+                    text
+                )
+            ) {
+
+                status =
+                    "Vietsub";
             }
 
             candidates.push({
-                title: title.trim(),
-                href: absUrl(href, directUrl),
+
+                title:
+                    cleanTitle,
+
+                href:
+                    absolute,
+
                 status
             });
-        }        console.log(
-            "[PHIMLONGTIENG] Search candidates:",
-            candidates.length
-        );
+        };
 
-        console.log(
-            "[PHIMLONGTIENG] Relevant candidates:",
-            candidates
-                .filter(c =>
-                    normalizeText(c.title).includes(
-                        normalizeText(movieName)
-                    )
-                )
-                .map(c => ({
-                    title: c.title,
-                    status: c.status,
-                    href: c.href
-                }))
-        );
+    // ========================================================
+    // CÁCH 1:
+    // <li> ... <a ... title="..." href="...">
+    // ========================================================
 
-        if (!candidates.length) {
-            console.log(
-                "[PHIMLONGTIENG] No search candidates"
+    const liRegex =
+        /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
+
+    let li;
+
+    while (
+        (li = liRegex.exec(searchHtml)) !== null
+    ) {
+
+        const block =
+            li[1];
+
+        const anchors =
+            block.matchAll(
+                /<a\b([^>]*)>([\s\S]*?)<\/a>/gi
             );
-            return [];
+
+        for (
+            const anchor of anchors
+        ) {
+
+            const attributes =
+                anchor[1] || "";
+
+            const inner =
+                anchor[2] || "";
+
+            const hrefMatch =
+                attributes.match(
+                    /href=["']([^"']+)["']/i
+                );
+
+            if (!hrefMatch) {
+                continue;
+            }
+
+            const titleMatch =
+                attributes.match(
+                    /title=["']([^"']+)["']/i
+                );
+
+            const title =
+                titleMatch
+                    ? titleMatch[1]
+                    : inner
+                        .replace(
+                            /<[^>]+>/g,
+                            " "
+                        )
+                        .replace(
+                            /\s+/g,
+                            " "
+                        )
+                        .trim();
+
+            addCandidate(
+                hrefMatch[1],
+                title,
+                block
+            );
+        }
+    }
+
+    // ========================================================
+    // CÁCH 2:
+    // Tìm trực tiếp mọi <a href="/phim/...">
+    //
+    // Một số giao diện search không đặt kết quả phim
+    // trong <li>, nên parser cũ có thể bỏ sót.
+    // ========================================================
+
+    const directAnchorRegex =
+        /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+
+    let anchorMatch;
+
+    while (
+        (anchorMatch =
+            directAnchorRegex.exec(searchHtml)) !== null
+    ) {
+
+        const attributes =
+            anchorMatch[1] || "";
+
+        const inner =
+            anchorMatch[2] || "";
+
+        const hrefMatch =
+            attributes.match(
+                /href=["']([^"']+)["']/i
+            );
+
+        if (!hrefMatch) {
+            continue;
         }
 
-        // ========================================================
-        // RANK
-        // ========================================================
+        const href =
+            hrefMatch[1];
 
-        const target = normalizeText(movieName);
+        if (
+            !/\/phim\//i.test(
+                href
+            )
+        ) {
 
-        const ranked = candidates.map(item => {
-            const titleNorm = normalizeText(item.title);
+            continue;
+        }
+
+        const titleMatch =
+            attributes.match(
+                /title=["']([^"']+)["']/i
+            );
+
+        const title =
+            titleMatch
+                ? titleMatch[1]
+                : inner
+                    .replace(
+                        /<[^>]+>/g,
+                        " "
+                    )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+        addCandidate(
+            href,
+            title,
+            anchorMatch[0]
+        );
+    }
+
+    console.log(
+        "[PHIMLONGTIENG] Search candidates:",
+        candidates.length
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] Candidates:",
+        candidates.map(c => ({
+            title:
+                c.title,
+
+            status:
+                c.status,
+
+            href:
+                c.href
+        }))
+    );
+
+    // ========================================================
+    // RANK
+    // ========================================================
+
+    const target =
+        normalizeText(
+            movieName
+        );
+
+    const targetWords =
+        target
+            .split(/\s+/)
+            .filter(Boolean);
+
+    const ranked =
+        candidates.map(item => {
+
+            const titleNorm =
+                normalizeText(
+                    item.title
+                );
 
             let score = 0;
 
-            if (titleNorm === target) {
+            // ------------------------------------------------
+            // KHỚP CHÍNH XÁC
+            // ------------------------------------------------
+
+            if (
+                titleNorm === target
+            ) {
+
                 score += 5000;
             }
 
-            if (titleNorm.includes(target)) {
+            // ------------------------------------------------
+            // CHỨA TOÀN BỘ TÊN PHIM
+            // ------------------------------------------------
+
+            if (
+                titleNorm.includes(
+                    target
+                )
+            ) {
+
+                score += 2000;
+            }
+
+            if (
+                target.includes(
+                    titleNorm
+                ) &&
+                titleNorm.length >= 3
+            ) {
+
                 score += 1000;
             }
 
-            if (target.includes(titleNorm)) {
-                score += 500;
+            // ------------------------------------------------
+            // KHỚP TỪ
+            // ------------------------------------------------
+
+            if (
+                targetWords.length
+            ) {
+
+                let matchedWords = 0;
+
+                for (
+                    const word
+                    of targetWords
+                ) {
+
+                    if (
+                        word.length >= 2 &&
+                        titleNorm.includes(
+                            word
+                        )
+                    ) {
+
+                        matchedWords++;
+                    }
+                }
+
+                score +=
+                    matchedWords *
+                    150;
             }
+
+            // ------------------------------------------------
+            // LOẠI PHẦN 2
+            // ------------------------------------------------
 
             if (
                 /phần\s*hai|phan\s*hai|part\s*two|part\s*2/i.test(
                     item.title
                 )
             ) {
+
                 score -= 8000;
             }
 
-            if (/lồng tiếng/i.test(item.status)) {
+            // ------------------------------------------------
+            // ƯU TIÊN LỒNG TIẾNG
+            // ------------------------------------------------
+
+            if (
+                /lồng tiếng/i.test(
+                    item.status
+                )
+            ) {
+
                 score += 100;
             }
 
@@ -4384,35 +4688,94 @@ async function get(url, headers = {}) {
             };
         });
 
-        ranked.sort((a, b) => b.score - a.score);
+    ranked.sort(
+        (a, b) =>
+            b.score - a.score
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] Ranked:",
+        ranked
+            .slice(0, 10)
+            .map(r => ({
+                title:
+                    r.title,
+
+                score:
+                    r.score,
+
+                status:
+                    r.status,
+
+                href:
+                    r.href
+            }))
+    );
+
+    // ========================================================
+    // KHÔNG ĐƯỢC CHỌN BỪA KHI SEARCH KHÔNG KHỚP
+    // ========================================================
+
+    if (!ranked.length) {
+
         console.log(
-            "[PHIMLONGTIENG] Ranked:",
-            ranked
-                .slice(0, 5)
-                .map(r => ({
-                    title: r.title,
-                    score: r.score,
-                    status: r.status
-                }))
+            "[PHIMLONGTIENG] No movie candidates found"
         );
 
-        const selected = ranked[0];
+        return [];
+    }
+
+    const best =
+        ranked[0];
+
+    // --------------------------------------------------------
+    // Ngưỡng an toàn:
+    //
+    // Nếu tên phim không có bất kỳ mức tương đồng nào,
+    // không được lấy candidate ngẫu nhiên.
+    // --------------------------------------------------------
+
+    if (
+        best.score <= 0
+    ) {
 
         console.log(
-            "[PHIMLONGTIENG] Selected movie:",
-            selected.title
+            "[PHIMLONGTIENG] No relevant movie match:",
+            {
+                requested:
+                    movieName,
+
+                bestCandidate:
+                    best.title,
+
+                bestScore:
+                    best.score
+            }
         );
 
-        console.log(
-            "[PHIMLONGTIENG] Movie URL:",
-            selected.href
-        );
+        return [];
+    }
 
-        if (!selected.href) return [];
+    const selected =
+        best;
 
-        // ========================================================
-        // MOVIE PAGE -> EPISODE
-        // ========================================================
+    console.log(
+        "[PHIMLONGTIENG] Selected movie:",
+        selected.title
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] Movie URL:",
+        selected.href
+    );
+
+    if (!selected.href) {
+        return [];
+    }
+
+    // ========================================================
+    // MOVIE PAGE -> EPISODE
+    // ========================================================
 
         const movieRes = await get(selected.href, {
             Referer: `${directUrl}/`
