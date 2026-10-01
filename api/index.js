@@ -3978,422 +3978,1242 @@ console.log(
     }
 
     // ============================================================
-    // SEARCH
-    // ============================================================
+// SEARCH
+// ============================================================
 
-    let directUrl = "https://phimlongtieng.link";
+let directUrl = "https://phimlongtieng.link";
+
+try {
+
+    const searchUrl =
+        `${directUrl}/search/${slugify(movieName)}/`;
+
+    console.log(
+        "[PHIMLONGTIENG] Search URL:",
+        searchUrl
+    );
+
+    const searchRes =
+        await get(searchUrl);
+
+    console.log(
+        "[PHIMLONGTIENG] Search HTTP:",
+        searchRes.status
+    );
+
+    const finalSearchUrl =
+        searchRes.url || searchUrl;
 
     try {
-        const searchUrl =
-            `${directUrl}/search/${slugify(movieName)}/`;
+        directUrl =
+            new URL(finalSearchUrl).origin;
+    } catch (_) {}
 
-        console.log(
-            "[PHIMLONGTIENG] Search URL:",
-            searchUrl
-        );
+    console.log(
+        "[PHIMLONGTIENG] directUrl:",
+        directUrl
+    );
 
-        const searchRes = await get(searchUrl);
+    const searchHtml =
+        await searchRes.text();
 
-        console.log(
-            "[PHIMLONGTIENG] Search HTTP:",
-            searchRes.status
-        );
+    // ========================================================
+    // 1. LẤY TẤT CẢ SEARCH CANDIDATES
+    // ========================================================
 
-        const finalSearchUrl = searchRes.url || searchUrl;
+    const candidates = [];
 
-        try {
-            directUrl = new URL(finalSearchUrl).origin;
-        } catch (_) {}
+    const liRegex =
+        /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
 
-        console.log(
-            "[PHIMLONGTIENG] directUrl:",
-            directUrl
-        );
+    let li;
 
-        const searchHtml = await searchRes.text();
+    while (
+        (li = liRegex.exec(searchHtml)) !== null
+    ) {
 
-        const candidates = [];
+        const block =
+            li[1];
 
-        const liRegex =
-            /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-
-        let li;
-
-        while ((li = liRegex.exec(searchHtml)) !== null) {
-            const block = li[1];
-
-            const aMatch =
-                block.match(
-                    /<a\b[^>]*href=["']([^"']+)["'][^>]*title=["']([^"']+)["'][^>]*>/i
-                ) ||
-                block.match(
-                    /<a\b[^>]*title=["']([^"']+)["'][^>]*href=["']([^"']+)["'][^>]*>/i
-                );
-
-            if (!aMatch) continue;
-
-            let href;
-            let title;
-
-            if (
-                /href=["'][^"']+["'][^>]*title=/i.test(
-                    aMatch[0]
-                )
-            ) {
-                href = aMatch[1];
-                title = aMatch[2];
-            } else {
-                title = aMatch[1];
-                href = aMatch[2];
-            }
-
-            const text = block
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
-
-            let status = "";
-
-            if (/lồng tiếng|thuyết minh|uslt|ffvn/i.test(text)) {
-                status = "Lồng Tiếng";
-            } else if (/vietsub|phụ đề/i.test(text)) {
-                status = "Vietsub";
-            }
-
-            candidates.push({
-                title: title.trim(),
-                href: absUrl(href, directUrl),
-                status
-            });
-        }        console.log(
-            "[PHIMLONGTIENG] Search candidates:",
-            candidates.length
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] Relevant candidates:",
-            candidates
-                .filter(c =>
-                    normalizeText(c.title).includes(
-                        normalizeText(movieName)
-                    )
-                )
-                .map(c => ({
-                    title: c.title,
-                    status: c.status,
-                    href: c.href
-                }))
-        );
-
-        if (!candidates.length) {
-            console.log(
-                "[PHIMLONGTIENG] No search candidates"
-            );
-            return [];
-        }
-
-        // ========================================================
-        // RANK
-        // ========================================================
-
-        const target = normalizeText(movieName);
-
-        const ranked = candidates.map(item => {
-            const titleNorm = normalizeText(item.title);
-
-            let score = 0;
-
-            if (titleNorm === target) {
-                score += 5000;
-            }
-
-            if (titleNorm.includes(target)) {
-                score += 1000;
-            }
-
-            if (target.includes(titleNorm)) {
-                score += 500;
-            }
-
-            if (
-                /phần\s*hai|phan\s*hai|part\s*two|part\s*2/i.test(
-                    item.title
-                )
-            ) {
-                score -= 8000;
-            }
-
-            if (/lồng tiếng/i.test(item.status)) {
-                score += 100;
-            }
-
-            return {
-                ...item,
-                score
-            };
-        });
-
-        ranked.sort((a, b) => b.score - a.score);
-        console.log(
-            "[PHIMLONGTIENG] Ranked:",
-            ranked
-                .slice(0, 5)
-                .map(r => ({
-                    title: r.title,
-                    score: r.score,
-                    status: r.status
-                }))
-        );
-
-        const selected = ranked[0];
-
-        console.log(
-            "[PHIMLONGTIENG] Selected movie:",
-            selected.title
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] Movie URL:",
-            selected.href
-        );
-
-        if (!selected.href) return [];
-
-        // ========================================================
-        // MOVIE PAGE -> EPISODE
-        // ========================================================
-
-        const movieRes = await get(selected.href, {
-            Referer: `${directUrl}/`
-        });
-
-        console.log(
-            "[PHIMLONGTIENG] MOVIE status:",
-            movieRes.status
-        );
-
-        const movieHtml = await movieRes.text();
-
-        const episodes = [];
-
-        const epLiRegex =
-            /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-
-        let ep;
-
-        while ((ep = epLiRegex.exec(movieHtml)) !== null) {
-            const block = ep[1];
-
-            const hrefMatch =
-                block.match(
-                    /<a\b[^>]*href=["']([^"']+)["'][^>]*>/i
-                );
-
-            if (!hrefMatch) continue;
-
-            const href = absUrl(
-                hrefMatch[1],
-                selected.href
+        const aMatch =
+            block.match(
+                /<a\b[^>]*href=["']([^"']+)["'][^>]*title=["']([^"']+)["'][^>]*>/i
+            ) ||
+            block.match(
+                /<a\b[^>]*title=["']([^"']+)["'][^>]*href=["']([^"']+)["'][^>]*>/i
             );
 
-            const rawText = block
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
-
-            if (!href) continue;
-
-                     let number = null;
-
-            // Ví dụ:
-            // "Xem tập 8" → 8
-            // "Tập 8"     → 8
-            // "Tap 8"     → 8
-            // "08"        → 8
-            // "8"         → 8
-
-            const numMatch =
-                rawText.match(
-                    /(?:tập|tap|episode|ep)\s*0*(\d+)\b/i
-                ) ||
-                rawText.match(
-                    /^\s*0*(\d+)\s*$/
-                );
-
-            if (numMatch) {
-                number = Number(numMatch[1]);
-            }
-
-            episodes.push({
-                name: rawText || "Lồng Tiếng",
-                number,
-                href
-            });
+        if (!aMatch) {
+            continue;
         }
 
-                console.log(
-            "[PHIMLONGTIENG] Episodes parsed:",
-            episodes.length
-        );
-
-        if (!episodes.length) {
-            console.log(
-                "[PHIMLONGTIENG] No episodes found"
-            );
-            return [];
-        }
-
-        // ========================================================
-        // CHỈ GIỮ CÁC EPISODE THẬT
-        // ========================================================
-
-        const realEpisodes = episodes.filter(e => {
-            if (!e || !e.href) return false;
-
-            try {
-                const u = new URL(e.href);
-
-                return /^\/phim\/[^/]+\/tap-[^/?#]+/i.test(
-                    u.pathname
-                );
-            } catch (_) {
-                return false;
-            }
-        });
-
-        console.log(
-            "[PHIMLONGTIENG] REAL episodes:",
-            realEpisodes.map(e => ({
-                name: e.name,
-                number: e.number,
-                href: e.href
-            }))
-        );
-
-        if (!realEpisodes.length) {
-            console.log(
-                "[PHIMLONGTIENG] No REAL episode links found"
-            );
-            return [];
-        }
-
-        // ========================================================
-        // CHỌN EPISODE
-        //
-        // Series:
-        //   ưu tiên đúng số tập được yêu cầu.
-        //
-        // Movie:
-        //   ưu tiên /tap-full
-        //   sau đó Lồng Tiếng
-        //   sau đó Xem Online
-        // ========================================================
-
-        let selectedEpisode = null;
+        let href;
+        let title;
 
         if (
-            episodeNumber !== null &&
-            episodeNumber !== undefined &&
-            Number(episodeNumber) > 0
+            /href=["'][^"']+["'][^>]*title=/i.test(
+                aMatch[0]
+            )
         ) {
-            const wantedNumber = Number(episodeNumber);
 
-            selectedEpisode = realEpisodes.find(
-                e => e.number === wantedNumber
+            href =
+                aMatch[1];
+
+            title =
+                aMatch[2];
+
+        } else {
+
+            title =
+                aMatch[1];
+
+            href =
+                aMatch[2];
+
+        }
+
+        const text =
+            block
+                .replace(
+                    /<[^>]+>/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+        let status = "";
+
+        if (
+            /lồng tiếng|thuyết minh|uslt|ffvn/i.test(
+                text
+            )
+        ) {
+
+            status =
+                "Lồng Tiếng";
+
+        } else if (
+            /vietsub|phụ đề/i.test(
+                text
+            )
+        ) {
+
+            status =
+                "Vietsub";
+
+        }
+
+        const absoluteHref =
+            absUrl(
+                href,
+                directUrl
             );
 
-            if (!selectedEpisode) {
-                selectedEpisode = realEpisodes.find(e => {
-                    const text = String(e.name || "");
-
-                    return new RegExp(
-                        `(?:tập|tap|episode|ep)\\s*0*${wantedNumber}\\b`,
-                        "i"
-                    ).test(text);
-                });
-            }
+        if (
+            !absoluteHref
+        ) {
+            continue;
         }
 
-        // Movie / Full
-        if (!selectedEpisode) {
-            selectedEpisode =
-                realEpisodes.find(e =>
-                    /\/tap-full(?:[/?#]|$)/i.test(e.href)
-                ) ||
-                realEpisodes.find(e =>
-                    /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
-                        String(e.name || "")
+        candidates.push({
+
+            title:
+                String(
+                    title || ""
+                ).trim(),
+
+            href:
+                absoluteHref,
+
+            status:
+                status
+
+        });
+
+    }
+
+    // ========================================================
+    // 2. UNIQUE CANDIDATES
+    // ========================================================
+
+    const uniqueCandidates =
+        Array.from(
+            new Map(
+                candidates.map(
+                    item => [
+                        item.href,
+                        item
+                    ]
+                )
+            ).values()
+        );
+
+    console.log(
+        "[PHIMLONGTIENG] Search candidates:",
+        uniqueCandidates.length
+    );
+
+    if (
+        !uniqueCandidates.length
+    ) {
+
+        console.log(
+            "[PHIMLONGTIENG] No search candidates"
+        );
+
+        return [];
+
+    }
+
+    // ========================================================
+    // 3. NORMALIZE TITLE
+    // ========================================================
+
+    const normalizePLT =
+        value => {
+
+            return String(
+                value || ""
+            )
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(
+                    /[\u0300-\u036f]/g,
+                    ""
+                )
+                .replace(
+                    /đ/g,
+                    "d"
+                )
+                .replace(
+                    /[^a-z0-9]+/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+        };
+
+    const target =
+        normalizePLT(
+            movieName
+        );
+
+    const targetWords =
+        target
+            .split(" ")
+            .filter(
+                word =>
+                    word.length >= 2
+            );
+
+    // ========================================================
+    // 4. RANK CANDIDATES
+    // ========================================================
+
+    const ranked =
+        uniqueCandidates
+            .map(
+                item => {
+
+                    const titleNorm =
+                        normalizePLT(
+                            item.title
+                        );
+
+                    let score =
+                        0;
+
+                    // ------------------------------------------------
+                    // EXACT TITLE
+                    // ------------------------------------------------
+
+                    if (
+                        titleNorm ===
+                        target
+                    ) {
+
+                        score +=
+                            5000;
+
+                    }
+
+                    // ------------------------------------------------
+                    // TITLE CONTAINS TARGET
+                    // ------------------------------------------------
+
+                    else if (
+                        titleNorm.includes(
+                            target
+                        ) &&
+                        target.length >= 4
+                    ) {
+
+                        score +=
+                            2500;
+
+                    }
+
+                    // ------------------------------------------------
+                    // TARGET CONTAINS TITLE
+                    // ------------------------------------------------
+
+                    else if (
+                        target.includes(
+                            titleNorm
+                        ) &&
+                        titleNorm.length >= 4
+                    ) {
+
+                        score +=
+                            1800;
+
+                    }
+
+                    // ------------------------------------------------
+                    // WORD OVERLAP
+                    // ------------------------------------------------
+
+                    let overlap =
+                        0;
+
+                    for (
+                        const word
+                        of targetWords
+                    ) {
+
+                        if (
+                            titleNorm.includes(
+                                word
+                            )
+                        ) {
+
+                            overlap++;
+
+                        }
+
+                    }
+
+                    score +=
+                        overlap * 100;
+
+                    // ------------------------------------------------
+                    // LOẠI CÁC TỪ BIỂU THỊ PHẦN KHÁC
+                    // ------------------------------------------------
+
+                    if (
+                        /(?:phần|phan)\s*(?:hai|2|ba|3|bon|4|năm|5)\b/i.test(
+                            item.title
+                        )
+                    ) {
+
+                        score -=
+                            2500;
+
+                    }
+
+                    if (
+                        /\b(?:part|season|mùa)\s*(?:2|3|4|5)\b/i.test(
+                            item.title
+                        )
+                    ) {
+
+                        score -=
+                            2500;
+
+                    }
+
+                    // ------------------------------------------------
+                    // KHÔNG DÙNG LỒNG TIẾNG ĐỂ ĐÈ PHIM ĐÚNG TÊN/NĂM
+                    //
+                    // Status chỉ dùng để nhận diện phiên bản.
+                    // ------------------------------------------------
+
+                    if (
+                        /lồng tiếng|thuyết minh|vietsub|phụ đề/i.test(
+                            item.title +
+                            " " +
+                            item.status
+                        )
+                    ) {
+
+                        score +=
+                            10;
+
+                    }
+
+                    // ------------------------------------------------
+                    // YEAR TRONG TITLE / URL
+                    //
+                    // Search của PhimLongTieng không luôn trả
+                    // field year như VSMov.
+                    // Vì vậy lấy năm từ title + URL.
+                    // ------------------------------------------------
+
+                    const yearText =
+                        (
+                            String(
+                                item.title ||
+                                ""
+                            ) +
+                            " " +
+                            String(
+                                item.href ||
+                                ""
+                            )
+                        );
+
+                    const yearMatch =
+                        yearText.match(
+                            /\b(19\d{2}|20\d{2})\b/
+                        );
+
+                    const candidateYear =
+                        yearMatch
+                            ? Number(
+                                yearMatch[1]
+                            )
+                            : 0;
+
+                    if (
+                        movieYear &&
+                        candidateYear
+                    ) {
+
+                        if (
+                            candidateYear ===
+                            Number(
+                                movieYear
+                            )
+                        ) {
+
+                            score +=
+                                6000;
+
+                        } else {
+
+                            score -=
+                                5000;
+
+                        }
+
+                    }
+
+                    return {
+
+                        ...item,
+
+                        score,
+
+                        candidateYear,
+
+                        titleNorm
+
+                    };
+
+                }
+            )
+            .sort(
+                (
+                    a,
+                    b
+                ) =>
+                    b.score -
+                    a.score
+            );
+
+    console.log(
+        "[PHIMLONGTIENG] Ranked:",
+        ranked
+            .slice(
+                0,
+                15
+            )
+            .map(
+                item => ({
+                    title:
+                        item.title,
+
+                    status:
+                        item.status,
+
+                    year:
+                        item.candidateYear,
+
+                    score:
+                        item.score,
+
+                    href:
+                        item.href
+                })
+            )
+    );
+
+    // ========================================================
+    // 5. CHỈ GIỮ CANDIDATE THỰC SỰ LIÊN QUAN
+    //
+    // QUAN TRỌNG:
+    //
+    // Không còn:
+    //
+    //     const selected = ranked[0];
+    //
+    // Vì chính điều đó làm:
+    //
+    // Tây Du Ký 1996
+    //      ↓
+    // Tân Tây Du Ký 2011
+    //
+    // ========================================================
+
+    const relevantCandidates =
+        ranked.filter(
+            item => {
+
+                const exact =
+                    item.titleNorm ===
+                    target;
+
+                const contains =
+                    item.titleNorm.includes(
+                        target
+                    );
+
+                const reverse =
+                    target.includes(
+                        item.titleNorm
+                    );
+
+                const overlap =
+                    targetWords.filter(
+                        word =>
+                            item.titleNorm.includes(
+                                word
+                            )
+                    ).length;
+
+                return (
+                    exact ||
+                    contains ||
+                    reverse ||
+                    (
+                        overlap >=
+                        Math.max(
+                            1,
+                            Math.ceil(
+                                targetWords.length *
+                                0.6
+                            )
+                        )
                     )
-                ) ||
-                realEpisodes.find(e =>
-                    /xem\s*online/i.test(
-                        String(e.name || "")
-                    )
-                ) ||
-                realEpisodes[0];
-        }
+                );
 
-        console.log(
-            "[PHIMLONGTIENG] Selected REAL episode:",
-            selectedEpisode
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] Episode:",
-            selectedEpisode.name
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] Episode URL:",
-            selectedEpisode.href
-        );
-
-        // ========================================================
-        // EPISODE PAGE
-        // ========================================================
-
-        const episodeRes = await get(
-            selectedEpisode.href,
-            {
-                Referer: `${directUrl}/`
             }
         );
 
-        console.log(
-            "[PHIMLONGTIENG] EPISODE status:",
-            episodeRes.status
-        );
+    console.log(
+        "[PHIMLONGTIENG] Relevant candidates:",
+        relevantCandidates.map(
+            item => ({
+                title:
+                    item.title,
+
+                status:
+                    item.status,
+
+                year:
+                    item.candidateYear,
+
+                score:
+                    item.score,
+
+                href:
+                    item.href
+            })
+        )
+    );
+
+    if (
+        !relevantCandidates.length
+    ) {
 
         console.log(
-            "[PHIMLONGTIENG] EPISODE final URL:",
-            episodeRes.url
+            "[PHIMLONGTIENG] NO RELEVANT CANDIDATE"
         );
 
-        const episodeHtml = await episodeRes.text();
+        return [];
 
-      
-        // ========================================================
-        // DECRYPT trailer()
-        // ========================================================
+    }
 
-        const encryptedEpisode =
-            extractEncryptedJson(episodeHtml);
+    // ========================================================
+    // 6. ƯU TIÊN ĐÚNG NĂM
+    //
+    // Nếu có movieYear và search result có năm rõ ràng,
+    // KHÔNG chọn version khác năm.
+    // ========================================================
 
-        if (!encryptedEpisode) {
+    let candidatesToTest =
+        relevantCandidates;
+
+    if (
+        movieYear
+    ) {
+
+        const yearMatches =
+            relevantCandidates.filter(
+                item =>
+                    item.candidateYear ===
+                    Number(
+                        movieYear
+                    )
+            );
+
+        console.log(
+            "[PHIMLONGTIENG] Exact year matches:",
+            yearMatches.length
+        );
+
+        if (
+            yearMatches.length
+        ) {
+
+            candidatesToTest =
+                yearMatches;
+
+        } else {
+
+            // Nếu candidate có năm nhưng không có
+            // candidate đúng năm → không lấy bừa.
+            const candidatesWithKnownYear =
+                relevantCandidates.filter(
+                    item =>
+                        item.candidateYear > 0
+                );
+
+            if (
+                candidatesWithKnownYear.length
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Known years exist but none match target year:",
+                    movieYear
+                );
+
+                return [];
+
+            }
+
             console.log(
-                "[PHIMLONGTIENG] Episode encrypted JSON NOT FOUND"
+                "[PHIMLONGTIENG] No explicit candidate year; will validate detail/player"
             );
-            return [];
+
         }
 
+    }
+
+    // ========================================================
+    // 7. TEST TỪNG VERSION
+    //
+    // Đây là phần quan trọng nhất.
+    //
+    // Không chỉ nhìn search result.
+    //
+    // Candidate phải:
+    //
+    //   1. mở được movie page
+    //   2. có episode thật
+    //   3. tìm được episode cần thiết
+    //   4. episode có encrypted JSON
+    //
+    // Nếu một phiên bản hỏng → thử phiên bản kế tiếp.
+    // ========================================================
+
+    const candidateResults =
+        [];
+
+    for (
+        const selected
+        of candidatesToTest
+    ) {
+
         console.log(
-            "[PHIMLONGTIENG] Encrypted JSON length:",
-            encryptedEpisode.length
+            "[PHIMLONGTIENG] TEST CANDIDATE:",
+            {
+                title:
+                    selected.title,
+
+                status:
+                    selected.status,
+
+                year:
+                    selected.candidateYear,
+
+                score:
+                    selected.score,
+
+                href:
+                    selected.href
+            }
         );
 
-        let playerUrl = null;
+        if (
+            !selected.href
+        ) {
+            continue;
+        }
 
         try {
+
+            // ====================================================
+            // MOVIE PAGE
+            // ====================================================
+
+            const movieRes =
+                await get(
+                    selected.href,
+                    {
+                        Referer:
+                            `${directUrl}/`
+                    }
+                );
+
+            console.log(
+                "[PHIMLONGTIENG] MOVIE status:",
+                movieRes.status
+            );
+
+            if (
+                movieRes.status &&
+                Number(
+                    movieRes.status
+                ) >= 400
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Reject candidate: MOVIE HTTP",
+                    movieRes.status
+                );
+
+                continue;
+
+            }
+
+            const movieHtml =
+                await movieRes.text();
+
+            // ====================================================
+            // EPISODES
+            // ====================================================
+
+            const episodes =
+                [];
+
+            const epLiRegex =
+                /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
+
+            let ep;
+
+            while (
+                (
+                    ep =
+                    epLiRegex.exec(
+                        movieHtml
+                    )
+                ) !== null
+            ) {
+
+                const block =
+                    ep[1];
+
+                const hrefMatch =
+                    block.match(
+                        /<a\b[^>]*href=["']([^"']+)["'][^>]*>/i
+                    );
+
+                if (
+                    !hrefMatch
+                ) {
+                    continue;
+                }
+
+                const href =
+                    absUrl(
+                        hrefMatch[1],
+                        selected.href
+                    );
+
+                const rawText =
+                    block
+                        .replace(
+                            /<[^>]+>/g,
+                            " "
+                        )
+                        .replace(
+                            /\s+/g,
+                            " "
+                        )
+                        .trim();
+
+                if (
+                    !href
+                ) {
+                    continue;
+                }
+
+                let number =
+                    null;
+
+                const numMatch =
+                    rawText.match(
+                        /(?:tập|tap|episode|ep)\s*0*(\d+)\b/i
+                    ) ||
+                    rawText.match(
+                        /^\s*0*(\d+)\s*$/
+                    );
+
+                if (
+                    numMatch
+                ) {
+
+                    number =
+                        Number(
+                            numMatch[1]
+                        );
+
+                }
+
+                episodes.push({
+
+                    name:
+                        rawText ||
+                        "Lồng Tiếng",
+
+                    number,
+
+                    href
+
+                });
+
+            }
+
+            console.log(
+                "[PHIMLONGTIENG] Candidate episodes:",
+                episodes.length
+            );
+
+            if (
+                !episodes.length
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Reject candidate: NO EPISODES"
+                );
+
+                continue;
+
+            }
+
+            // ====================================================
+            // CHỈ GIỮ EPISODE THẬT
+            // ====================================================
+
+            const realEpisodes =
+                episodes.filter(
+                    e => {
+
+                        if (
+                            !e ||
+                            !e.href
+                        ) {
+                            return false;
+                        }
+
+                        try {
+
+                            const u =
+                                new URL(
+                                    e.href
+                                );
+
+                            return /^\/phim\/[^/]+\/tap-[^/?#]+/i.test(
+                                u.pathname
+                            );
+
+                        } catch (_) {
+
+                            return false;
+
+                        }
+
+                    }
+                );
+
+            console.log(
+                "[PHIMLONGTIENG] REAL episodes:",
+                realEpisodes.map(
+                    e => ({
+                        name:
+                            e.name,
+
+                        number:
+                            e.number,
+
+                        href:
+                            e.href
+                    })
+                )
+            );
+
+            if (
+                !realEpisodes.length
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Reject candidate: NO REAL EPISODES"
+                );
+
+                continue;
+
+            }
+
+            // ====================================================
+            // CHỌN EPISODE
+            // ====================================================
+
+            let selectedEpisode =
+                null;
+
+            if (
+                episodeNumber !== null &&
+                episodeNumber !== undefined &&
+                Number(
+                    episodeNumber
+                ) > 0
+            ) {
+
+                const wantedNumber =
+                    Number(
+                        episodeNumber
+                    );
+
+                selectedEpisode =
+                    realEpisodes.find(
+                        e =>
+                            e.number ===
+                            wantedNumber
+                    );
+
+                if (
+                    !selectedEpisode
+                ) {
+
+                    selectedEpisode =
+                        realEpisodes.find(
+                            e => {
+
+                                const text =
+                                    String(
+                                        e.name ||
+                                        ""
+                                    );
+
+                                return new RegExp(
+                                    `(?:tập|tap|episode|ep)\\s*0*${wantedNumber}\\b`,
+                                    "i"
+                                ).test(
+                                    text
+                                );
+
+                            }
+                        );
+
+                }
+
+            }
+
+            // ====================================================
+            // MOVIE / FULL
+            // ====================================================
+
+            if (
+                !selectedEpisode
+            ) {
+
+                selectedEpisode =
+                    realEpisodes.find(
+                        e =>
+                            /\/tap-full(?:[/?#]|$)/i.test(
+                                e.href
+                            )
+                    ) ||
+                    realEpisodes.find(
+                        e =>
+                            /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
+                                String(
+                                    e.name ||
+                                    ""
+                                )
+                            )
+                    ) ||
+                    realEpisodes.find(
+                        e =>
+                            /xem\s*online/i.test(
+                                String(
+                                    e.name ||
+                                    ""
+                                )
+                            )
+                    ) ||
+                    realEpisodes[0];
+
+            }
+
+            if (
+                !selectedEpisode
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Reject candidate: EPISODE NOT FOUND"
+                );
+
+                continue;
+
+            }
+
+            console.log(
+                "[PHIMLONGTIENG] Candidate selected episode:",
+                {
+                    title:
+                        selected.title,
+
+                    status:
+                        selected.status,
+
+                    episode:
+                        selectedEpisode.name,
+
+                    url:
+                        selectedEpisode.href
+                }
+            );
+
+            // ====================================================
+            // EPISODE PAGE
+            // ====================================================
+
+            const episodeRes =
+                await get(
+                    selectedEpisode.href,
+                    {
+                        Referer:
+                            `${directUrl}/`
+                    }
+                );
+
+            console.log(
+                "[PHIMLONGTIENG] EPISODE status:",
+                episodeRes.status
+            );
+
+            if (
+                episodeRes.status &&
+                Number(
+                    episodeRes.status
+                ) >= 400
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Reject candidate: EPISODE HTTP",
+                    episodeRes.status
+                );
+
+                continue;
+
+            }
+
+            const episodeHtml =
+                await episodeRes.text();
+
+            // ====================================================
+            // VALIDATE ENCRYPTED JSON
+            //
+            // Chưa decrypt ở đây.
+            // Chỉ cần xác nhận episode thực sự có player data.
+            // ====================================================
+
+            const encryptedEpisode =
+                extractEncryptedJson(
+                    episodeHtml
+                );
+
+            if (
+                !encryptedEpisode
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Reject candidate: ENCRYPTED JSON NOT FOUND"
+                );
+
+                continue;
+
+            }
+
+            console.log(
+                "[PHIMLONGTIENG] Valid candidate:",
+                {
+                    title:
+                        selected.title,
+
+                    status:
+                        selected.status,
+
+                    year:
+                        selected.candidateYear,
+
+                    episode:
+                        selectedEpisode.name
+                }
+            );
+
+            candidateResults.push({
+
+                candidate:
+                    selected,
+
+                selectedEpisode,
+
+                episodeHtml,
+
+                encryptedEpisode,
+
+                episodeUrl:
+                    selectedEpisode.href
+
+            });
+
+        } catch (candidateError) {
+
+            console.log(
+                "[PHIMLONGTIENG] Candidate failed:",
+                selected.title,
+                "|",
+                candidateError?.message ||
+                candidateError
+            );
+
+        }
+
+    }
+
+    // ========================================================
+    // 8. KHÔNG CÓ VERSION NÀO HOẠT ĐỘNG
+    // ========================================================
+
+    if (
+        !candidateResults.length
+    ) {
+
+        console.log(
+            "[PHIMLONGTIENG] NO VALID MOVIE VERSION"
+        );
+
+        return [];
+
+    }
+
+    console.log(
+        "[PHIMLONGTIENG] VALID VERSIONS:",
+        candidateResults.map(
+            result => ({
+                title:
+                    result.candidate.title,
+
+                status:
+                    result.candidate.status,
+
+                year:
+                    result.candidate.candidateYear,
+
+                episode:
+                    result.selectedEpisode.name,
+
+                url:
+                    result.candidate.href
+            })
+        )
+    );
+
+    // ========================================================
+    // 9. DECRYPT + PLAYER CHO TỪNG VERSION
+    //
+    // Đây là điểm khác biệt quan trọng:
+    //
+    // Không còn chỉ:
+    //
+    //     const selected = ranked[0]
+    //
+    // mà xử lý từng version hợp lệ.
+    //
+    // Nhờ vậy Stremio có thể nhận nhiều stream:
+    //
+    //   Lồng Tiếng
+    //   Thuyết Minh
+    //   Vietsub
+    //
+    // ========================================================
+
+    for (
+        const result
+        of candidateResults
+    ) {
+
+        const selected =
+            result.candidate;
+
+        const selectedEpisode =
+            result.selectedEpisode;
+
+        const encryptedEpisode =
+            result.encryptedEpisode;
+
+        console.log(
+            "[PHIMLONGTIENG] PROCESS VERSION:",
+            {
+                title:
+                    selected.title,
+
+                status:
+                    selected.status,
+
+                year:
+                    selected.candidateYear,
+
+                movieUrl:
+                    selected.href,
+
+                episode:
+                    selectedEpisode.name,
+
+                episodeUrl:
+                    selectedEpisode.href
+            }
+        );
+
+        // ====================================================
+        // DECRYPT trailer()
+        // ====================================================
+
+        let playerUrl =
+            null;
+
+        try {
+
             playerUrl =
                 cryptoJSAesDecrypt(
                     "Encrypt",
@@ -4404,12 +5224,16 @@ console.log(
                 "[PHIMLONGTIENG] DECRYPTED URL:",
                 playerUrl
             );
+
         } catch (e) {
+
             console.log(
                 "[PHIMLONGTIENG] DECRYPT ERROR:",
                 e.message
             );
-            return [];
+
+            continue;
+
         }
 
         playerUrl =
@@ -4423,90 +5247,171 @@ console.log(
             playerUrl
         );
 
-        if (!playerUrl) return [];
+        if (
+            !playerUrl
+        ) {
+            continue;
+        }
 
-        // ========================================================
+        // ====================================================
         // PLAYER PAGE
-        // ========================================================
+        // ====================================================
 
-        const playerRes = await get(
-            playerUrl,
-            {
-                Referer: selectedEpisode.href
+        let playerHtml =
+            "";
+
+        let playerFinalUrl =
+            playerUrl;
+
+        try {
+
+            const playerRes =
+                await get(
+                    playerUrl,
+                    {
+                        Referer:
+                            selectedEpisode.href
+                    }
+                );
+
+            console.log(
+                "[PHIMLONGTIENG] PLAYER status:",
+                playerRes.status
+            );
+
+            console.log(
+                "[PHIMLONGTIENG] PLAYER final URL:",
+                playerRes.url
+            );
+
+            if (
+                playerRes.status &&
+                Number(
+                    playerRes.status
+                ) >= 400
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] PLAYER HTTP ERROR:",
+                    playerRes.status
+                );
+
+                continue;
+
             }
-        );
 
-        console.log(
-            "[PHIMLONGTIENG] PLAYER status:",
-            playerRes.status
-        );
+            playerFinalUrl =
+                playerRes.url ||
+                playerUrl;
 
-        console.log(
-            "[PHIMLONGTIENG] PLAYER final URL:",
-            playerRes.url
-        );
+            playerHtml =
+                await playerRes.text();
 
-        const playerHtml = await playerRes.text();
+        } catch (playerError) {
+
+            console.log(
+                "[PHIMLONGTIENG] PLAYER ERROR:",
+                playerError?.message ||
+                playerError
+            );
+
+            continue;
+
+        }
 
         console.log(
             "[PHIMLONGTIENG] PLAYER length:",
             playerHtml.length
         );
 
-        // ========================================================
+        // ====================================================
+        // STREAM LABEL
+        //
+        // Gắn version vào tên stream để Stremio cho biết
+        // nguồn nào là Lồng Tiếng / Vietsub / Thuyết Minh.
+        // ====================================================
+
+        const versionLabel =
+            selected.status
+                ? selected.status
+                : (
+                    /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
+                        selected.title
+                    )
+                        ? "Lồng Tiếng"
+                        : /vietsub|phụ đề/i.test(
+                            selected.title
+                        )
+                            ? "Vietsub"
+                            : "PhimLongTieng"
+                );
+
+        const streamPrefix =
+            `▶️ [PhimLongTieng] ${versionLabel}`;
+
+        // ====================================================
         // 1. S2 / default player
-        // ========================================================
+        // ====================================================
+
+        const beforeS2 =
+            streams.length;
 
         extractPlay2Streams(
             playerHtml,
-            playerRes.url || playerUrl,
-            "S2"
+            playerFinalUrl,
+            streamPrefix
         );
 
-        // ========================================================
+        // ====================================================
         // 2. onclick="vb_load_player(this,'URL')"
-        // ========================================================
+        // ====================================================
 
         extractVBPlayers(
             playerHtml,
-            playerRes.url || playerUrl
+            playerFinalUrl
         );
 
-        // ========================================================
+        // ====================================================
         // 3. data-url="play2.php?hash=..."
-        // ========================================================
+        // ====================================================
 
         extractDataUrls(
             playerHtml,
-            playerRes.url || playerUrl
+            playerFinalUrl
         );
 
-        // ========================================================
+        // ====================================================
         // 4. .m3u8 trực tiếp
-        // ========================================================
+        // ====================================================
 
         extractDirectM3U8(
             playerHtml,
-            playerRes.url || playerUrl,
-            "PLAYER"
+            playerFinalUrl,
+            streamPrefix
         );
 
-        // ========================================================
+        // ====================================================
         // 5. Nếu playerUrl đã là m3u8
-        // ========================================================
+        // ====================================================
 
-        if (/\.m3u8(?:[?#]|$)/i.test(playerUrl)) {
+        if (
+            /\.m3u8(?:[?#]|$)/i.test(
+                playerUrl
+            )
+        ) {
+
             addStream(
                 playerUrl,
-                "S2 - Decrypted M3U8",
-                playerRes.url || playerUrl,
+                `${streamPrefix} - Decrypted M3U8`,
+                playerFinalUrl,
                 "S2"
             );
+
         }
 
-        // ========================================================
-        // 6. Log server buttons
-        // ========================================================
+        // ====================================================
+        // 6. LOG SERVER BUTTONS
+        // ====================================================
 
         const serverMatches = [
             ...playerHtml.matchAll(
@@ -4514,42 +5419,85 @@ console.log(
             )
         ];
 
-        for (const match of serverMatches) {
-            const argument = match[1];
+        for (
+            const match
+            of serverMatches
+        ) {
 
-            const label = match[2]
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
+            const argument =
+                match[1];
+
+            const label =
+                match[2]
+                    .replace(
+                        /<[^>]+>/g,
+                        " "
+                    )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
 
             console.log(
                 "[PHIMLONGTIENG] SERVER BUTTON:",
                 {
+                    version:
+                        versionLabel,
+
                     label,
+
                     argument
                 }
             );
+
         }
 
-        // ========================================================
-        // FINAL
-        // ========================================================
-
         console.log(
-            "[PHIMLONGTIENG] STREAMS FOUND:",
-            streams.length
+            "[PHIMLONGTIENG] VERSION STREAMS:",
+            {
+                version:
+                    versionLabel,
+
+                title:
+                    selected.title,
+
+                before:
+                    beforeS2,
+
+                after:
+                    streams.length
+            }
         );
 
-                console.log(
-            "[PHIMLONGTIENG] FINAL STREAMS:",
-            streams.map(s => ({
-                name: s.name,
-                title: s.title,
-                url: s.url
-            }))
-        );
+    }
 
-        return streams;
+    // ========================================================
+    // FINAL
+    // ========================================================
+
+    console.log(
+        "[PHIMLONGTIENG] STREAMS FOUND:",
+        streams.length
+    );
+
+    console.log(
+        "[PHIMLONGTIENG] FINAL STREAMS:",
+        streams.map(
+            s => ({
+                name:
+                    s.name,
+
+                title:
+                    s.title,
+
+                url:
+                    s.url
+            })
+        )
+    );
+
+    return streams;
 
     } catch (e) {
         console.log(
