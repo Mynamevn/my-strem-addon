@@ -17,29 +17,67 @@ const manifest = {
     idPrefixes: ["tt", "vnwpsw"],
 
     catalogs: [
-        {
-            type: "movie",
-            id: "pa_movies_new",
-            name: "Phim le moi",
-            extra: [
-                {
-                    name: "search",
-                    isRequired: false
-                }
-            ]
-        },
-        {
-            type: "series",
-            id: "pa_series_new",
-            name: "Phim bo moi",
-            extra: [
-                {
-                    name: "search",
-                    isRequired: false
-                }
-            ]
-        }
-    ]
+
+    {
+        type: "movie",
+        id: "pa_movies_trending",
+        name: "Phim lẻ - Trending",
+        extra: [
+            {
+                name: "search",
+                isRequired: false
+            }
+        ]
+    },
+
+    {
+        type: "series",
+        id: "pa_series_trending",
+        name: "Phim bộ - Trending",
+        extra: [
+            {
+                name: "search",
+                isRequired: false
+            }
+        ]
+    },
+
+    {
+        type: "movie",
+        id: "pa_tvb",
+        name: "🇭🇰 TVB",
+        extra: [
+            {
+                name: "search",
+                isRequired: false
+            }
+        ]
+    },
+
+    {
+        type: "movie",
+        id: "pa_daily",
+        name: "⭐ Phim trong ngày",
+        extra: [
+            {
+                name: "search",
+                isRequired: false
+            }
+        ]
+    },
+
+    {
+        type: "movie",
+        id: "pa_animation_new",
+        name: "🐼 Hoạt hình - New",
+        extra: [
+            {
+                name: "search",
+                isRequired: false
+            }
+        ]
+    }
+]
 };
 
 const builder = new addonBuilder(manifest);
@@ -132,132 +170,827 @@ function makePosterUrl(item) {
    CATALOG
    ============================================================ */
 
-async function fetchCatalogFromPhimApi(args) {
+/*
+   MOVINA BOARD / DISCOVER
+   ------------------------------------------------------------
+   1. Phim lẻ - Trending
+   2. Phim bộ - Trending
+   3. 🇭🇰 TVB
+   4. ⭐ Phim trong ngày
+   5. 🐼 Hoạt hình - New
 
-    const search = args.extra?.search;
+   - Hai hàng Trending: lấy danh sách mới/trending từ API.
+   - Ba hàng dưới: random theo NGÀY.
+   - Cùng một ngày => danh sách giữ nguyên.
+   - Sang ngày mới => danh sách thay đổi.
+   - Ba hàng dưới trộn movie + series.
+*/
 
-    let apiUrl;
 
-    if (search && search.trim()) {
+/* ============================================================
+   DAILY RANDOM
+   ============================================================ */
 
-        apiUrl =
-            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-            encodeURIComponent(search.trim()) +
-            "&limit=20";
+function getDailySeed() {
 
-    } else if (
-        args.type === "series" ||
-        args.id === "pa_series_new"
-    ) {
+    const now = new Date();
 
-        apiUrl =
-            "https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20";
+    const year =
+        now.getFullYear();
 
-    } else {
+    const month =
+        String(now.getMonth() + 1)
+            .padStart(2, "0");
 
-        apiUrl =
-            "https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20";
+    const day =
+        String(now.getDate())
+            .padStart(2, "0");
+
+    return (
+        String(year) +
+        month +
+        day
+    );
+}
+
+
+function hashString(text) {
+
+    let hash = 2166136261;
+
+    const str =
+        String(text || "");
+
+    for (let i = 0; i < str.length; i++) {
+
+        hash ^= str.charCodeAt(i);
+
+        hash +=
+            (hash << 1) +
+            (hash << 4) +
+            (hash << 7) +
+            (hash << 8) +
+            (hash << 24);
     }
 
-    console.log("[CATALOG] Request:", apiUrl);
+    return hash >>> 0;
+}
 
-    const res = await axios.get(apiUrl, {
-        timeout: 8000,
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-    });
 
-    const data = res.data || {};
+function dailyRandomSort(items, salt) {
+
+    const seed =
+        getDailySeed();
+
+    return [...items]
+        .map((item, index) => {
+
+            const key =
+                String(
+                    item?._id ||
+                    item?.slug ||
+                    item?.name ||
+                    index
+                );
+
+            return {
+                item,
+                value:
+                    hashString(
+                        seed +
+                        "|" +
+                        String(salt || "") +
+                        "|" +
+                        key
+                    )
+            };
+        })
+        .sort(
+            (a, b) =>
+                a.value - b.value
+        )
+        .map(
+            x => x.item
+        );
+}
+
+
+/* ============================================================
+   API HELPERS
+   ============================================================ */
+
+async function requestPhimApi(apiUrl) {
+
+    console.log(
+        "[CATALOG API] Request:",
+        apiUrl
+    );
+
+    const res =
+        await axios.get(
+            apiUrl,
+            {
+                timeout: 10000,
+
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0",
+                    "Accept":
+                        "application/json"
+                }
+            }
+        );
+
+    const data =
+        res.data || {};
 
     const items =
         data?.data?.items ||
         data?.items ||
         [];
 
-    console.log("[CATALOG] Items:", items.length);
+    console.log(
+        "[CATALOG API] Items:",
+        Array.isArray(items)
+            ? items.length
+            : 0
+    );
 
-    return items;
+    return Array.isArray(items)
+        ? items
+        : [];
 }
 
 
-builder.defineCatalogHandler(async (args) => {
+async function requestPhimList(
+    slug,
+    page = 1,
+    limit = 30
+) {
 
-    console.log(
-        "[CATALOG] type:",
-        args.type,
-        "id:",
-        args.id,
-        "search:",
-        args.extra?.search || ""
-    );
+    const apiUrl =
+        "https://phimapi.com/v1/api/danh-sach/" +
+        slug +
+        "?page=" +
+        page +
+        "&limit=" +
+        limit;
 
-    try {
+    return requestPhimApi(apiUrl);
+}
 
-        const items =
-            await fetchCatalogFromPhimApi(args);
 
-        if (!Array.isArray(items)) {
-            return { metas: [] };
+/* ============================================================
+   ITEM TYPE
+   ============================================================ */
+
+function getCatalogItemType(item) {
+
+    const rawType =
+        String(
+            item?.type ||
+            ""
+        ).toLowerCase();
+
+    if (
+        rawType === "series" ||
+        rawType === "tv" ||
+        rawType === "tvshows"
+    ) {
+        return "series";
+    }
+
+    if (
+        rawType === "hoathinh"
+    ) {
+
+        /*
+           Hoạt hình có thể là movie hoặc series.
+           Nếu API không nói rõ thì mặc định movie.
+        */
+
+        if (
+            item?.episode_current ||
+            item?.episode_total ||
+            item?.type === "series"
+        ) {
+            return "series";
         }
 
-        const metas = items
-            .filter(item => item && item.name)
-            .map(item => {
+        return "movie";
+    }
 
-                const movieName =
-                    String(item.name);
+    return "movie";
+}
 
-                return {
-                    id:
-                        "vnwpsw:" +
-                        encodeURIComponent(movieName),
 
-                    type:
-                        args.type === "series"
-                            ? "series"
-                            : "movie",
+/* ============================================================
+   NORMALIZE META
+   ============================================================ */
 
-                    name:
-                        movieName,
+function makeCatalogMeta(
+    item,
+    fallbackType = "movie"
+) {
 
-                    poster:
-                        makePosterUrl(item),
+    if (
+        !item ||
+        !item.name
+    ) {
+        return null;
+    }
 
-                    description:
-                        "Original: " +
-                        (
-                            item.origin_name ||
-                            item.original_name ||
-                            movieName
-                        ) +
-                        " (" +
-                        (
-                            item.year ||
-                            "New"
-                        ) +
-                        ")"
-                };
-            });
+    const movieName =
+        String(item.name);
+
+    const type =
+        getCatalogItemType(
+            item
+        ) || fallbackType;
+
+    return {
+
+        id:
+            "vnwpsw:" +
+            encodeURIComponent(
+                movieName
+            ),
+
+        type,
+
+        name:
+            movieName,
+
+        poster:
+            makePosterUrl(item),
+
+        description:
+            "Original: " +
+            (
+                item.origin_name ||
+                item.original_name ||
+                movieName
+            ) +
+            " (" +
+            (
+                item.year ||
+                "New"
+            ) +
+            ")"
+    };
+}
+
+
+/* ============================================================
+   TRENDING - PHIM LẺ
+   ============================================================ */
+
+async function getTrendingMovies() {
+
+    /*
+       Dùng danh sách phim lẻ mới/cập nhật.
+       API /home không đảm bảo tách movie/series ổn định,
+       nên lấy riêng phim-le để giữ đúng loại.
+    */
+
+    const items =
+        await requestPhimList(
+            "phim-le",
+            1,
+            20
+        );
+
+    return items
+        .filter(
+            item =>
+                item &&
+                item.name
+        )
+        .map(
+            item =>
+                makeCatalogMeta(
+                    {
+                        ...item,
+                        type: "single"
+                    },
+                    "movie"
+                )
+        )
+        .filter(Boolean);
+}
+
+
+/* ============================================================
+   TRENDING - PHIM BỘ
+   ============================================================ */
+
+async function getTrendingSeries() {
+
+    const items =
+        await requestPhimList(
+            "phim-bo",
+            1,
+            20
+        );
+
+    return items
+        .filter(
+            item =>
+                item &&
+                item.name
+        )
+        .map(
+            item =>
+                makeCatalogMeta(
+                    {
+                        ...item,
+                        type: "series"
+                    },
+                    "series"
+                )
+        )
+        .filter(Boolean);
+}
+
+
+/* ============================================================
+   TVB
+   ============================================================ */
+
+async function getDailyTVB() {
+
+    /*
+       Không dùng một catalog type riêng cho TVB.
+       Lấy dữ liệu từ cả phim-le + phim-bo,
+       sau đó lọc theo category / country / tên phim.
+
+       Kết quả cuối cùng được random theo ngày.
+    */
+
+    const [
+        movieItems,
+        seriesItems
+    ] =
+        await Promise.all([
+            requestPhimList(
+                "phim-le",
+                1,
+                30
+            ),
+
+            requestPhimList(
+                "phim-bo",
+                1,
+                30
+            )
+        ]);
+
+    const allItems = [
+        ...movieItems,
+        ...seriesItems
+    ];
+
+    const seen =
+        new Set();
+
+    const tvbItems =
+        allItems.filter(item => {
+
+            if (
+                !item ||
+                !item.name
+            ) {
+                return false;
+            }
+
+            const uniqueKey =
+                String(
+                    item._id ||
+                    item.slug ||
+                    item.name
+                ).toLowerCase();
+
+            if (
+                seen.has(uniqueKey)
+            ) {
+                return false;
+            }
+
+            seen.add(uniqueKey);
+
+            const nameText =
+                String(
+                    item.name || ""
+                ).toLowerCase();
+
+            const originText =
+                String(
+                    item.origin_name ||
+                    item.original_name ||
+                    ""
+                ).toLowerCase();
+
+            const categoryText =
+                Array.isArray(
+                    item.category
+                )
+                    ? item.category
+                        .map(
+                            x =>
+                                typeof x === "string"
+                                    ? x
+                                    : (
+                                        x?.name ||
+                                        x?.slug ||
+                                        ""
+                                    )
+                        )
+                        .join(" ")
+                        .toLowerCase()
+                    : String(
+                        item.category || ""
+                    ).toLowerCase();
+
+            const countryText =
+                Array.isArray(
+                    item.country
+                )
+                    ? item.country
+                        .map(
+                            x =>
+                                typeof x === "string"
+                                    ? x
+                                    : (
+                                        x?.name ||
+                                        x?.slug ||
+                                        ""
+                                    )
+                        )
+                        .join(" ")
+                        .toLowerCase()
+                    : String(
+                        item.country || ""
+                    ).toLowerCase();
+
+            return (
+
+                nameText.includes("tvb") ||
+
+                originText.includes("tvb") ||
+
+                categoryText.includes("tvb") ||
+
+                countryText.includes("hong kong") ||
+
+                countryText.includes("hong-kong") ||
+
+                countryText.includes("hongkong") ||
+
+                countryText.includes("hong kong")
+            );
+        });
+
+    return dailyRandomSort(
+        tvbItems,
+        "tvb"
+    )
+        .slice(0, 20)
+        .map(
+            item =>
+                makeCatalogMeta(
+                    item
+                )
+        )
+        .filter(Boolean);
+}
+
+
+/* ============================================================
+   PHIM TRONG NGÀY - IMDb >= 6
+   ============================================================ */
+
+async function getDailyRecommended() {
+
+    const [
+        movieItems,
+        seriesItems
+    ] =
+        await Promise.all([
+            requestPhimList(
+                "phim-le",
+                1,
+                30
+            ),
+
+            requestPhimList(
+                "phim-bo",
+                1,
+                30
+            )
+        ]);
+
+    const allItems = [
+        ...movieItems,
+        ...seriesItems
+    ];
+
+    const seen =
+        new Set();
+
+    const qualified =
+        allItems.filter(item => {
+
+            if (
+                !item ||
+                !item.name
+            ) {
+                return false;
+            }
+
+            const uniqueKey =
+                String(
+                    item._id ||
+                    item.slug ||
+                    item.name
+                ).toLowerCase();
+
+            if (
+                seen.has(uniqueKey)
+            ) {
+                return false;
+            }
+
+            seen.add(uniqueKey);
+
+            /*
+               API hiện dùng:
+               item.imdb.vote_average
+
+               Có thêm fallback cho một số
+               cấu trúc dữ liệu khác.
+            */
+
+            const imdb =
+                item.imdb || {};
+
+            const rating =
+                Number(
+                    imdb.vote_average ??
+                    item.imdb_rating ??
+                    item.imdbRating ??
+                    item.rating ??
+                    0
+                );
+
+            return (
+                Number.isFinite(rating) &&
+                rating >= 6
+            );
+        });
+
+    return dailyRandomSort(
+        qualified,
+        "daily"
+    )
+        .slice(0, 20)
+        .map(
+            item =>
+                makeCatalogMeta(
+                    item
+                )
+        )
+        .filter(Boolean);
+}
+
+
+/* ============================================================
+   HOẠT HÌNH - NEW
+   ============================================================ */
+
+async function getNewAnimation() {
+
+    const items =
+        await requestPhimList(
+            "hoat-hinh",
+            1,
+            20
+        );
+
+    /*
+       Không ép type movie/series.
+       API tự quyết định loại phim.
+    */
+
+    return items
+        .filter(
+            item =>
+                item &&
+                item.name
+        )
+        .map(
+            item =>
+                makeCatalogMeta(
+                    item
+                )
+        )
+        .filter(Boolean);
+}
+
+
+/* ============================================================
+   CATALOG DISPATCHER
+   ============================================================ */
+
+async function fetchCatalogFromPhimApi(
+    args
+) {
+
+    const search =
+        args.extra?.search;
+
+    /*
+       SEARCH GIỮ NGUYÊN
+       --------------------------------------------------------
+       Khi người dùng tìm kiếm trong Stremio,
+       vẫn dùng API tìm kiếm như cũ.
+    */
+
+    if (
+        search &&
+        search.trim()
+    ) {
+
+        const apiUrl =
+            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+            encodeURIComponent(
+                search.trim()
+            ) +
+            "&limit=20";
+
+        const items =
+            await requestPhimApi(
+                apiUrl
+            );
+
+        return items.map(
+            item =>
+                makeCatalogMeta(
+                    item,
+                    args.type === "series"
+                        ? "series"
+                        : "movie"
+                )
+        ).filter(Boolean);
+    }
+
+
+    /* ========================================================
+       HÀNG 1 - PHIM LẺ - TRENDING
+       ======================================================== */
+
+    if (
+        args.id ===
+        "pa_movies_trending"
+    ) {
+
+        return getTrendingMovies();
+    }
+
+
+    /* ========================================================
+       HÀNG 2 - PHIM BỘ - TRENDING
+       ======================================================== */
+
+    if (
+        args.id ===
+        "pa_series_trending"
+    ) {
+
+        return getTrendingSeries();
+    }
+
+
+    /* ========================================================
+       HÀNG 3 - TVB
+       ======================================================== */
+
+    if (
+        args.id ===
+        "pa_tvb"
+    ) {
+
+        return getDailyTVB();
+    }
+
+
+    /* ========================================================
+       HÀNG 4 - PHIM TRONG NGÀY
+       ======================================================== */
+
+    if (
+        args.id ===
+        "pa_daily"
+    ) {
+
+        return getDailyRecommended();
+    }
+
+
+    /* ========================================================
+       HÀNG 5 - HOẠT HÌNH NEW
+       ======================================================== */
+
+    if (
+        args.id ===
+        "pa_animation_new"
+    ) {
+
+        return getNewAnimation();
+    }
+
+
+    /*
+       FALLBACK
+       --------------------------------------------------------
+       Giữ tương thích nếu Stremio gọi catalog cũ.
+    */
+
+    if (
+        args.type === "series" ||
+        args.id === "pa_series_new"
+    ) {
+
+        return getTrendingSeries();
+
+    } else {
+
+        return getTrendingMovies();
+    }
+}
+
+
+/* ============================================================
+   CATALOG HANDLER
+   ============================================================ */
+
+builder.defineCatalogHandler(
+    async (args) => {
 
         console.log(
-            "[CATALOG] Metas:",
-            metas.length
+            "[CATALOG] type:",
+            args.type,
+            "id:",
+            args.id,
+            "search:",
+            args.extra?.search || ""
         );
 
-        return { metas };
+        try {
 
-    } catch (e) {
+            const metas =
+                await fetchCatalogFromPhimApi(
+                    args
+                );
 
-        console.error(
-            "[CATALOG ERROR]",
-            e?.message || e
-        );
+            if (
+                !Array.isArray(metas)
+            ) {
 
-        return { metas: [] };
+                return {
+                    metas: []
+                };
+            }
+
+            const cleanMetas =
+                metas.filter(
+                    item =>
+                        item &&
+                        item.name
+                );
+
+            console.log(
+                "[CATALOG] Metas:",
+                cleanMetas.length
+            );
+
+            return {
+                metas:
+                    cleanMetas
+            };
+
+        } catch (e) {
+
+            console.error(
+                "[CATALOG ERROR]",
+                e?.message || e
+            );
+
+            return {
+                metas: []
+            };
+        }
     }
-});
+);
 
 
 /* ============================================================
