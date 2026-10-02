@@ -10281,554 +10281,724 @@ async function scrapePhimLongTieng(
 
         }
 
-        // ========================================================
-        // 16. CHỌN DUY NHẤT 1 CANDIDATE
-        //
-        // ĐÂY LÀ THAY ĐỔI QUAN TRỌNG NHẤT.
-        //
-        // Trước đây:
-        //
-        //   candidateResults
-        //          ↓
-        //   for tất cả candidate
-        //          ↓
-        //   streams của tất cả phim
-        //
-        // Bây giờ:
-        //
-        //   candidateResults
-        //          ↓
-        //   sort score
-        //          ↓
-        //   CHỈ 1 candidate
-        //          ↓
-        //   extract streams
-        // ========================================================
-
         candidateResults.sort(
-            (
-                a,
-                b
-            ) =>
+    (
+        a,
+        b
+    ) =>
+        Number(
+            b.candidate.finalScore ||
+            0
+        ) -
+        Number(
+            a.candidate.finalScore ||
+            0
+        )
+);
+
+console.log(
+    "[PHIMLONGTIENG] CANDIDATE RANKING:",
+    candidateResults.map(
+        result => ({
+            title:
+                result.candidate.title,
+
+            status:
+                result.candidate.status,
+
+            detailTitle:
+                result.candidate.detailTitle,
+
+            year:
+                result.candidate.detailYear,
+
+            episode:
+                result.selectedEpisode.name,
+
+            score:
+                result.candidate.finalScore,
+
+            contextSimilarity:
+                result.candidate.contextSimilarity,
+
+            contextMatchedSource:
+                result.candidate.contextMatchedSource
+        })
+    )
+);
+
+if (
+    !candidateResults.length
+) {
+
+    console.log(
+        "[PHIMLONGTIENG] NO VALID CANDIDATE"
+    );
+
+    return [];
+
+}
+
+
+// ========================================================
+// 17. CONFIDENCE CHECK CHUNG
+//
+// Confidence dùng để xác định:
+//   "đúng phim hay không"
+//
+// Không dùng confidence để loại Vietsub/Lồng Tiếng
+// chỉ vì một version có score thấp hơn version kia.
+//
+// Đây là điểm quan trọng:
+//   score dùng để xác định candidate đúng phim,
+//   KHÔNG dùng để chỉ lấy 1 version.
+// ========================================================
+
+const hasSupportContext =
+    uniqueContextTitles.length > 0 ||
+    !!supportTargetYear;
+
+const minimumScore =
+    hasSupportContext
+        ? 6500
+        : 7000;
+
+const highestScore =
+    Number(
+        candidateResults[0]
+            .candidate
+            .finalScore ||
+        0
+    );
+
+if (
+    highestScore <
+    minimumScore
+) {
+
+    console.log(
+        "[PHIMLONGTIENG] REJECT ALL CANDIDATES: LOW CONFIDENCE",
+        {
+            highestScore:
+                highestScore,
+
+            minimumScore:
+                minimumScore
+        }
+    );
+
+    return [];
+
+}
+
+
+// ========================================================
+// 18. LỌC CANDIDATE ĐỦ ĐỘ TIN CẬY
+//
+// Không yêu cầu mọi version phải có score bằng nhau.
+//
+// Ví dụ:
+//   Lồng Tiếng = 9400
+//   Vietsub    = 7500
+//
+// Cả hai vẫn có thể là cùng một phim thật.
+//
+// Chỉ loại candidate nếu score thấp hơn ngưỡng
+// hoặc rõ ràng là candidate yếu.
+// ========================================================
+
+const validResults =
+    candidateResults.filter(
+        result => {
+
+            const score =
                 Number(
-                    b.candidate.finalScore ||
+                    result.candidate.finalScore ||
                     0
-                ) -
-                Number(
-                    a.candidate.finalScore ||
-                    0
-                )
-        );
-
-        const bestResult =
-            candidateResults[0];
-
-        const secondResult =
-            candidateResults[1] ||
-            null;
-
-        const bestScore =
-            Number(
-                bestResult.candidate.finalScore ||
-                0
-            );
-
-        const secondScore =
-            secondResult
-                ? Number(
-                    secondResult.candidate.finalScore ||
-                    0
-                )
-                : null;
-
-        const scoreMargin =
-            secondScore !== null
-                ? bestScore -
-                    secondScore
-                : 99999;
-
-        console.log(
-            "[PHIMLONGTIENG] CANDIDATE RANKING:",
-            candidateResults.map(
-                result => ({
-                    title:
-                        result.candidate.title,
-
-                    detailTitle:
-                        result.candidate.detailTitle,
-
-                    year:
-                        result.candidate.detailYear,
-
-                    episode:
-                        result.selectedEpisode.name,
-
-                    score:
-                        result.candidate.finalScore,
-
-                    contextSimilarity:
-                        result.candidate.contextSimilarity,
-
-                    contextMatchedSource:
-                        result.candidate.contextMatchedSource
-                })
-            )
-        );
-
-        console.log(
-            "[PHIMLONGTIENG] BEST CANDIDATE:",
-            {
-                title:
-                    bestResult.candidate.title,
-
-                detailTitle:
-                    bestResult.candidate.detailTitle,
-
-                year:
-                    bestResult.candidate.detailYear,
-
-                episode:
-                    bestResult.selectedEpisode.name,
-
-                score:
-                    bestScore,
-
-                secondScore:
-                    secondScore,
-
-                margin:
-                    scoreMargin,
-
-                contextSimilarity:
-                    bestResult.candidate.contextSimilarity,
-
-                contextMatchedSource:
-                    bestResult.candidate.contextMatchedSource
-            }
-        );
-
-        // ========================================================
-        // 17. CONFIDENCE CHECK
-        //
-        // Nếu có context từ nguồn khác:
-        //   yêu cầu score >= 6500
-        //
-        // Nếu không có context:
-        //   yêu cầu score >= 7000.
-        //
-        // Ngoài ra, nếu 2 candidate đứng đầu quá sát nhau
-        // mà không có năm/context mạnh thì bỏ.
-        //
-        // Mục tiêu:
-        //
-        //   0 stream còn tốt hơn stream sai phim.
-        // ========================================================
-
-        const hasSupportContext =
-            uniqueContextTitles.length > 0 ||
-            !!supportTargetYear;
-
-        const minimumScore =
-            hasSupportContext
-                ? 6500
-                : 7000;
-
-        if (
-            bestScore <
-            minimumScore
-        ) {
-
-            console.log(
-                "[PHIMLONGTIENG] REJECT BEST CANDIDATE: LOW CONFIDENCE",
-                {
-                    bestScore:
-                        bestScore,
-
-                    minimumScore:
-                        minimumScore
-                }
-            );
-
-            return [];
-
-        }
-
-        // Nếu không có năm chính xác và không có context mạnh,
-        // nhưng top 2 quá sát nhau thì không đoán.
-        if (
-            secondResult &&
-            scoreMargin < 1000 &&
-            bestResult.candidate.contextSimilarity < 0.75 &&
-            !(
-                supportTargetYear &&
-                bestResult.candidate.detailYear &&
-                Number(
-                    supportTargetYear
-                ) ===
-                Number(
-                    bestResult.candidate.detailYear
-                )
-            )
-        ) {
-
-            console.log(
-                "[PHIMLONGTIENG] REJECT: TOP CANDIDATES TOO CLOSE",
-                {
-                    bestScore:
-                        bestScore,
-
-                    secondScore:
-                        secondScore,
-
-                    margin:
-                        scoreMargin
-                }
-            );
-
-            return [];
-
-        }
-
-        // ========================================================
-        // 18. CHỈ PROCESS BEST CANDIDATE
-        // ========================================================
-
-        const selected =
-            bestResult.candidate;
-
-        const selectedEpisode =
-            bestResult.selectedEpisode;
-
-        const encryptedEpisode =
-            bestResult.encryptedEpisode;
-
-        console.log(
-            "[PHIMLONGTIENG] PROCESS ONLY BEST VERSION:",
-            {
-                title:
-                    selected.title,
-
-                status:
-                    selected.status,
-
-                detailTitle:
-                    selected.detailTitle,
-
-                detailYear:
-                    selected.detailYear,
-
-                movieUrl:
-                    selected.href,
-
-                episode:
-                    selectedEpisode.name,
-
-                episodeUrl:
-                    selectedEpisode.href,
-
-                score:
-                    selected.finalScore,
-
-                contextMatchedSource:
-                    selected.contextMatchedSource
-            }
-        );
-
-        // ========================================================
-        // 19. DECRYPT
-        // ========================================================
-
-        let playerUrl =
-            null;
-
-        try {
-
-            playerUrl =
-                cryptoJSAesDecrypt(
-                    "Encrypt",
-                    encryptedEpisode
-                ).trim();
-
-            console.log(
-                "[PHIMLONGTIENG] DECRYPTED URL:",
-                playerUrl
-            );
-
-        } catch (e) {
-
-            console.log(
-                "[PHIMLONGTIENG] DECRYPT ERROR:",
-                e.message
-            );
-
-            return [];
-
-        }
-
-        playerUrl =
-            absUrl(
-                playerUrl,
-                directUrl
-            );
-
-        console.log(
-            "[PHIMLONGTIENG] PLAYER URL:",
-            playerUrl
-        );
-
-        if (
-            !playerUrl
-        ) {
-
-            return [];
-
-        }
-
-        // ========================================================
-        // 20. PLAYER PAGE
-        // ========================================================
-
-        let playerHtml =
-            "";
-
-        let playerFinalUrl =
-            playerUrl;
-
-        try {
-
-            const playerRes =
-                await get(
-                    playerUrl,
-                    {
-                        Referer:
-                            selectedEpisode.href
-                    }
                 );
 
-            console.log(
-                "[PHIMLONGTIENG] PLAYER status:",
-                playerRes.status
-            );
-
-            console.log(
-                "[PHIMLONGTIENG] PLAYER final URL:",
-                playerRes.url
-            );
-
             if (
-                playerRes.status &&
-                Number(
-                    playerRes.status
-                ) >= 400
+                score <
+                minimumScore
             ) {
 
                 console.log(
-                    "[PHIMLONGTIENG] PLAYER HTTP ERROR:",
-                    playerRes.status
+                    "[PHIMLONGTIENG] SKIP VERSION: LOW CONFIDENCE",
+                    {
+                        title:
+                            result.candidate.title,
+
+                        status:
+                            result.candidate.status,
+
+                        score:
+                            score,
+
+                        minimumScore:
+                            minimumScore
+                    }
                 );
 
-                return [];
+                return false;
 
             }
 
-            playerFinalUrl =
-                playerRes.url ||
-                playerUrl;
-
-            playerHtml =
-                await playerRes.text();
-
-        } catch (
-            playerError
-        ) {
-
-            console.log(
-                "[PHIMLONGTIENG] PLAYER ERROR:",
-                playerError?.message ||
-                playerError
-            );
-
-            return [];
+            return true;
 
         }
+    );
+
+if (
+    !validResults.length
+) {
+
+    console.log(
+        "[PHIMLONGTIENG] NO CANDIDATE AFTER CONFIDENCE FILTER"
+    );
+
+    return [];
+
+}
+
+
+// ========================================================
+// 19. LOG CÁC VERSION SẼ ĐƯỢC XỬ LÝ
+// ========================================================
+
+console.log(
+    "[PHIMLONGTIENG] VALID VERSIONS TO PROCESS:",
+    validResults.map(
+        result => ({
+            title:
+                result.candidate.title,
+
+            status:
+                result.candidate.status,
+
+            detailTitle:
+                result.candidate.detailTitle,
+
+            year:
+                result.candidate.detailYear,
+
+            episode:
+                result.selectedEpisode.name,
+
+            score:
+                result.candidate.finalScore
+        })
+    )
+);
+
+
+// ========================================================
+// 20. PROCESS TỪNG VERSION ĐỘC LẬP
+//
+// Mỗi candidate:
+//   1. decrypt
+//   2. mở player
+//   3. lấy play2
+//   4. lấy VB player
+//   5. lấy data-url
+//   6. lấy direct m3u8
+//
+// Một version lỗi KHÔNG làm mất các version khác.
+//
+// Ví dụ:
+//   Lồng Tiếng lỗi
+//   Vietsub OK
+//
+// → vẫn trả Vietsub.
+//
+// Hoặc:
+//   Lồng Tiếng OK
+//   Vietsub OK
+//
+// → trả cả hai.
+// ========================================================
+
+for (
+    const result
+    of validResults
+) {
+
+    const selected =
+        result.candidate;
+
+    const selectedEpisode =
+        result.selectedEpisode;
+
+    const encryptedEpisode =
+        result.encryptedEpisode;
+
+
+    console.log(
+        "[PHIMLONGTIENG] PROCESS VERSION:",
+        {
+            title:
+                selected.title,
+
+            status:
+                selected.status,
+
+            detailTitle:
+                selected.detailTitle,
+
+            detailYear:
+                selected.detailYear,
+
+            movieUrl:
+                selected.href,
+
+            episode:
+                selectedEpisode.name,
+
+            episodeUrl:
+                selectedEpisode.href,
+
+            score:
+                selected.finalScore,
+
+            contextMatchedSource:
+                selected.contextMatchedSource
+        }
+    );
+
+
+    // ======================================================
+    // 20.1. DECRYPT
+    // ======================================================
+
+    let playerUrl =
+        null;
+
+    try {
+
+        playerUrl =
+            cryptoJSAesDecrypt(
+                "Encrypt",
+                encryptedEpisode
+            ).trim();
 
         console.log(
-            "[PHIMLONGTIENG] PLAYER length:",
-            playerHtml.length
+            "[PHIMLONGTIENG] DECRYPTED URL:",
+            {
+                version:
+                    selected.status,
+
+                url:
+                    playerUrl
+            }
         );
 
-        // ========================================================
-        // 21. STREAM LABEL
-        // ========================================================
+    } catch (e) {
 
-        const versionLabel =
-            selected.status
-                ? selected.status
-                : (
-                    /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
-                        selected.title
-                    )
-                        ? "Lồng Tiếng"
-                        : /vietsub|phụ đề/i.test(
-                            selected.title
-                        )
-                            ? "Vietsub"
-                            : "PhimLongTieng"
-                );
+        console.log(
+            "[PHIMLONGTIENG] DECRYPT ERROR:",
+            {
+                version:
+                    selected.status,
 
-        const streamPrefix =
-            `▶️ [PhimLongTieng] ${versionLabel}`;
-
-        // ========================================================
-        // 22. S2 / DEFAULT PLAYER
-        // ========================================================
-
-        const beforeS2 =
-            streams.length;
-
-        extractPlay2Streams(
-            playerHtml,
-            playerFinalUrl,
-            streamPrefix
+                error:
+                    e?.message ||
+                    e
+            }
         );
 
-        // ========================================================
-        // 23. VB LOAD PLAYER
-        // ========================================================
+        continue;
 
-        extractVBPlayers(
-            playerHtml,
-            playerFinalUrl
+    }
+
+    playerUrl =
+        absUrl(
+            playerUrl,
+            directUrl
         );
 
-        // ========================================================
-        // 24. DATA URL
-        // ========================================================
+    console.log(
+        "[PHIMLONGTIENG] PLAYER URL:",
+        {
+            version:
+                selected.status,
 
-        extractDataUrls(
-            playerHtml,
-            playerFinalUrl
-        );
-
-        // ========================================================
-        // 25. DIRECT M3U8
-        // ========================================================
-
-        extractDirectM3U8(
-            playerHtml,
-            playerFinalUrl,
-            streamPrefix
-        );
-
-        // ========================================================
-        // 26. PLAYER URL ĐÃ LÀ M3U8
-        // ========================================================
-
-        if (
-            /\.m3u8(?:[?#]|$)/i.test(
+            url:
                 playerUrl
-            )
-        ) {
-
-            addStream(
-                playerUrl,
-                `${streamPrefix} - Decrypted M3U8`,
-                playerFinalUrl,
-                "S2"
-            );
-
         }
+    );
 
-        // ========================================================
-        // 27. LOG SERVER BUTTONS
-        // ========================================================
+    if (
+        !playerUrl
+    ) {
 
-        const serverMatches = [
-            ...playerHtml.matchAll(
-                /<span\b[^>]*onclick=["']vb_load_player\(this,([^)]*)\)["'][^>]*>([\s\S]*?)<\/span>/gi
-            )
-        ];
+        console.log(
+            "[PHIMLONGTIENG] SKIP VERSION: EMPTY PLAYER URL",
+            selected.status
+        );
 
-        for (
-            const match
-            of serverMatches
-        ) {
+        continue;
 
-            const argument =
-                match[1];
+    }
 
-            const label =
-                match[2]
-                    .replace(
-                        /<[^>]+>/g,
-                        " "
-                    )
-                    .replace(
-                        /\s+/g,
-                        " "
-                    )
-                    .trim();
 
-            console.log(
-                "[PHIMLONGTIENG] SERVER BUTTON:",
+    // ======================================================
+    // 20.2. PLAYER PAGE
+    // ======================================================
+
+    let playerHtml =
+        "";
+
+    let playerFinalUrl =
+        playerUrl;
+
+    try {
+
+        const playerRes =
+            await get(
+                playerUrl,
                 {
-                    version:
-                        versionLabel,
-
-                    label,
-
-                    argument
+                    Referer:
+                        selectedEpisode.href
                 }
             );
 
-        }
+        console.log(
+            "[PHIMLONGTIENG] PLAYER status:",
+            {
+                version:
+                    selected.status,
+
+                status:
+                    playerRes.status
+            }
+        );
 
         console.log(
-            "[PHIMLONGTIENG] VERSION STREAMS:",
+            "[PHIMLONGTIENG] PLAYER final URL:",
+            {
+                version:
+                    selected.status,
+
+                url:
+                    playerRes.url
+            }
+        );
+
+        if (
+            playerRes.status &&
+            Number(
+                playerRes.status
+            ) >= 400
+        ) {
+
+            console.log(
+                "[PHIMLONGTIENG] SKIP VERSION: PLAYER HTTP ERROR",
+                {
+                    version:
+                        selected.status,
+
+                    status:
+                        playerRes.status
+                }
+            );
+
+            continue;
+
+        }
+
+        playerFinalUrl =
+            playerRes.url ||
+            playerUrl;
+
+        playerHtml =
+            await playerRes.text();
+
+    } catch (
+        playerError
+    ) {
+
+        console.log(
+            "[PHIMLONGTIENG] PLAYER ERROR:",
+            {
+                version:
+                    selected.status,
+
+                error:
+                    playerError?.message ||
+                    playerError
+            }
+        );
+
+        continue;
+
+    }
+
+    console.log(
+        "[PHIMLONGTIENG] PLAYER length:",
+        {
+            version:
+                selected.status,
+
+            length:
+                playerHtml.length
+        }
+    );
+
+
+    // ======================================================
+    // 20.3. STREAM LABEL
+    // ======================================================
+
+    const versionLabel =
+        selected.status
+            ? selected.status
+            : (
+                /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
+                    selected.title
+                )
+                    ? "Lồng Tiếng"
+                    : /vietsub|phụ đề/i.test(
+                        selected.title
+                    )
+                        ? "Vietsub"
+                        : "PhimLongTieng"
+            );
+
+    const streamPrefix =
+        `▶️ [PhimLongTieng] ${versionLabel}`;
+
+
+    // ======================================================
+    // 20.4. STREAM COUNT TRƯỚC VERSION
+    // ======================================================
+
+    const beforeVersion =
+        streams.length;
+
+
+    // ======================================================
+    // 20.5. S2 / DEFAULT PLAYER
+    // ======================================================
+
+    extractPlay2Streams(
+        playerHtml,
+        playerFinalUrl,
+        streamPrefix
+    );
+
+
+    // ======================================================
+    // 20.6. VB LOAD PLAYER
+    // ======================================================
+
+    extractVBPlayers(
+        playerHtml,
+        playerFinalUrl
+    );
+
+
+    // ======================================================
+    // 20.7. DATA URL
+    // ======================================================
+
+    extractDataUrls(
+        playerHtml,
+        playerFinalUrl
+    );
+
+
+    // ======================================================
+    // 20.8. DIRECT M3U8
+    // ======================================================
+
+    extractDirectM3U8(
+        playerHtml,
+        playerFinalUrl,
+        streamPrefix
+    );
+
+
+    // ======================================================
+    // 20.9. PLAYER URL ĐÃ LÀ M3U8
+    // ======================================================
+
+    if (
+        /\.m3u8(?:[?#]|$)/i.test(
+            playerUrl
+        )
+    ) {
+
+        addStream(
+            playerUrl,
+            `${streamPrefix} - Decrypted M3U8`,
+            playerFinalUrl,
+            "S2"
+        );
+
+    }
+
+
+    // ======================================================
+    // 20.10. LOG SERVER BUTTONS
+    // ======================================================
+
+    const serverMatches = [
+        ...playerHtml.matchAll(
+            /<span\b[^>]*onclick=["']vb_load_player\(this,([^)]*)\)["'][^>]*>([\s\S]*?)<\/span>/gi
+        )
+    ];
+
+    for (
+        const match
+        of serverMatches
+    ) {
+
+        const argument =
+            match[1];
+
+        const label =
+            match[2]
+                .replace(
+                    /<[^>]+>/g,
+                    " "
+                )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+        console.log(
+            "[PHIMLONGTIENG] SERVER BUTTON:",
             {
                 version:
                     versionLabel,
 
-                title:
-                    selected.title,
+                label,
 
-                detailYear:
-                    selected.detailYear,
-
-                before:
-                    beforeS2,
-
-                after:
-                    streams.length
+                argument
             }
         );
 
-        // ========================================================
-        // FINAL
-        // ========================================================
+    }
 
-        console.log(
-            "[PHIMLONGTIENG] STREAMS FOUND:",
-            streams.length
-        );
 
-        console.log(
-            "[PHIMLONGTIENG] FINAL STREAMS:",
-            streams.map(
-                s => ({
-                    name:
-                        s.name,
+    // ======================================================
+    // 20.11. LOG KẾT QUẢ VERSION
+    // ======================================================
 
-                    title:
-                        s.title,
+    console.log(
+        "[PHIMLONGTIENG] VERSION STREAMS:",
+        {
+            version:
+                versionLabel,
 
-                    url:
-                        s.url
-                })
-            )
-        );
+            title:
+                selected.title,
 
-        return streams;
+            detailYear:
+                selected.detailYear,
+
+            before:
+                beforeVersion,
+
+            after:
+                streams.length,
+
+            added:
+                streams.length -
+                beforeVersion
+        }
+    );
+
+}
+
+
+// ========================================================
+// 21. FINAL DEDUPE
+//
+// Các parser khác nhau có thể tìm cùng một M3U8:
+//
+//   play2
+//   vb_load_player
+//   data-url
+//
+// Vì vậy dedupe lần cuối theo URL.
+//
+// Không dùng title/name làm key vì Vietsub và Lồng Tiếng
+// phải được giữ riêng.
+// ========================================================
+
+const finalSeen =
+    new Set();
+
+const finalStreams =
+    [];
+
+for (
+    const stream
+    of streams
+) {
+
+    if (
+        !stream ||
+        !stream.url
+    ) {
+
+        continue;
+
+    }
+
+    const key =
+        String(
+            stream.url
+        ).trim();
+
+    if (
+        !key ||
+        finalSeen.has(key)
+    ) {
+
+        continue;
+
+    }
+
+    finalSeen.add(
+        key
+    );
+
+    finalStreams.push(
+        stream
+    );
+
+}
+
+
+// ========================================================
+// 22. FINAL LOG
+// ========================================================
+
+console.log(
+    "[PHIMLONGTIENG] STREAMS FOUND:",
+    finalStreams.length
+);
+
+console.log(
+    "[PHIMLONGTIENG] FINAL STREAMS:",
+    finalStreams.map(
+        s => ({
+            name:
+                s.name,
+
+            title:
+                s.title,
+
+            url:
+                s.url
+        })
+    )
+);
+
+return finalStreams;
 
     } catch (e) {
 
