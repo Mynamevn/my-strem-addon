@@ -4346,117 +4346,127 @@ builder.defineMetaHandler(async (args) => {
         }
 
         // =====================================================
-        // 13.13. META HOÀN CHỈNH
-        // =====================================================
+// 13.13. META HOÀN CHỈNH
+// =====================================================
 
-        const meta = {
+const meta = {
 
-            id:
-                rawId,
+    id:
+        rawId,
 
-            type:
-                metaType,
+    type:
+        metaType,
 
-            name:
-                detail?.name ||
-                item?.name ||
-                movieName,
+    name:
+        detail?.name ||
+        item?.name ||
+        movieName,
 
-            poster:
-                poster,
+    poster:
+        poster,
 
-            posterShape:
-                "poster",
+    posterShape:
+        "poster",
 
-            background:
-                background ||
-                undefined,
+    background:
+        background ||
+        undefined,
 
-            description:
-                description,
+    description:
+        description,
 
-            releaseInfo:
-                detail?.year
+    releaseInfo:
+        detail?.year
+            ? String(
+                detail.year
+            )
+            : (
+                item?.year
                     ? String(
-                        detail.year
+                        item.year
                     )
-                    : (
-                        item?.year
-                            ? String(
-                                item.year
-                            )
-                            : undefined
-                    ),
+                    : undefined
+            ),
 
-            imdbRating:
-                imdbRating !== null
-                    ? imdbRating
-                    : undefined,
+    imdbRating:
+        imdbRating !== null
+            ? imdbRating
+            : undefined,
 
-            genres:
-                genres,
+    genres:
+        genres,
 
-            country:
-                Array.isArray(
-                    detail?.country
+    country:
+        Array.isArray(
+            detail?.country
+        )
+            ? detail.country
+                .map(x =>
+                    typeof x === "string"
+                        ? x
+                        : x?.name
                 )
-                    ? detail.country
-                        .map(x =>
-                            typeof x === "string"
-                                ? x
-                                : x?.name
-                        )
-                        .filter(Boolean)
-                    : undefined,
+                .filter(Boolean)
+            : undefined,
 
-            director:
-                Array.isArray(
-                    detail?.director
+    director:
+        Array.isArray(
+            detail?.director
+        )
+            ? detail.director
+                .map(x =>
+                    typeof x === "string"
+                        ? x
+                        : x?.name
                 )
-                    ? detail.director
-                        .filter(Boolean)
-                    : undefined,
+                .filter(Boolean)
+            : undefined,
 
-            cast:
-                Array.isArray(
-                    detail?.actor
+    cast:
+        Array.isArray(
+            detail?.actor
+        )
+            ? detail.actor
+                .map(x =>
+                    typeof x === "string"
+                        ? x
+                        : x?.name
                 )
-                    ? detail.actor
-                        .filter(Boolean)
-                    : undefined,
+                .filter(Boolean)
+            : undefined,
 
-            runtime:
-                detail?.time ||
-                undefined
-        };
+    runtime:
+        detail?.time ||
+        undefined
+};
 
-        if (
-            isSeries &&
-            Array.isArray(videos)
-        ) {
+if (
+    isSeries &&
+    Array.isArray(videos)
+) {
 
-            meta.videos =
-                videos;
+    meta.videos =
+        videos;
 
-        }
+}
 
-        console.log(
-            "[META] OK:",
-            meta.name,
-            "| type:",
-            meta.type,
-            "| episodes:",
-            Array.isArray(meta.videos)
-                ? meta.videos.length
-                : 0,
-            "| IMDb:",
-            meta.imdbRating ??
-            "N/A"
-        );
+console.log(
+    "[META] OK:",
+    meta.name,
+    "| type:",
+    meta.type,
+    "| episodes:",
+    Array.isArray(meta.videos)
+        ? meta.videos.length
+        : 0,
+    "| IMDb:",
+    meta.imdbRating ??
+    "N/A"
+);
 
-        return {
-            meta
-        };
+return {
+    meta
+};
 
     } catch (e) {
 
