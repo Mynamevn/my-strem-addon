@@ -4426,7 +4426,7 @@ if (isSeries) {
 }
 
         // =====================================================
-// 13.13. META SERIES - TEST THÔNG TIN PHIM
+// 13.13. META SERIES - THÔNG TIN + VIDEOS TỐI GIẢN
 // =====================================================
 
 const meta = {
@@ -4466,8 +4466,37 @@ const meta = {
 
 };
 
+if (
+    isSeries &&
+    Array.isArray(videos)
+) {
+
+    meta.videos =
+        videos.map(
+            video => ({
+
+                id:
+                    video.id,
+
+                title:
+                    video.title,
+
+                released:
+                    video.released,
+
+                season:
+                    video.season,
+
+                episode:
+                    video.episode
+
+            })
+        );
+
+}
+
 console.log(
-    "[META] TEST INFO:",
+    "[META] TEST VIDEOS:",
     JSON.stringify(meta)
 );
 
