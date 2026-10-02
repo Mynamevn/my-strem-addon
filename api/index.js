@@ -763,35 +763,96 @@ MOVIE TRENDING
 
 async function fetchMovieTrending() {
 
-const pages = [];
+    const pages = [];
 
-for (let page = 1; page <= 3; page++) {
+    /*
+       Lấy nhiều trang phim chiếu rạp
+       để có đủ dữ liệu mới nhất.
+    */
 
-    pages.push(
-        catalogFetch(
-            "https://phimapi.com/v1/api/" +
-            "danh-sach/phim-chieu-rap" +
-            "?page=" +
-            page +
-            "&limit=24"
-        )
-    );
-}
+    for (
+        let page = 1;
+        page <= 6;
+        page++
+    ) {
 
-const groups =
-    await Promise.all(pages);
+        pages.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-chieu-rap" +
+                "?page=" +
+                page +
+                "&limit=24"
+            )
+        );
+    }
 
-const items =
-    catalogDedupe(
-        groups.flat()
-    );
+    const groups =
+        await Promise.all(
+            pages
+        );
 
-return items
-    .filter(
-        item =>
-            !isSeriesItem(item)
-    )
-    .slice(
+    let items =
+        catalogDedupe(
+            groups.flat()
+        );
+
+    /*
+       Chỉ lấy phim lẻ.
+    */
+
+    items =
+        items.filter(
+            item =>
+                !isSeriesItem(item)
+        );
+
+    /*
+       Ưu tiên phim mới:
+       1. Năm phát hành mới hơn
+       2. Ngày cập nhật mới hơn
+    */
+
+    items =
+        items.sort(
+            (a, b) => {
+
+                const yearA =
+                    itemYear(a);
+
+                const yearB =
+                    itemYear(b);
+
+                if (
+                    yearB !==
+                    yearA
+                ) {
+                    return (
+                        yearB -
+                        yearA
+                    );
+                }
+
+                const modifiedA =
+                    Date.parse(
+                        a?.modified?.time ||
+                        ""
+                    ) || 0;
+
+                const modifiedB =
+                    Date.parse(
+                        b?.modified?.time ||
+                        ""
+                    ) || 0;
+
+                return (
+                    modifiedB -
+                    modifiedA
+                );
+            }
+        );
+
+    return items.slice(
         0,
         CATALOG_TARGET
     );
@@ -3084,48 +3145,6 @@ async function fetchAnimationNew() {
             "anime|final"
         );
 
- /*
-       --------------------------------------------------------
-       KIỂM TRA ĐỘ MỚI
-       --------------------------------------------------------
-    */
-
-    const yearStats =
-        {};
-
-    result.forEach(
-        item => {
-
-            const year =
-                itemYear(item) ||
-                "unknown";
-
-            yearStats[year] =
-                (yearStats[year] || 0) +
-                1;
-        }
-    );
-
-    console.log(
-        "[ANIME] Years:",
-        Object.entries(
-            yearStats
-        )
-            .sort(
-                (a, b) =>
-                    Number(b[0]) -
-                    Number(a[0])
-            )
-            .map(
-                ([year, count]) =>
-                    year +
-                    "=" +
-                    count
-            )
-            .join(
-                " | "
-            )
-    );
 
     /*
        --------------------------------------------------------
