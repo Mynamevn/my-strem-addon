@@ -224,13 +224,41 @@ return result;
 
 function catalogPoster(item) {
 
-return (
-    item?.poster_url ||
-    item?.thumb_url ||
-    item?.poster ||
-    ""
-);
+    const raw =
+        item?.poster_url ||
+        item?.thumb_url ||
+        item?.poster ||
+        "";
 
+    if (!raw) {
+        return "";
+    }
+
+    const value =
+        String(raw).trim();
+
+    if (
+        /^https?:\/\//i.test(value)
+    ) {
+        return value;
+    }
+
+    if (
+        value.startsWith("//")
+    ) {
+        return "https:" + value;
+    }
+
+    /*
+       PhimAPI thường trả poster dạng:
+       uploads/...
+       upload/...
+    */
+
+    return (
+        "https://phimapi.com/" +
+        value.replace(/^\/+/, "")
+    );
 }
 
 function catalogCountryNames(item) {
