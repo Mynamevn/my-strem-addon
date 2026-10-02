@@ -387,23 +387,123 @@ return countries.some(x =>
 
 }
 
+/* ============================================================
+   XÁC ĐỊNH MOVIE / SERIES
+   PhimAPI:
+   - series   = phim bộ
+   - single   = phim lẻ
+   - hoathinh = hoạt hình
+   - tvshows  = TV Shows
+   ============================================================ */
+
 function isSeriesItem(item) {
 
-const type =
-    catalogNormalize(
-        item?.type ||
-        item?.tmdb?.type ||
-        ""
-    );
+    if (!item) {
+        return false;
+    }
 
-return (
-    type === "series" ||
-    type === "tv" ||
-    type === "tvshows" ||
-    type === "phim bo" ||
-    item?.episode_current !== undefined
-);
+    /*
+       Ưu tiên tuyệt đối trường type của PhimAPI.
+    */
 
+    const rawType =
+        String(
+            item?.type ||
+            ""
+        )
+            .trim()
+            .toLowerCase();
+
+    if (
+        rawType ===
+        "series"
+    ) {
+        return true;
+    }
+
+    if (
+        rawType ===
+        "single"
+    ) {
+        return false;
+    }
+
+    if (
+        rawType ===
+        "movie"
+    ) {
+        return false;
+    }
+
+    /*
+       Hoạt hình có thể là movie hoặc series.
+       Không tự coi hoathinh là series ở đây.
+       Nếu API không có type rõ ràng thì mới
+       dùng các dấu hiệu phụ bên dưới.
+    */
+
+    if (
+        rawType ===
+        "hoathinh"
+    ) {
+
+        /*
+           Nếu có episode_current / episode_total
+           thì xem như series.
+        */
+
+        const episodeCurrent =
+            String(
+                item?.episode_current ||
+                ""
+            ).trim();
+
+        const episodeTotal =
+            String(
+                item?.episode_total ||
+                ""
+            ).trim();
+
+        if (
+            episodeCurrent ||
+            episodeTotal
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /*
+       Trường hợp API không trả type.
+       Chỉ dùng dấu hiệu phụ nếu thật sự có.
+    */
+
+    const episodeCurrent =
+        String(
+            item?.episode_current ||
+            ""
+        ).trim();
+
+    const episodeTotal =
+        String(
+            item?.episode_total ||
+            ""
+        ).trim();
+
+    if (
+        episodeCurrent ||
+        episodeTotal
+    ) {
+        return true;
+    }
+
+    /*
+       Không đủ bằng chứng là series
+       => mặc định là movie.
+    */
+
+    return false;
 }
 
 function itemYear(item) {
