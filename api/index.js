@@ -4426,7 +4426,7 @@ if (isSeries) {
 }
 
         // =====================================================
-// 13.13. META SERIES - TEST 3 FIELD
+// 13.13. META SERIES - TEST THÔNG TIN PHIM
 // =====================================================
 
 const meta = {
@@ -4440,12 +4440,34 @@ const meta = {
     name:
         detail?.name ||
         item?.name ||
-        movieName
+        movieName,
+
+    poster:
+        poster,
+
+    posterShape:
+        "poster",
+
+    background:
+        background ||
+        undefined,
+
+    description:
+        description,
+
+    releaseInfo:
+        detail?.year
+            ? String(detail.year)
+            : (
+                item?.year
+                    ? String(item.year)
+                    : undefined
+            )
 
 };
 
 console.log(
-    "[META] TEST 3 FIELD:",
+    "[META] TEST INFO:",
     JSON.stringify(meta)
 );
 
