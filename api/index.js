@@ -7645,7 +7645,7 @@ async function scrapePhimLongTieng(
                 absUrl(
                     url,
                     referer ||
-                    "https://www.1phim34.com/"
+                    "https://www.1phim35.com/"
                 );
 
         }
@@ -7700,6 +7700,12 @@ async function scrapePhimLongTieng(
                 "www.1phim34.com" ||
 
             streamHost ===
+                "1phim35.com" ||
+
+            streamHost ===
+                "www.1phim35.com" ||
+
+            streamHost ===
                 "play.cbplay.cc" ||
 
             streamHost.endsWith(
@@ -7734,6 +7740,17 @@ async function scrapePhimLongTieng(
 
             streamReferer =
                 "https://play.cbplay.cc/";
+
+        } else if (
+            streamHost ===
+                "1phim35.com" ||
+
+            streamHost ===
+                "www.1phim35.com"
+        ) {
+
+            streamReferer =
+                "https://www.1phim35.com/";
 
         } else {
 
