@@ -1363,68 +1363,62 @@ async function fetchDailyCatalog() {
     }
 
     /*
-       ========================================================
-       NGUỒN HOẠT HÌNH
-       ========================================================
+   ========================================================
+   NGUỒN HOẠT HÌNH
+   ========================================================
 
-       Lấy riêng phim lẻ + phim bộ hoạt hình
-       để biết chính xác type.
-    */
+   Dùng endpoint trực tiếp /danh-sach/hoat-hinh.
 
-    const animationSources = [];
+   Endpoint này chứa cả:
+   - Anime / hoạt hình Nhật
+   - Cartoon / hoạt hình Mỹ, Âu-Mỹ
+   - Hoạt hình các nước khác
 
-    for (
-        let page = 1;
-        page <= 5;
-        page++
-    ) {
+   Dùng isSeriesItem() để xác định Movie / Series.
+*/
 
-        animationSources.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-le" +
-                "?category=hoat-hinh" +
-                "&page=" +
-                page +
-                "&limit=24"
-            )
-                .then(
-                    items =>
-                        items.map(
-                            item => ({
+const animationSources = [];
+
+for (
+    let page = 1;
+    page <= 12;
+    page++
+) {
+
+    animationSources.push(
+        catalogFetch(
+            "https://phimapi.com/v1/api/" +
+            "danh-sach/hoat-hinh" +
+            "?page=" +
+            page +
+            "&limit=24"
+        )
+            .then(
+                items =>
+                    items.map(
+                        item => {
+
+                            const series =
+                                isSeriesItem(
+                                    item
+                                );
+
+                            return {
                                 ...item,
+
                                 __catalogType:
-                                    "movie",
+                                    series
+                                        ? "series"
+                                        : "movie",
+
                                 __isAnimation:
                                     true
-                            })
-                        )
-                )
-        );
-
-        animationSources.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-bo" +
-                "?category=hoat-hinh" +
-                "&page=" +
-                page +
-                "&limit=24"
+                            };
+                        }
+                    )
             )
-                .then(
-                    items =>
-                        items.map(
-                            item => ({
-                                ...item,
-                                __catalogType:
-                                    "series",
-                                __isAnimation:
-                                    true
-                            })
-                        )
-                )
-        );
-    }
+    );
+}
 
     const [
         normalGroups,
