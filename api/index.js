@@ -7409,62 +7409,258 @@ for (
    Reverse-engineered from PhimLongTiengProvider
    ============================================================ */
 
-async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear = null) {
-    console.log("[PHIMLONGTIENG] Search:", movieName, "Episode:", episodeNumber, "Year:", targetYear);
+async function scrapePhimLongTieng(
+    movieName,
+    episodeNumber = null,
+    targetYear = null,
+    supportContext = null
+) {
+
+    console.log(
+        "[PHIMLONGTIENG] Search:",
+        movieName,
+        "Episode:",
+        episodeNumber,
+        "Year:",
+        targetYear
+    );
 
     const streams = [];
     const seen = new Set();
 
     const timeoutMs = 20000;
 
+    // ============================================================
+    // 1. SUPPORT CONTEXT
+    //
+    // PhimLongTieng vẫn tự match độc lập.
+    //
+    // KKPHiM / NguonC / VSMOV / PhimHDCS chỉ cung cấp
+    // thêm bằng chứng để tăng độ chính xác.
+    // ============================================================
+
+    const context =
+        supportContext &&
+        typeof supportContext === "object"
+            ? supportContext
+            : {};
+
+    const supportOriginalName =
+        String(
+            context.originalName ||
+            movieName ||
+            ""
+        ).trim();
+
+    const supportTargetYear =
+        context.targetYear ||
+        targetYear ||
+        null;
+
+    const supportSeasonNumber =
+        context.seasonNumber !== undefined &&
+        context.seasonNumber !== null
+            ? Number(context.seasonNumber)
+            : null;
+
+    const supportEpisodeNumber =
+        context.episodeNumber !== undefined &&
+        context.episodeNumber !== null
+            ? Number(context.episodeNumber)
+            : (
+                episodeNumber !== null &&
+                episodeNumber !== undefined
+                    ? Number(episodeNumber)
+                    : null
+            );
+
+    const supportStreamType =
+        String(
+            context.streamType ||
+            ""
+        ).toLowerCase();
+
+    const supportSources = {
+
+        kkphim:
+            Array.isArray(context.kkphim)
+                ? context.kkphim
+                : [],
+
+        nguonc:
+            Array.isArray(context.nguonc)
+                ? context.nguonc
+                : [],
+
+        vsmov:
+            Array.isArray(context.vsmov)
+                ? context.vsmov
+                : [],
+
+        phimhdcs:
+            Array.isArray(context.phimhdcs)
+                ? context.phimhdcs
+                : []
+
+    };
+
+    console.log(
+        "[PHIMLONGTIENG] Support context:",
+        {
+            originalName:
+                supportOriginalName,
+
+            targetYear:
+                supportTargetYear,
+
+            seasonNumber:
+                supportSeasonNumber,
+
+            episodeNumber:
+                supportEpisodeNumber,
+
+            streamType:
+                supportStreamType,
+
+            kkphim:
+                supportSources.kkphim.length,
+
+            nguonc:
+                supportSources.nguonc.length,
+
+            vsmov:
+                supportSources.vsmov.length,
+
+            phimhdcs:
+                supportSources.phimhdcs.length
+        }
+    );
+
+    // ============================================================
+    // 2. HELPERS
+    // ============================================================
+
     function normalizeText(s) {
+
         return String(s || "")
             .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
+            .replace(
+                /[\u0300-\u036f]/g,
+                ""
+            )
             .toLowerCase()
-            .replace(/[^a-z0-9]+/g, " ")
+            .replace(
+                /đ/g,
+                "d"
+            )
+            .replace(
+                /[^a-z0-9]+/g,
+                " "
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
             .trim();
+
     }
 
     function slugify(s) {
-        return normalizeText(s).replace(/\s+/g, "-");
+
+        return normalizeText(s)
+            .replace(
+                /\s+/g,
+                "-"
+            );
+
     }
 
     function decodeHtml(s) {
+
         return String(s || "")
-            .replace(/&amp;/g, "&")
-            .replace(/&#39;/g, "'")
-            .replace(/&quot;/g, '"')
-            .replace(/&#x27;/g, "'")
-            .replace(/\\\//g, "/");
-    }
-
-    function absUrl(url, base) {
-        try {
-            return new URL(decodeHtml(url), base).href;
-        } catch (_) {
-            return null;
-        }
-    }
-
-            function addStream(url, title, referer, sourceLabel) {
-
-        if (!url) return;
-
-        url = decodeHtml(url).trim();
-
-        if (!/^https?:\/\//i.test(url)) {
-            url = absUrl(
-                url,
-                referer || "https://www.1phim34.com/"
+            .replace(
+                /&amp;/g,
+                "&"
+            )
+            .replace(
+                /&#39;/g,
+                "'"
+            )
+            .replace(
+                /&quot;/g,
+                '"'
+            )
+            .replace(
+                /&#x27;/g,
+                "'"
+            )
+            .replace(
+                /\\\//g,
+                "/"
             );
+
+    }
+
+    function absUrl(
+        url,
+        base
+    ) {
+
+        try {
+
+            return new URL(
+                decodeHtml(url),
+                base
+            ).href;
+
+        } catch (_) {
+
+            return null;
+
+        }
+
+    }
+
+    // ============================================================
+    // 3. ADD STREAM
+    // ============================================================
+
+    function addStream(
+        url,
+        title,
+        referer,
+        sourceLabel
+    ) {
+
+        if (!url) return;
+
+        url =
+            decodeHtml(url).trim();
+
+        if (
+            !/^https?:\/\//i.test(url)
+        ) {
+
+            url =
+                absUrl(
+                    url,
+                    referer ||
+                    "https://www.1phim34.com/"
+                );
+
         }
 
         if (!url) return;
 
-        const key = url.trim();
+        const key =
+            url.trim();
 
-        if (seen.has(key)) return;
+        if (
+            seen.has(key)
+        ) {
+            return;
+        }
+
         seen.add(key);
 
         // =================================================
@@ -7475,7 +7671,8 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
         try {
 
-            streamUrl = new URL(url);
+            streamUrl =
+                new URL(url);
 
         } catch (e) {
 
@@ -7485,6 +7682,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
             );
 
             return;
+
         }
 
         const streamHost =
@@ -7495,10 +7693,18 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         // =================================================
 
         const allowedHost =
-            streamHost === "1phim34.com" ||
-            streamHost === "www.1phim34.com" ||
-            streamHost === "play.cbplay.cc" ||
-            streamHost.endsWith(".cbplay.cc");
+            streamHost ===
+                "1phim34.com" ||
+
+            streamHost ===
+                "www.1phim34.com" ||
+
+            streamHost ===
+                "play.cbplay.cc" ||
+
+            streamHost.endsWith(
+                ".cbplay.cc"
+            );
 
         if (!allowedHost) {
 
@@ -7508,6 +7714,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
             );
 
             return;
+
         }
 
         // =================================================
@@ -7517,8 +7724,12 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
         let streamReferer;
 
         if (
-            streamHost === "play.cbplay.cc" ||
-            streamHost.endsWith(".cbplay.cc")
+            streamHost ===
+                "play.cbplay.cc" ||
+
+            streamHost.endsWith(
+                ".cbplay.cc"
+            )
         ) {
 
             streamReferer =
@@ -7528,6 +7739,7 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
 
             streamReferer =
                 "https://www.1phim34.com/";
+
         }
 
         // =================================================
@@ -7571,152 +7783,281 @@ async function scrapePhimLongTieng(movieName, episodeNumber = null, targetYear =
             proxyUrl
         );
 
-        // ============================================================
-// ADD STREAM
-// ============================================================
+        // =================================================
+        // ADD STREAM
+        // =================================================
 
-const streamObject = {
+        const streamObject = {
 
-    name:
-        `⚡ [PhimLongTieng] ${sourceLabel}`,
+            name:
+                `⚡ [PhimLongTieng] ${sourceLabel}`,
 
-    title:
-        title ||
-        `${sourceLabel} - Direct`,
+            title:
+                title ||
+                `${sourceLabel} - Direct`,
 
-    url:
-        proxyUrl,
+            url:
+                proxyUrl,
 
-    behaviorHints: {
+            behaviorHints: {
 
-        // WebStremio có thể phát trực tiếp
-        // thông qua URL proxy Vercel.
-        notWebReady: false,
+                notWebReady:
+                    false,
 
-        // Cho phép Stremio gom các tập
-        // của cùng nguồn vào một nhóm.
-        bingeGroup:
-            `phimlongtieng-${streamHost}`
+                bingeGroup:
+                    `phimlongtieng-${streamHost}`
 
-    }
-
-};
-
-streams.push(
-    streamObject
-);
-
-console.log(
-    "[PHIMLONGTIENG] STREAM ADDED:"
-);
-
-console.log(
-    JSON.stringify(
-        streamObject,
-        null,
-        2
-    )
-);
-}
-    async function get(url, headers = {}) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-        try {
-            return await fetch(url, {
-                method: "GET",
-                redirect: "follow",
-                signal: controller.signal,
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-                    "Accept":
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    ...headers
-                }
-            });
-        } finally {
-            clearTimeout(timer);
-        }
-    }
-
-    // ============================================================
-    // CryptoJSAesDecrypt chính xác như site / Cloudstream
-    // ============================================================
-
-    function cryptoJSAesDecrypt(passphrase, encryptedJsonString) {
-        const crypto = require("crypto");
-
-        const obj = JSON.parse(encryptedJsonString);
-
-        const encrypted = Buffer.from(obj.ciphertext, "base64");
-        const salt = Buffer.from(obj.salt, "hex");
-        const iv = Buffer.from(obj.iv, "hex");
-
-        const key = crypto.pbkdf2Sync(
-            Buffer.from(passphrase, "utf8"),
-            salt,
-            999,
-            32,
-            "sha512"
-        );
-
-        const decipher = crypto.createDecipheriv(
-            "aes-256-cbc",
-            key,
-            iv
-        );
-
-        return Buffer.concat([
-            decipher.update(encrypted),
-            decipher.final()
-        ]).toString("utf8");
-    }
-
-    // ============================================================
-    // Base64 URL decoder
-    // ============================================================
-
-    function decodeBase64Url(value) {
-        try {
-            let s = decodeURIComponent(value || "");
-
-            s = s.replace(/-/g, "+").replace(/_/g, "/");
-
-            while (s.length % 4 !== 0) {
-                s += "=";
             }
 
-            return Buffer.from(s, "base64").toString("utf8");
-        } catch (e) {
-            console.log("[PHIMLONGTIENG] Base64 decode error:", e.message);
-            return null;
-        }
+        };
+
+        streams.push(
+            streamObject
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] STREAM ADDED:"
+        );
+
+        console.log(
+            JSON.stringify(
+                streamObject,
+                null,
+                2
+            )
+        );
+
     }
 
     // ============================================================
-    // Extract encrypted JSON
+    // 4. GET
     // ============================================================
 
-    function extractEncryptedJson(html) {
-        const marker = "CryptoJSAesDecrypt('Encrypt', `";
+    async function get(
+        url,
+        headers = {}
+    ) {
+
+        const controller =
+            new AbortController();
+
+        const timer =
+            setTimeout(
+                () =>
+                    controller.abort(),
+                timeoutMs
+            );
+
+        try {
+
+            return await fetch(
+                url,
+                {
+                    method:
+                        "GET",
+
+                    redirect:
+                        "follow",
+
+                    signal:
+                        controller.signal,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                        ...headers
+
+                    }
+
+                }
+            );
+
+        } finally {
+
+            clearTimeout(
+                timer
+            );
+
+        }
+
+    }
+
+    // ============================================================
+    // 5. CRYPTO
+    // ============================================================
+
+    function cryptoJSAesDecrypt(
+        passphrase,
+        encryptedJsonString
+    ) {
+
+        const crypto =
+            require("crypto");
+
+        const obj =
+            JSON.parse(
+                encryptedJsonString
+            );
+
+        const encrypted =
+            Buffer.from(
+                obj.ciphertext,
+                "base64"
+            );
+
+        const salt =
+            Buffer.from(
+                obj.salt,
+                "hex"
+            );
+
+        const iv =
+            Buffer.from(
+                obj.iv,
+                "hex"
+            );
+
+        const key =
+            crypto.pbkdf2Sync(
+                Buffer.from(
+                    passphrase,
+                    "utf8"
+                ),
+                salt,
+                999,
+                32,
+                "sha512"
+            );
+
+        const decipher =
+            crypto.createDecipheriv(
+                "aes-256-cbc",
+                key,
+                iv
+            );
+
+        return Buffer.concat([
+            decipher.update(
+                encrypted
+            ),
+            decipher.final()
+        ]).toString(
+            "utf8"
+        );
+
+    }
+
+    // ============================================================
+    // 6. BASE64 URL
+    // ============================================================
+
+    function decodeBase64Url(
+        value
+    ) {
+
+        try {
+
+            let s =
+                decodeURIComponent(
+                    value || ""
+                );
+
+            s =
+                s.replace(
+                    /-/g,
+                    "+"
+                )
+                .replace(
+                    /_/g,
+                    "/"
+                );
+
+            while (
+                s.length % 4 !== 0
+            ) {
+
+                s += "=";
+
+            }
+
+            return Buffer.from(
+                s,
+                "base64"
+            ).toString(
+                "utf8"
+            );
+
+        } catch (e) {
+
+            console.log(
+                "[PHIMLONGTIENG] Base64 decode error:",
+                e.message
+            );
+
+            return null;
+
+        }
+
+    }
+
+    // ============================================================
+    // 7. ENCRYPTED JSON
+    // ============================================================
+
+    function extractEncryptedJson(
+        html
+    ) {
+
+        const marker =
+            "CryptoJSAesDecrypt('Encrypt', `";
 
         let pos = 0;
+
         const candidates = [];
 
         while (true) {
-            const found = html.indexOf(marker, pos);
 
-            if (found < 0) break;
+            const found =
+                html.indexOf(
+                    marker,
+                    pos
+                );
 
-            const start = found + marker.length;
-            const end = html.indexOf("`", start);
+            if (found < 0) {
+                break;
+            }
 
-            if (end > start) {
-                const candidate = html.substring(start, end).trim();
+            const start =
+                found +
+                marker.length;
+
+            const end =
+                html.indexOf(
+                    "`",
+                    start
+                );
+
+            if (
+                end > start
+            ) {
+
+                const candidate =
+                    html.substring(
+                        start,
+                        end
+                    ).trim();
 
                 try {
-                    const obj = JSON.parse(candidate);
+
+                    const obj =
+                        JSON.parse(
+                            candidate
+                        );
 
                     if (
                         obj &&
@@ -7724,14 +8065,20 @@ console.log(
                         obj.iv &&
                         obj.salt
                     ) {
-                        candidates.push(candidate);
+
+                        candidates.push(
+                            candidate
+                        );
+
                     }
-                } catch (_) {
-                    // Không phải encrypted JSON hợp lệ
-                }
+
+                } catch (_) {}
+
             }
 
-            pos = start;
+            pos =
+                start;
+
         }
 
         console.log(
@@ -7739,104 +8086,196 @@ console.log(
             candidates.length
         );
 
-        if (!candidates.length) return null;
+        if (
+            !candidates.length
+        ) {
 
-        return candidates[candidates.length - 1];
+            return null;
+
+        }
+
+        return candidates[
+            candidates.length - 1
+        ];
+
     }
 
     // ============================================================
-    // Tìm URL play2.php?hash=...
+    // 8. PLAY2
     // ============================================================
 
-    function extractPlay2Streams(html, baseUrl, labelPrefix = "PLAY2") {
+    function extractPlay2Streams(
+        html,
+        baseUrl,
+        labelPrefix = "PLAY2"
+    ) {
+
         const found = [];
-        const regex = /https?:\/\/[^"'<>\\\s]+\/play2\.php\?[^"'<>\\\s]+/gi;
+
+        const regex =
+            /https?:\/\/[^"'<>\\\s]+\/play2\.php\?[^"'<>\\\s]+/gi;
 
         let m;
 
-        while ((m = regex.exec(html)) !== null) {
-            let url = decodeHtml(m[0]);
+        while (
+            (m = regex.exec(html)) !== null
+        ) {
 
-            url = url.replace(/[)"';,]+$/g, "");
+            let url =
+                decodeHtml(
+                    m[0]
+                );
 
-            if (!found.includes(url)) {
-                found.push(url);
+            url =
+                url.replace(
+                    /[)"';,]+$/g,
+                    ""
+                );
+
+            if (
+                !found.includes(url)
+            ) {
+
+                found.push(
+                    url
+                );
+
             }
+
         }
 
-                console.log(
+        console.log(
             `[PHIMLONGTIENG] ${labelPrefix} play2 count:`,
             found.length
         );
 
-        for (const play2Url of found) {
-            try {
-                const parsed = new URL(play2Url);
+        for (
+            const play2Url
+            of found
+        ) {
 
-                const hash = parsed.searchParams.get("hash");
+            try {
+
+                const parsed =
+                    new URL(
+                        play2Url
+                    );
+
+                const hash =
+                    parsed.searchParams.get(
+                        "hash"
+                    );
 
                 if (!hash) {
+
                     console.log(
                         "[PHIMLONGTIENG] play2 WITHOUT hash:",
                         play2Url
                     );
+
                     continue;
+
                 }
 
-                const decoded = decodeBase64Url(hash);
+                const decoded =
+                    decodeBase64Url(
+                        hash
+                    );
 
-                                console.log(
+                console.log(
                     "[PHIMLONGTIENG] play2 decoded:",
                     decoded
                 );
 
                 if (
                     decoded &&
-                    /^https?:\/\//i.test(decoded)
+                    /^https?:\/\//i.test(
+                        decoded
+                    )
                 ) {
+
                     addStream(
                         decoded,
                         `${labelPrefix} - Direct`,
                         baseUrl,
-                        `${labelPrefix}`
+                        labelPrefix
                     );
+
                 }
+
             } catch (e) {
+
                 console.log(
                     "[PHIMLONGTIENG] play2 parse error:",
                     e.message
                 );
+
             }
+
         }
 
         return found;
+
     }
 
     // ============================================================
-    // Tìm trực tiếp các .m3u8 trong HTML/JS
+    // 9. DIRECT M3U8
     // ============================================================
 
-    function extractDirectM3U8(html, baseUrl, label = "Direct") {
+    function extractDirectM3U8(
+        html,
+        baseUrl,
+        label = "Direct"
+    ) {
+
         const found = [];
 
         const patterns = [
+
             /https?:\/\/[^"'<>\\\s]+\.m3u8(?:\?[^"'<>\\\s]*)?/gi,
+
             /https?:\\\/\\\/[^"'<>\\\s]+\.m3u8(?:\?[^"'<>\\\s]*)?/gi
+
         ];
 
-        for (const regex of patterns) {
+        for (
+            const regex
+            of patterns
+        ) {
+
             let m;
 
-            while ((m = regex.exec(html)) !== null) {
-                let url = m[0]
-                    .replace(/\\\//g, "/")
-                    .replace(/\\u0026/g, "&")
-                    .replace(/[)"';,]+$/g, "");
+            while (
+                (m = regex.exec(html)) !== null
+            ) {
 
-                if (!found.includes(url)) {
-                    found.push(url);
+                let url =
+                    m[0]
+                        .replace(
+                            /\\\//g,
+                            "/"
+                        )
+                        .replace(
+                            /\\u0026/g,
+                            "&"
+                        )
+                        .replace(
+                            /[)"';,]+$/g,
+                            ""
+                        );
+
+                if (
+                    !found.includes(url)
+                ) {
+
+                    found.push(
+                        url
+                    );
+
                 }
+
             }
+
         }
 
         console.log(
@@ -7844,25 +8283,33 @@ console.log(
             found
         );
 
-        for (const url of found) {
+        for (
+            const url
+            of found
+        ) {
+
             addStream(
                 url,
                 `${label} - M3U8`,
                 baseUrl,
                 label
             );
+
         }
 
         return found;
+
     }
 
     // ============================================================
-    // Tìm URL trong onclick:
-    //
-    // onclick="vb_load_player(this,'https://...')"
+    // 10. VB PLAYER
     // ============================================================
 
-    function extractVBPlayers(html, baseUrl) {
+    function extractVBPlayers(
+        html,
+        baseUrl
+    ) {
+
         const players = [];
 
         const regex =
@@ -7870,12 +8317,25 @@ console.log(
 
         let m;
 
-        while ((m = regex.exec(html)) !== null) {
-            const raw = decodeHtml(m[2]).trim();
+        while (
+            (m = regex.exec(html)) !== null
+        ) {
 
-            if (!players.includes(raw)) {
-                players.push(raw);
+            const raw =
+                decodeHtml(
+                    m[2]
+                ).trim();
+
+            if (
+                !players.includes(raw)
+            ) {
+
+                players.push(
+                    raw
+                );
+
             }
+
         }
 
         console.log(
@@ -7883,10 +8343,20 @@ console.log(
             players
         );
 
-        for (const raw of players) {
-            const url = absUrl(raw, baseUrl);
+        for (
+            const raw
+            of players
+        ) {
 
-            if (!url) continue;
+            const url =
+                absUrl(
+                    raw,
+                    baseUrl
+                );
+
+            if (!url) {
+                continue;
+            }
 
             console.log(
                 "[PHIMLONGTIENG] VB PLAYER:",
@@ -7894,15 +8364,31 @@ console.log(
             );
 
             try {
-                const parsed = new URL(url);
+
+                const parsed =
+                    new URL(
+                        url
+                    );
 
                 if (
-                    parsed.pathname.toLowerCase().includes("/play2.php")
+                    parsed.pathname
+                        .toLowerCase()
+                        .includes(
+                            "/play2.php"
+                        )
                 ) {
-                    const hash = parsed.searchParams.get("hash");
+
+                    const hash =
+                        parsed.searchParams.get(
+                            "hash"
+                        );
 
                     if (hash) {
-                        const decoded = decodeBase64Url(hash);
+
+                        const decoded =
+                            decodeBase64Url(
+                                hash
+                            );
 
                         console.log(
                             "[PHIMLONGTIENG] VB play2 decoded:",
@@ -7911,37 +8397,56 @@ console.log(
 
                         if (
                             decoded &&
-                            /^https?:\/\//i.test(decoded)
+                            /^https?:\/\//i.test(
+                                decoded
+                            )
                         ) {
+
                             addStream(
                                 decoded,
                                 "VB - Direct M3U8",
                                 baseUrl,
                                 "S1/S2"
                             );
+
                         }
+
                     }
+
                 }
+
             } catch (_) {}
 
-            if (/\.m3u8(?:[?#]|$)/i.test(url)) {
+            if (
+                /\.m3u8(?:[?#]|$)/i.test(
+                    url
+                )
+            ) {
+
                 addStream(
                     url,
                     "VB - M3U8",
                     baseUrl,
                     "VB"
                 );
+
             }
+
         }
 
         return players;
+
     }
 
     // ============================================================
-    // data-url của server
+    // 11. DATA URL
     // ============================================================
 
-    function extractDataUrls(html, baseUrl) {
+    function extractDataUrls(
+        html,
+        baseUrl
+    ) {
+
         const urls = [];
 
         const regex =
@@ -7949,12 +8454,25 @@ console.log(
 
         let m;
 
-        while ((m = regex.exec(html)) !== null) {
-            const raw = decodeHtml(m[2]).trim();
+        while (
+            (m = regex.exec(html)) !== null
+        ) {
 
-            if (!urls.includes(raw)) {
-                urls.push(raw);
+            const raw =
+                decodeHtml(
+                    m[2]
+                ).trim();
+
+            if (
+                !urls.includes(raw)
+            ) {
+
+                urls.push(
+                    raw
+                );
+
             }
+
         }
 
         console.log(
@@ -7962,21 +8480,47 @@ console.log(
             urls
         );
 
-        for (const raw of urls) {
-            const url = absUrl(raw, baseUrl);
+        for (
+            const raw
+            of urls
+        ) {
 
-            if (!url) continue;
+            const url =
+                absUrl(
+                    raw,
+                    baseUrl
+                );
+
+            if (!url) {
+                continue;
+            }
 
             try {
-                const parsed = new URL(url);
+
+                const parsed =
+                    new URL(
+                        url
+                    );
 
                 if (
-                    parsed.pathname.toLowerCase().includes("/play2.php")
+                    parsed.pathname
+                        .toLowerCase()
+                        .includes(
+                            "/play2.php"
+                        )
                 ) {
-                    const hash = parsed.searchParams.get("hash");
+
+                    const hash =
+                        parsed.searchParams.get(
+                            "hash"
+                        );
 
                     if (hash) {
-                        const decoded = decodeBase64Url(hash);
+
+                        const decoded =
+                            decodeBase64Url(
+                                hash
+                            );
 
                         console.log(
                             "[PHIMLONGTIENG] data-url decoded:",
@@ -7985,533 +8529,274 @@ console.log(
 
                         if (
                             decoded &&
-                            /^https?:\/\//i.test(decoded)
+                            /^https?:\/\//i.test(
+                                decoded
+                            )
                         ) {
+
                             addStream(
                                 decoded,
                                 "Server - Direct M3U8",
                                 baseUrl,
                                 "S2"
                             );
+
                         }
+
                     }
+
                 }
+
             } catch (_) {}
+
         }
+
     }
 
     // ============================================================
-// SEARCH
-// ============================================================
+    // 12. SUPPORT CONTEXT HELPERS
+    // ============================================================
 
-let directUrl = "https://phimlongtieng.link";
-
-try {
-
-    const searchUrl =
-        `${directUrl}/search/${slugify(movieName)}/`;
-
-    console.log(
-        "[PHIMLONGTIENG] Search URL:",
-        searchUrl
-    );
-
-    const searchRes =
-        await get(searchUrl);
-
-    console.log(
-        "[PHIMLONGTIENG] Search HTTP:",
-        searchRes.status
-    );
-
-    const finalSearchUrl =
-        searchRes.url || searchUrl;
-
-    try {
-        directUrl =
-            new URL(finalSearchUrl).origin;
-    } catch (_) {}
-
-    console.log(
-        "[PHIMLONGTIENG] directUrl:",
-        directUrl
-    );
-
-    const searchHtml =
-        await searchRes.text();
-
-    // ========================================================
-    // 1. LẤY TẤT CẢ SEARCH CANDIDATES
-    //
-    // Không loại candidate chỉ vì:
-    //
-    //   Journey to the West
-    //        ≠
-    //   Tây Du Ký
-    //
-    // Search chỉ có nhiệm vụ tìm ứng viên.
-    // Detail page mới xác nhận phim.
-    // ========================================================
-
-    const candidates = [];
-
-    const liRegex =
-        /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-
-    let li;
-
-    while (
-        (li = liRegex.exec(searchHtml)) !== null
+    function collectObjectStrings(
+        value,
+        output = []
     ) {
 
-        const block =
-            li[1];
+        if (
+            value === null ||
+            value === undefined
+        ) {
 
-        const aMatch =
-            block.match(
-                /<a\b[^>]*href=["']([^"']+)["'][^>]*title=["']([^"']+)["'][^>]*>/i
-            ) ||
-            block.match(
-                /<a\b[^>]*title=["']([^"']+)["'][^>]*href=["']([^"']+)["'][^>]*>/i
-            );
+            return output;
 
-        if (!aMatch) {
-            continue;
         }
-
-        let href;
-        let title;
 
         if (
-            /href=["'][^"']+["'][^>]*title=/i.test(
-                aMatch[0]
-            )
+            typeof value === "string"
         ) {
 
-            href =
-                aMatch[1];
+            const s =
+                value.trim();
 
-            title =
-                aMatch[2];
+            if (s.length >= 2) {
 
-        } else {
+                output.push(
+                    s
+                );
 
-            title =
-                aMatch[1];
+            }
 
-            href =
-                aMatch[2];
+            return output;
 
         }
-
-        const text =
-            block
-                .replace(
-                    /<[^>]+>/g,
-                    " "
-                )
-                .replace(
-                    /\s+/g,
-                    " "
-                )
-                .trim();
-
-        let status = "";
 
         if (
-            /lồng tiếng|thuyết minh|uslt|ffvn/i.test(
-                text
-            )
+            typeof value === "number" ||
+            typeof value === "boolean"
         ) {
 
-            status =
-                "Lồng Tiếng";
-
-        } else if (
-            /vietsub|phụ đề/i.test(
-                text
-            )
-        ) {
-
-            status =
-                "Vietsub";
-
-        }
-
-        const absoluteHref =
-            absUrl(
-                href,
-                directUrl
+            output.push(
+                String(value)
             );
 
-        if (!absoluteHref) {
-            continue;
+            return output;
+
         }
 
-        // Chỉ giữ trang phim thật.
-        //
-        // Loại:
-        // /the-loai/...
-        // /tim-phim-vietsub
-        // /search/...
-        //
         if (
-            !/\/phim\//i.test(
-                new URL(absoluteHref).pathname
-            )
+            Array.isArray(value)
         ) {
-            continue;
+
+            for (
+                const item
+                of value
+            ) {
+
+                collectObjectStrings(
+                    item,
+                    output
+                );
+
+            }
+
+            return output;
+
         }
 
-        candidates.push({
+        if (
+            typeof value === "object"
+        ) {
 
-            title:
-                String(
-                    title || ""
-                ).trim(),
+            for (
+                const [key, item]
+                of Object.entries(value)
+            ) {
 
-            href:
-                absoluteHref,
+                // URL stream không phải title.
+                // Nhưng các field tên phim vẫn được đọc.
+                if (
+                    /^(url|stream|link|src|proxy|hls)$/i.test(
+                        key
+                    )
+                ) {
 
-            status:
-                status
-
-        });
-
-    }
-
-    // ========================================================
-    // 2. UNIQUE CANDIDATES
-    // ========================================================
-
-    const uniqueCandidates =
-        Array.from(
-            new Map(
-                candidates.map(
-                    item => [
-                        item.href,
-                        item
-                    ]
-                )
-            ).values()
-        );
-
-    console.log(
-        "[PHIMLONGTIENG] Movie candidates:",
-        uniqueCandidates.length
-    );
-
-    if (
-        !uniqueCandidates.length
-    ) {
-
-        console.log(
-            "[PHIMLONGTIENG] No movie candidates"
-        );
-
-        return [];
-
-    }
-
-    // ========================================================
-    // 3. NORMALIZE
-    // ========================================================
-
-    const normalizePLT =
-        value => {
-
-            return String(
-                value || ""
-            )
-                .toLowerCase()
-                .normalize("NFD")
-                .replace(
-                    /[\u0300-\u036f]/g,
-                    ""
-                )
-                .replace(
-                    /đ/g,
-                    "d"
-                )
-                .replace(
-                    /[^a-z0-9]+/g,
-                    " "
-                )
-                .replace(
-                    /\s+/g,
-                    " "
-                )
-                .trim();
-
-        };
-
-    const target =
-        normalizePLT(
-            movieName
-        );
-
-    const targetWords =
-        target
-            .split(" ")
-            .filter(
-                word =>
-                    word.length >= 2
-            );
-
-    // ========================================================
-    // 4. RANK SEARCH RESULT
-    //
-    // Giống tư duy VSMov / PhimHDCS:
-    //
-    // - exact
-    // - contains
-    // - reverse
-    // - word overlap
-    //
-    // NHƯNG:
-    //
-    // Không dùng ranking để loại các tên Việt hóa.
-    //
-    // Ví dụ:
-    //
-    // Journey to the West
-    //        ↓
-    // Tây Du Ký
-    //
-    // vẫn được đưa vào detail validation.
-    // ========================================================
-
-    const ranked =
-        uniqueCandidates
-            .map(
-                item => {
-
-                    const titleNorm =
-                        normalizePLT(
-                            item.title
-                        );
-
-                    const hrefNorm =
-                        normalizePLT(
-                            item.href
-                        );
-
-                    let score =
-                        0;
-
-                    if (
-                        titleNorm ===
-                        target
-                    ) {
-
-                        score +=
-                            5000;
-
-                    }
-
-                    if (
-                        titleNorm.includes(
-                            target
-                        ) &&
-                        target.length >= 4
-                    ) {
-
-                        score +=
-                            2500;
-
-                    }
-
-                    if (
-                        target.includes(
-                            titleNorm
-                        ) &&
-                        titleNorm.length >= 4
-                    ) {
-
-                        score +=
-                            1800;
-
-                    }
-
-                    // Word overlap
-                    let overlap =
-                        0;
-
-                    for (
-                        const word
-                        of targetWords
-                    ) {
-
-                        if (
-                            titleNorm.includes(
-                                word
-                            )
-                        ) {
-
-                            overlap++;
-
-                        }
-
-                    }
-
-                    score +=
-                        overlap * 100;
-
-                    // URL cũng được dùng để hỗ trợ nhận diện.
-                    for (
-                        const word
-                        of targetWords
-                    ) {
-
-                        if (
-                            word.length >= 3 &&
-                            hrefNorm.includes(
-                                word
-                            )
-                        ) {
-
-                            score +=
-                                50;
-
-                        }
-
-                    }
-
-                    // Ưu tiên title có dấu hiệu phiên bản
-                    // rõ ràng nhưng không dùng nó để loại phim.
-                    if (
-                        /lồng tiếng|thuyết minh|uslt|vietsub|phụ đề|ffvn/i.test(
-                            item.title +
-                            " " +
-                            item.status
-                        )
-                    ) {
-
-                        score +=
-                            10;
-
-                    }
-
-                    // Hạn chế phần/season khác.
-                    if (
-                        /(?:phần|phan)\s*(?:hai|2|ba|3|bon|4|năm|5)\b/i.test(
-                            item.title
-                        )
-                    ) {
-
-                        score -=
-                            2500;
-
-                    }
-
-                    if (
-                        /\b(?:part|season|mùa)\s*(?:2|3|4|5)\b/i.test(
-                            item.title
-                        )
-                    ) {
-
-                        score -=
-                            2500;
-
-                    }
-
-                    return {
-
-                        ...item,
-
-                        score,
-
-                        titleNorm,
-
-                        hrefNorm
-
-                    };
+                    continue;
 
                 }
+
+                if (
+                    typeof item === "string" &&
+                    item.length > 500
+                ) {
+
+                    continue;
+
+                }
+
+                collectObjectStrings(
+                    item,
+                    output
+                );
+
+            }
+
+        }
+
+        return output;
+
+    }
+
+    function getContextTitles(
+        sourceArray
+    ) {
+
+        const titles = [];
+
+        if (
+            !Array.isArray(
+                sourceArray
             )
-            .sort(
-                (
-                    a,
-                    b
-                ) =>
-                    b.score -
-                    a.score
-            );
+        ) {
 
-    console.log(
-        "[PHIMLONGTIENG] Ranked movie candidates:",
-        ranked
-            .slice(
-                0,
-                20
+            return titles;
+
+        }
+
+        for (
+            const item
+            of sourceArray
+        ) {
+
+            if (
+                !item ||
+                typeof item !== "object"
+            ) {
+
+                continue;
+
+            }
+
+            const possibleKeys = [
+
+                "title",
+                "name",
+                "movieName",
+                "movie_name",
+                "originalName",
+                "original_name",
+                "showName",
+                "show_name",
+                "seriesName",
+                "series_name",
+                "metaName",
+                "meta_name"
+
+            ];
+
+            for (
+                const key
+                of possibleKeys
+            ) {
+
+                if (
+                    typeof item[key] ===
+                    "string"
+                ) {
+
+                    const value =
+                        item[key].trim();
+
+                    if (
+                        value.length >= 2
+                    ) {
+
+                        titles.push(
+                            value
+                        );
+
+                    }
+
+                }
+
+            }
+
+        }
+
+        return Array.from(
+            new Set(
+                titles
             )
-            .map(
-                item => ({
-                    title:
-                        item.title,
+        );
 
-                    status:
-                        item.status,
+    }
 
-                    score:
-                        item.score,
+    const contextTitleSets = {
 
-                    href:
-                        item.href
-                })
+        kkphim:
+            getContextTitles(
+                supportSources.kkphim
+            ),
+
+        nguonc:
+            getContextTitles(
+                supportSources.nguonc
+            ),
+
+        vsmov:
+            getContextTitles(
+                supportSources.vsmov
+            ),
+
+        phimhdcs:
+            getContextTitles(
+                supportSources.phimhdcs
             )
-    );
 
-    // ========================================================
-    // 5. GIỚI HẠN CANDIDATE
-    //
-    // Search của site thường đưa category/navigation vào.
-    // Ta đã loại /the-loai/ ở trên.
-    //
-    // Không test vô hạn.
-    //
-    // 20 candidate đầu đủ để xử lý:
-    //
-    // Tây Du Ký:
-    //   Tây Du Ký
-    //   Tây Du Kí 96 USLT
-    //   Tây Du Ký Thuyết Minh
-    //
-    // Đầu Xuân:
-    //   2 version
-    //
-    // ========================================================
+    };
 
-    const candidatesToTest =
-        ranked.slice(
-            0,
-            20
+    const contextTitles = [
+
+        ...contextTitleSets.kkphim,
+
+        ...contextTitleSets.nguonc,
+
+        ...contextTitleSets.vsmov,
+
+        ...contextTitleSets.phimhdcs
+
+    ];
+
+    const uniqueContextTitles =
+        Array.from(
+            new Set(
+                contextTitles
+            )
         );
 
     console.log(
-        "[PHIMLONGTIENG] Candidates to validate:",
-        candidatesToTest.length
+        "[PHIMLONGTIENG] Resolved context titles:",
+        uniqueContextTitles
     );
-
-    // ========================================================
-    // 6. HỖ TRỢ ĐỌC NĂM TỪ DETAIL PAGE
-    //
-    // Search result của PhimLongTieng thường không có year.
-    //
-    // Vì vậy:
-    //
-    // SEARCH
-    //   ↓
-    // DETAIL
-    //   ↓
-    // YEAR
-    //
-    // Ngoài năm 4 chữ số, hỗ trợ cả:
-    //
-    //   Tây Du Kí 96 USLT
-    //
-    // → 1996
-    // ========================================================
 
     function extractYearFromText(
         value
@@ -8522,7 +8807,6 @@ try {
                 value || ""
             );
 
-        // Năm 4 chữ số
         const fullYear =
             text.match(
                 /\b(19\d{2}|20\d{2})\b/
@@ -8538,11 +8822,6 @@ try {
 
         }
 
-        // Hỗ trợ năm 2 chữ số:
-        //
-        // 96 → 1996
-        // 11 → 2011
-        //
         const shortYear =
             text.match(
                 /(?:^|[\s\-_.(])(\d{2})(?:[\s\-_.),]|$)/
@@ -8608,7 +8887,6 @@ try {
                     " "
                 );
 
-        // Ưu tiên các khu vực có chữ "Năm".
         const yearPatterns = [
 
             /năm\s*(?:sản xuất|phát hành)[^0-9]{0,80}(19\d{2}|20\d{2})/i,
@@ -8643,7 +8921,6 @@ try {
 
         }
 
-        // Sau đó thử title.
         const titleYear =
             extractYearFromText(
                 title
@@ -8657,669 +8934,1559 @@ try {
 
         }
 
-        // Cuối cùng thử URL.
         return extractYearFromText(
             url
         );
 
     }
 
-    // ========================================================
-    // 7. TEST TỪNG MOVIE DETAIL
-    //
-    // Đây là bước quan trọng nhất.
-    //
-    // Không còn:
-    //
-    //   Relevant candidates = []
-    //        ↓
-    //      return []
-    //
-    // Mà:
-    //
-    //   candidate
-    //      ↓
-    //   movie detail
-    //      ↓
-    //   year
-    //      ↓
-    //   episodes
-    //      ↓
-    //   encrypted JSON
-    // ========================================================
-
-    const candidateResults =
-        [];
-
-    for (
-        const selected
-        of candidatesToTest
+    function scoreTitleSimilarity(
+        candidateTitle,
+        referenceTitle
     ) {
 
-        console.log(
-            "[PHIMLONGTIENG] TEST CANDIDATE:",
-            {
-                title:
-                    selected.title,
+        const a =
+            normalizeText(
+                candidateTitle
+            );
 
-                status:
-                    selected.status,
-
-                score:
-                    selected.score,
-
-                href:
-                    selected.href
-            }
-        );
+        const b =
+            normalizeText(
+                referenceTitle
+            );
 
         if (
-            !selected.href
+            !a ||
+            !b
         ) {
-            continue;
+
+            return 0;
+
         }
+
+        if (
+            a === b
+        ) {
+
+            return 1;
+
+        }
+
+        if (
+            a.includes(b) ||
+            b.includes(a)
+        ) {
+
+            return 0.75;
+
+        }
+
+        const aWords =
+            new Set(
+                a
+                    .split(" ")
+                    .filter(
+                        x =>
+                            x.length >= 2
+                    )
+            );
+
+        const bWords =
+            new Set(
+                b
+                    .split(" ")
+                    .filter(
+                        x =>
+                            x.length >= 2
+                    )
+            );
+
+        if (
+            !aWords.size ||
+            !bWords.size
+        ) {
+
+            return 0;
+
+        }
+
+        let overlap = 0;
+
+        for (
+            const word
+            of aWords
+        ) {
+
+            if (
+                bWords.has(
+                    word
+                )
+            ) {
+
+                overlap++;
+
+            }
+
+        }
+
+        return (
+            overlap /
+            Math.max(
+                aWords.size,
+                bWords.size
+            )
+        );
+
+    }
+
+    // ============================================================
+    // 13. SEARCH
+    // ============================================================
+
+    let directUrl =
+        "https://phimlongtieng.link";
+
+    try {
+
+        const searchUrl =
+            `${directUrl}/search/${slugify(movieName)}/`;
+
+        console.log(
+            "[PHIMLONGTIENG] Search URL:",
+            searchUrl
+        );
+
+        const searchRes =
+            await get(
+                searchUrl
+            );
+
+        console.log(
+            "[PHIMLONGTIENG] Search HTTP:",
+            searchRes.status
+        );
+
+        const finalSearchUrl =
+            searchRes.url ||
+            searchUrl;
 
         try {
 
-            // ====================================================
-            // MOVIE DETAIL
-            // ====================================================
+            directUrl =
+                new URL(
+                    finalSearchUrl
+                ).origin;
 
-            const movieRes =
-                await get(
-                    selected.href,
-                    {
-                        Referer:
-                            `${directUrl}/`
-                    }
+        } catch (_) {}
+
+        console.log(
+            "[PHIMLONGTIENG] directUrl:",
+            directUrl
+        );
+
+        const searchHtml =
+            await searchRes.text();
+
+        // ========================================================
+        // 13.1. SEARCH CANDIDATES
+        // ========================================================
+
+        const candidates = [];
+
+        const liRegex =
+            /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
+
+        let li;
+
+        while (
+            (li = liRegex.exec(searchHtml)) !== null
+        ) {
+
+            const block =
+                li[1];
+
+            const aMatch =
+                block.match(
+                    /<a\b[^>]*href=["']([^"']+)["'][^>]*title=["']([^"']+)["'][^>]*>/i
+                ) ||
+                block.match(
+                    /<a\b[^>]*title=["']([^"']+)["'][^>]*href=["']([^"']+)["'][^>]*>/i
                 );
 
-            console.log(
-                "[PHIMLONGTIENG] MOVIE status:",
-                movieRes.status
-            );
+            if (!aMatch) {
+                continue;
+            }
+
+            let href;
+            let title;
 
             if (
-                movieRes.status &&
-                Number(
-                    movieRes.status
-                ) >= 400
+                /href=["'][^"']+["'][^>]*title=/i.test(
+                    aMatch[0]
+                )
             ) {
 
-                console.log(
-                    "[PHIMLONGTIENG] Reject candidate: MOVIE HTTP",
-                    movieRes.status
+                href =
+                    aMatch[1];
+
+                title =
+                    aMatch[2];
+
+            } else {
+
+                title =
+                    aMatch[1];
+
+                href =
+                    aMatch[2];
+
+            }
+
+            const text =
+                block
+                    .replace(
+                        /<[^>]+>/g,
+                        " "
+                    )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+            let status = "";
+
+            if (
+                /lồng tiếng|thuyết minh|uslt|ffvn/i.test(
+                    text
+                )
+            ) {
+
+                status =
+                    "Lồng Tiếng";
+
+            } else if (
+                /vietsub|phụ đề/i.test(
+                    text
+                )
+            ) {
+
+                status =
+                    "Vietsub";
+
+            }
+
+            const absoluteHref =
+                absUrl(
+                    href,
+                    directUrl
                 );
+
+            if (!absoluteHref) {
+                continue;
+            }
+
+            try {
+
+                if (
+                    !/\/phim\//i.test(
+                        new URL(
+                            absoluteHref
+                        ).pathname
+                    )
+                ) {
+
+                    continue;
+
+                }
+
+            } catch (_) {
 
                 continue;
 
             }
 
-            const movieHtml =
-                await movieRes.text();
+            candidates.push({
 
-            // ====================================================
-            // DETAIL TITLE
-            // ====================================================
+                title:
+                    String(
+                        title || ""
+                    ).trim(),
 
-            const detailTitleMatch =
-                movieHtml.match(
-                    /<title[^>]*>([\s\S]*?)<\/title>/i
-                );
+                href:
+                    absoluteHref,
 
-            const detailTitle =
-                detailTitleMatch
-                    ? detailTitleMatch[1]
-                        .replace(
-                            /<[^>]+>/g,
-                            " "
-                        )
-                        .replace(
-                            /\s+/g,
-                            " "
-                        )
-                        .trim()
-                    : selected.title;
+                status:
+                    status
 
-            const detailYear =
-                extractDetailYear(
-                    movieHtml,
-                    selected.href,
-                    selected.title
-                );
+            });
+
+        }
+
+        // ========================================================
+        // 13.2. UNIQUE
+        // ========================================================
+
+        const uniqueCandidates =
+            Array.from(
+                new Map(
+                    candidates.map(
+                        item => [
+                            item.href,
+                            item
+                        ]
+                    )
+                ).values()
+            );
+
+        console.log(
+            "[PHIMLONGTIENG] Movie candidates:",
+            uniqueCandidates.length
+        );
+
+        if (
+            !uniqueCandidates.length
+        ) {
 
             console.log(
-                "[PHIMLONGTIENG] DETAIL:",
+                "[PHIMLONGTIENG] No movie candidates"
+            );
+
+            return [];
+
+        }
+
+        // ========================================================
+        // 13.3. TARGET WORDS
+        // ========================================================
+
+        const target =
+            normalizeText(
+                movieName
+            );
+
+        const targetWords =
+            target
+                .split(" ")
+                .filter(
+                    word =>
+                        word.length >= 2
+                );
+
+        // ========================================================
+        // 13.4. INITIAL RANK
+        //
+        // Đây chỉ là ranking để quyết định candidate nào
+        // được kiểm tra trước.
+        //
+        // KHÔNG phải kết quả cuối.
+        // ========================================================
+
+        const ranked =
+            uniqueCandidates
+                .map(
+                    item => {
+
+                        const titleNorm =
+                            normalizeText(
+                                item.title
+                            );
+
+                        const hrefNorm =
+                            normalizeText(
+                                item.href
+                            );
+
+                        let score = 0;
+
+                        if (
+                            titleNorm ===
+                            target
+                        ) {
+
+                            score +=
+                                5000;
+
+                        }
+
+                        if (
+                            target.length >= 4 &&
+                            titleNorm.includes(
+                                target
+                            )
+                        ) {
+
+                            score +=
+                                2500;
+
+                        }
+
+                        if (
+                            titleNorm.length >= 4 &&
+                            target.includes(
+                                titleNorm
+                            )
+                        ) {
+
+                            score +=
+                                1800;
+
+                        }
+
+                        let overlap =
+                            0;
+
+                        for (
+                            const word
+                            of targetWords
+                        ) {
+
+                            if (
+                                titleNorm.includes(
+                                    word
+                                )
+                            ) {
+
+                                overlap++;
+
+                            }
+
+                        }
+
+                        score +=
+                            overlap * 100;
+
+                        for (
+                            const word
+                            of targetWords
+                        ) {
+
+                            if (
+                                word.length >= 3 &&
+                                hrefNorm.includes(
+                                    word
+                                )
+                            ) {
+
+                                score +=
+                                    50;
+
+                            }
+
+                        }
+
+                        if (
+                            /lồng tiếng|thuyết minh|uslt|ffvn/i.test(
+                                item.title +
+                                " " +
+                                item.status
+                            )
+                        ) {
+
+                            score +=
+                                100;
+
+                        }
+
+                        if (
+                            /(?:phần|phan)\s*(?:hai|2|ba|3|bon|4|năm|5)\b/i.test(
+                                item.title
+                            )
+                        ) {
+
+                            score -=
+                                2500;
+
+                        }
+
+                        if (
+                            /\b(?:part|season|mùa)\s*(?:2|3|4|5)\b/i.test(
+                                item.title
+                            )
+                        ) {
+
+                            score -=
+                                2500;
+
+                        }
+
+                        return {
+
+                            ...item,
+
+                            score,
+
+                            titleNorm,
+
+                            hrefNorm
+
+                        };
+
+                    }
+                )
+                .sort(
+                    (
+                        a,
+                        b
+                    ) =>
+                        b.score -
+                        a.score
+                );
+
+        console.log(
+            "[PHIMLONGTIENG] Ranked movie candidates:",
+            ranked
+                .slice(
+                    0,
+                    20
+                )
+                .map(
+                    item => ({
+                        title:
+                            item.title,
+
+                        status:
+                            item.status,
+
+                        score:
+                            item.score,
+
+                        href:
+                            item.href
+                    })
+                )
+        );
+
+        const candidatesToTest =
+            ranked.slice(
+                0,
+                20
+            );
+
+        // ========================================================
+        // 14. VALIDATE CANDIDATES
+        // ========================================================
+
+        const candidateResults =
+            [];
+
+        for (
+            const selected
+            of candidatesToTest
+        ) {
+
+            console.log(
+                "[PHIMLONGTIENG] TEST CANDIDATE:",
                 {
-                    searchTitle:
+                    title:
                         selected.title,
 
-                    detailTitle:
-                        detailTitle,
+                    status:
+                        selected.status,
 
-                    detailYear:
-                        detailYear
+                    score:
+                        selected.score,
+
+                    href:
+                        selected.href
                 }
             );
 
-            // ====================================================
-            // YEAR VALIDATION
-            //
-            // Chỉ loại khi detail page xác nhận rõ năm khác.
-            //
-            // Nếu detail không có năm:
-            //   KHÔNG loại.
-            //
-            // Đây là điểm quan trọng để không mất Tây Du Ký.
-            // ====================================================
-
             if (
-                targetYear &&
-                detailYear
+                !selected.href
             ) {
+                continue;
+            }
+
+            try {
+
+                // ==================================================
+                // 14.1. DETAIL
+                // ==================================================
+
+                const movieRes =
+                    await get(
+                        selected.href,
+                        {
+                            Referer:
+                                `${directUrl}/`
+                        }
+                    );
+
+                console.log(
+                    "[PHIMLONGTIENG] MOVIE status:",
+                    movieRes.status
+                );
 
                 if (
-                    detailYear !==
+                    movieRes.status &&
                     Number(
-                        targetYear
-                    )
+                        movieRes.status
+                    ) >= 400
                 ) {
 
                     console.log(
-                        "[PHIMLONGTIENG] Reject candidate: DETAIL YEAR MISMATCH",
-                        {
-                            targetYear:
-                                Number(
-                                    targetYear
-                                ),
-
-                            detailYear:
-                                detailYear
-                        }
+                        "[PHIMLONGTIENG] Reject candidate: MOVIE HTTP",
+                        movieRes.status
                     );
 
                     continue;
 
                 }
 
-                console.log(
-                    "[PHIMLONGTIENG] DETAIL YEAR MATCH:",
-                    detailYear
-                );
+                const movieHtml =
+                    await movieRes.text();
 
-            }
+                // ==================================================
+                // 14.2. DETAIL TITLE
+                // ==================================================
 
-            // ====================================================
-            // EPISODES
-            // ====================================================
-
-            const episodes =
-                [];
-
-            const epLiRegex =
-                /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-
-            let ep;
-
-            while (
-                (
-                    ep =
-                    epLiRegex.exec(
-                        movieHtml
-                    )
-                ) !== null
-            ) {
-
-                const block =
-                    ep[1];
-
-                const hrefMatch =
-                    block.match(
-                        /<a\b[^>]*href=["']([^"']+)["'][^>]*>/i
+                const detailTitleMatch =
+                    movieHtml.match(
+                        /<title[^>]*>([\s\S]*?)<\/title>/i
                     );
 
-                if (
-                    !hrefMatch
-                ) {
-                    continue;
-                }
+                const detailTitle =
+                    detailTitleMatch
+                        ? detailTitleMatch[1]
+                            .replace(
+                                /<[^>]+>/g,
+                                " "
+                            )
+                            .replace(
+                                /\s+/g,
+                                " "
+                            )
+                            .trim()
+                        : selected.title;
 
-                const href =
-                    absUrl(
-                        hrefMatch[1],
-                        selected.href
+                const detailYear =
+                    extractDetailYear(
+                        movieHtml,
+                        selected.href,
+                        selected.title
+                    );
+
+                // ==================================================
+                // 14.3. TITLE SCORE
+                // ==================================================
+
+                let finalScore =
+                    selected.score;
+
+                const originalSimilarity =
+                    scoreTitleSimilarity(
+                        detailTitle,
+                        supportOriginalName
                     );
 
                 if (
-                    !href
+                    originalSimilarity >= 1
                 ) {
-                    continue;
+
+                    finalScore +=
+                        5000;
+
+                } else if (
+                    originalSimilarity >= 0.75
+                ) {
+
+                    finalScore +=
+                        3000;
+
+                } else if (
+                    originalSimilarity >= 0.5
+                ) {
+
+                    finalScore +=
+                        1200;
+
+                } else {
+
+                    finalScore -=
+                        1500;
+
                 }
 
-                const rawText =
-                    block
-                        .replace(
-                            /<[^>]+>/g,
-                            " "
-                        )
-                        .replace(
-                            /\s+/g,
-                            " "
-                        )
-                        .trim();
+                // ==================================================
+                // 14.4. SO SÁNH VỚI CÁC NGUỒN ĐÃ RESOLVE
+                //
+                // Đây là phần context quan trọng.
+                //
+                // Không bắt buộc phải khớp.
+                // Nhưng nếu nhiều nguồn cùng xác nhận một tên
+                // tương đương thì candidate đó được tăng điểm mạnh.
+                // ==================================================
 
-                let number =
+                let contextBestSimilarity =
+                    0;
+
+                let contextMatchedSource =
                     null;
 
-                const numMatch =
-                    rawText.match(
-                        /(?:tập|tap|episode|ep)\s*0*(\d+)\b/i
-                    ) ||
-                    rawText.match(
-                        /^\s*0*(\d+)\s*$/
-                    );
-
-                if (
-                    numMatch
+                for (
+                    const sourceName
+                    of uniqueContextTitles
                 ) {
 
-                    number =
-                        Number(
-                            numMatch[1]
+                    const similarity =
+                        Math.max(
+
+                            scoreTitleSimilarity(
+                                selected.title,
+                                sourceName
+                            ),
+
+                            scoreTitleSimilarity(
+                                detailTitle,
+                                sourceName
+                            )
+
                         );
+
+                    if (
+                        similarity >
+                        contextBestSimilarity
+                    ) {
+
+                        contextBestSimilarity =
+                            similarity;
+
+                        contextMatchedSource =
+                            sourceName;
+
+                    }
 
                 }
 
-                episodes.push({
+                if (
+                    contextBestSimilarity >= 1
+                ) {
 
-                    name:
-                        rawText ||
-                        "Lồng Tiếng",
+                    finalScore +=
+                        6000;
 
-                    number,
+                } else if (
+                    contextBestSimilarity >= 0.75
+                ) {
 
-                    href
+                    finalScore +=
+                        4000;
 
-                });
+                } else if (
+                    contextBestSimilarity >= 0.5
+                ) {
 
-            }
+                    finalScore +=
+                        1800;
 
-            console.log(
-                "[PHIMLONGTIENG] Candidate episodes:",
-                episodes.length
-            );
+                }
 
-            if (
-                !episodes.length
-            ) {
+                // ==================================================
+                // 14.5. YEAR
+                // ==================================================
+
+                let yearScore =
+                    0;
+
+                if (
+                    supportTargetYear &&
+                    detailYear
+                ) {
+
+                    if (
+                        Number(
+                            detailYear
+                        ) ===
+                        Number(
+                            supportTargetYear
+                        )
+                    ) {
+
+                        yearScore =
+                            4500;
+
+                        finalScore +=
+                            yearScore;
+
+                    } else {
+
+                        yearScore =
+                            -6000;
+
+                        finalScore +=
+                            yearScore;
+
+                        console.log(
+                            "[PHIMLONGTIENG] Reject candidate: DETAIL YEAR MISMATCH",
+                            {
+                                targetYear:
+                                    Number(
+                                        supportTargetYear
+                                    ),
+
+                                detailYear:
+                                    detailYear
+                            }
+                        );
+
+                        continue;
+
+                    }
+
+                }
 
                 console.log(
-                    "[PHIMLONGTIENG] Reject candidate: NO EPISODES"
-                );
+                    "[PHIMLONGTIENG] DETAIL MATCH SCORE:",
+                    {
+                        searchTitle:
+                            selected.title,
 
-                continue;
+                        detailTitle:
+                            detailTitle,
 
-            }
+                        detailYear:
+                            detailYear,
 
-            // ====================================================
-            // CHỈ GIỮ EPISODE THẬT
-            // ====================================================
+                        originalSimilarity:
+                            originalSimilarity,
 
-            const realEpisodes =
-                episodes.filter(
-                    e => {
+                        contextSimilarity:
+                            contextBestSimilarity,
 
-                        if (
-                            !e ||
-                            !e.href
-                        ) {
-                            return false;
-                        }
+                        contextMatchedSource:
+                            contextMatchedSource,
 
-                        try {
+                        yearScore:
+                            yearScore,
 
-                            const u =
-                                new URL(
-                                    e.href
-                                );
-
-                            return /^\/phim\/[^/]+\/tap-[^/?#]+/i.test(
-                                u.pathname
-                            );
-
-                        } catch (_) {
-
-                            return false;
-
-                        }
-
+                        finalScore:
+                            finalScore
                     }
                 );
 
-            console.log(
-                "[PHIMLONGTIENG] REAL episodes:",
-                realEpisodes.map(
-                    e => ({
+                // ==================================================
+                // 14.6. EPISODES
+                // ==================================================
+
+                const episodes =
+                    [];
+
+                const epLiRegex =
+                    /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
+
+                let ep;
+
+                while (
+                    (
+                        ep =
+                            epLiRegex.exec(
+                                movieHtml
+                            )
+                    ) !== null
+                ) {
+
+                    const block =
+                        ep[1];
+
+                    const hrefMatch =
+                        block.match(
+                            /<a\b[^>]*href=["']([^"']+)["'][^>]*>/i
+                        );
+
+                    if (
+                        !hrefMatch
+                    ) {
+                        continue;
+                    }
+
+                    const href =
+                        absUrl(
+                            hrefMatch[1],
+                            selected.href
+                        );
+
+                    if (
+                        !href
+                    ) {
+                        continue;
+                    }
+
+                    const rawText =
+                        block
+                            .replace(
+                                /<[^>]+>/g,
+                                " "
+                            )
+                            .replace(
+                                /\s+/g,
+                                " "
+                            )
+                            .trim();
+
+                    let number =
+                        null;
+
+                    const numMatch =
+                        rawText.match(
+                            /(?:tập|tap|episode|ep)\s*0*(\d+)\b/i
+                        ) ||
+                        rawText.match(
+                            /^\s*0*(\d+)\s*$/
+                        );
+
+                    if (
+                        numMatch
+                    ) {
+
+                        number =
+                            Number(
+                                numMatch[1]
+                            );
+
+                    }
+
+                    episodes.push({
+
                         name:
-                            e.name,
+                            rawText ||
+                            "Lồng Tiếng",
 
-                        number:
-                            e.number,
+                        number,
 
-                        href:
-                            e.href
-                    })
-                )
-            );
+                        href
 
-            if (
-                !realEpisodes.length
-            ) {
+                    });
+
+                }
 
                 console.log(
-                    "[PHIMLONGTIENG] Reject candidate: NO REAL EPISODES"
+                    "[PHIMLONGTIENG] Candidate episodes:",
+                    episodes.length
                 );
 
-                continue;
+                if (
+                    !episodes.length
+                ) {
 
-            }
+                    console.log(
+                        "[PHIMLONGTIENG] Reject candidate: NO EPISODES"
+                    );
 
-            // ====================================================
-            // CHỌN EPISODE
-            // ====================================================
+                    continue;
 
-            let selectedEpisode =
-                null;
+                }
 
-            if (
-                episodeNumber !== null &&
-                episodeNumber !== undefined &&
-                Number(
-                    episodeNumber
-                ) > 0
-            ) {
+                // ==================================================
+                // 14.7. REAL EPISODES
+                // ==================================================
 
-                const wantedNumber =
+                const realEpisodes =
+                    episodes.filter(
+                        e => {
+
+                            if (
+                                !e ||
+                                !e.href
+                            ) {
+
+                                return false;
+
+                            }
+
+                            try {
+
+                                const u =
+                                    new URL(
+                                        e.href
+                                    );
+
+                                return /^\/phim\/[^/]+\/tap-[^/?#]+/i.test(
+                                    u.pathname
+                                );
+
+                            } catch (_) {
+
+                                return false;
+
+                            }
+
+                        }
+                    );
+
+                console.log(
+                    "[PHIMLONGTIENG] REAL episodes:",
+                    realEpisodes.map(
+                        e => ({
+                            name:
+                                e.name,
+
+                            number:
+                                e.number,
+
+                            href:
+                                e.href
+                        })
+                    )
+                );
+
+                if (
+                    !realEpisodes.length
+                ) {
+
+                    console.log(
+                        "[PHIMLONGTIENG] Reject candidate: NO REAL EPISODES"
+                    );
+
+                    continue;
+
+                }
+
+                // ==================================================
+                // 14.8. SELECT EPISODE
+                // ==================================================
+
+                let selectedEpisode =
+                    null;
+
+                const wantedEpisode =
+                    supportEpisodeNumber &&
                     Number(
-                        episodeNumber
-                    );
+                        supportEpisodeNumber
+                    ) > 0
+                        ? Number(
+                            supportEpisodeNumber
+                        )
+                        : null;
 
-                selectedEpisode =
-                    realEpisodes.find(
-                        e =>
-                            e.number ===
-                            wantedNumber
-                    );
+                if (
+                    wantedEpisode !== null
+                ) {
+
+                    selectedEpisode =
+                        realEpisodes.find(
+                            e =>
+                                e.number ===
+                                wantedEpisode
+                        );
+
+                    if (
+                        !selectedEpisode
+                    ) {
+
+                        selectedEpisode =
+                            realEpisodes.find(
+                                e => {
+
+                                    const text =
+                                        String(
+                                            e.name ||
+                                            ""
+                                        );
+
+                                    return new RegExp(
+                                        `(?:tập|tap|episode|ep)\\s*0*${wantedEpisode}\\b`,
+                                        "i"
+                                    ).test(
+                                        text
+                                    );
+
+                                }
+                            );
+
+                    }
+
+                    // Với series, không tìm được đúng tập
+                    // thì candidate này KHÔNG phải candidate hợp lệ.
+                    if (
+                        !selectedEpisode
+                    ) {
+
+                        console.log(
+                            "[PHIMLONGTIENG] Reject candidate: REQUESTED EPISODE NOT FOUND",
+                            wantedEpisode
+                        );
+
+                        continue;
+
+                    }
+
+                    finalScore +=
+                        3500;
+
+                } else {
+
+                    selectedEpisode =
+                        realEpisodes.find(
+                            e =>
+                                /\/tap-full(?:[/?#]|$)/i.test(
+                                    e.href
+                                )
+                        ) ||
+
+                        realEpisodes.find(
+                            e =>
+                                /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
+                                    String(
+                                        e.name ||
+                                        ""
+                                    )
+                                )
+                        ) ||
+
+                        realEpisodes.find(
+                            e =>
+                                /xem\s*online/i.test(
+                                    String(
+                                        e.name ||
+                                        ""
+                                    )
+                                )
+                        ) ||
+
+                        realEpisodes[0];
+
+                }
 
                 if (
                     !selectedEpisode
                 ) {
 
-                    selectedEpisode =
-                        realEpisodes.find(
-                            e => {
+                    console.log(
+                        "[PHIMLONGTIENG] Reject candidate: EPISODE NOT FOUND"
+                    );
 
-                                const text =
-                                    String(
-                                        e.name ||
-                                        ""
-                                    );
-
-                                return new RegExp(
-                                    `(?:tập|tap|episode|ep)\\s*0*${wantedNumber}\\b`,
-                                    "i"
-                                ).test(
-                                    text
-                                );
-
-                            }
-                        );
+                    continue;
 
                 }
-
-            }
-
-            // ====================================================
-            // MOVIE / FULL
-            // ====================================================
-
-            if (
-                !selectedEpisode
-            ) {
-
-                selectedEpisode =
-                    realEpisodes.find(
-                        e =>
-                            /\/tap-full(?:[/?#]|$)/i.test(
-                                e.href
-                            )
-                    ) ||
-                    realEpisodes.find(
-                        e =>
-                            /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
-                                String(
-                                    e.name ||
-                                    ""
-                                )
-                            )
-                    ) ||
-                    realEpisodes.find(
-                        e =>
-                            /xem\s*online/i.test(
-                                String(
-                                    e.name ||
-                                    ""
-                                )
-                            )
-                    ) ||
-                    realEpisodes[0];
-
-            }
-
-            if (
-                !selectedEpisode
-            ) {
 
                 console.log(
-                    "[PHIMLONGTIENG] Reject candidate: EPISODE NOT FOUND"
-                );
-
-                continue;
-
-            }
-
-            console.log(
-                "[PHIMLONGTIENG] Candidate selected episode:",
-                {
-                    title:
-                        selected.title,
-
-                    status:
-                        selected.status,
-
-                    detailYear:
-                        detailYear,
-
-                    episode:
-                        selectedEpisode.name,
-
-                    url:
-                        selectedEpisode.href
-                }
-            );
-
-            // ====================================================
-            // EPISODE PAGE
-            // ====================================================
-
-            const episodeRes =
-                await get(
-                    selectedEpisode.href,
+                    "[PHIMLONGTIENG] Candidate selected episode:",
                     {
-                        Referer:
-                            `${directUrl}/`
+                        title:
+                            selected.title,
+
+                        status:
+                            selected.status,
+
+                        detailYear:
+                            detailYear,
+
+                        episode:
+                            selectedEpisode.name,
+
+                        url:
+                            selectedEpisode.href
                     }
                 );
 
-            console.log(
-                "[PHIMLONGTIENG] EPISODE status:",
-                episodeRes.status
-            );
+                // ==================================================
+                // 14.9. EPISODE PAGE
+                // ==================================================
 
-            if (
-                episodeRes.status &&
-                Number(
-                    episodeRes.status
-                ) >= 400
-            ) {
-
-                console.log(
-                    "[PHIMLONGTIENG] Reject candidate: EPISODE HTTP",
-                    episodeRes.status
-                );
-
-                continue;
-
-            }
-
-            const episodeHtml =
-                await episodeRes.text();
-
-            // ====================================================
-            // ENCRYPTED JSON
-            // ====================================================
-
-            const encryptedEpisode =
-                extractEncryptedJson(
-                    episodeHtml
-                );
-
-            if (
-                !encryptedEpisode
-            ) {
+                const episodeRes =
+                    await get(
+                        selectedEpisode.href,
+                        {
+                            Referer:
+                                `${directUrl}/`
+                        }
+                    );
 
                 console.log(
-                    "[PHIMLONGTIENG] Reject candidate: ENCRYPTED JSON NOT FOUND"
+                    "[PHIMLONGTIENG] EPISODE status:",
+                    episodeRes.status
                 );
 
-                continue;
+                if (
+                    episodeRes.status &&
+                    Number(
+                        episodeRes.status
+                    ) >= 400
+                ) {
 
-            }
+                    console.log(
+                        "[PHIMLONGTIENG] Reject candidate: EPISODE HTTP",
+                        episodeRes.status
+                    );
 
-            console.log(
-                "[PHIMLONGTIENG] VALID CANDIDATE:",
-                {
-                    title:
-                        selected.title,
+                    continue;
 
-                    status:
-                        selected.status,
-
-                    detailYear:
-                        detailYear,
-
-                    episode:
-                        selectedEpisode.name
                 }
-            );
 
-            candidateResults.push({
+                const episodeHtml =
+                    await episodeRes.text();
 
-                candidate:
+                // ==================================================
+                // 14.10. ENCRYPTED JSON
+                // ==================================================
+
+                const encryptedEpisode =
+                    extractEncryptedJson(
+                        episodeHtml
+                    );
+
+                if (
+                    !encryptedEpisode
+                ) {
+
+                    console.log(
+                        "[PHIMLONGTIENG] Reject candidate: ENCRYPTED JSON NOT FOUND"
+                    );
+
+                    continue;
+
+                }
+
+                // ==================================================
+                // 14.11. FINAL CANDIDATE SCORE
+                // ==================================================
+
+                // Ưu tiên rõ ràng Lồng Tiếng / Thuyết Minh.
+                if (
+                    /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
+                        selected.title +
+                        " " +
+                        selected.status +
+                        " " +
+                        selectedEpisode.name
+                    )
+                ) {
+
+                    finalScore +=
+                        700;
+
+                }
+
+                if (
+                    /vietsub|phụ\s*đề/i.test(
+                        selected.title +
+                        " " +
+                        selected.status +
+                        " " +
+                        selectedEpisode.name
+                    )
+                ) {
+
+                    finalScore -=
+                        500;
+
+                }
+
+                console.log(
+                    "[PHIMLONGTIENG] VALID CANDIDATE:",
                     {
-                        ...selected,
+                        title:
+                            selected.title,
 
-                        detailTitle,
+                        detailTitle:
+                            detailTitle,
 
-                        detailYear
-                    },
+                        status:
+                            selected.status,
 
-                selectedEpisode,
+                        detailYear:
+                            detailYear,
 
-                episodeHtml,
+                        contextSimilarity:
+                            contextBestSimilarity,
 
-                encryptedEpisode,
+                        contextMatchedSource:
+                            contextMatchedSource,
 
-                episodeUrl:
-                    selectedEpisode.href
+                        episode:
+                            selectedEpisode.name,
 
-            });
+                        finalScore:
+                            finalScore
+                    }
+                );
 
-        } catch (candidateError) {
+                candidateResults.push({
 
-            console.log(
-                "[PHIMLONGTIENG] Candidate failed:",
-                selected.title,
-                "|",
-                candidateError?.message ||
+                    candidate:
+                        {
+                            ...selected,
+
+                            detailTitle,
+
+                            detailYear,
+
+                            finalScore,
+
+                            contextSimilarity:
+                                contextBestSimilarity,
+
+                            contextMatchedSource:
+                                contextMatchedSource
+                        },
+
+                    selectedEpisode,
+
+                    episodeHtml,
+
+                    encryptedEpisode,
+
+                    episodeUrl:
+                        selectedEpisode.href
+
+                });
+
+            } catch (
                 candidateError
-            );
+            ) {
+
+                console.log(
+                    "[PHIMLONGTIENG] Candidate failed:",
+                    selected.title,
+                    "|",
+                    candidateError?.message ||
+                    candidateError
+                );
+
+            }
 
         }
 
-    }
+        // ========================================================
+        // 15. KHÔNG CÓ VERSION HỢP LỆ
+        // ========================================================
 
-    // ========================================================
-    // 8. KHÔNG CÓ VERSION NÀO HOẠT ĐỘNG
-    // ========================================================
+        if (
+            !candidateResults.length
+        ) {
 
-    if (
-        !candidateResults.length
-    ) {
+            console.log(
+                "[PHIMLONGTIENG] NO VALID MOVIE VERSION"
+            );
 
-        console.log(
-            "[PHIMLONGTIENG] NO VALID MOVIE VERSION"
+            return [];
+
+        }
+
+        // ========================================================
+        // 16. CHỌN DUY NHẤT 1 CANDIDATE
+        //
+        // ĐÂY LÀ THAY ĐỔI QUAN TRỌNG NHẤT.
+        //
+        // Trước đây:
+        //
+        //   candidateResults
+        //          ↓
+        //   for tất cả candidate
+        //          ↓
+        //   streams của tất cả phim
+        //
+        // Bây giờ:
+        //
+        //   candidateResults
+        //          ↓
+        //   sort score
+        //          ↓
+        //   CHỈ 1 candidate
+        //          ↓
+        //   extract streams
+        // ========================================================
+
+        candidateResults.sort(
+            (
+                a,
+                b
+            ) =>
+                Number(
+                    b.candidate.finalScore ||
+                    0
+                ) -
+                Number(
+                    a.candidate.finalScore ||
+                    0
+                )
         );
 
-        return [];
+        const bestResult =
+            candidateResults[0];
 
-    }
+        const secondResult =
+            candidateResults[1] ||
+            null;
 
-    console.log(
-        "[PHIMLONGTIENG] VALID VERSIONS:",
-        candidateResults.map(
-            result => ({
-                title:
-                    result.candidate.title,
+        const bestScore =
+            Number(
+                bestResult.candidate.finalScore ||
+                0
+            );
 
-                status:
-                    result.candidate.status,
+        const secondScore =
+            secondResult
+                ? Number(
+                    secondResult.candidate.finalScore ||
+                    0
+                )
+                : null;
 
-                detailTitle:
-                    result.candidate.detailTitle,
-
-                year:
-                    result.candidate.detailYear,
-
-                episode:
-                    result.selectedEpisode.name,
-
-                url:
-                    result.candidate.href
-            })
-        )
-    );
-
-    // ========================================================
-    // 9. DECRYPT + PLAYER CHO TỪNG VERSION
-    // ========================================================
-
-    for (
-        const result
-        of candidateResults
-    ) {
-
-        const selected =
-            result.candidate;
-
-        const selectedEpisode =
-            result.selectedEpisode;
-
-        const encryptedEpisode =
-            result.encryptedEpisode;
+        const scoreMargin =
+            secondScore !== null
+                ? bestScore -
+                    secondScore
+                : 99999;
 
         console.log(
-            "[PHIMLONGTIENG] PROCESS VERSION:",
+            "[PHIMLONGTIENG] CANDIDATE RANKING:",
+            candidateResults.map(
+                result => ({
+                    title:
+                        result.candidate.title,
+
+                    detailTitle:
+                        result.candidate.detailTitle,
+
+                    year:
+                        result.candidate.detailYear,
+
+                    episode:
+                        result.selectedEpisode.name,
+
+                    score:
+                        result.candidate.finalScore,
+
+                    contextSimilarity:
+                        result.candidate.contextSimilarity,
+
+                    contextMatchedSource:
+                        result.candidate.contextMatchedSource
+                })
+            )
+        );
+
+        console.log(
+            "[PHIMLONGTIENG] BEST CANDIDATE:",
+            {
+                title:
+                    bestResult.candidate.title,
+
+                detailTitle:
+                    bestResult.candidate.detailTitle,
+
+                year:
+                    bestResult.candidate.detailYear,
+
+                episode:
+                    bestResult.selectedEpisode.name,
+
+                score:
+                    bestScore,
+
+                secondScore:
+                    secondScore,
+
+                margin:
+                    scoreMargin,
+
+                contextSimilarity:
+                    bestResult.candidate.contextSimilarity,
+
+                contextMatchedSource:
+                    bestResult.candidate.contextMatchedSource
+            }
+        );
+
+        // ========================================================
+        // 17. CONFIDENCE CHECK
+        //
+        // Nếu có context từ nguồn khác:
+        //   yêu cầu score >= 6500
+        //
+        // Nếu không có context:
+        //   yêu cầu score >= 7000.
+        //
+        // Ngoài ra, nếu 2 candidate đứng đầu quá sát nhau
+        // mà không có năm/context mạnh thì bỏ.
+        //
+        // Mục tiêu:
+        //
+        //   0 stream còn tốt hơn stream sai phim.
+        // ========================================================
+
+        const hasSupportContext =
+            uniqueContextTitles.length > 0 ||
+            !!supportTargetYear;
+
+        const minimumScore =
+            hasSupportContext
+                ? 6500
+                : 7000;
+
+        if (
+            bestScore <
+            minimumScore
+        ) {
+
+            console.log(
+                "[PHIMLONGTIENG] REJECT BEST CANDIDATE: LOW CONFIDENCE",
+                {
+                    bestScore:
+                        bestScore,
+
+                    minimumScore:
+                        minimumScore
+                }
+            );
+
+            return [];
+
+        }
+
+        // Nếu không có năm chính xác và không có context mạnh,
+        // nhưng top 2 quá sát nhau thì không đoán.
+        if (
+            secondResult &&
+            scoreMargin < 1000 &&
+            bestResult.candidate.contextSimilarity < 0.75 &&
+            !(
+                supportTargetYear &&
+                bestResult.candidate.detailYear &&
+                Number(
+                    supportTargetYear
+                ) ===
+                Number(
+                    bestResult.candidate.detailYear
+                )
+            )
+        ) {
+
+            console.log(
+                "[PHIMLONGTIENG] REJECT: TOP CANDIDATES TOO CLOSE",
+                {
+                    bestScore:
+                        bestScore,
+
+                    secondScore:
+                        secondScore,
+
+                    margin:
+                        scoreMargin
+                }
+            );
+
+            return [];
+
+        }
+
+        // ========================================================
+        // 18. CHỈ PROCESS BEST CANDIDATE
+        // ========================================================
+
+        const selected =
+            bestResult.candidate;
+
+        const selectedEpisode =
+            bestResult.selectedEpisode;
+
+        const encryptedEpisode =
+            bestResult.encryptedEpisode;
+
+        console.log(
+            "[PHIMLONGTIENG] PROCESS ONLY BEST VERSION:",
             {
                 title:
                     selected.title,
@@ -9340,13 +10507,19 @@ try {
                     selectedEpisode.name,
 
                 episodeUrl:
-                    selectedEpisode.href
+                    selectedEpisode.href,
+
+                score:
+                    selected.finalScore,
+
+                contextMatchedSource:
+                    selected.contextMatchedSource
             }
         );
 
-        // ====================================================
-        // DECRYPT
-        // ====================================================
+        // ========================================================
+        // 19. DECRYPT
+        // ========================================================
 
         let playerUrl =
             null;
@@ -9371,7 +10544,7 @@ try {
                 e.message
             );
 
-            continue;
+            return [];
 
         }
 
@@ -9389,12 +10562,14 @@ try {
         if (
             !playerUrl
         ) {
-            continue;
+
+            return [];
+
         }
 
-        // ====================================================
-        // PLAYER PAGE
-        // ====================================================
+        // ========================================================
+        // 20. PLAYER PAGE
+        // ========================================================
 
         let playerHtml =
             "";
@@ -9435,7 +10610,7 @@ try {
                     playerRes.status
                 );
 
-                continue;
+                return [];
 
             }
 
@@ -9446,7 +10621,9 @@ try {
             playerHtml =
                 await playerRes.text();
 
-        } catch (playerError) {
+        } catch (
+            playerError
+        ) {
 
             console.log(
                 "[PHIMLONGTIENG] PLAYER ERROR:",
@@ -9454,7 +10631,7 @@ try {
                 playerError
             );
 
-            continue;
+            return [];
 
         }
 
@@ -9463,9 +10640,9 @@ try {
             playerHtml.length
         );
 
-        // ====================================================
-        // STREAM LABEL
-        // ====================================================
+        // ========================================================
+        // 21. STREAM LABEL
+        // ========================================================
 
         const versionLabel =
             selected.status
@@ -9485,9 +10662,9 @@ try {
         const streamPrefix =
             `▶️ [PhimLongTieng] ${versionLabel}`;
 
-        // ====================================================
-        // 1. S2 / DEFAULT PLAYER
-        // ====================================================
+        // ========================================================
+        // 22. S2 / DEFAULT PLAYER
+        // ========================================================
 
         const beforeS2 =
             streams.length;
@@ -9498,27 +10675,27 @@ try {
             streamPrefix
         );
 
-        // ====================================================
-        // 2. vb_load_player
-        // ====================================================
+        // ========================================================
+        // 23. VB LOAD PLAYER
+        // ========================================================
 
         extractVBPlayers(
             playerHtml,
             playerFinalUrl
         );
 
-        // ====================================================
-        // 3. data-url
-        // ====================================================
+        // ========================================================
+        // 24. DATA URL
+        // ========================================================
 
         extractDataUrls(
             playerHtml,
             playerFinalUrl
         );
 
-        // ====================================================
-        // 4. DIRECT M3U8
-        // ====================================================
+        // ========================================================
+        // 25. DIRECT M3U8
+        // ========================================================
 
         extractDirectM3U8(
             playerHtml,
@@ -9526,9 +10703,9 @@ try {
             streamPrefix
         );
 
-        // ====================================================
-        // 5. playerUrl ĐÃ LÀ M3U8
-        // ====================================================
+        // ========================================================
+        // 26. PLAYER URL ĐÃ LÀ M3U8
+        // ========================================================
 
         if (
             /\.m3u8(?:[?#]|$)/i.test(
@@ -9545,9 +10722,9 @@ try {
 
         }
 
-        // ====================================================
-        // 6. LOG SERVER BUTTONS
-        // ====================================================
+        // ========================================================
+        // 27. LOG SERVER BUTTONS
+        // ========================================================
 
         const serverMatches = [
             ...playerHtml.matchAll(
@@ -9609,43 +10786,44 @@ try {
             }
         );
 
-    }
+        // ========================================================
+        // FINAL
+        // ========================================================
 
-    // ========================================================
-    // FINAL
-    // ========================================================
+        console.log(
+            "[PHIMLONGTIENG] STREAMS FOUND:",
+            streams.length
+        );
 
-    console.log(
-        "[PHIMLONGTIENG] STREAMS FOUND:",
-        streams.length
-    );
+        console.log(
+            "[PHIMLONGTIENG] FINAL STREAMS:",
+            streams.map(
+                s => ({
+                    name:
+                        s.name,
 
-    console.log(
-        "[PHIMLONGTIENG] FINAL STREAMS:",
-        streams.map(
-            s => ({
-                name:
-                    s.name,
+                    title:
+                        s.title,
 
-                title:
-                    s.title,
+                    url:
+                        s.url
+                })
+            )
+        );
 
-                url:
-                    s.url
-            })
-        )
-    );
-
-    return streams;
+        return streams;
 
     } catch (e) {
+
         console.log(
             "[PHIMLONGTIENG] ERROR:",
             e.message
         );
 
         return streams;
+
     }
+
 }
 
 /* ============================================================
@@ -13691,12 +14869,17 @@ try {
 }
 
 
-// =====================================================
+/ =====================================================
 // 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
 // =====================================================
+
 let results = [];
 
 try {
+
+    // -------------------------------------------------
+    // 8.1. Chạy các nguồn độc lập trước
+    // -------------------------------------------------
 
     results =
         await Promise.allSettled([
@@ -13708,12 +14891,6 @@ try {
                 seasonNumber,
                 episodeNumber,
                 streamType
-            ),
-
-            scrapePhimLongTieng(
-                movieName,
-                episodeNumber,
-                movieYear
             ),
 
             scrapePhimHDCS(
@@ -13734,6 +14911,122 @@ try {
     );
 
 }
+
+
+// -----------------------------------------------------
+// 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
+// -----------------------------------------------------
+
+const nguoncSupport =
+    results[0]?.status === "fulfilled" &&
+    Array.isArray(
+        results[0].value
+    )
+        ? results[0].value
+        : [];
+
+const vsmovSupport =
+    results[1]?.status === "fulfilled" &&
+    Array.isArray(
+        results[1].value
+    )
+        ? results[1].value
+        : [];
+
+const phimhdcsSupport =
+    results[2]?.status === "fulfilled" &&
+    Array.isArray(
+        results[2].value
+    )
+        ? results[2].value
+        : [];
+
+
+// -----------------------------------------------------
+// 8.3. Context hỗ trợ từ các nguồn đã resolve
+// -----------------------------------------------------
+
+const phimLongTiengSupportContext = {
+
+    originalName:
+        movieName,
+
+    targetYear:
+        movieYear,
+
+    seasonNumber:
+        seasonNumber,
+
+    episodeNumber:
+        episodeNumber,
+
+    streamType:
+        streamType,
+
+    kkphim:
+        Array.isArray(kkphim)
+            ? kkphim
+            : [],
+
+    nguonc:
+        nguoncSupport,
+
+    vsmov:
+        vsmovSupport,
+
+    phimhdcs:
+        phimhdcsSupport
+};
+
+
+// -----------------------------------------------------
+// 8.4. Chạy PhimLongTieng sau khi đã có context
+// -----------------------------------------------------
+
+let longtiengResult = [];
+
+try {
+
+    longtiengResult =
+        await scrapePhimLongTieng(
+            movieName,
+            episodeNumber,
+            movieYear,
+            phimLongTiengSupportContext
+        );
+
+} catch (e) {
+
+    console.log(
+        "[PHIM LONG TIENG ERROR]:",
+        e?.message ||
+        e
+    );
+
+}
+
+
+// -----------------------------------------------------
+// 8.5. Đưa kết quả PLT vào vị trí cũ của results
+// -----------------------------------------------------
+
+results = [
+
+    results[0],
+    results[1],
+
+    {
+        status:
+            "fulfilled",
+
+        value:
+            Array.isArray(longtiengResult)
+                ? longtiengResult
+                : []
+    },
+
+    results[2]
+];
 
 
 // =====================================================
