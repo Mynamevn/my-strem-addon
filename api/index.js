@@ -1287,6 +1287,28 @@ async function fetchDailyCatalog() {
 
     /*
        ========================================================
+       TIÊU CHÍ
+       ========================================================
+
+       Tổng:
+       - 50 item
+       - 45 Movie
+       - 5 Series
+
+       Trong đó:
+       - đúng 1 Animation
+       - Animation được tính là Movie
+       - 49 item thường:
+         + 44 Movie
+         + 5 Series
+       - IMDb >= 6.0
+       - 49 item thường chia đều theo thập niên
+       - Không giới hạn quốc gia
+       - Random ổn định theo ngày
+    */
+
+    /*
+       ========================================================
        NGUỒN PHIM THƯỜNG
        ========================================================
     */
@@ -1335,7 +1357,7 @@ async function fetchDailyCatalog() {
                                 __catalogType:
                                     "series"
                             })
-                )
+                        )
                 )
         );
     }
@@ -1345,18 +1367,15 @@ async function fetchDailyCatalog() {
        NGUỒN HOẠT HÌNH
        ========================================================
 
-       Không dùng /hoat-hinh để đoán movie/series.
-
-       Lấy:
-       - phim-le + category=hoat-hinh
-       - phim-bo + category=hoat-hinh
+       Lấy riêng phim lẻ + phim bộ hoạt hình
+       để biết chính xác type.
     */
 
     const animationSources = [];
 
     for (
         let page = 1;
-        page <= 3;
+        page <= 5;
         page++
     ) {
 
@@ -1420,20 +1439,82 @@ async function fetchDailyCatalog() {
             )
         ]);
 
+    /*
+       ========================================================
+       IMDb >= 6.0
+       ========================================================
+    */
+
+    function imdbRating(item) {
+
+        const raw =
+            item?.imdb?.vote_average ??
+            item?.imdb?.rating ??
+            null;
+
+        if (
+            raw === null ||
+            raw === undefined ||
+            raw === ""
+        ) {
+            return 0;
+        }
+
+        const rating =
+            Number(raw);
+
+        return Number.isFinite(rating)
+            ? rating
+            : 0;
+    }
+
+    function hasGoodIMDb(item) {
+
+        return (
+            imdbRating(item) >=
+            6.0
+        );
+    }
+
     const normal =
         catalogDedupe(
             normalGroups.flat()
-        );
+        )
+            .filter(
+                item =>
+                    !isAnimation(item) &&
+                    hasGoodIMDb(item)
+            );
 
     const animation =
         catalogDedupe(
             animationGroups.flat()
-        );
+        )
+            .filter(
+                item =>
+                    item.__isAnimation === true &&
+                    hasGoodIMDb(item)
+            );
+
+    console.log(
+        "[DAILY] IMDb >= 6:",
+        normal.length,
+        "| Animation:",
+        animation.length
+    );
 
     /*
        ========================================================
        49 ITEM THƯỜNG
        ========================================================
+
+       Mục tiêu:
+       - 44 Movie
+       - 5 Series
+       - tổng 49
+
+       Đồng thời chia đều theo các thập niên
+       có đủ dữ liệu.
     */
 
     const decadePools =
@@ -1443,17 +1524,6 @@ async function fetchDailyCatalog() {
         const item
         of normal
     ) {
-
-        /*
-           Nếu nguồn phim thường vẫn có
-           category hoạt hình thì loại ra.
-        */
-
-        if (
-            isAnimation(item)
-        ) {
-            continue;
-        }
 
         const decade =
             decadeOf(item);
@@ -1470,13 +1540,29 @@ async function fetchDailyCatalog() {
 
             decadePools.set(
                 decade,
-                []
+                {
+                    movies: [],
+                    series: []
+                }
             );
         }
 
-        decadePools
-            .get(decade)
-            .push(item);
+        if (
+            isSeriesItem(item)
+        ) {
+
+            decadePools
+                .get(decade)
+                .series
+                .push(item);
+
+        } else {
+
+            decadePools
+                .get(decade)
+                .movies
+                .push(item);
+        }
     }
 
     const decades =
@@ -1493,28 +1579,166 @@ async function fetchDailyCatalog() {
         decades.join(", ")
     );
 
-    const targetNormal = 49;
-
-    const selected = [];
-
     /*
-       Chia 49 vị trí tương đối đều
-       cho các thập niên có dữ liệu.
+       Nếu có 7 thập niên như dữ liệu hiện tại:
+       49 / 7 = 7 item mỗi thập niên.
+
+       Nếu số thập niên thay đổi,
+       vẫn chia tương đối đều.
     */
 
-    const base =
+    const targetNormal = 49;
+
+    const decadeTargets =
+        new Map();
+
+    if (
         decades.length
-            ? Math.floor(
+    ) {
+
+        const base =
+            Math.floor(
                 targetNormal /
                 decades.length
-            )
-            : 0;
+            );
 
-    let remainder =
-        decades.length
-            ? targetNormal %
-                decades.length
-            : 0;
+        let remainder =
+            targetNormal %
+            decades.length;
+
+        for (
+            const decade
+            of decades
+        ) {
+
+            let target =
+                base;
+
+            if (
+                remainder > 0
+            ) {
+
+                target++;
+                remainder--;
+            }
+
+            decadeTargets.set(
+                decade,
+                target
+            );
+        }
+    }
+
+    /*
+       ========================================================
+       PHÂN BỔ MOVIE / SERIES
+       ========================================================
+
+       49 item thường:
+       - 44 Movie
+       - 5 Series
+
+       Series được rải đều vào các thập niên,
+       không dồn thành một nhóm.
+    */
+
+    const seriesQuota =
+        new Map();
+
+    let remainingSeries = 5;
+
+    for (
+        const decade
+        of decades
+    ) {
+
+        if (
+            remainingSeries <= 0
+        ) {
+            seriesQuota.set(
+                decade,
+                0
+            );
+            continue;
+        }
+
+        const target =
+            decadeTargets.get(
+                decade
+            ) || 0;
+
+        /*
+           Mỗi thập niên tối đa 1 series
+           để danh sách nhìn tự nhiên hơn.
+        */
+
+        const quota =
+            Math.min(
+                1,
+                target
+            );
+
+        seriesQuota.set(
+            decade,
+            quota
+        );
+
+        remainingSeries -=
+            quota;
+    }
+
+    /*
+       Nếu có ít hơn 5 thập niên,
+       phân bổ phần series còn thiếu.
+    */
+
+    if (
+        remainingSeries > 0
+    ) {
+
+        for (
+            const decade
+            of decades
+        ) {
+
+            if (
+                remainingSeries <= 0
+            ) {
+                break;
+            }
+
+            const target =
+                decadeTargets.get(
+                    decade
+                ) || 0;
+
+            const current =
+                seriesQuota.get(
+                    decade
+                ) || 0;
+
+            if (
+                current <
+                target
+            ) {
+
+                seriesQuota.set(
+                    decade,
+                    current + 1
+                );
+
+                remainingSeries--;
+            }
+        }
+    }
+
+    /*
+       ========================================================
+       CHỌN 49 ITEM
+       ========================================================
+    */
+
+    const selected = [];
 
     for (
         const decade
@@ -1522,31 +1746,70 @@ async function fetchDailyCatalog() {
     ) {
 
         const pool =
-            stableShuffle(
-                decadePools.get(
-                    decade
-                ),
-                today +
-                "|" +
+            decadePools.get(
                 decade
             );
 
-        let take =
-            base;
+        const target =
+            decadeTargets.get(
+                decade
+            ) || 0;
 
-        if (
-            remainder > 0
-        ) {
+        const targetSeries =
+            Math.min(
+                seriesQuota.get(
+                    decade
+                ) || 0,
+                pool.series.length
+            );
 
-            take++;
-            remainder--;
-        }
+        const targetMovies =
+            Math.max(
+                0,
+                target -
+                targetSeries
+            );
+
+        const series =
+            stableShuffle(
+                pool.series,
+                today +
+                "|daily|" +
+                decade +
+                "|series"
+            )
+                .slice(
+                    0,
+                    targetSeries
+                );
+
+        const movies =
+            stableShuffle(
+                pool.movies,
+                today +
+                "|daily|" +
+                decade +
+                "|movies"
+            )
+                .slice(
+                    0,
+                    targetMovies
+                );
 
         selected.push(
-            ...pool.slice(
-                0,
-                take
-            )
+            ...series,
+            ...movies
+        );
+
+        console.log(
+            "[DAILY] Decade",
+            decade,
+            "| Target:",
+            target,
+            "| Movies:",
+            movies.length,
+            "| Series:",
+            series.length
         );
     }
 
@@ -1557,8 +1820,13 @@ async function fetchDailyCatalog() {
 
     /*
        ========================================================
-       BÙ NẾU MỘT THẬP NIÊN KHÔNG ĐỦ
+       BÙ ITEM THƯỜNG
        ========================================================
+
+       Nếu một thập niên không đủ dữ liệu IMDb >= 6,
+       lấy thêm từ các thập niên khác.
+
+       Không hạ điều kiện IMDb.
     */
 
     if (
@@ -1577,7 +1845,6 @@ async function fetchDailyCatalog() {
             stableShuffle(
                 normal.filter(
                     item =>
-                        !isAnimation(item) &&
                         !used.has(
                             catalogKey(item)
                         )
@@ -1602,32 +1869,138 @@ async function fetchDailyCatalog() {
 
     /*
        ========================================================
-       CHÍNH XÁC 1 HOẠT HÌNH
+       ĐIỀU CHỈNH TYPE
        ========================================================
 
-       Ưu tiên Nhật.
+       Đảm bảo 49 item thường hướng tới:
+       - 44 Movie
+       - 5 Series
     */
 
-    const japaneseAnimation =
-        animation.filter(
+    let normalMovies =
+        result.filter(
             item =>
-                isJapanese(item)
+                !isSeriesItem(item)
         );
 
-    const otherAnimation =
-        animation.filter(
-            item =>
-                !isJapanese(item)
+    let normalSeries =
+        result.filter(
+            isSeriesItem
         );
 
-    const animationPool =
-        japaneseAnimation.length
-            ? japaneseAnimation
-            : otherAnimation;
+    /*
+       Nếu thiếu Series:
+       lấy thêm Series IMDb >= 6 từ toàn bộ nguồn.
+    */
+
+    if (
+        normalSeries.length <
+        5
+    ) {
+
+        const used =
+            new Set(
+                result.map(
+                    catalogKey
+                )
+            );
+
+        const extraSeries =
+            stableShuffle(
+                normal.filter(
+                    item =>
+                        isSeriesItem(item) &&
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                today +
+                "|daily|extra-series"
+            );
+
+        const need =
+            5 -
+            normalSeries.length;
+
+        const add =
+            extraSeries.slice(
+                0,
+                need
+            );
+
+        result.push(
+            ...add
+        );
+
+        normalSeries =
+            [
+                ...normalSeries,
+                ...add
+            ];
+    }
+
+    /*
+       Nếu Series vượt 5 thì loại bớt,
+       ưu tiên giữ random theo ngày.
+    */
+
+    if (
+        normalSeries.length >
+        5
+    ) {
+
+        const keepSeries =
+            stableShuffle(
+                normalSeries,
+                today +
+                "|daily|series-final"
+            )
+                .slice(
+                    0,
+                    5
+                );
+
+        const keepKeys =
+            new Set(
+                keepSeries.map(
+                    catalogKey
+                )
+            );
+
+        result =
+            [
+                ...normalMovies,
+                ...normalSeries.filter(
+                    item =>
+                        keepKeys.has(
+                            catalogKey(item)
+                        )
+                )
+            ];
+    }
+
+    result =
+        catalogDedupe(
+            result
+        );
+
+    /*
+       ========================================================
+       CHÍNH XÁC 1 ANIMATION
+       ========================================================
+
+       Animation được tính là Movie
+       để đạt tổng:
+       45 Movie + 5 Series.
+
+       Ưu tiên animation Nhật chỉ là lựa chọn
+       ngẫu nhiên trong nguồn animation,
+       KHÔNG áp dụng giới hạn quốc gia cho Daily.
+    */
 
     const oneAnimation =
         stableShuffle(
-            animationPool,
+            animation,
             today +
             "|daily-animation"
         )[0];
@@ -1637,14 +2010,22 @@ async function fetchDailyCatalog() {
     ) {
 
         result.push(
-            oneAnimation
+            {
+                ...oneAnimation,
+
+                __catalogType:
+                    "movie",
+
+                __isAnimation:
+                    true
+            }
         );
 
     } else {
 
         console.log(
             "[DAILY] WARNING: " +
-            "khong tim thay animation"
+            "khong tim thay animation IMDb >= 6"
         );
     }
 
@@ -1659,6 +2040,10 @@ async function fetchDailyCatalog() {
             result
         );
 
+    /*
+       Bảo đảm chỉ lấy tối đa 50.
+    */
+
     result =
         stableShuffle(
             result,
@@ -1669,6 +2054,12 @@ async function fetchDailyCatalog() {
                 0,
                 CATALOG_TARGET
             );
+
+    /*
+       ========================================================
+       KIỂM TRA FINAL
+       ========================================================
+    */
 
     console.log(
         "[DAILY] Final:",
@@ -1691,6 +2082,11 @@ async function fetchDailyCatalog() {
         "| Series:",
         result.filter(
             isSeriesItem
+        ).length,
+        "| IMDb<6:",
+        result.filter(
+            item =>
+                imdbRating(item) < 6
         ).length
     );
 
