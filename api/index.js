@@ -250,6 +250,18 @@ function catalogPoster(item) {
     }
 
     /*
+       Poster của PhimAPI có thể là:
+       uploads/movies/...
+       upload/vod/...
+    */
+
+    return (
+        "https://phimimg.com/" +
+        value.replace(/^\/+/, "")
+    );
+}
+
+    /*
        PhimAPI thường trả poster dạng:
        uploads/...
        upload/...
@@ -451,11 +463,6 @@ return countries.some(x =>
 
 /* ============================================================
    XÁC ĐỊNH MOVIE / SERIES
-   PhimAPI:
-   - series   = phim bộ
-   - single   = phim lẻ
-   - hoathinh = hoạt hình
-   - tvshows  = TV Shows
    ============================================================ */
 
 function isSeriesItem(item) {
@@ -514,15 +521,14 @@ function isSeriesItem(item) {
     }
 
     /*
+       "hoathinh" chỉ cho biết đây là hoạt hình,
+       KHÔNG tự nó cho biết movie hay series.
+    */
+
+    /*
        ========================================================
        3. TMDB TYPE
        ========================================================
-
-       PhimAPI có dữ liệu:
-       tmdb.type = movie / tv
-
-       Đây là dấu hiệu rất hữu ích để phân biệt
-       phim lẻ và phim bộ.
     */
 
     const tmdbType =
@@ -548,7 +554,7 @@ function isSeriesItem(item) {
 
     /*
        ========================================================
-       4. DẤU HIỆU PHỤ
+       4. DẤU HIỆU PHỤ TỪ SỐ TẬP
        ========================================================
     */
 
@@ -568,11 +574,6 @@ function isSeriesItem(item) {
             .trim()
             .toLowerCase();
 
-    /*
-       "Full" không có nghĩa là series.
-       Rất nhiều phim lẻ có episode_current = Full.
-    */
-
     const looksLikeSeries =
         (
             episodeTotal &&
@@ -587,7 +588,9 @@ function isSeriesItem(item) {
             )
         );
 
-    if (looksLikeSeries) {
+    if (
+        looksLikeSeries
+    ) {
         return true;
     }
 
@@ -1483,178 +1486,356 @@ async function fetchDailyCatalog() {
 
 async function fetchAnimationNew() {
 
-    /*
-       ========================================================
-       LẤY RIÊNG PHIM LẺ + PHIM BỘ
-       ========================================================
-    */
+    const sources = [];
 
-    const moviePages = [];
-    const seriesPages = [];
+    /*
+       Dùng endpoint HOẠT HÌNH trực tiếp.
+
+       Không dùng:
+       phim-le?category=hoat-hinh
+       phim-bo?category=hoat-hinh
+
+       vì hai endpoint đó trước đây chỉ trả
+       rất ít dữ liệu.
+    */
 
     for (
         let page = 1;
-        page <= 6;
+        page <= 12;
         page++
     ) {
 
-        moviePages.push(
+        sources.push(
             catalogFetch(
                 "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-le" +
-                "?category=hoat-hinh" +
-                "&page=" +
+                "danh-sach/hoat-hinh" +
+                "?page=" +
                 page +
                 "&limit=24"
             )
-                .then(
-                    items =>
-                        items.map(
-                            item => ({
-                                ...item,
-                                __catalogType:
-                                    "movie",
-                                __isAnimation:
-                                    true
-                            })
-                        )
-                )
-        );
-
-        seriesPages.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-bo" +
-                "?category=hoat-hinh" +
-                "&page=" +
-                page +
-                "&limit=24"
-            )
-                .then(
-                    items =>
-                        items.map(
-                            item => ({
-                                ...item,
-                                __catalogType:
-                                    "series",
-                                __isAnimation:
-                                    true
-                            })
-                        )
-                )
         );
     }
 
-    const [
-        movieGroups,
-        seriesGroups
-    ] =
-        await Promise.all([
-            Promise.all(
-                moviePages
-            ),
-            Promise.all(
-                seriesPages
-            )
-        ]);
-
-    const movies =
-        catalogDedupe(
-            movieGroups.flat()
+    const groups =
+        await Promise.all(
+            sources
         );
 
-    const series =
+    const all =
         catalogDedupe(
-            seriesGroups.flat()
-        );
+            groups.flat()
+        )
+            .map(
+                item => {
+
+                    const series =
+                        isSeriesItem(
+                            item
+                        );
+
+                    return {
+                        ...item,
+
+                        __catalogType:
+                            series
+                                ? "series"
+                                : "movie",
+
+                        __isAnimation:
+                            true
+                    };
+                }
+            );
 
     console.log(
-        "[ANIME] Source Movies:",
-        movies.length,
+        "[ANIME] Source:",
+        all.length,
+
+        "| Movies:",
+        all.filter(
+            item =>
+                item.__catalogType ===
+                "movie"
+        ).length,
+
         "| Series:",
-        series.length
+        all.filter(
+            item =>
+                item.__catalogType ===
+                "series"
+        ).length
     );
 
     /*
-       ========================================================
-       CHIA THEO QUỐC GIA
-       ========================================================
+       --------------------------------------------------------
+       PHÂN NHÓM QUỐC GIA
+       --------------------------------------------------------
+
+       Chỉ dùng 3 nhóm:
+
+       1. Japan
+       2. USA
+       3. Other
+
+       Không gom toàn bộ Western vào USA.
     */
 
-    function groupByCountry(
-        items
-    ) {
+    function isUSA(item) {
+
+        const countries =
+            catalogCountryNames(
+                item
+            );
+
+        return countries.some(
+            country =>
+                country === "my" ||
+                country === "hoa ky" ||
+                country === "united states" ||
+                country ===
+                    "united states of america" ||
+                country === "usa"
+        );
+    }
+
+    function isJapan(item) {
+
+        const countries =
+            catalogCountryNames(
+                item
+            );
+
+        return countries.some(
+            country =>
+                country ===
+                    "nhat ban" ||
+                country ===
+                    "japan"
+        );
+    }
+
+    function isOther(item) {
+
+        return (
+            !isJapan(item) &&
+            !isUSA(item)
+        );
+    }
+
+    const japanItems =
+        all.filter(
+            isJapan
+        );
+
+    const usaItems =
+        all.filter(
+            isUSA
+        );
+
+    const otherItems =
+        all.filter(
+            isOther
+        );
+
+    console.log(
+        "[ANIME] Country:",
+        "Japan",
+        japanItems.length,
+
+        "| USA",
+        usaItems.length,
+
+        "| Other",
+        otherItems.length
+    );
+
+    /*
+       --------------------------------------------------------
+       TÁCH MOVIE / SERIES
+       --------------------------------------------------------
+    */
+
+    function splitType(items) {
 
         return {
 
-            japan:
-                items.filter(
-                    isJapanese
-                ),
-
-            western:
-                items.filter(
-                    isAmericanWestern
-                ),
-
-            other:
+            movies:
                 items.filter(
                     item =>
-                        !isJapanese(item) &&
-                        !isAmericanWestern(item)
+                        item.__catalogType ===
+                        "movie"
+                ),
+
+            series:
+                items.filter(
+                    item =>
+                        item.__catalogType ===
+                        "series"
                 )
         };
     }
 
-    const movieGroupsByCountry =
-        groupByCountry(
-            movies
+    const japan =
+        splitType(
+            japanItems
         );
 
-    const seriesGroupsByCountry =
-        groupByCountry(
-            series
+    const usa =
+        splitType(
+            usaItems
+        );
+
+    const other =
+        splitType(
+            otherItems
         );
 
     console.log(
-        "[ANIME] Movies:",
-        "Japan",
-        movieGroupsByCountry.japan.length,
-        "| Western",
-        movieGroupsByCountry.western.length,
-        "| Other",
-        movieGroupsByCountry.other.length
+        "[ANIME] Japan:",
+        "Movies",
+        japan.movies.length,
+        "| Series",
+        japan.series.length
     );
 
     console.log(
-        "[ANIME] Series:",
-        "Japan",
-        seriesGroupsByCountry.japan.length,
-        "| Western",
-        seriesGroupsByCountry.western.length,
-        "| Other",
-        seriesGroupsByCountry.other.length
+        "[ANIME] USA:",
+        "Movies",
+        usa.movies.length,
+        "| Series",
+        usa.series.length
+    );
+
+    console.log(
+        "[ANIME] Other:",
+        "Movies",
+        other.movies.length,
+        "| Series",
+        other.series.length
     );
 
     /*
-       ========================================================
-       LẤY NỘI DUNG THEO TỶ LỆ
-       ========================================================
+       --------------------------------------------------------
+       LẤY CÓ ƯU TIÊN
+       --------------------------------------------------------
 
-       Mục tiêu:
-       Japan   = 20
-       Western = 20
-       Other   = 10
+       Nhật:
+       khoảng 23
+       và ưu tiên SERIES.
 
-       Tổng:
-       50
+       USA:
+       khoảng 22
+       cố gắng cân bằng movie / series.
 
-       Mỗi nhóm cố gắng movie / series 50 / 50.
+       Other:
+       khoảng 5
+       = khoảng 10%.
     */
 
-    function takeFromGroup(
-        moviePool,
-        seriesPool,
+    function takeSeriesPriority(
+        group,
+        target,
+        seed
+    ) {
+
+        const result = [];
+
+        const shuffledSeries =
+            stableShuffle(
+                group.series,
+                seed +
+                "|series"
+            );
+
+        const shuffledMovies =
+            stableShuffle(
+                group.movies,
+                seed +
+                "|movies"
+            );
+
+        /*
+           Nhật ưu tiên series.
+
+           Trước tiên lấy tối đa khoảng
+           60% series.
+        */
+
+        const seriesTarget =
+            Math.min(
+                group.series.length,
+                Math.ceil(
+                    target * 0.60
+                )
+            );
+
+        result.push(
+            ...shuffledSeries.slice(
+                0,
+                seriesTarget
+            )
+        );
+
+        const movieTarget =
+            Math.min(
+                group.movies.length,
+                target -
+                result.length
+            );
+
+        result.push(
+            ...shuffledMovies.slice(
+                0,
+                movieTarget
+            )
+        );
+
+        /*
+           Nếu thiếu movie hoặc series,
+           lấy thêm loại còn lại.
+        */
+
+        if (
+            result.length <
+            target
+        ) {
+
+            const used =
+                new Set(
+                    result.map(
+                        catalogKey
+                    )
+                );
+
+            const remaining =
+                stableShuffle(
+                    [
+                        ...group.series,
+                        ...group.movies
+                    ].filter(
+                        item =>
+                            !used.has(
+                                catalogKey(item)
+                            )
+                    ),
+                    seed +
+                    "|fallback"
+                );
+
+            result.push(
+                ...remaining.slice(
+                    0,
+                    target -
+                    result.length
+                )
+            );
+        }
+
+        return result;
+    }
+
+    function takeBalanced(
+        group,
         target,
         seed
     ) {
@@ -1669,50 +1850,45 @@ async function fetchAnimationNew() {
             movieTarget;
 
         /*
-           Nếu movie không đủ,
-           chuyển phần thiếu sang series.
+           Nếu một loại không đủ,
+           chuyển phần thiếu sang loại còn lại.
         */
 
         if (
-            moviePool.length <
+            group.movies.length <
             movieTarget
         ) {
 
             const shortage =
                 movieTarget -
-                moviePool.length;
+                group.movies.length;
 
             movieTarget =
-                moviePool.length;
+                group.movies.length;
 
             seriesTarget +=
                 shortage;
         }
 
-        /*
-           Nếu series không đủ,
-           chuyển phần thiếu sang movie.
-        */
-
         if (
-            seriesPool.length <
+            group.series.length <
             seriesTarget
         ) {
 
             const shortage =
                 seriesTarget -
-                seriesPool.length;
+                group.series.length;
 
             seriesTarget =
-                seriesPool.length;
+                group.series.length;
 
             movieTarget +=
                 shortage;
         }
 
-        const selectedMovies =
+        const movies =
             stableShuffle(
-                moviePool,
+                group.movies,
                 seed +
                 "|movies"
             )
@@ -1721,9 +1897,9 @@ async function fetchAnimationNew() {
                     movieTarget
                 );
 
-        const selectedSeries =
+        const series =
             stableShuffle(
-                seriesPool,
+                group.series,
                 seed +
                 "|series"
             )
@@ -1733,62 +1909,62 @@ async function fetchAnimationNew() {
                 );
 
         return [
-            ...selectedMovies,
-            ...selectedSeries
+            ...movies,
+            ...series
         ];
     }
 
-    let result = [];
-
     /*
-       ========================================================
-       JAPAN = 20
-       ========================================================
+       --------------------------------------------------------
+       TARGET
+       --------------------------------------------------------
+
+       Japan = 23
+       USA   = 22
+       Other = 5
+
+       Tổng = 50.
     */
 
+    let result = [];
+
     result.push(
-        ...takeFromGroup(
-            movieGroupsByCountry.japan,
-            seriesGroupsByCountry.japan,
-            20,
+        ...takeSeriesPriority(
+            japan,
+            23,
             "anime|japan"
         )
     );
 
-    /*
-       ========================================================
-       WESTERN = 20
-       ========================================================
-    */
-
     result.push(
-        ...takeFromGroup(
-            movieGroupsByCountry.western,
-            seriesGroupsByCountry.western,
-            20,
-            "anime|western"
+        ...takeBalanced(
+            usa,
+            22,
+            "anime|usa"
         )
     );
 
-    /*
-       ========================================================
-       OTHER = 10
-       ========================================================
-    */
-
     result.push(
-        ...takeFromGroup(
-            movieGroupsByCountry.other,
-            seriesGroupsByCountry.other,
-            10,
+        ...takeBalanced(
+            other,
+            5,
             "anime|other"
         )
     );
 
     /*
-       ========================================================
-       BÙ NẾU MỘT NHÓM KHÔNG ĐỦ
-       ========================================================
+       --------------------------------------------------------
+       FALLBACK
+       --------------------------------------------------------
+
+       Nếu API không đủ Japan / USA / Other
+       thì lấy phần còn thiếu từ toàn bộ nguồn.
+
+       Nhưng vẫn ưu tiên:
+
+       1. Japan
+       2. USA
+       3. Other
     */
 
     if (
@@ -1803,20 +1979,45 @@ async function fetchAnimationNew() {
                 )
             );
 
-        const fallback =
+        const remainingJapan =
             stableShuffle(
-                [
-                    ...movies,
-                    ...series
-                ]
-                    .filter(
-                        item =>
-                            !used.has(
-                                catalogKey(item)
-                            )
-                    ),
-                "anime|fallback"
+                japanItems.filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "anime|fallback|japan"
             );
+
+        const remainingUSA =
+            stableShuffle(
+                usaItems.filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "anime|fallback|usa"
+            );
+
+        const remainingOther =
+            stableShuffle(
+                otherItems.filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "anime|fallback|other"
+            );
+
+        const fallback =
+            [
+                ...remainingJapan,
+                ...remainingUSA,
+                ...remainingOther
+            ];
 
         result.push(
             ...fallback
@@ -1824,9 +2025,7 @@ async function fetchAnimationNew() {
     }
 
     /*
-       ========================================================
-       ĐÚNG 50
-       ========================================================
+       Dedupe + giới hạn đúng 50.
     */
 
     result =
@@ -1839,7 +2038,8 @@ async function fetchAnimationNew() {
             );
 
     /*
-       Trộn movie + series.
+       Trộn thứ tự cuối cùng để row không bị
+       chia thành Japan / USA / Other.
     */
 
     result =
@@ -1851,28 +2051,34 @@ async function fetchAnimationNew() {
     console.log(
         "[ANIME] Final:",
         result.length,
+
         "| Movies:",
         result.filter(
             item =>
-                !isSeriesItem(item)
+                item.__catalogType ===
+                "movie"
         ).length,
+
         "| Series:",
         result.filter(
-            isSeriesItem
+            item =>
+                item.__catalogType ===
+                "series"
         ).length,
+
         "| Japan:",
         result.filter(
-            isJapanese
+            isJapan
         ).length,
-        "| Western:",
+
+        "| USA:",
         result.filter(
-            isAmericanWestern
+            isUSA
         ).length,
+
         "| Other:",
         result.filter(
-            item =>
-                !isJapanese(item) &&
-                !isAmericanWestern(item)
+            isOther
         ).length
     );
 
