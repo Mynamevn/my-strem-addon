@@ -1404,246 +1404,285 @@ return {
 }
 
 /* ============================================================
-DEFINE CATALOG HANDLER
-============================================================ */
+   DEFINE CATALOG HANDLER
+   ============================================================ */
 
 builder.defineCatalogHandler(
-async args => {
+    async args => {
 
-    console.log(
-        "[CATALOG] type:",
-        args.type,
-        "id:",
-        args.id,
-        "search:",
-        args.extra?.search ||
-        ""
-    );
+        console.log(
+            "[CATALOG] type:",
+            args.type,
+            "id:",
+            args.id,
+            "search:",
+            args.extra?.search ||
+            ""
+        );
 
-    try {
+        try {
 
-        let items = [];
-        let forcedType = null;
+            let items = [];
+            let forcedType = null;
 
-        if (
-            args.id ===
-            "pa_movies_trending"
-        ) {
+            /* ========================================================
+               MOVIE TRENDING
+               ======================================================== */
 
-            console.log(
-                "[CATALOG] Mode: MOVIE TRENDING"
-            );
+            if (
+                args.id ===
+                "pa_movies_trending"
+            ) {
 
-            items =
-                await fetchMovieTrending();
+                console.log(
+                    "[CATALOG] Mode: MOVIE TRENDING"
+                );
 
-            forcedType =
-                "movie";
+                items =
+                    await fetchMovieTrending();
 
-        } else if (
-            args.id ===
-            "pa_series_trending"
-        ) {
+                forcedType =
+                    "movie";
 
-            console.log(
-                "[CATALOG] Mode: SERIES TRENDING"
-            );
+            /* ========================================================
+               SERIES TRENDING
+               ======================================================== */
 
-            items =
-                await fetchSeriesTrending();
+            } else if (
+                args.id ===
+                "pa_series_trending"
+            ) {
 
-            forcedType =
-                "series";
+                console.log(
+                    "[CATALOG] Mode: SERIES TRENDING"
+                );
 
-         } else if (
-            args.id ===
-            "pa_tvb"
-        ) {
+                items =
+                    await fetchSeriesTrending();
 
-            console.log(
-                "[CATALOG] Mode: TVB"
-            );
+                forcedType =
+                    "series";
 
-            items =
-                await fetchTVB();
+            /* ========================================================
+               TVB
+               ======================================================== */
+
+            } else if (
+                args.id ===
+                "pa_tvb"
+            ) {
+
+                console.log(
+                    "[CATALOG] Mode: TVB"
+                );
+
+                /*
+                   TVB = 50 item tổng cộng.
+                   Bao gồm cả phim bộ + phim lẻ.
+                */
+
+                items =
+                    await fetchTVB();
+
+                /*
+                   Không ép type.
+                   Mỗi item sẽ tự xác định movie/series
+                   trong makeCatalogMeta().
+                */
+
+                forcedType =
+                    null;
+
+            /* ========================================================
+               DAILY
+               ======================================================== */
+
+            } else if (
+                args.id ===
+                "pa_daily"
+            ) {
+
+                console.log(
+                    "[CATALOG] Mode: DAILY"
+                );
+
+                items =
+                    await fetchDailyCatalog();
+
+            /* ========================================================
+               ANIMATION NEW
+               ======================================================== */
+
+            } else if (
+                args.id ===
+                "pa_animation_new"
+            ) {
+
+                console.log(
+                    "[CATALOG] Mode: ANIME NEW"
+                );
+
+                items =
+                    await fetchAnimationNew();
+
+            /* ========================================================
+               UNKNOWN
+               ======================================================== */
+
+            } else {
+
+                console.log(
+                    "[CATALOG] Unknown catalog:",
+                    args.id
+                );
+
+                return {
+                    metas: []
+                };
+            }
+
+            /* ========================================================
+               SEARCH
+               ======================================================== */
+
+            if (
+                args.extra?.search
+            ) {
+
+                const q =
+                    catalogNormalize(
+                        args.extra.search
+                    );
+
+                items =
+                    items.filter(
+                        item => {
+
+                            const text =
+                                catalogNormalize(
+                                    [
+                                        item?.name,
+                                        item?.origin_name,
+                                        item?.original_name
+                                    ]
+                                        .filter(Boolean)
+                                        .join(" ")
+                                );
+
+                            return text.includes(
+                                q
+                            );
+                        }
+                    );
+            }
+
+            /* ========================================================
+               TYPE FILTER
+               ======================================================== */
 
             /*
-               TVB là catalog hỗn hợp:
-               phim bộ + phim lẻ.
+               Chỉ ép type cho hai catalog
+               vốn đã có type cố định.
 
-               Không ép forcedType ở đây.
-               makeCatalogMeta() sẽ tự xác định
-               type thực tế của từng item.
+               TVB KHÔNG được lọc ở đây vì TVB
+               chứa cả movie + series.
             */
 
-            forcedType =
-                null;
+            if (
+                args.id ===
+                "pa_movies_trending"
+            ) {
 
-        } else if (
-            args.id ===
-            "pa_daily"
-        ) {
+                items =
+                    items.filter(
+                        item =>
+                            !isSeriesItem(item)
+                    );
+
+            } else if (
+                args.id ===
+                "pa_series_trending"
+            ) {
+
+                items =
+                    items.filter(
+                        item =>
+                            isSeriesItem(item)
+                    );
+            }
+
+            /* ========================================================
+               BUILD METAS
+               ======================================================== */
+
+            const metas =
+                items
+                    .slice(
+                        0,
+                        CATALOG_TARGET
+                    )
+                    .map(
+                        item =>
+                            makeCatalogMeta(
+                                item,
+                                forcedType
+                            )
+                    )
+                    .filter(
+                        meta =>
+                            meta.id &&
+                            meta.name
+                    );
+
+            /* ========================================================
+               LOG
+               ======================================================== */
 
             console.log(
-                "[CATALOG] Mode: DAILY"
+                "[CATALOG] Items:",
+                items.length
             );
 
-            items =
-                await fetchDailyCatalog();
-
-        } else if (
-            args.id ===
-            "pa_animation_new"
-        ) {
-
             console.log(
-                "[CATALOG] Mode: ANIME NEW"
+                "[CATALOG] Metas:",
+                metas.length
             );
 
-            items =
-                await fetchAnimationNew();
-
-        } else {
-
             console.log(
-                "[CATALOG] Unknown catalog:",
-                args.id
+                "[CATALOG] Movies:",
+                metas.filter(
+                    x =>
+                        x.type === "movie"
+                ).length,
+                "| Series:",
+                metas.filter(
+                    x =>
+                        x.type === "series"
+                ).length,
+                "| Posters:",
+                metas.filter(
+                    x =>
+                        !!x.poster
+                ).length
+            );
+
+            return {
+                metas
+            };
+
+        } catch (e) {
+
+            console.error(
+                "[CATALOG ERROR]",
+                e?.message ||
+                e
             );
 
             return {
                 metas: []
             };
         }
-
-        /*
-           Không để search làm mất catalog
-           trong trường hợp Stremio truyền search.
-        */
-
-        if (
-            args.extra?.search
-        ) {
-
-            const q =
-                catalogNormalize(
-                    args.extra.search
-                );
-
-            items =
-                items.filter(
-                    item => {
-
-                        const text =
-                            catalogNormalize(
-                                [
-                                    item?.name,
-                                    item?.origin_name,
-                                    item?.original_name
-                                ]
-                                    .filter(Boolean)
-                                    .join(" ")
-                            );
-
-                        return text.includes(
-                            q
-                        );
-                    }
-                );
-        }
-
-        /*
-           Bắt buộc đúng type cho catalog
-           khi Stremio gọi endpoint.
-        */
-
-        if (
-            args.id ===
-            "pa_movies_trending"
-        ) {
-
-            items =
-                items.filter(
-                    item =>
-                        !isSeriesItem(item)
-                );
-
-        } else if (
-            args.id ===
-            "pa_series_trending"
-        ) {
-
-            items =
-                items.filter(
-                    item =>
-                        isSeriesItem(item)
-                );
-
-        
-        const metas =
-            items
-                .slice(
-                    0,
-                    CATALOG_TARGET
-                )
-                .map(
-                    item =>
-                        makeCatalogMeta(
-                            item,
-                            forcedType
-                        )
-                )
-                .filter(
-                    meta =>
-                        meta.id &&
-                        meta.name
-                );
-
-        console.log(
-            "[CATALOG] Items:",
-            items.length
-        );
-
-        console.log(
-            "[CATALOG] Metas:",
-            metas.length
-        );
-
-        console.log(
-            "[CATALOG] Movies:",
-            metas.filter(
-                x =>
-                    x.type === "movie"
-            ).length,
-            "| Series:",
-            metas.filter(
-                x =>
-                    x.type === "series"
-            ).length,
-            "| Posters:",
-            metas.filter(
-                x =>
-                    !!x.poster
-            ).length
-        );
-
-        return {
-            metas
-        };
-
-    } catch (e) {
-
-        console.error(
-            "[CATALOG ERROR]",
-            e?.message ||
-            e
-        );
-
-        return {
-            metas: []
-        };
     }
-}
-
 );
 
 /* ============================================================
