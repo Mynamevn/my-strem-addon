@@ -4186,164 +4186,244 @@ builder.defineMetaHandler(async (args) => {
                 );
 
         // =====================================================
-        // 13.12. VIDEOS CHO SERIES
-        //
-        // Đây là phần QUAN TRỌNG nhất:
-        //
-        // Stremio sẽ hiển thị:
-        //
-        //   Mùa 1
-        //      Tập 1
-        //      Tập 2
-        //      Tập 3
-        //
-        // Sau khi chọn tập → mới gọi STREAM.
-        // =====================================================
+// 13.12. VIDEOS CHO SERIES
+//
+// Stremio yêu cầu mỗi Video Object có:
+//   - id
+//   - title
+//   - released
+//
+// Với series:
+//   id = metaId:season:episode
+// =====================================================
 
-        let videos = undefined;
+let videos = undefined;
 
-        if (isSeries) {
+if (isSeries) {
 
-            const episodeMap =
-                new Map();
+    const episodeMap =
+        new Map();
 
-            const episodeGroups =
-                Array.isArray(
-                    detail?.episodes
-                )
-                    ? detail.episodes
-                    : [];
+    const episodeGroups =
+        Array.isArray(
+            detail?.episodes
+        )
+            ? detail.episodes
+            : [];
 
-            for (
-                const group
-                of episodeGroups
-            ) {
+    for (
+        const group
+        of episodeGroups
+    ) {
 
-                const serverData =
-                    Array.isArray(
-                        group?.server_data
-                    )
-                        ? group.server_data
-                        : [];
+        const serverData =
+            Array.isArray(
+                group?.server_data
+            )
+                ? group.server_data
+                : [];
 
-                for (
-                    const ep
-                    of serverData
-                ) {
+        for (
+            const ep
+            of serverData
+        ) {
 
-                    const rawEpisodeName =
-                        String(
-                            ep?.name ||
-                            ep?.slug ||
-                            ""
-                        ).trim();
+            const rawEpisodeName =
+                String(
+                    ep?.name ||
+                    ep?.slug ||
+                    ""
+                ).trim();
 
-                    if (!rawEpisodeName) {
-                        continue;
-                    }
+            if (!rawEpisodeName) {
+                continue;
+            }
 
-                    // -------------------------------------------------
-                    // Lấy số tập:
-                    // "Tập 1"
-                    // "01"
-                    // "Episode 1"
-                    // "Ep 1"
-                    // "1"
-                    // -------------------------------------------------
+            // -------------------------------------------------
+            // Lấy số tập:
+            //
+            // "Tập 1"
+            // "01"
+            // "Episode 1"
+            // "Ep 1"
+            // "1"
+            // -------------------------------------------------
 
-                    const match =
-                        rawEpisodeName.match(
-                            /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
-                        );
+            const match =
+                rawEpisodeName.match(
+                    /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
+                );
 
-                    if (!match) {
+            if (!match) {
 
-                        // "Full" không phải episode của series
-                        continue;
-
-                    }
-
-                    const episodeNumber =
-                        Number(
-                            match[1]
-                        );
-
-                    if (
-                        !Number.isFinite(
-                            episodeNumber
-                        ) ||
-                        episodeNumber <= 0
-                    ) {
-                        continue;
-                    }
-
-                    if (
-                        !episodeMap.has(
-                            episodeNumber
-                        )
-                    ) {
-
-                        episodeMap.set(
-                            episodeNumber,
-                            {
-                                number:
-                                    episodeNumber,
-
-                                name:
-                                    rawEpisodeName
-                            }
-                        );
-
-                    }
-
-                }
+                // "Full" không phải episode
+                continue;
 
             }
 
-            videos =
-                Array.from(
-                    episodeMap.values()
+            const episodeNumber =
+                Number(
+                    match[1]
+                );
+
+            if (
+                !Number.isFinite(
+                    episodeNumber
+                ) ||
+                episodeNumber <= 0
+            ) {
+
+                continue;
+
+            }
+
+            if (
+                !episodeMap.has(
+                    episodeNumber
                 )
-                    .sort(
-                        (a, b) =>
-                            a.number -
-                            b.number
-                    )
-                    .map(ep => {
+            ) {
 
-                        const videoId =
-                            rawId +
-                            ":1:" +
-                            ep.number;
+                episodeMap.set(
+                    episodeNumber,
+                    {
+                        number:
+                            episodeNumber,
 
-                        return {
+                        name:
+                            rawEpisodeName,
 
-                            id:
-                                videoId,
+                        released:
+                            ep?.released ||
+                            ep?.air_date ||
+                            ep?.release_date ||
+                            ep?.created_at ||
+                            null
+                    }
+                );
 
-                            title:
-                                "Tập " +
-                                ep.number,
-
-                            season:
-                                1,
-
-                            number:
-                                ep.number,
-
-                            name:
-                                "Tập " +
-                                ep.number
-                        };
-
-                    });
-
-            console.log(
-                "[META] Series episodes:",
-                videos.length
-            );
+            }
 
         }
+
+    }
+
+    // ---------------------------------------------------------
+    // Năm fallback cho released
+    //
+    // Nếu PhimAPI không trả ngày phát hành tập,
+    // dùng ngày đầu năm của phim.
+    //
+    // Đây là fallback hợp lệ theo ISO 8601 để Stremio
+    // có thể nhận Video Object.
+    // ---------------------------------------------------------
+
+    const fallbackYear =
+        Number(
+            detail?.year ||
+            item?.year ||
+            new Date().getFullYear()
+        );
+
+    const fallbackReleased =
+        Number.isFinite(
+            fallbackYear
+        )
+            ? new Date(
+                Date.UTC(
+                    fallbackYear,
+                    0,
+                    1
+                )
+            ).toISOString()
+            : new Date().toISOString();
+
+    videos =
+        Array.from(
+            episodeMap.values()
+        )
+            .sort(
+                (a, b) =>
+                    a.number -
+                    b.number
+            )
+            .map(ep => {
+
+                const videoId =
+                    rawId +
+                    ":1:" +
+                    ep.number;
+
+                let released =
+                    ep.released;
+
+                // -------------------------------------------------
+                // Chuẩn hóa released thành ISO 8601
+                // -------------------------------------------------
+
+                if (released) {
+
+                    const parsedDate =
+                        new Date(
+                            released
+                        );
+
+                    if (
+                        !Number.isNaN(
+                            parsedDate.getTime()
+                        )
+                    ) {
+
+                        released =
+                            parsedDate.toISOString();
+
+                    } else {
+
+                        released =
+                            fallbackReleased;
+
+                    }
+
+                } else {
+
+                    released =
+                        fallbackReleased;
+
+                }
+
+                return {
+
+                    id:
+                        videoId,
+
+                    title:
+                        "Tập " +
+                        ep.number,
+
+                    released:
+                        released,
+
+                    season:
+                        1,
+
+                    episode:
+                        ep.number,
+
+                    number:
+                        ep.number,
+
+                    name:
+                        "Tập " +
+                        ep.number
+                };
+
+            });
+
+    console.log(
+        "[META] Series episodes:",
+        videos.length
+    );
+
+}
 
         // =====================================================
 // 13.13. META HOÀN CHỈNH
