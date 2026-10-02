@@ -864,74 +864,107 @@ SERIES TRENDING
 ============================================================ */
 
 /*
-phim-bo-dang-chieu KHÔNG tồn tại ở endpoint hiện tại.
-Dùng phim-bo + modified/year để lấy nhóm phim bộ mới nhất.
+   phim-bo-dang-chieu KHÔNG tồn tại ở endpoint hiện tại.
+
+   Dùng phim-bo + year/modified để ưu tiên
+   các phim bộ mới nhất.
 */
 
 async function fetchSeriesTrending() {
 
-const pages = [];
+    const pages = [];
 
-for (let page = 1; page <= 4; page++) {
+    /*
+       Lấy nhiều trang hơn để có đủ dữ liệu
+       trước khi chọn 50 phim bộ.
+    */
 
-    pages.push(
-        catalogFetch(
-            "https://phimapi.com/v1/api/" +
-            "danh-sach/phim-bo" +
-            "?page=" +
-            page +
-            "&limit=24"
-        )
-    );
-}
+    for (
+        let page = 1;
+        page <= 6;
+        page++
+    ) {
 
-const groups =
-    await Promise.all(pages);
+        pages.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-bo" +
+                "?page=" +
+                page +
+                "&limit=24"
+            )
+        );
+    }
 
-let items =
-    catalogDedupe(
-        groups.flat()
-    );
+    const groups =
+        await Promise.all(
+            pages
+        );
 
-items =
-    items
-        .filter(
+    let items =
+        catalogDedupe(
+            groups.flat()
+        );
+
+    /*
+       Chỉ giữ phim bộ.
+    */
+
+    items =
+        items.filter(
             item =>
                 isSeriesItem(item)
-        )
-        .sort(
+        );
+
+    /*
+       Ưu tiên phim mới:
+       1. Năm phát hành mới hơn
+       2. Ngày cập nhật mới hơn
+    */
+
+    items =
+        items.sort(
             (a, b) => {
 
-                const ya =
+                const yearA =
                     itemYear(a);
 
-                const yb =
+                const yearB =
                     itemYear(b);
 
-                if (yb !== ya) {
-                    return yb - ya;
+                if (
+                    yearB !==
+                    yearA
+                ) {
+                    return (
+                        yearB -
+                        yearA
+                    );
                 }
 
-                const ma =
+                const modifiedA =
                     Date.parse(
                         a?.modified?.time ||
                         ""
                     ) || 0;
 
-                const mb =
+                const modifiedB =
                     Date.parse(
                         b?.modified?.time ||
                         ""
                     ) || 0;
 
-                return mb - ma;
+                return (
+                    modifiedB -
+                    modifiedA
+                );
             }
         );
 
-return items.slice(
-    0,
-    CATALOG_TARGET
-);
+    return items.slice(
+        0,
+        CATALOG_TARGET
+    );
 
 }
 
