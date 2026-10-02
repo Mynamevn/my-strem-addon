@@ -4426,7 +4426,7 @@ if (isSeries) {
 }
 
         // =====================================================
-// 13.13. META HOÀN CHỈNH - TEST TỐI GIẢN
+// 13.13. META SERIES - TEST 3 FIELD
 // =====================================================
 
 const meta = {
@@ -4440,54 +4440,13 @@ const meta = {
     name:
         detail?.name ||
         item?.name ||
-        movieName,
+        movieName
 
-    poster:
-        poster,
-
-    posterShape:
-        "poster",
-
-    background:
-        background ||
-        undefined,
-
-    description:
-        description,
-
-    releaseInfo:
-        detail?.year
-            ? String(
-                detail.year
-            )
-            : (
-                item?.year
-                    ? String(
-                        item.year
-                    )
-                    : undefined
-            )
 };
 
-if (
-    isSeries &&
-    Array.isArray(videos)
-) {
-
-    meta.videos =
-        videos;
-
-}
-
 console.log(
-    "[META] OK:",
-    meta.name,
-    "| type:",
-    meta.type,
-    "| episodes:",
-    Array.isArray(meta.videos)
-        ? meta.videos.length
-        : 0
+    "[META] TEST 3 FIELD:",
+    JSON.stringify(meta)
 );
 
 return {
