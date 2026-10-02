@@ -222,6 +222,10 @@ return result;
 
 }
 
+/* ============================================================
+   CATALOG POSTER
+   ============================================================ */
+
 function catalogPoster(item) {
 
     const raw =
@@ -237,11 +241,19 @@ function catalogPoster(item) {
     const value =
         String(raw).trim();
 
+    /*
+       Đã là URL đầy đủ.
+    */
+
     if (
         /^https?:\/\//i.test(value)
     ) {
         return value;
     }
+
+    /*
+       Protocol-relative URL.
+    */
 
     if (
         value.startsWith("//")
@@ -250,25 +262,43 @@ function catalogPoster(item) {
     }
 
     /*
-       Poster của PhimAPI có thể là:
-       uploads/movies/...
-       upload/vod/...
+       Poster dạng uploads/movies/...
+       thường thuộc phimapi.com.
+    */
+
+    if (
+        value.startsWith(
+            "uploads/movies/"
+        )
+    ) {
+        return (
+            "https://phimapi.com/" +
+            value
+        );
+    }
+
+    /*
+       Poster dạng upload/vod/...
+       thường thuộc phimimg.com.
+    */
+
+    if (
+        value.startsWith(
+            "upload/vod/"
+        )
+    ) {
+        return (
+            "https://phimimg.com/" +
+            value
+        );
+    }
+
+    /*
+       Fallback.
     */
 
     return (
         "https://phimimg.com/" +
-        value.replace(/^\/+/, "")
-    );
-}
-
-    /*
-       PhimAPI thường trả poster dạng:
-       uploads/...
-       upload/...
-    */
-
-    return (
-        "https://phimapi.com/" +
         value.replace(/^\/+/, "")
     );
 }
