@@ -885,8 +885,17 @@ async function fetchTVB() {
 
     /*
        Lấy nhiều trang để có đủ dữ liệu.
-       Mục tiêu cuối cùng:
-       50 item TOTAL, gồm cả phim bộ + phim lẻ.
+
+       Mục tiêu:
+       - 25 phim bộ
+       - 25 phim lẻ
+       - Tổng 50 item
+       - 35 mới
+       - 15 cũ
+
+       Quy ước:
+       - Mới = năm hiện tại hoặc năm trước
+       - Cũ = các năm trước đó
     */
 
     for (
@@ -958,56 +967,220 @@ async function fetchTVB() {
     );
 
     /*
-       TVB = 50 ITEM TỔNG CỘNG.
-
-       Cố gắng cân bằng:
-       - 25 phim bộ
-       - 25 phim lẻ
-
-       Nếu một bên không đủ thì lấy phần còn thiếu
-       từ bên còn lại.
+       ========================================================
+       PHÂN LOẠI MỚI / CŨ
+       ========================================================
     */
 
-    const targetSeries =
-        Math.min(
-            25,
-            hkSeries.length
+    const currentYear =
+        new Date().getFullYear();
+
+    const isNew =
+        item =>
+            itemYear(item) >=
+            currentYear - 1;
+
+    const isOld =
+        item =>
+            itemYear(item) > 0 &&
+            itemYear(item) <
+            currentYear - 1;
+
+    const seriesNew =
+        hkSeries.filter(isNew);
+
+    const seriesOld =
+        hkSeries.filter(isOld);
+
+    const moviesNew =
+        hkMovies.filter(isNew);
+
+    const moviesOld =
+        hkMovies.filter(isOld);
+
+    console.log(
+        "[TVB] New:",
+        seriesNew.length +
+        moviesNew.length,
+        "| Old:",
+        seriesOld.length +
+        moviesOld.length
+    );
+
+    /*
+       ========================================================
+       MỤC TIÊU
+       ========================================================
+
+       25 series:
+       - 18 mới
+       - 7 cũ
+
+       25 movie:
+       - 17 mới
+       - 8 cũ
+
+       Tổng:
+       - 35 mới
+       - 15 cũ
+    */
+
+    const selectedSeriesNew =
+        stableShuffle(
+            seriesNew,
+            "tvb|series|new"
+        ).slice(
+            0,
+            18
         );
 
-    const targetMovies =
-        Math.min(
-            25,
-            hkMovies.length
+    const selectedSeriesOld =
+        stableShuffle(
+            seriesOld,
+            "tvb|series|old"
+        ).slice(
+            0,
+            7
+        );
+
+    const selectedMoviesNew =
+        stableShuffle(
+            moviesNew,
+            "tvb|movies|new"
+        ).slice(
+            0,
+            17
+        );
+
+    const selectedMoviesOld =
+        stableShuffle(
+            moviesOld,
+            "tvb|movies|old"
+        ).slice(
+            0,
+            8
         );
 
     let selectedSeries =
-        stableShuffle(
-            hkSeries,
-            "tvb|series"
-        ).slice(
-            0,
-            targetSeries
-        );
+        [
+            ...selectedSeriesNew,
+            ...selectedSeriesOld
+        ];
 
     let selectedMovies =
-        stableShuffle(
-            hkMovies,
-            "tvb|movies"
+        [
+            ...selectedMoviesNew,
+            ...selectedMoviesOld
+        ];
+
+    /*
+       ========================================================
+       BÙ NẾU MỚI / CŨ KHÔNG ĐỦ
+       ========================================================
+
+       Ưu tiên vẫn giữ:
+       - 25 series
+       - 25 movie
+       - đủ 50 item nếu nguồn cho phép.
+    */
+
+    if (
+        selectedSeries.length <
+        25
+    ) {
+
+        const used =
+            new Set(
+                selectedSeries.map(
+                    catalogKey
+                )
+            );
+
+        const fallbackSeries =
+            stableShuffle(
+                hkSeries.filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "tvb|series|fallback"
+            );
+
+        selectedSeries.push(
+            ...fallbackSeries.slice(
+                0,
+                25 -
+                selectedSeries.length
+            )
+        );
+    }
+
+    if (
+        selectedMovies.length <
+        25
+    ) {
+
+        const used =
+            new Set(
+                selectedMovies.map(
+                    catalogKey
+                )
+            );
+
+        const fallbackMovies =
+            stableShuffle(
+                hkMovies.filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "tvb|movies|fallback"
+            );
+
+        selectedMovies.push(
+            ...fallbackMovies.slice(
+                0,
+                25 -
+                selectedMovies.length
+            )
+        );
+    }
+
+    /*
+       Giữ đúng tối đa:
+       - 25 series
+       - 25 movie
+    */
+
+    selectedSeries =
+        catalogDedupe(
+            selectedSeries
         ).slice(
             0,
-            targetMovies
+            25
         );
+
+    selectedMovies =
+        catalogDedupe(
+            selectedMovies
+        ).slice(
+            0,
+            25
+        );
+
+    /*
+       ========================================================
+       NẾU MỘT BÊN THIẾU
+       ========================================================
+    */
 
     let result =
         catalogDedupe([
             ...selectedSeries,
             ...selectedMovies
         ]);
-
-    /*
-       Nếu chưa đủ 50 vì một bên không có đủ,
-       lấy thêm từ bên còn lại.
-    */
 
     if (
         result.length <
@@ -1042,7 +1215,7 @@ async function fetchTVB() {
     }
 
     /*
-       Cuối cùng chỉ giữ đúng 50.
+       Cuối cùng chỉ giữ 50.
     */
 
     result =
@@ -1054,9 +1227,9 @@ async function fetchTVB() {
         );
 
     /*
-       Trộn thứ tự phim bộ + phim lẻ
-       để hàng TVB không bị chia thành
-       25 bộ rồi 25 lẻ.
+       Trộn phim bộ + phim lẻ
+       để giao diện không chia thành
+       25 series rồi 25 movie.
     */
 
     result =
@@ -1064,6 +1237,16 @@ async function fetchTVB() {
             result,
             "tvb|final"
         );
+
+    const finalNew =
+        result.filter(
+            isNew
+        ).length;
+
+    const finalOld =
+        result.filter(
+            isOld
+        ).length;
 
     console.log(
         "[TVB] Final:",
@@ -1076,7 +1259,11 @@ async function fetchTVB() {
         result.filter(
             item =>
                 !isSeriesItem(item)
-        ).length
+        ).length,
+        "| New:",
+        finalNew,
+        "| Old:",
+        finalOld
     );
 
     return result;
