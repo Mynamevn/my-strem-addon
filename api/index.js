@@ -3084,6 +3084,49 @@ async function fetchAnimationNew() {
             "anime|final"
         );
 
+ /*
+       --------------------------------------------------------
+       KIỂM TRA ĐỘ MỚI
+       --------------------------------------------------------
+    */
+
+    const yearStats =
+        {};
+
+    result.forEach(
+        item => {
+
+            const year =
+                itemYear(item) ||
+                "unknown";
+
+            yearStats[year] =
+                (yearStats[year] || 0) +
+                1;
+        }
+    );
+
+    console.log(
+        "[ANIME] Years:",
+        Object.entries(
+            yearStats
+        )
+            .sort(
+                (a, b) =>
+                    Number(b[0]) -
+                    Number(a[0])
+            )
+            .map(
+                ([year, count]) =>
+                    year +
+                    "=" +
+                    count
+            )
+            .join(
+                " | "
+            )
+    );
+
     /*
        --------------------------------------------------------
        LOG CUỐI
