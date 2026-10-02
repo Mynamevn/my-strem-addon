@@ -4426,7 +4426,7 @@ if (isSeries) {
 }
 
         // =====================================================
-// 13.13. META HOÀN CHỈNH
+// 13.13. META HOÀN CHỈNH - TEST TỐI GIẢN
 // =====================================================
 
 const meta = {
@@ -4466,58 +4466,7 @@ const meta = {
                         item.year
                     )
                     : undefined
-            ),
-
-    imdbRating:
-        imdbRating !== null
-            ? imdbRating
-            : undefined,
-
-    genres:
-        genres,
-
-    country:
-        Array.isArray(
-            detail?.country
-        )
-            ? detail.country
-                .map(x =>
-                    typeof x === "string"
-                        ? x
-                        : x?.name
-                )
-                .filter(Boolean)
-            : undefined,
-
-    director:
-        Array.isArray(
-            detail?.director
-        )
-            ? detail.director
-                .map(x =>
-                    typeof x === "string"
-                        ? x
-                        : x?.name
-                )
-                .filter(Boolean)
-            : undefined,
-
-    cast:
-        Array.isArray(
-            detail?.actor
-        )
-            ? detail.actor
-                .map(x =>
-                    typeof x === "string"
-                        ? x
-                        : x?.name
-                )
-                .filter(Boolean)
-            : undefined,
-
-    runtime:
-        detail?.time ||
-        undefined
+            )
 };
 
 if (
@@ -4538,10 +4487,7 @@ console.log(
     "| episodes:",
     Array.isArray(meta.videos)
         ? meta.videos.length
-        : 0,
-    "| IMDb:",
-    meta.imdbRating ??
-    "N/A"
+        : 0
 );
 
 return {
