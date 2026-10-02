@@ -299,73 +299,107 @@ return (
 
 function isAnimation(item) {
 
-const categories =
-    catalogCategoryNames(item);
+    if (!item) {
+        return false;
+    }
 
-const text =
-    catalogNormalize(
-        [
-            item?.name,
-            item?.origin_name,
-            item?.original_name
-        ]
-            .filter(Boolean)
-            .join(" ")
+    /*
+       Nếu item được tạo từ nguồn hoạt hình
+       riêng thì tin cậy tuyệt đối.
+    */
+
+    if (
+        item.__isAnimation === true
+    ) {
+        return true;
+    }
+
+    const categories =
+        catalogCategoryNames(item);
+
+    return categories.some(
+        x =>
+            x === "hoat hinh" ||
+            x === "animation" ||
+            x === "anime" ||
+            x.includes("hoat hinh")
     );
-
-return (
-    categories.some(x =>
-        x.includes("hoat hinh") ||
-        x.includes("animation") ||
-        x.includes("anime")
-    ) ||
-    text.includes("anime")
-);
-
 }
 
 function isJapanese(item) {
 
-const countries =
-    catalogCountryNames(item);
+    const countries =
+        catalogCountryNames(item);
 
-const text =
-    catalogNormalize(
-        [
-            item?.name,
-            item?.origin_name,
-            item?.original_name
-        ]
-            .filter(Boolean)
-            .join(" ")
+    return countries.some(
+        country =>
+            country === "nhat ban" ||
+            country === "japan"
     );
-
-return (
-    countries.some(x =>
-        x.includes("nhat ban") ||
-        x.includes("japan")
-    ) ||
-    text.includes("japan")
-);
-
 }
 
 function isAmericanWestern(item) {
 
-const countries =
-    catalogCountryNames(item);
+    const countries =
+        catalogCountryNames(item);
 
-return countries.some(x =>
-    x.includes("au my") ||
-    x.includes("my") ||
-    x.includes("anh") ||
-    x.includes("phap") ||
-    x.includes("duc") ||
-    x.includes("canada") ||
-    x.includes("uc") ||
-    x.includes("new zealand")
-);
+    /*
+       Nhóm Mỹ / Âu / phương Tây.
 
+       Không dùng includes("my"), includes("anh")...
+       vì có thể nhận nhầm tên quốc gia khác.
+
+       PhimAPI thường dùng "Âu Mỹ" cho nhóm
+       phim Mỹ / Âu.
+    */
+
+    const westernCountries = new Set([
+        "au my",
+        "my",
+        "hoa ky",
+        "united states",
+        "united states of america",
+        "usa",
+        "anh",
+        "vuong quoc anh",
+        "united kingdom",
+        "uk",
+        "phap",
+        "duc",
+        "canada",
+        "uc",
+        "australia",
+        "new zealand",
+        "italia",
+        "y",
+        "tay ban nha",
+        "tbn",
+        "spain",
+        "bo dao nha",
+        "ireland",
+        "tho nhi ky",
+        "netherlands",
+        "ha lan",
+        "belgium",
+        "bi",
+        "sweden",
+        "thuy dien",
+        "norway",
+        "na uy",
+        "denmark",
+        "phan lan",
+        "finland",
+        "switzerland",
+        "ao",
+        "austria"
+    ]);
+
+    return countries.some(
+        country =>
+            westernCountries.has(
+                country
+            )
+    );
 }
 
 function isAsian(item) {
@@ -403,7 +437,29 @@ function isSeriesItem(item) {
     }
 
     /*
-       Ưu tiên tuyệt đối trường type của PhimAPI.
+       ========================================================
+       1. TYPE NỘI BỘ DO CHÚNG TA GÁN
+       ========================================================
+    */
+
+    if (
+        item.__catalogType ===
+        "series"
+    ) {
+        return true;
+    }
+
+    if (
+        item.__catalogType ===
+        "movie"
+    ) {
+        return false;
+    }
+
+    /*
+       ========================================================
+       2. TYPE CỦA PHIMAPI
+       ========================================================
     */
 
     const rawType =
@@ -415,92 +471,101 @@ function isSeriesItem(item) {
             .toLowerCase();
 
     if (
-        rawType ===
-        "series"
+        rawType === "series" ||
+        rawType === "tvshows" ||
+        rawType === "tvshow"
     ) {
         return true;
     }
 
     if (
-        rawType ===
-        "single"
-    ) {
-        return false;
-    }
-
-    if (
-        rawType ===
-        "movie"
+        rawType === "single" ||
+        rawType === "movie"
     ) {
         return false;
     }
 
     /*
-       Hoạt hình có thể là movie hoặc series.
-       Không tự coi hoathinh là series ở đây.
-       Nếu API không có type rõ ràng thì mới
-       dùng các dấu hiệu phụ bên dưới.
+       ========================================================
+       3. TMDB TYPE
+       ========================================================
+
+       PhimAPI có dữ liệu:
+       tmdb.type = movie / tv
+
+       Đây là dấu hiệu rất hữu ích để phân biệt
+       phim lẻ và phim bộ.
     */
 
+    const tmdbType =
+        String(
+            item?.tmdb?.type ||
+            ""
+        )
+            .trim()
+            .toLowerCase();
+
     if (
-        rawType ===
-        "hoathinh"
+        tmdbType === "tv" ||
+        tmdbType === "series"
     ) {
+        return true;
+    }
 
-        /*
-           Nếu có episode_current / episode_total
-           thì xem như series.
-        */
-
-        const episodeCurrent =
-            String(
-                item?.episode_current ||
-                ""
-            ).trim();
-
-        const episodeTotal =
-            String(
-                item?.episode_total ||
-                ""
-            ).trim();
-
-        if (
-            episodeCurrent ||
-            episodeTotal
-        ) {
-            return true;
-        }
-
+    if (
+        tmdbType === "movie"
+    ) {
         return false;
     }
 
     /*
-       Trường hợp API không trả type.
-       Chỉ dùng dấu hiệu phụ nếu thật sự có.
+       ========================================================
+       4. DẤU HIỆU PHỤ
+       ========================================================
     */
 
     const episodeCurrent =
         String(
             item?.episode_current ||
             ""
-        ).trim();
+        )
+            .trim()
+            .toLowerCase();
 
     const episodeTotal =
         String(
             item?.episode_total ||
             ""
-        ).trim();
+        )
+            .trim()
+            .toLowerCase();
 
-    if (
-        episodeCurrent ||
-        episodeTotal
-    ) {
+    /*
+       "Full" không có nghĩa là series.
+       Rất nhiều phim lẻ có episode_current = Full.
+    */
+
+    const looksLikeSeries =
+        (
+            episodeTotal &&
+            episodeTotal !== "1" &&
+            episodeTotal !== "full"
+        ) ||
+        (
+            episodeCurrent &&
+            episodeCurrent !== "full" &&
+            /\d/.test(
+                episodeCurrent
+            )
+        );
+
+    if (looksLikeSeries) {
         return true;
     }
 
     /*
-       Không đủ bằng chứng là series
-       => mặc định là movie.
+       Không đủ bằng chứng
+       => movie.
     */
 
     return false;
@@ -962,447 +1027,828 @@ DAILY
 
 async function fetchDailyCatalog() {
 
-const today =
-    new Date()
-        .toISOString()
-        .slice(0, 10);
+    const today =
+        new Date()
+            .toISOString()
+            .slice(0, 10);
 
-console.log(
-    "[DAILY] Date:",
-    today
-);
-
-const sources = [];
-
-for (let page = 1; page <= 5; page++) {
-
-    sources.push(
-        catalogFetch(
-            "https://phimapi.com/v1/api/" +
-            "danh-sach/phim-le" +
-            "?page=" +
-            page +
-            "&limit=24"
-        )
+    console.log(
+        "[DAILY] Date:",
+        today
     );
 
-    sources.push(
-        catalogFetch(
-            "https://phimapi.com/v1/api/" +
-            "danh-sach/phim-bo" +
-            "?page=" +
-            page +
-            "&limit=24"
-        )
-    );
-}
+    /*
+       ========================================================
+       NGUỒN PHIM THƯỜNG
+       ========================================================
+    */
 
-const animationPages = [];
+    const normalSources = [];
 
-for (let page = 1; page <= 3; page++) {
+    for (
+        let page = 1;
+        page <= 5;
+        page++
+    ) {
 
-    animationPages.push(
-        catalogFetch(
-            "https://phimapi.com/v1/api/" +
-            "danh-sach/hoat-hinh" +
-            "?page=" +
-            page +
-            "&limit=24"
-        )
-    );
-}
-
-const [
-    normalGroups,
-    animationGroups
-] =
-    await Promise.all([
-        Promise.all(sources),
-        Promise.all(animationPages)
-    ]);
-
-let normal =
-    catalogDedupe(
-        normalGroups.flat()
-    );
-
-const animation =
-    catalogDedupe(
-        animationGroups.flat()
-    );
-
-/*
-   DAILY:
-   - chính xác 50 item
-   - chỉ 1 animation
-   - 49 item còn lại chia đều theo từng thập niên
-   - series/movie vẫn lấy từ cả hai nguồn
-*/
-
-const decadePools =
-    new Map();
-
-for (const item of normal) {
-
-    if (isAnimation(item)) {
-        continue;
-    }
-
-    const decade =
-        decadeOf(item);
-
-    if (!decade) {
-        continue;
-    }
-
-    if (!decadePools.has(decade)) {
-        decadePools.set(
-            decade,
-            []
-        );
-    }
-
-    decadePools
-        .get(decade)
-        .push(item);
-}
-
-/*
-   Các thập niên có dữ liệu.
-   Chia 49 vị trí gần đều nhau.
-*/
-
-const decades =
-    Array.from(
-        decadePools.keys()
-    )
-        .sort(
-            (a, b) =>
-                b - a
-        );
-
-console.log(
-    "[DAILY] Decades:",
-    decades.join(", ")
-);
-
-const targetNormal = 49;
-
-const selected = [];
-
-/*
-   Chia đều trước.
-   Ví dụ 7 thập niên:
-   7,7,7,7,7,7,7 = 49
-   Nếu số thập niên thay đổi,
-   phần dư sẽ được phân bổ ổn định.
-*/
-
-const base =
-    decades.length > 0
-        ? Math.floor(
-            targetNormal /
-            decades.length
-        )
-        : 0;
-
-let remainder =
-    decades.length > 0
-        ? targetNormal %
-            decades.length
-        : 0;
-
-for (const decade of decades) {
-
-    const pool =
-        stableShuffle(
-            decadePools.get(decade),
-            today +
-            "|" +
-            decade
-        );
-
-    let take =
-        base;
-
-    if (remainder > 0) {
-        take++;
-        remainder--;
-    }
-
-    selected.push(
-        ...pool.slice(
-            0,
-            take
-        )
-    );
-}
-
-/*
-   Nếu một thập niên không đủ phim,
-   bù từ các thập niên còn dư.
-*/
-
-let result =
-    catalogDedupe(
-        selected
-    );
-
-if (result.length < targetNormal) {
-
-    const used =
-        new Set(
-            result.map(
-                catalogKey
+        normalSources.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-le" +
+                "?page=" +
+                page +
+                "&limit=24"
             )
-        );
-
-    const fallback =
-        normal
-            .filter(
-                item =>
-                    !isAnimation(item) &&
-                    !used.has(
-                        catalogKey(item)
-                    )
-            );
-
-    result.push(
-        ...stableShuffle(
-            fallback,
-            today +
-            "|fallback"
-        )
-    );
-}
-
-result =
-    catalogDedupe(
-        result
-    ).slice(
-        0,
-        targetNormal
-    );
-
-/*
-   Chỉ lấy ĐÚNG 1 animation.
-   Ưu tiên animation Nhật nếu có.
-*/
-
-const japaneseAnimation =
-    animation.filter(
-        item =>
-            isJapanese(item)
-    );
-
-const otherAnimation =
-    animation.filter(
-        item =>
-            !isJapanese(item)
-    );
-
-const oneAnimation =
-    stableShuffle(
-        japaneseAnimation.length
-            ? japaneseAnimation
-            : otherAnimation,
-        today +
-        "|animation"
-    )[0];
-
-if (oneAnimation) {
-    result.push(
-        oneAnimation
-    );
-}
-
-result =
-    stableShuffle(
-        catalogDedupe(result),
-        today +
-        "|daily-final"
-    ).slice(
-        0,
-        CATALOG_TARGET
-    );
-
-console.log(
-    "[DAILY] Normal:",
-    result.filter(
-        x =>
-            !isAnimation(x)
-    ).length,
-    "| Animation:",
-    result.filter(
-        x =>
-            isAnimation(x)
-    ).length
-);
-
-return result;
-
-}
-
-/* ============================================================
-ANIMATION NEW
-============================================================ */
-
-async function fetchAnimationNew() {
-
-const pages = [];
-
-for (let page = 1; page <= 6; page++) {
-
-    pages.push(
-        catalogFetch(
-            "https://phimapi.com/v1/api/" +
-            "danh-sach/hoat-hinh" +
-            "?page=" +
-            page +
-            "&limit=24"
-        )
-    );
-}
-
-const groups =
-    await Promise.all(
-        pages
-    );
-
-const items =
-    catalogDedupe(
-        groups.flat()
-    );
-
-/*
-   50 item:
-   Nhật 40%
-   Mỹ / Âu Mỹ 40%
-   Trung + nước khác 20%
-*/
-
-const japanese =
-    items.filter(
-        item =>
-            isJapanese(item)
-    );
-
-const western =
-    items.filter(
-        item =>
-            !isJapanese(item) &&
-            isAmericanWestern(item)
-    );
-
-const other =
-    items.filter(
-        item =>
-            !isJapanese(item) &&
-            !isAmericanWestern(item)
-    );
-
-/*
-   Mỗi nhóm 25 / 20 / 10 tương ứng
-   với 40% / 40% / 20% sau khi
-   tổng mục tiêu là 50.
-
-   Ở đây 40% Nhật = 20,
-   40% Mỹ = 20,
-   20% còn lại = 10.
-*/
-
-let japanSelected =
-    stableShuffle(
-        japanese,
-        "anime|japan"
-    ).slice(
-        0,
-        20
-    );
-
-let westernSelected =
-    stableShuffle(
-        western,
-        "anime|western"
-    ).slice(
-        0,
-        20
-    );
-
-let otherSelected =
-    stableShuffle(
-        other,
-        "anime|other"
-    ).slice(
-        0,
-        10
-    );
-
-/*
-   Nếu nguồn Nhật/Mỹ không đủ,
-   bù bằng nhóm còn lại để vẫn có 50.
-*/
-
-let result =
-    catalogDedupe([
-        ...japanSelected,
-        ...westernSelected,
-        ...otherSelected
-    ]);
-
-if (result.length < CATALOG_TARGET) {
-
-    const used =
-        new Set(
-            result.map(
-                catalogKey
-            )
-        );
-
-    const fallback =
-        items.filter(
-            item =>
-                !used.has(
-                    catalogKey(item)
+                .then(
+                    items =>
+                        items.map(
+                            item => ({
+                                ...item,
+                                __catalogType:
+                                    "movie"
+                            })
+                        )
                 )
         );
 
-    result.push(
-        ...stableShuffle(
-            fallback,
-            "anime|fallback"
+        normalSources.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-bo" +
+                "?page=" +
+                page +
+                "&limit=24"
+            )
+                .then(
+                    items =>
+                        items.map(
+                            item => ({
+                                ...item,
+                                __catalogType:
+                                    "series"
+                            })
+                )
+                )
+        );
+    }
+
+    /*
+       ========================================================
+       NGUỒN HOẠT HÌNH
+       ========================================================
+
+       Không dùng /hoat-hinh để đoán movie/series.
+
+       Lấy:
+       - phim-le + category=hoat-hinh
+       - phim-bo + category=hoat-hinh
+    */
+
+    const animationSources = [];
+
+    for (
+        let page = 1;
+        page <= 3;
+        page++
+    ) {
+
+        animationSources.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-le" +
+                "?category=hoat-hinh" +
+                "&page=" +
+                page +
+                "&limit=24"
+            )
+                .then(
+                    items =>
+                        items.map(
+                            item => ({
+                                ...item,
+                                __catalogType:
+                                    "movie",
+                                __isAnimation:
+                                    true
+                            })
+                        )
+                )
+        );
+
+        animationSources.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-bo" +
+                "?category=hoat-hinh" +
+                "&page=" +
+                page +
+                "&limit=24"
+            )
+                .then(
+                    items =>
+                        items.map(
+                            item => ({
+                                ...item,
+                                __catalogType:
+                                    "series",
+                                __isAnimation:
+                                    true
+                            })
+                        )
+                )
+        );
+    }
+
+    const [
+        normalGroups,
+        animationGroups
+    ] =
+        await Promise.all([
+            Promise.all(
+                normalSources
+            ),
+            Promise.all(
+                animationSources
+            )
+        ]);
+
+    const normal =
+        catalogDedupe(
+            normalGroups.flat()
+        );
+
+    const animation =
+        catalogDedupe(
+            animationGroups.flat()
+        );
+
+    /*
+       ========================================================
+       49 ITEM THƯỜNG
+       ========================================================
+    */
+
+    const decadePools =
+        new Map();
+
+    for (
+        const item
+        of normal
+    ) {
+
+        /*
+           Nếu nguồn phim thường vẫn có
+           category hoạt hình thì loại ra.
+        */
+
+        if (
+            isAnimation(item)
+        ) {
+            continue;
+        }
+
+        const decade =
+            decadeOf(item);
+
+        if (!decade) {
+            continue;
+        }
+
+        if (
+            !decadePools.has(
+                decade
+            )
+        ) {
+
+            decadePools.set(
+                decade,
+                []
+            );
+        }
+
+        decadePools
+            .get(decade)
+            .push(item);
+    }
+
+    const decades =
+        Array.from(
+            decadePools.keys()
         )
+            .sort(
+                (a, b) =>
+                    b - a
+            );
+
+    console.log(
+        "[DAILY] Decades:",
+        decades.join(", ")
     );
+
+    const targetNormal = 49;
+
+    const selected = [];
+
+    /*
+       Chia 49 vị trí tương đối đều
+       cho các thập niên có dữ liệu.
+    */
+
+    const base =
+        decades.length
+            ? Math.floor(
+                targetNormal /
+                decades.length
+            )
+            : 0;
+
+    let remainder =
+        decades.length
+            ? targetNormal %
+                decades.length
+            : 0;
+
+    for (
+        const decade
+        of decades
+    ) {
+
+        const pool =
+            stableShuffle(
+                decadePools.get(
+                    decade
+                ),
+                today +
+                "|" +
+                decade
+            );
+
+        let take =
+            base;
+
+        if (
+            remainder > 0
+        ) {
+
+            take++;
+            remainder--;
+        }
+
+        selected.push(
+            ...pool.slice(
+                0,
+                take
+            )
+        );
+    }
+
+    let result =
+        catalogDedupe(
+            selected
+        );
+
+    /*
+       ========================================================
+       BÙ NẾU MỘT THẬP NIÊN KHÔNG ĐỦ
+       ========================================================
+    */
+
+    if (
+        result.length <
+        targetNormal
+    ) {
+
+        const used =
+            new Set(
+                result.map(
+                    catalogKey
+                )
+            );
+
+        const fallback =
+            stableShuffle(
+                normal.filter(
+                    item =>
+                        !isAnimation(item) &&
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                today +
+                "|daily-fallback"
+            );
+
+        result.push(
+            ...fallback
+        );
+    }
+
+    result =
+        catalogDedupe(
+            result
+        )
+            .slice(
+                0,
+                targetNormal
+            );
+
+    /*
+       ========================================================
+       CHÍNH XÁC 1 HOẠT HÌNH
+       ========================================================
+
+       Ưu tiên Nhật.
+    */
+
+    const japaneseAnimation =
+        animation.filter(
+            item =>
+                isJapanese(item)
+        );
+
+    const otherAnimation =
+        animation.filter(
+            item =>
+                !isJapanese(item)
+        );
+
+    const animationPool =
+        japaneseAnimation.length
+            ? japaneseAnimation
+            : otherAnimation;
+
+    const oneAnimation =
+        stableShuffle(
+            animationPool,
+            today +
+            "|daily-animation"
+        )[0];
+
+    if (
+        oneAnimation
+    ) {
+
+        result.push(
+            oneAnimation
+        );
+
+    } else {
+
+        console.log(
+            "[DAILY] WARNING: " +
+            "khong tim thay animation"
+        );
+    }
+
+    /*
+       ========================================================
+       FINAL
+       ========================================================
+    */
+
+    result =
+        catalogDedupe(
+            result
+        );
+
+    result =
+        stableShuffle(
+            result,
+            today +
+            "|daily-final"
+        )
+            .slice(
+                0,
+                CATALOG_TARGET
+            );
+
+    console.log(
+        "[DAILY] Final:",
+        result.length,
+        "| Normal:",
+        result.filter(
+            item =>
+                !item.__isAnimation
+        ).length,
+        "| Animation:",
+        result.filter(
+            item =>
+                item.__isAnimation === true
+        ).length,
+        "| Movies:",
+        result.filter(
+            item =>
+                !isSeriesItem(item)
+        ).length,
+        "| Series:",
+        result.filter(
+            isSeriesItem
+        ).length
+    );
+
+    return result;
 }
 
-result =
-    catalogDedupe(
-        result
-    ).slice(
-        0,
-        CATALOG_TARGET
+/* ============================================================
+   ANIMATION NEW
+   ============================================================ */
+
+async function fetchAnimationNew() {
+
+    /*
+       ========================================================
+       LẤY RIÊNG PHIM LẺ + PHIM BỘ
+       ========================================================
+    */
+
+    const moviePages = [];
+    const seriesPages = [];
+
+    for (
+        let page = 1;
+        page <= 6;
+        page++
+    ) {
+
+        moviePages.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-le" +
+                "?category=hoat-hinh" +
+                "&page=" +
+                page +
+                "&limit=24"
+            )
+                .then(
+                    items =>
+                        items.map(
+                            item => ({
+                                ...item,
+                                __catalogType:
+                                    "movie",
+                                __isAnimation:
+                                    true
+                            })
+                        )
+                )
+        );
+
+        seriesPages.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-bo" +
+                "?category=hoat-hinh" +
+                "&page=" +
+                page +
+                "&limit=24"
+            )
+                .then(
+                    items =>
+                        items.map(
+                            item => ({
+                                ...item,
+                                __catalogType:
+                                    "series",
+                                __isAnimation:
+                                    true
+                            })
+                        )
+                )
+        );
+    }
+
+    const [
+        movieGroups,
+        seriesGroups
+    ] =
+        await Promise.all([
+            Promise.all(
+                moviePages
+            ),
+            Promise.all(
+                seriesPages
+            )
+        ]);
+
+    const movies =
+        catalogDedupe(
+            movieGroups.flat()
+        );
+
+    const series =
+        catalogDedupe(
+            seriesGroups.flat()
+        );
+
+    console.log(
+        "[ANIME] Source Movies:",
+        movies.length,
+        "| Series:",
+        series.length
     );
 
-console.log(
-    "[ANIME] Japan:",
-    result.filter(
-        isJapanese
-    ).length,
-    "| Western:",
-    result.filter(
-        item =>
-            isAmericanWestern(item)
+    /*
+       ========================================================
+       CHIA THEO QUỐC GIA
+       ========================================================
+    */
+
+    function groupByCountry(
+        items
+    ) {
+
+        return {
+
+            japan:
+                items.filter(
+                    isJapanese
+                ),
+
+            western:
+                items.filter(
+                    isAmericanWestern
+                ),
+
+            other:
+                items.filter(
+                    item =>
+                        !isJapanese(item) &&
+                        !isAmericanWestern(item)
+                )
+        };
+    }
+
+    const movieGroupsByCountry =
+        groupByCountry(
+            movies
+        );
+
+    const seriesGroupsByCountry =
+        groupByCountry(
+            series
+        );
+
+    console.log(
+        "[ANIME] Movies:",
+        "Japan",
+        movieGroupsByCountry.japan.length,
+        "| Western",
+        movieGroupsByCountry.western.length,
+        "| Other",
+        movieGroupsByCountry.other.length
+    );
+
+    console.log(
+        "[ANIME] Series:",
+        "Japan",
+        seriesGroupsByCountry.japan.length,
+        "| Western",
+        seriesGroupsByCountry.western.length,
+        "| Other",
+        seriesGroupsByCountry.other.length
+    );
+
+    /*
+       ========================================================
+       LẤY NỘI DUNG THEO TỶ LỆ
+       ========================================================
+
+       Mục tiêu:
+       Japan   = 20
+       Western = 20
+       Other   = 10
+
+       Tổng:
+       50
+
+       Mỗi nhóm cố gắng movie / series 50 / 50.
+    */
+
+    function takeFromGroup(
+        moviePool,
+        seriesPool,
+        target,
+        seed
+    ) {
+
+        let movieTarget =
+            Math.floor(
+                target / 2
+            );
+
+        let seriesTarget =
+            target -
+            movieTarget;
+
+        /*
+           Nếu movie không đủ,
+           chuyển phần thiếu sang series.
+        */
+
+        if (
+            moviePool.length <
+            movieTarget
+        ) {
+
+            const shortage =
+                movieTarget -
+                moviePool.length;
+
+            movieTarget =
+                moviePool.length;
+
+            seriesTarget +=
+                shortage;
+        }
+
+        /*
+           Nếu series không đủ,
+           chuyển phần thiếu sang movie.
+        */
+
+        if (
+            seriesPool.length <
+            seriesTarget
+        ) {
+
+            const shortage =
+                seriesTarget -
+                seriesPool.length;
+
+            seriesTarget =
+                seriesPool.length;
+
+            movieTarget +=
+                shortage;
+        }
+
+        const selectedMovies =
+            stableShuffle(
+                moviePool,
+                seed +
+                "|movies"
+            )
+                .slice(
+                    0,
+                    movieTarget
+                );
+
+        const selectedSeries =
+            stableShuffle(
+                seriesPool,
+                seed +
+                "|series"
+            )
+                .slice(
+                    0,
+                    seriesTarget
+                );
+
+        return [
+            ...selectedMovies,
+            ...selectedSeries
+        ];
+    }
+
+    let result = [];
+
+    /*
+       ========================================================
+       JAPAN = 20
+       ========================================================
+    */
+
+    result.push(
+        ...takeFromGroup(
+            movieGroupsByCountry.japan,
+            seriesGroupsByCountry.japan,
+            20,
+            "anime|japan"
+        )
+    );
+
+    /*
+       ========================================================
+       WESTERN = 20
+       ========================================================
+    */
+
+    result.push(
+        ...takeFromGroup(
+            movieGroupsByCountry.western,
+            seriesGroupsByCountry.western,
+            20,
+            "anime|western"
+        )
+    );
+
+    /*
+       ========================================================
+       OTHER = 10
+       ========================================================
+    */
+
+    result.push(
+        ...takeFromGroup(
+            movieGroupsByCountry.other,
+            seriesGroupsByCountry.other,
+            10,
+            "anime|other"
+        )
+    );
+
+    /*
+       ========================================================
+       BÙ NẾU MỘT NHÓM KHÔNG ĐỦ
+       ========================================================
+    */
+
+    if (
+        result.length <
+        CATALOG_TARGET
+    ) {
+
+        const used =
+            new Set(
+                result.map(
+                    catalogKey
+                )
+            );
+
+        const fallback =
+            stableShuffle(
+                [
+                    ...movies,
+                    ...series
+                ]
+                    .filter(
+                        item =>
+                            !used.has(
+                                catalogKey(item)
+                            )
+                    ),
+                "anime|fallback"
+            );
+
+        result.push(
+            ...fallback
+        );
+    }
+
+    /*
+       ========================================================
+       ĐÚNG 50
+       ========================================================
+    */
+
+    result =
+        catalogDedupe(
+            result
+        )
+            .slice(
+                0,
+                CATALOG_TARGET
+            );
+
+    /*
+       Trộn movie + series.
+    */
+
+    result =
+        stableShuffle(
+            result,
+            "anime|final"
+        );
+
+    console.log(
+        "[ANIME] Final:",
+        result.length,
+        "| Movies:",
+        result.filter(
+            item =>
+                !isSeriesItem(item)
         ).length,
-    "| Other:",
-    result.filter(
-        item =>
-            !isJapanese(item) &&
-            !isAmericanWestern(item)
-    ).length
-);
+        "| Series:",
+        result.filter(
+            isSeriesItem
+        ).length,
+        "| Japan:",
+        result.filter(
+            isJapanese
+        ).length,
+        "| Western:",
+        result.filter(
+            isAmericanWestern
+        ).length,
+        "| Other:",
+        result.filter(
+            item =>
+                !isJapanese(item) &&
+                !isAmericanWestern(item)
+        ).length
+    );
 
-return result;
-
+    return result;
 }
 
 /* ============================================================
