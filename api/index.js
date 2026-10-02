@@ -2450,22 +2450,83 @@ async function fetchAnimationNew() {
         other.series.length
     );
 
-    /*
+   /*
        --------------------------------------------------------
        LẤY CÓ ƯU TIÊN
        --------------------------------------------------------
 
-       Nhật:
-       khoảng 23
-       và ưu tiên SERIES.
+       Mục tiêu:
+       - Tổng 50 item
+       - Japan khoảng 23
+       - USA khoảng 22
+       - Other khoảng 5
+       - Ưu tiên phim mới
+       - Nhật ưu tiên SERIES
+       - Tổng thể cố cân bằng Movie / Series
+    */
 
-       USA:
-       khoảng 22
-       cố gắng cân bằng movie / series.
+    /*
+       --------------------------------------------------------
+       SẮP XẾP THEO ĐỘ MỚI
+       --------------------------------------------------------
 
-       Other:
-       khoảng 5
-       = khoảng 10%.
+       Ưu tiên:
+       1. Năm mới hơn
+       2. modified mới hơn
+       3. stableShuffle để vẫn có sự thay đổi
+          nhưng ổn định trong cùng một lần chạy
+    */
+
+    function sortRecent(
+        items,
+        seed
+    ) {
+
+        return stableShuffle(
+            items,
+            seed +
+            "|shuffle"
+        ).sort(
+            (a, b) => {
+
+                const ya =
+                    itemYear(a);
+
+                const yb =
+                    itemYear(b);
+
+                if (
+                    yb !== ya
+                ) {
+                    return yb - ya;
+                }
+
+                const ma =
+                    Date.parse(
+                        a?.modified?.time ||
+                        ""
+                    ) || 0;
+
+                const mb =
+                    Date.parse(
+                        b?.modified?.time ||
+                        ""
+                    ) || 0;
+
+                return mb - ma;
+            }
+        );
+    }
+
+    /*
+       --------------------------------------------------------
+       LẤY SERIES ƯU TIÊN
+       --------------------------------------------------------
+
+       Dùng cho Japan.
+
+       Nhật có rất nhiều Series nên ưu tiên
+       Series mới trước, sau đó mới lấy Movie.
     */
 
     function takeSeriesPriority(
@@ -2476,59 +2537,59 @@ async function fetchAnimationNew() {
 
         const result = [];
 
-        const shuffledSeries =
-            stableShuffle(
+        const series =
+            sortRecent(
                 group.series,
                 seed +
                 "|series"
             );
 
-        const shuffledMovies =
-            stableShuffle(
+        const movies =
+            sortRecent(
                 group.movies,
                 seed +
                 "|movies"
             );
 
         /*
-           Nhật ưu tiên series.
-
-           Trước tiên lấy tối đa khoảng
-           60% series.
+           Ưu tiên khoảng 60% Series.
         */
 
         const seriesTarget =
             Math.min(
-                group.series.length,
+                series.length,
                 Math.ceil(
                     target * 0.60
                 )
             );
 
         result.push(
-            ...shuffledSeries.slice(
+            ...series.slice(
                 0,
                 seriesTarget
             )
         );
 
+        /*
+           Phần còn lại lấy Movie.
+        */
+
         const movieTarget =
             Math.min(
-                group.movies.length,
+                movies.length,
                 target -
                 result.length
             );
 
         result.push(
-            ...shuffledMovies.slice(
+            ...movies.slice(
                 0,
                 movieTarget
             )
         );
 
         /*
-           Nếu thiếu movie hoặc series,
-           lấy thêm loại còn lại.
+           Nếu thiếu thì lấy tiếp từ loại còn lại.
         */
 
         if (
@@ -2544,10 +2605,10 @@ async function fetchAnimationNew() {
                 );
 
             const remaining =
-                stableShuffle(
+                sortRecent(
                     [
-                        ...group.series,
-                        ...group.movies
+                        ...series,
+                        ...movies
                     ].filter(
                         item =>
                             !used.has(
@@ -2570,6 +2631,12 @@ async function fetchAnimationNew() {
         return result;
     }
 
+    /*
+       --------------------------------------------------------
+       LẤY CÂN BẰNG MOVIE / SERIES
+       --------------------------------------------------------
+    */
+
     function takeBalanced(
         group,
         target,
@@ -2586,8 +2653,8 @@ async function fetchAnimationNew() {
             movieTarget;
 
         /*
-           Nếu một loại không đủ,
-           chuyển phần thiếu sang loại còn lại.
+           Nếu Movie không đủ,
+           chuyển phần thiếu sang Series.
         */
 
         if (
@@ -2606,6 +2673,11 @@ async function fetchAnimationNew() {
                 shortage;
         }
 
+        /*
+           Nếu Series không đủ,
+           chuyển phần thiếu sang Movie.
+        */
+
         if (
             group.series.length <
             seriesTarget
@@ -2623,7 +2695,7 @@ async function fetchAnimationNew() {
         }
 
         const movies =
-            stableShuffle(
+            sortRecent(
                 group.movies,
                 seed +
                 "|movies"
@@ -2634,7 +2706,7 @@ async function fetchAnimationNew() {
                 );
 
         const series =
-            stableShuffle(
+            sortRecent(
                 group.series,
                 seed +
                 "|series"
@@ -2652,14 +2724,14 @@ async function fetchAnimationNew() {
 
     /*
        --------------------------------------------------------
-       TARGET
+       TARGET QUỐC GIA
        --------------------------------------------------------
 
        Japan = 23
        USA   = 22
        Other = 5
 
-       Tổng = 50.
+       Tổng = 50
     */
 
     let result = [];
@@ -2690,17 +2762,13 @@ async function fetchAnimationNew() {
 
     /*
        --------------------------------------------------------
-       FALLBACK
+       FALLBACK QUỐC GIA
        --------------------------------------------------------
 
-       Nếu API không đủ Japan / USA / Other
-       thì lấy phần còn thiếu từ toàn bộ nguồn.
+       Nếu một nhóm không đủ item,
+       lấy phần thiếu từ các nhóm còn lại.
 
-       Nhưng vẫn ưu tiên:
-
-       1. Japan
-       2. USA
-       3. Other
+       Ưu tiên item mới.
     */
 
     if (
@@ -2715,53 +2783,279 @@ async function fetchAnimationNew() {
                 )
             );
 
-        const remainingJapan =
-            stableShuffle(
-                japanItems.filter(
+        const remaining =
+            sortRecent(
+                [
+                    ...japanItems,
+                    ...usaItems,
+                    ...otherItems
+                ].filter(
                     item =>
                         !used.has(
                             catalogKey(item)
                         )
                 ),
-                "anime|fallback|japan"
+                "anime|fallback"
             );
-
-        const remainingUSA =
-            stableShuffle(
-                usaItems.filter(
-                    item =>
-                        !used.has(
-                            catalogKey(item)
-                        )
-                ),
-                "anime|fallback|usa"
-            );
-
-        const remainingOther =
-            stableShuffle(
-                otherItems.filter(
-                    item =>
-                        !used.has(
-                            catalogKey(item)
-                        )
-                ),
-                "anime|fallback|other"
-            );
-
-        const fallback =
-            [
-                ...remainingJapan,
-                ...remainingUSA,
-                ...remainingOther
-            ];
 
         result.push(
-            ...fallback
+            ...remaining.slice(
+                0,
+                CATALOG_TARGET -
+                result.length
+            )
         );
     }
 
     /*
-       Dedupe + giới hạn đúng 50.
+       --------------------------------------------------------
+       ĐIỀU CHỈNH MOVIE / SERIES
+       --------------------------------------------------------
+
+       Mục tiêu cuối:
+       - khoảng 25 Movie
+       - khoảng 25 Series
+
+       Không phá ưu tiên quốc gia ở trên.
+    */
+
+    let movies =
+        result.filter(
+            item =>
+                item.__catalogType ===
+                "movie"
+        );
+
+    let series =
+        result.filter(
+            item =>
+                item.__catalogType ===
+                "series"
+        );
+
+    /*
+       --------------------------------------------------------
+       BƯỚC 1: NẾU SERIES QUÁ NHIỀU
+       --------------------------------------------------------
+    */
+
+    if (
+        series.length >
+        25
+    ) {
+
+        const removeCount =
+            series.length -
+            25;
+
+        const removableSeries =
+            sortRecent(
+                series,
+                "anime|remove-series"
+            )
+                .slice(
+                    0,
+                    removeCount
+                );
+
+        const removeKeys =
+            new Set(
+                removableSeries.map(
+                    catalogKey
+                )
+            );
+
+        result =
+            result.filter(
+                item =>
+                    !removeKeys.has(
+                        catalogKey(item)
+                    )
+            );
+
+        /*
+           Bổ sung Movie mới nhất
+           từ toàn bộ nguồn chưa dùng.
+        */
+
+        const used =
+            new Set(
+                result.map(
+                    catalogKey
+                )
+            );
+
+        const extraMovies =
+            sortRecent(
+                [
+                    ...japan.movies,
+                    ...usa.movies,
+                    ...other.movies
+                ].filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "anime|extra-movies"
+            );
+
+        const need =
+            Math.min(
+                removeCount,
+                extraMovies.length
+            );
+
+        result.push(
+            ...extraMovies.slice(
+                0,
+                need
+            )
+        );
+    }
+
+    /*
+       --------------------------------------------------------
+       BƯỚC 2: NẾU MOVIE QUÁ NHIỀU
+       --------------------------------------------------------
+    */
+
+    movies =
+        result.filter(
+            item =>
+                item.__catalogType ===
+                "movie"
+        );
+
+    series =
+        result.filter(
+            item =>
+                item.__catalogType ===
+                "series"
+        );
+
+    if (
+        movies.length >
+        25
+    ) {
+
+        const removeCount =
+            movies.length -
+            25;
+
+        const removableMovies =
+            sortRecent(
+                movies,
+                "anime|remove-movies"
+            )
+                .slice(
+                    0,
+                    removeCount
+                );
+
+        const removeKeys =
+            new Set(
+                removableMovies.map(
+                    catalogKey
+                )
+            );
+
+        result =
+            result.filter(
+                item =>
+                    !removeKeys.has(
+                        catalogKey(item)
+                    )
+            );
+
+        /*
+           Bổ sung Series mới nhất
+           từ toàn bộ nguồn chưa dùng.
+        */
+
+        const used =
+            new Set(
+                result.map(
+                    catalogKey
+                )
+            );
+
+        const extraSeries =
+            sortRecent(
+                [
+                    ...japan.series,
+                    ...usa.series,
+                    ...other.series
+                ].filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "anime|extra-series"
+            );
+
+        const need =
+            Math.min(
+                removeCount,
+                extraSeries.length
+            );
+
+        result.push(
+            ...extraSeries.slice(
+                0,
+                need
+            )
+        );
+    }
+
+    /*
+       --------------------------------------------------------
+       BƯỚC 3: NẾU SAU ĐIỀU CHỈNH CHƯA ĐỦ 50
+       --------------------------------------------------------
+    */
+
+    result =
+        catalogDedupe(
+            result
+        );
+
+    if (
+        result.length <
+        CATALOG_TARGET
+    ) {
+
+        const used =
+            new Set(
+                result.map(
+                    catalogKey
+                )
+            );
+
+        const remaining =
+            sortRecent(
+                all.filter(
+                    item =>
+                        !used.has(
+                            catalogKey(item)
+                        )
+                ),
+                "anime|final-fallback"
+            );
+
+        result.push(
+            ...remaining.slice(
+                0,
+                CATALOG_TARGET -
+                result.length
+            )
+        );
+    }
+
+    /*
+       --------------------------------------------------------
+       GIỚI HẠN ĐÚNG 50
+       --------------------------------------------------------
     */
 
     result =
@@ -2774,8 +3068,14 @@ async function fetchAnimationNew() {
             );
 
     /*
-       Trộn thứ tự cuối cùng để row không bị
-       chia thành Japan / USA / Other.
+       --------------------------------------------------------
+       TRỘN THỨ TỰ CUỐI
+       --------------------------------------------------------
+
+       Không để row bị chia:
+       Japan → USA → Other.
+
+       Stable shuffle giúp thứ tự ổn định.
     */
 
     result =
@@ -2783,6 +3083,12 @@ async function fetchAnimationNew() {
             result,
             "anime|final"
         );
+
+    /*
+       --------------------------------------------------------
+       LOG CUỐI
+       --------------------------------------------------------
+    */
 
     console.log(
         "[ANIME] Final:",
