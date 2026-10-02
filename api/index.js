@@ -1813,170 +1813,260 @@ for (
         );
 
     /*
-       ========================================================
-       BÙ ITEM THƯỜNG
-       ========================================================
+   ========================================================
+   BÙ ITEM THƯỜNG
+   ========================================================
 
-       Nếu một thập niên không đủ dữ liệu IMDb >= 6,
-       lấy thêm từ các thập niên khác.
+   Mục tiêu cuối cùng:
+   - 49 item thường
+   - 44 Movie
+   - 5 Series
+   - tất cả IMDb >= 6
 
-       Không hạ điều kiện IMDb.
-    */
+   Nếu các thập niên cũ không đủ item,
+   lấy phần thiếu từ các thập niên khác.
+*/
 
-    if (
-        result.length <
-        targetNormal
-    ) {
+if (
+    result.length <
+    targetNormal
+) {
 
-        const used =
-            new Set(
-                result.map(
-                    catalogKey
-                )
-            );
-
-        const fallback =
-            stableShuffle(
-                normal.filter(
-                    item =>
-                        !used.has(
-                            catalogKey(item)
-                        )
-                ),
-                today +
-                "|daily-fallback"
-            );
-
-        result.push(
-            ...fallback
-        );
-    }
-
-    result =
-        catalogDedupe(
-            result
-        )
-            .slice(
-                0,
-                targetNormal
-            );
-
-    /*
-       ========================================================
-       ĐIỀU CHỈNH TYPE
-       ========================================================
-
-       Đảm bảo 49 item thường hướng tới:
-       - 44 Movie
-       - 5 Series
-    */
-
-    let normalMovies =
-        result.filter(
-            item =>
-                !isSeriesItem(item)
-        );
-
-    let normalSeries =
-        result.filter(
-            isSeriesItem
-        );
-
-    /*
-       Nếu thiếu Series:
-       lấy thêm Series IMDb >= 6 từ toàn bộ nguồn.
-    */
-
-    if (
-        normalSeries.length <
-        5
-    ) {
-
-        const used =
-            new Set(
-                result.map(
-                    catalogKey
-                )
-            );
-
-        const extraSeries =
-            stableShuffle(
-                normal.filter(
-                    item =>
-                        isSeriesItem(item) &&
-                        !used.has(
-                            catalogKey(item)
-                        )
-                ),
-                today +
-                "|daily|extra-series"
-            );
-
-        const need =
-            5 -
-            normalSeries.length;
-
-        const add =
-            extraSeries.slice(
-                0,
-                need
-            );
-
-        result.push(
-            ...add
-        );
-
-        normalSeries =
-            [
-                ...normalSeries,
-                ...add
-            ];
-    }
-
-    /*
-       Nếu Series vượt 5 thì loại bớt,
-       ưu tiên giữ random theo ngày.
-    */
-
-    if (
-        normalSeries.length >
-        5
-    ) {
-
-        const keepSeries =
-            stableShuffle(
-                normalSeries,
-                today +
-                "|daily|series-final"
+    const used =
+        new Set(
+            result.map(
+                catalogKey
             )
-                .slice(
-                    0,
-                    5
-                );
-
-        const keepKeys =
-            new Set(
-                keepSeries.map(
-                    catalogKey
-                )
-            );
-
-        result =
-            [
-                ...normalMovies,
-                ...normalSeries.filter(
-                    item =>
-                        keepKeys.has(
-                            catalogKey(item)
-                        )
-                )
-            ];
-    }
-
-    result =
-        catalogDedupe(
-            result
         );
+
+    const fallback =
+        stableShuffle(
+            normal.filter(
+                item =>
+                    !used.has(
+                        catalogKey(item)
+                    )
+            ),
+            today +
+            "|daily-fallback"
+        );
+
+    result.push(
+        ...fallback.slice(
+            0,
+            targetNormal -
+            result.length
+        )
+    );
+}
+
+result =
+    catalogDedupe(
+        result
+    );
+
+/*
+   ========================================================
+   ĐIỀU CHỈNH TYPE
+   ========================================================
+
+   Bảo đảm chính xác:
+   - 44 Movie
+   - 5 Series
+   - tổng 49 item thường
+*/
+
+/*
+   --------------------------------------------------------
+   BƯỚC 1: TÁCH MOVIE / SERIES
+   --------------------------------------------------------
+*/
+
+let normalMovies =
+    result.filter(
+        item =>
+            !isSeriesItem(item)
+    );
+
+let normalSeries =
+    result.filter(
+        isSeriesItem
+    );
+
+/*
+   --------------------------------------------------------
+   BƯỚC 2: BẢO ĐẢM 5 SERIES
+   --------------------------------------------------------
+*/
+
+if (
+    normalSeries.length <
+    5
+) {
+
+    const used =
+        new Set(
+            result.map(
+                catalogKey
+            )
+        );
+
+    const extraSeries =
+        stableShuffle(
+            normal.filter(
+                item =>
+                    isSeriesItem(item) &&
+                    !used.has(
+                        catalogKey(item)
+                    )
+            ),
+            today +
+            "|daily|extra-series"
+        );
+
+    const need =
+        5 -
+        normalSeries.length;
+
+    const add =
+        extraSeries.slice(
+            0,
+            need
+        );
+
+    result.push(
+        ...add
+    );
+
+    normalSeries =
+        [
+            ...normalSeries,
+            ...add
+        ];
+}
+
+/*
+   --------------------------------------------------------
+   BƯỚC 3: CHỈ GIỮ 5 SERIES
+   --------------------------------------------------------
+*/
+
+normalSeries =
+    stableShuffle(
+        normalSeries,
+        today +
+        "|daily|series-final"
+    )
+        .slice(
+            0,
+            5
+        );
+
+/*
+   --------------------------------------------------------
+   BƯỚC 4: BỔ SUNG MOVIE ĐỂ ĐỦ 44
+   --------------------------------------------------------
+*/
+
+const seriesKeys =
+    new Set(
+        normalSeries.map(
+            catalogKey
+        )
+    );
+
+const currentMovies =
+    result.filter(
+        item =>
+            !isSeriesItem(item) &&
+            !seriesKeys.has(
+                catalogKey(item)
+            )
+    );
+
+let selectedMovies =
+    stableShuffle(
+        currentMovies,
+        today +
+        "|daily|movies-final"
+    )
+        .slice(
+            0,
+            44
+        );
+
+/*
+   Nếu sau khi loại Series dư mà Movie
+   chưa đủ 44, lấy thêm Movie IMDb >= 6
+   từ toàn bộ nguồn.
+*/
+
+if (
+    selectedMovies.length <
+    44
+) {
+
+    const used =
+        new Set(
+            [
+                ...selectedMovies,
+                ...normalSeries
+            ].map(
+                catalogKey
+            )
+        );
+
+    const extraMovies =
+        stableShuffle(
+            normal.filter(
+                item =>
+                    !isSeriesItem(item) &&
+                    !used.has(
+                        catalogKey(item)
+                    )
+            ),
+            today +
+            "|daily|extra-movies"
+        );
+
+    selectedMovies.push(
+        ...extraMovies.slice(
+            0,
+            44 -
+            selectedMovies.length
+        )
+    );
+}
+
+/*
+   --------------------------------------------------------
+   BƯỚC 5: GHÉP LẠI ĐÚNG 49 ITEM
+   --------------------------------------------------------
+*/
+
+result =
+    catalogDedupe([
+        ...selectedMovies,
+        ...normalSeries
+    ])
+        .slice(
+            0,
+            49
+        );
+
+console.log(
+    "[DAILY] Normal final:",
+    result.length,
+    "| Movies:",
+    result.filter(
+        item =>
+            !isSeriesItem(item)
+    ).length,
+    "| Series:",
+    result.filter(
+        isSeriesItem
+    ).length
+);
 
     /*
        ========================================================
