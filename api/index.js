@@ -2279,21 +2279,60 @@ async function fetchAnimationNew() {
 
     function isUSA(item) {
 
-        const countries =
-            catalogCountryNames(
-                item
-            );
-
-        return countries.some(
-            country =>
-                country === "my" ||
-                country === "hoa ky" ||
-                country === "united states" ||
-                country ===
-                    "united states of america" ||
-                country === "usa"
+    const countries =
+        catalogCountryNames(
+            item
         );
-    }
+
+    const westernCountries =
+        new Set([
+            "au my",
+            "my",
+            "hoa ky",
+            "united states",
+            "united states of america",
+            "usa",
+            "anh",
+            "vuong quoc anh",
+            "united kingdom",
+            "uk",
+            "phap",
+            "duc",
+            "canada",
+            "uc",
+            "australia",
+            "new zealand",
+            "italia",
+            "y",
+            "tay ban nha",
+            "tbn",
+            "spain",
+            "bo dao nha",
+            "ireland",
+            "tho nhi ky",
+            "netherlands",
+            "ha lan",
+            "belgium",
+            "bi",
+            "sweden",
+            "thuy dien",
+            "norway",
+            "na uy",
+            "denmark",
+            "phan lan",
+            "finland",
+            "switzerland",
+            "ao",
+            "austria"
+        ]);
+
+    return countries.some(
+        country =>
+            westernCountries.has(
+                country
+            )
+    );
+}
 
     function isJapan(item) {
 
