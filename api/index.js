@@ -7037,9 +7037,24 @@ function makeVSMovHlsProxyUrl(
     }
 
 
+    /*
+     * QUAN TRỌNG:
+     *
+     * Trước đây:
+     *
+     * /vsmov-hls-proxy?url=...master.m3u8&ref=...
+     *
+     * Bây giờ:
+     *
+     * /vsmov-hls-proxy/master.m3u8?url=...&ref=...
+     *
+     * Mục đích là để URL stream mà Stremio nhìn thấy
+     * có đuôi .m3u8 ngay trên path.
+     */
+
     return (
         VSMOV_PROXY_BASE +
-        "/vsmov-hls-proxy?url=" +
+        "/vsmov-hls-proxy/master.m3u8?url=" +
         encodeURIComponent(
             String(
                 m3u8Url
@@ -19372,10 +19387,24 @@ app.get(
 // rewrite .png
 //      ↓
 // /vsmov-segment-proxy
+//
+// Hỗ trợ cả:
+//
+// /vsmov-hls-proxy?url=...master.m3u8
+//
+// và:
+//
+// /vsmov-hls-proxy/master.m3u8?url=...
+//
+// URL mới có .m3u8 trên path để client/player
+// nhận diện rõ đây là HLS.
 // =====================================================
 
 app.get(
-    "/vsmov-hls-proxy",
+    [
+        "/vsmov-hls-proxy",
+        "/vsmov-hls-proxy/master.m3u8"
+    ],
     async (
         req,
         res
@@ -19397,8 +19426,20 @@ app.get(
 
 
             console.log(
+                "[VSMOV HLS PROXY] PATH:",
+                req.path
+            );
+
+
+            console.log(
                 "[VSMOV HLS PROXY] URL:",
                 targetUrl
+            );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] REFERER:",
+                referer
             );
 
 
@@ -19536,12 +19577,19 @@ app.get(
                     );
 
 
+            const hasEndList =
+                playlist.includes(
+                    "#EXT-X-ENDLIST"
+                );
+
+
             console.log(
                 "[VSMOV HLS PROXY] HLS CHECK:",
                 {
                     isHls,
                     hasExtInf,
-                    hasSegmentUrl
+                    hasSegmentUrl,
+                    hasEndList
                 }
             );
 
@@ -19623,6 +19671,21 @@ app.get(
 
 
             // -------------------------------------------------
+            // DEBUG LAST LINES
+            // -------------------------------------------------
+
+            console.log(
+                "[VSMOV HLS PROXY] OUTPUT TAIL:",
+                rewrittenText
+                    .split("\n")
+                    .slice(
+                        -6
+                    )
+                    .join("\n")
+            );
+
+
+            // -------------------------------------------------
             // FINAL VALIDATION
             // -------------------------------------------------
 
@@ -19645,12 +19708,19 @@ app.get(
                 );
 
 
+            const rewrittenHasEndList =
+                rewrittenText.includes(
+                    "#EXT-X-ENDLIST"
+                );
+
+
             console.log(
                 "[VSMOV HLS PROXY] FINAL CHECK:",
                 {
                     rewrittenIsHls,
                     rewrittenHasExtInf,
-                    rewrittenHasProxy
+                    rewrittenHasProxy,
+                    rewrittenHasEndList
                 }
             );
 
@@ -19805,7 +19875,6 @@ app.get(
 
     }
 );
-
 
 
 // =====================================================
