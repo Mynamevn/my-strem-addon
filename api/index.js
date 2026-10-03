@@ -6923,6 +6923,8 @@ const episodes =
    SEARCH API
    DETAIL API
    RESOLVE EMBED → M3U8
+   VSMOV HLS PROXY
+   VSMOV MPEG-TS / PNG PREFIX STRIP
    ƯU TIÊN SIGNED MASTER
    FALLBACK BASEURL + VIDEOHASH
    FALLBACK VIDEOSRC
@@ -6933,7 +6935,1129 @@ const episodes =
    ============================================================ */
 
 // =====================================================
-// 16.0. VSMOV EMBED RESOLVER
+// 16.0. VSMOV HELPERS
+// =====================================================
+
+// =====================================================
+// VSMOV STREAM HOST VALIDATION
+// =====================================================
+
+function isVSMovStreamHost(
+    hostname
+) {
+
+    const host =
+        String(
+            hostname ||
+            ""
+        )
+            .toLowerCase()
+            .trim();
+
+    return (
+        host === "streamvsmov.com" ||
+        host.endsWith(
+            ".streamvsmov.com"
+        )
+    );
+
+}
+
+
+// =====================================================
+// VSMOV URL VALIDATION
+// =====================================================
+
+function isValidVSMovStreamUrl(
+    value
+) {
+
+    try {
+
+        const url =
+            new URL(
+                String(
+                    value ||
+                    ""
+                ).trim()
+            );
+
+
+        if (
+            !/^https?:$/i.test(
+                url.protocol
+            )
+        ) {
+
+            return false;
+
+        }
+
+
+        return isVSMovStreamHost(
+            url.hostname
+        );
+
+
+    } catch (e) {
+
+        return false;
+
+    }
+
+}
+
+
+// =====================================================
+// VSMOV PROXY BASE
+// =====================================================
+
+const VSMOV_PROXY_BASE =
+    "https://my-strem-addon.vercel.app";
+
+
+// =====================================================
+// CREATE HLS PROXY URL
+// =====================================================
+
+function makeVSMovHlsProxyUrl(
+    m3u8Url,
+    referer = "https://vsmov.com/"
+) {
+
+    if (
+        !m3u8Url ||
+        !isValidVSMovStreamUrl(
+            m3u8Url
+        )
+    ) {
+
+        return "";
+
+    }
+
+
+    return (
+        VSMOV_PROXY_BASE +
+        "/vsmov-hls-proxy?url=" +
+        encodeURIComponent(
+            String(
+                m3u8Url
+            ).trim()
+        ) +
+        "&ref=" +
+        encodeURIComponent(
+            String(
+                referer ||
+                "https://vsmov.com/"
+            ).trim()
+        )
+    );
+
+}
+
+
+// =====================================================
+// CREATE SEGMENT PROXY URL
+// =====================================================
+
+function makeVSMovSegmentProxyUrl(
+    segmentUrl,
+    referer = "https://vsmov.com/"
+) {
+
+    if (
+        !segmentUrl ||
+        !isValidVSMovStreamUrl(
+            segmentUrl
+        )
+    ) {
+
+        return "";
+
+    }
+
+
+    return (
+        VSMOV_PROXY_BASE +
+        "/vsmov-segment-proxy?url=" +
+        encodeURIComponent(
+            String(
+                segmentUrl
+            ).trim()
+        ) +
+        "&ref=" +
+        encodeURIComponent(
+            String(
+                referer ||
+                "https://vsmov.com/"
+            ).trim()
+        )
+    );
+
+}
+
+
+// =====================================================
+// 16.0.1. FIND FAKE PNG PREFIX
+//
+// GIỐNG LOGIC CloudStream:
+//
+// response
+//   ↓
+// tìm byte 0x47
+//   ↓
+// kiểm tra:
+//   pos
+//   pos + 188
+//   pos + 376
+//   pos + 564
+//   pos + 752
+//   pos + 940
+// đều = 0x47
+//
+// 0x47 = MPEG-TS sync byte
+// 188   = MPEG-TS packet size
+// =====================================================
+
+function findVSMovPngPrefixLength(
+    buffer
+) {
+
+    if (
+        !Buffer.isBuffer(
+            buffer
+        ) ||
+        !buffer.length
+    ) {
+
+        return 0;
+
+    }
+
+
+    const total =
+        buffer.length;
+
+
+    const REQUIRED_DISTANCE =
+        188;
+
+
+    const REQUIRED_PACKETS =
+        6;
+
+
+    const REQUIRED_SPAN =
+        REQUIRED_DISTANCE *
+        REQUIRED_PACKETS;
+
+
+    let start =
+        -1;
+
+
+    for (
+        let pos = 0;
+        pos + REQUIRED_SPAN <= total;
+        pos++
+    ) {
+
+        // -------------------------------------------------
+        // MPEG-TS SYNC BYTE
+        // -------------------------------------------------
+
+        if (
+            buffer[pos] !==
+            0x47
+        ) {
+
+            continue;
+
+        }
+
+
+        let valid =
+            true;
+
+
+        // -------------------------------------------------
+        // KIỂM TRA 6 SYNC BYTE
+        // -------------------------------------------------
+
+        for (
+            let packet = 1;
+            packet < REQUIRED_PACKETS;
+            packet++
+        ) {
+
+            const checkPos =
+                pos +
+                packet *
+                REQUIRED_DISTANCE;
+
+
+            if (
+                buffer[checkPos] !==
+                0x47
+            ) {
+
+                valid = false;
+
+                break;
+
+            }
+
+        }
+
+
+        if (
+            valid
+        ) {
+
+            start =
+                pos;
+
+            break;
+
+        }
+
+    }
+
+
+    // -------------------------------------------------
+    // GIỐNG CLOUDSTREAM:
+    //
+    // nếu prefix <= 0
+    // → không cắt
+    // -------------------------------------------------
+
+    if (
+        start <= 0
+    ) {
+
+        return 0;
+
+    }
+
+
+    return start;
+
+}
+
+
+// =====================================================
+// 16.0.2. GET VSMOV REFERER
+// =====================================================
+
+function normalizeVSMovReferer(
+    value
+) {
+
+    const fallback =
+        "https://vsmov.com/";
+
+
+    try {
+
+        const url =
+            new URL(
+                String(
+                    value ||
+                    ""
+                ).trim()
+            );
+
+
+        if (
+            !/^https?:$/i.test(
+                url.protocol
+            )
+        ) {
+
+            return fallback;
+
+        }
+
+
+        return url.toString();
+
+    } catch (e) {
+
+        return fallback;
+
+    }
+
+}
+
+
+// =====================================================
+// 16.0.3. REWRITE ONE VSMOV SEGMENT
+// =====================================================
+
+function rewriteVSMovSegmentUrl(
+    rawUrl,
+    baseUrl,
+    referer
+) {
+
+    try {
+
+        const value =
+            String(
+                rawUrl ||
+                ""
+            ).trim();
+
+
+        if (
+            !value
+        ) {
+
+            return value;
+
+        }
+
+
+        const absoluteUrl =
+            new URL(
+                value,
+                baseUrl
+            ).toString();
+
+
+        if (
+            !isValidVSMovStreamUrl(
+                absoluteUrl
+            )
+        ) {
+
+            return value;
+
+        }
+
+
+        const proxyUrl =
+            makeVSMovSegmentProxyUrl(
+                absoluteUrl,
+                referer
+            );
+
+
+        return (
+            proxyUrl ||
+            value
+        );
+
+
+    } catch (e) {
+
+        return rawUrl;
+
+    }
+
+}
+
+
+// =====================================================
+// 16.0.4. REWRITE VSMOV M3U8
+// =====================================================
+
+function rewriteVSMovM3u8(
+    playlist,
+    masterUrl,
+    referer
+) {
+
+    const source =
+        String(
+            playlist ||
+            ""
+        );
+
+
+    const lines =
+        source.split(
+            /\r?\n/
+        );
+
+
+    const output = [];
+
+
+    for (
+        let line
+        of lines
+    ) {
+
+        const trimmed =
+            String(
+                line ||
+                ""
+            ).trim();
+
+
+        // -------------------------------------------------
+        // EMPTY LINE
+        // -------------------------------------------------
+
+        if (
+            !trimmed
+        ) {
+
+            output.push(
+                line
+            );
+
+            continue;
+
+        }
+
+
+        // -------------------------------------------------
+        // COMMENT / EXT-X
+        // -------------------------------------------------
+
+        if (
+            trimmed.startsWith(
+                "#"
+            )
+        ) {
+
+            let rewrittenLine =
+                line;
+
+
+            // ---------------------------------------------
+            // Nếu HLS có URI="..."
+            //
+            // Ví dụ:
+            // #EXT-X-MAP:URI="..."
+            // #EXT-X-KEY:URI="..."
+            //
+            // Chỉ rewrite nếu URI là streamvsmov.
+            // ---------------------------------------------
+
+            rewrittenLine =
+                rewrittenLine.replace(
+                    /URI=(["'])([^"']+)\1/gi,
+                    (
+                        full,
+                        quote,
+                        uri
+                    ) => {
+
+                        try {
+
+                            const absoluteUri =
+                                new URL(
+                                    uri,
+                                    masterUrl
+                                ).toString();
+
+
+                            if (
+                                !isValidVSMovStreamUrl(
+                                    absoluteUri
+                                )
+                            ) {
+
+                                return full;
+
+                            }
+
+
+                            const proxyUri =
+                                makeVSMovSegmentProxyUrl(
+                                    absoluteUri,
+                                    referer
+                                );
+
+
+                            if (
+                                !proxyUri
+                            ) {
+
+                                return full;
+
+                            }
+
+
+                            return (
+                                "URI=" +
+                                quote +
+                                proxyUri +
+                                quote
+                            );
+
+
+                        } catch (e) {
+
+                            return full;
+
+                        }
+
+                    }
+                );
+
+
+            output.push(
+                rewrittenLine
+            );
+
+            continue;
+
+        }
+
+
+        // -------------------------------------------------
+        // MEDIA SEGMENT
+        //
+        // master.m3u8 hiện tại của VSMov:
+        //
+        // https://p25.streamvsmov.com/....png
+        //
+        // → /vsmov-segment-proxy
+        // -------------------------------------------------
+
+        const rewritten =
+            rewriteVSMovSegmentUrl(
+                trimmed,
+                masterUrl,
+                referer
+            );
+
+
+        output.push(
+            rewritten
+        );
+
+    }
+
+
+    return output.join(
+        "\n"
+    );
+
+}
+
+
+// =====================================================
+// 16.0.5. VSMOV HLS PROXY
+//
+// MASTER M3U8
+//      ↓
+// GET playlist
+//      ↓
+// rewrite .png
+//      ↓
+// /vsmov-segment-proxy
+// =====================================================
+
+app.get(
+    "/vsmov-hls-proxy",
+    async (
+        req,
+        res
+    ) => {
+
+        try {
+
+            const targetUrl =
+                String(
+                    req.query?.url ||
+                    ""
+                ).trim();
+
+
+            const referer =
+                normalizeVSMovReferer(
+                    req.query?.ref
+                );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] URL:",
+                targetUrl
+            );
+
+
+            // -------------------------------------------------
+            // VALIDATE TARGET
+            // -------------------------------------------------
+
+            if (
+                !targetUrl ||
+                !isValidVSMovStreamUrl(
+                    targetUrl
+                )
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY] INVALID TARGET"
+                );
+
+
+                return res
+                    .status(
+                        400
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Invalid VSMov HLS URL"
+                    );
+
+            }
+
+
+            // -------------------------------------------------
+            // GET MASTER M3U8
+            // -------------------------------------------------
+
+            const response =
+                await axios.get(
+                    targetUrl,
+                    {
+                        timeout:
+                            15000,
+
+                        responseType:
+                            "text",
+
+                        headers: {
+
+                            "Referer":
+                                referer,
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*"
+
+                        }
+
+                    }
+                );
+
+
+            const playlist =
+                String(
+                    response?.data ||
+                    ""
+                );
+
+
+            if (
+                !playlist
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY] EMPTY PLAYLIST"
+                );
+
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Empty VSMov playlist"
+                    );
+
+            }
+
+
+            // -------------------------------------------------
+            // REWRITE PLAYLIST
+            // -------------------------------------------------
+
+            const rewritten =
+                rewriteVSMovM3u8(
+                    playlist,
+                    targetUrl,
+                    referer
+                );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] PLAYLIST:",
+                playlist.length,
+                "→",
+                rewritten.length
+            );
+
+
+            // -------------------------------------------------
+            // RESPONSE HEADERS
+            // -------------------------------------------------
+
+            res.set(
+                "Content-Type",
+                "application/vnd.apple.mpegurl"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+
+            res.set(
+                "Cache-Control",
+                "no-cache, no-store, must-revalidate"
+            );
+
+
+            res.send(
+                rewritten
+            );
+
+
+        } catch (e) {
+
+            console.log(
+                "[VSMOV HLS PROXY ERROR]:",
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+
+            if (
+                !res.headersSent
+            ) {
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "VSMov HLS proxy error"
+                    );
+
+            }
+
+        }
+
+    }
+);
+
+
+// =====================================================
+// 16.0.6. VSMOV SEGMENT PROXY
+//
+// .png
+//   ↓
+// download binary
+//   ↓
+// find MPEG-TS sync
+//   ↓
+// strip fake PNG prefix
+//   ↓
+// return MPEG-TS
+// =====================================================
+
+app.get(
+    "/vsmov-segment-proxy",
+    async (
+        req,
+        res
+    ) => {
+
+        try {
+
+            const targetUrl =
+                String(
+                    req.query?.url ||
+                    ""
+                ).trim();
+
+
+            const referer =
+                normalizeVSMovReferer(
+                    req.query?.ref
+                );
+
+
+            console.log(
+                "[VSMOV SEGMENT PROXY] URL:",
+                targetUrl
+            );
+
+
+            // -------------------------------------------------
+            // VALIDATE TARGET
+            // -------------------------------------------------
+
+            if (
+                !targetUrl ||
+                !isValidVSMovStreamUrl(
+                    targetUrl
+                )
+            ) {
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] INVALID TARGET"
+                );
+
+
+                return res
+                    .status(
+                        400
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Invalid VSMov segment URL"
+                    );
+
+            }
+
+
+            // -------------------------------------------------
+            // CLOUDSTREAM KHÔNG FORWARD RANGE
+            //
+            // Đây là điểm quan trọng.
+            //
+            // CloudStream interceptor:
+            //
+            // request.headers.remove("Range")
+            //
+            // nên proxy cũng không gửi Range lên VSMov.
+            // -------------------------------------------------
+
+            const response =
+                await axios.get(
+                    targetUrl,
+                    {
+                        timeout:
+                            20000,
+
+                        responseType:
+                            "arraybuffer",
+
+                        headers: {
+
+                            "Referer":
+                                referer,
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "*/*"
+
+                        },
+
+                        validateStatus:
+                            status =>
+                                status >= 200 &&
+                                status < 300
+
+                    }
+                );
+
+
+            const input =
+                Buffer.from(
+                    response?.data ||
+                    []
+                );
+
+
+            if (
+                !input.length
+            ) {
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] EMPTY SEGMENT"
+                );
+
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Empty VSMov segment"
+                    );
+
+            }
+
+
+            const total =
+                input.length;
+
+
+            // -------------------------------------------------
+            // TÌM FAKE PNG PREFIX
+            // -------------------------------------------------
+
+            const prefix =
+                findVSMovPngPrefixLength(
+                    input
+                );
+
+
+            let output =
+                input;
+
+
+            if (
+                prefix > 0 &&
+                prefix < total
+            ) {
+
+                output =
+                    input.slice(
+                        prefix
+                    );
+
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] stripPng:",
+                    "prefix=",
+                    prefix,
+                    "payload=",
+                    output.length,
+                    "total=",
+                    total
+                );
+
+            } else {
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] no PNG prefix:",
+                    "total=",
+                    total
+                );
+
+            }
+
+
+            // -------------------------------------------------
+            // RESPONSE
+            //
+            // CloudStream sau khi strip:
+            //
+            // remove Content-Range
+            // remove Content-Length
+            // set Content-Length = payload
+            // -------------------------------------------------
+
+            res.removeHeader(
+                "Content-Range"
+            );
+
+
+            res.removeHeader(
+                "Content-Length"
+            );
+
+
+            res.removeHeader(
+                "Transfer-Encoding"
+            );
+
+
+            res.set(
+                "Content-Type",
+                "video/mp2t"
+            );
+
+
+            res.set(
+                "Content-Length",
+                String(
+                    output.length
+                )
+            );
+
+
+            res.set(
+                "Accept-Ranges",
+                "none"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+
+            res.set(
+                "Cache-Control",
+                "no-store, no-cache, must-revalidate"
+            );
+
+
+            return res.send(
+                output
+            );
+
+
+        } catch (e) {
+
+            console.log(
+                "[VSMOV SEGMENT PROXY ERROR]:",
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+
+            if (
+                !res.headersSent
+            ) {
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "VSMov segment proxy error"
+                    );
+
+            }
+
+        }
+
+    }
+);
+
+
+// =====================================================
+// 16.1. VSMOV EMBED RESOLVER
 // =====================================================
 
 async function resolveVSMovEmbed(
@@ -6945,7 +8069,9 @@ async function resolveVSMovEmbed(
         if (
             !embedUrl ||
             !/^https?:\/\//i.test(
-                String(embedUrl)
+                String(
+                    embedUrl
+                )
             )
         ) {
 
@@ -6974,7 +8100,8 @@ async function resolveVSMovEmbed(
             await axios.get(
                 url,
                 {
-                    timeout: 12000,
+                    timeout:
+                        12000,
 
                     headers: {
 
@@ -7105,7 +8232,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.1. EXTRACT BASE URL
+        // 16.1.1. BASE URL
         // =================================================
 
         let baseUrl =
@@ -7116,7 +8243,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.2. EXTRACT VIDEO HASH
+        // 16.1.2. VIDEO HASH
         // =================================================
 
         let videoHash =
@@ -7127,7 +8254,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.3. EXTRACT VIDEO SRC
+        // 16.1.3. VIDEO SRC
         // =================================================
 
         let videoSrc =
@@ -7138,7 +8265,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.4. EXTRACT SIGNED MASTER URL
+        // 16.1.4. SIGNED MASTER URL
         // =================================================
 
         let signedMasterUrl =
@@ -7149,7 +8276,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.5. ENABLE SIGNED URL
+        // 16.1.5. ENABLE SIGNED URL
         // =================================================
 
         let enableSignedUrl =
@@ -7195,7 +8322,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.6. NORMALIZE BASE URL
+        // 16.1.6. NORMALIZE BASE URL
         // =================================================
 
         baseUrl =
@@ -7211,23 +8338,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.7. MAIN PLAYER SOURCE
-        //
-        // GIỐNG resolveSingleLink() CỦA CLOUDSTREAM:
-        //
-        // enableSignedUrl + signedMasterUrl
-        //          ↓
-        // signedMasterUrl
-        //
-        // nếu không:
-        //
-        // baseUrl + videoHash
-        //          ↓
-        // /stream/{videoHash}/master.m3u8
-        //
-        // nếu không:
-        //
-        // videoSrc
+        // 16.1.7. MAIN PLAYER SOURCE
         // =================================================
 
         let playerSource =
@@ -7277,7 +8388,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.8. VIDEOSRC FALLBACK
+        // 16.1.8. VIDEOSRC FALLBACK
         // =================================================
 
         if (
@@ -7299,13 +8410,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.9. LEGACY M3U8 FALLBACK
-        //
-        // resolveSingleLink() CỦA CLOUDSTREAM:
-        //
-        // const url = "https://....m3u8"
-        // let url   = "https://....m3u8"
-        // var url   = "https://....m3u8"
+        // 16.1.9. LEGACY M3U8 FALLBACK
         // =================================================
 
         if (
@@ -7343,7 +8448,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.10. FINAL VALIDATION
+        // 16.1.10. FINAL VALIDATION
         // =================================================
 
         if (
@@ -7369,10 +8474,7 @@ async function resolveVSMovEmbed(
 
 
         // =================================================
-        // 16.0.11. QUALITY
-        //
-        // CloudStream:
-        // /(\d{3,4})p|4k/i
+        // 16.1.11. QUALITY
         // =================================================
 
         let quality =
@@ -7380,7 +8482,8 @@ async function resolveVSMovEmbed(
 
 
         const headEnd =
-            html.toLowerCase()
+            html
+                .toLowerCase()
                 .indexOf(
                     "</head>"
                 );
@@ -7594,7 +8697,8 @@ async function fetchVSMov(
                     await axios.get(
                         searchUrl,
                         {
-                            timeout: 8000,
+                            timeout:
+                                8000,
 
                             headers: {
 
@@ -7728,8 +8832,12 @@ async function fetchVSMov(
 
         const inputWords =
             inputTitle
-                .split(" ")
-                .filter(Boolean);
+                .split(
+                    " "
+                )
+                .filter(
+                    Boolean
+                );
 
 
         // =====================================================
@@ -7781,7 +8889,8 @@ async function fetchVSMov(
                             );
 
 
-                        let score = 0;
+                        let score =
+                            0;
 
 
                         if (
@@ -7789,7 +8898,8 @@ async function fetchVSMov(
                             inputTitle
                         ) {
 
-                            score += 1000;
+                            score +=
+                                1000;
 
                         }
 
@@ -7799,7 +8909,8 @@ async function fetchVSMov(
                             inputTitle
                         ) {
 
-                            score += 950;
+                            score +=
+                                950;
 
                         }
 
@@ -7810,7 +8921,8 @@ async function fetchVSMov(
                             )
                         ) {
 
-                            score += 500;
+                            score +=
+                                500;
 
                         }
 
@@ -7821,7 +8933,8 @@ async function fetchVSMov(
                             )
                         ) {
 
-                            score += 400;
+                            score +=
+                                400;
 
                         }
 
@@ -7832,12 +8945,14 @@ async function fetchVSMov(
                             )
                         ) {
 
-                            score += 450;
+                            score +=
+                                450;
 
                         }
 
 
-                        let overlap = 0;
+                        let overlap =
+                            0;
 
 
                         for (
@@ -7874,7 +8989,8 @@ async function fetchVSMov(
 
 
                         score +=
-                            overlap * 25;
+                            overlap *
+                            25;
 
 
                         const itemYear =
@@ -7898,11 +9014,13 @@ async function fetchVSMov(
                                 )
                             ) {
 
-                                score += 1000;
+                                score +=
+                                    1000;
 
                             } else {
 
-                                score -= 700;
+                                score -=
+                                    700;
 
                             }
 
@@ -8091,7 +9209,8 @@ async function fetchVSMov(
             await axios.get(
                 detailUrl,
                 {
-                    timeout: 10000,
+                    timeout:
+                        10000,
 
                     headers: {
 
@@ -8272,7 +9391,8 @@ async function fetchVSMov(
                             ) {
 
                                 detectedEpisode =
-                                    index + 1;
+                                    index +
+                                    1;
 
                             }
 
@@ -8325,6 +9445,10 @@ async function fetchVSMov(
 
                 // =============================================
                 // DIRECT API M3U8
+                //
+                // QUAN TRỌNG:
+                // Không đưa thẳng master.m3u8 cho Stremio.
+                // Nếu là VSMov stream → đi qua HLS proxy.
                 // =============================================
 
                 const apiM3u8 =
@@ -8342,6 +9466,17 @@ async function fetchVSMov(
                     )
                 ) {
 
+                    const apiProxyUrl =
+                        isValidVSMovStreamUrl(
+                            apiM3u8
+                        )
+                            ? makeVSMovHlsProxyUrl(
+                                apiM3u8,
+                                "https://vsmov.com/"
+                            )
+                            : apiM3u8;
+
+
                     streams.push({
 
                         name:
@@ -8358,23 +9493,12 @@ async function fetchVSMov(
                             ),
 
                         url:
-                            apiM3u8,
+                            apiProxyUrl,
 
                         behaviorHints: {
 
                             bingeGroup:
-                                "vsmov",
-
-                            proxyHeaders: {
-
-                                request: {
-
-                                    Referer:
-                                        "https://vsmov.com/"
-
-                                }
-
-                            }
+                                "vsmov"
 
                         }
 
@@ -8385,6 +9509,19 @@ async function fetchVSMov(
                         "[VSMOV] API M3U8:",
                         apiM3u8
                     );
+
+
+                    if (
+                        apiProxyUrl !==
+                        apiM3u8
+                    ) {
+
+                        console.log(
+                            "[VSMOV] API M3U8 PROXY:",
+                            apiProxyUrl
+                        );
+
+                    }
 
                 }
 
@@ -8418,6 +9555,17 @@ async function fetchVSMov(
                         resolved?.url
                     ) {
 
+                        const directProxyUrl =
+                            isValidVSMovStreamUrl(
+                                resolved.url
+                            )
+                                ? makeVSMovHlsProxyUrl(
+                                    resolved.url,
+                                    resolved.referer
+                                )
+                                : resolved.url;
+
+
                         streams.push({
 
                             name:
@@ -8434,23 +9582,12 @@ async function fetchVSMov(
                                 ),
 
                             url:
-                                resolved.url,
+                                directProxyUrl,
 
                             behaviorHints: {
 
                                 bingeGroup:
-                                    "vsmov",
-
-                                proxyHeaders: {
-
-                                    request: {
-
-                                        Referer:
-                                            resolved.referer
-
-                                    }
-
-                                }
+                                    "vsmov"
 
                             }
 
@@ -8460,6 +9597,12 @@ async function fetchVSMov(
                         console.log(
                             "[VSMOV] RESOLVED M3U8:",
                             resolved.url
+                        );
+
+
+                        console.log(
+                            "[VSMOV] PROXY M3U8:",
+                            directProxyUrl
                         );
 
                     }
@@ -8571,6 +9714,17 @@ async function fetchVSMov(
                         )
                     ) {
 
+                        const apiProxyUrl =
+                            isValidVSMovStreamUrl(
+                                apiM3u8
+                            )
+                                ? makeVSMovHlsProxyUrl(
+                                    apiM3u8,
+                                    "https://vsmov.com/"
+                                )
+                                : apiM3u8;
+
+
                         streams.push({
 
                             name:
@@ -8581,23 +9735,12 @@ async function fetchVSMov(
                                 episodeName,
 
                             url:
-                                apiM3u8,
+                                apiProxyUrl,
 
                             behaviorHints: {
 
                                 bingeGroup:
-                                    "vsmov",
-
-                                proxyHeaders: {
-
-                                    request: {
-
-                                        Referer:
-                                            "https://vsmov.com/"
-
-                                    }
-
-                                }
+                                    "vsmov"
 
                             }
 
@@ -8608,6 +9751,19 @@ async function fetchVSMov(
                             "[VSMOV] API M3U8:",
                             apiM3u8
                         );
+
+
+                        if (
+                            apiProxyUrl !==
+                            apiM3u8
+                        ) {
+
+                            console.log(
+                                "[VSMOV] API M3U8 PROXY:",
+                                apiProxyUrl
+                            );
+
+                        }
 
                     }
 
@@ -8641,6 +9797,17 @@ async function fetchVSMov(
                             resolved?.url
                         ) {
 
+                            const directProxyUrl =
+                                isValidVSMovStreamUrl(
+                                    resolved.url
+                                )
+                                    ? makeVSMovHlsProxyUrl(
+                                        resolved.url,
+                                        resolved.referer
+                                    )
+                                    : resolved.url;
+
+
                             streams.push({
 
                                 name:
@@ -8651,23 +9818,12 @@ async function fetchVSMov(
                                     episodeName,
 
                                 url:
-                                    resolved.url,
+                                    directProxyUrl,
 
                                 behaviorHints: {
 
                                     bingeGroup:
-                                        "vsmov",
-
-                                    proxyHeaders: {
-
-                                        request: {
-
-                                            Referer:
-                                                resolved.referer
-
-                                        }
-
-                                    }
+                                        "vsmov"
 
                                 }
 
@@ -8677,6 +9833,12 @@ async function fetchVSMov(
                             console.log(
                                 "[VSMOV] RESOLVED M3U8:",
                                 resolved.url
+                            );
+
+
+                            console.log(
+                                "[VSMOV] PROXY M3U8:",
+                                directProxyUrl
                             );
 
                         }
