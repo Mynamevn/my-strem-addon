@@ -7543,520 +7543,6 @@ function rewriteVSMovM3u8(
 
 
 // =====================================================
-// 16.0.5. VSMOV HLS PROXY
-//
-// MASTER M3U8
-//      ↓
-// GET playlist
-//      ↓
-// rewrite .png
-//      ↓
-// /vsmov-segment-proxy
-// =====================================================
-
-app.get(
-    "/vsmov-hls-proxy",
-    async (
-        req,
-        res
-    ) => {
-
-        try {
-
-            const targetUrl =
-                String(
-                    req.query?.url ||
-                    ""
-                ).trim();
-
-
-            const referer =
-                normalizeVSMovReferer(
-                    req.query?.ref
-                );
-
-
-            console.log(
-                "[VSMOV HLS PROXY] URL:",
-                targetUrl
-            );
-
-
-            // -------------------------------------------------
-            // VALIDATE TARGET
-            // -------------------------------------------------
-
-            if (
-                !targetUrl ||
-                !isValidVSMovStreamUrl(
-                    targetUrl
-                )
-            ) {
-
-                console.log(
-                    "[VSMOV HLS PROXY] INVALID TARGET"
-                );
-
-
-                return res
-                    .status(
-                        400
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "Invalid VSMov HLS URL"
-                    );
-
-            }
-
-
-            // -------------------------------------------------
-            // GET MASTER M3U8
-            // -------------------------------------------------
-
-            const response =
-                await axios.get(
-                    targetUrl,
-                    {
-                        timeout:
-                            15000,
-
-                        responseType:
-                            "text",
-
-                        headers: {
-
-                            "Referer":
-                                referer,
-
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                            "Accept":
-                                "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*"
-
-                        }
-
-                    }
-                );
-
-
-            const playlist =
-                String(
-                    response?.data ||
-                    ""
-                );
-
-
-            if (
-                !playlist
-            ) {
-
-                console.log(
-                    "[VSMOV HLS PROXY] EMPTY PLAYLIST"
-                );
-
-
-                return res
-                    .status(
-                        502
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "Empty VSMov playlist"
-                    );
-
-            }
-
-
-            // -------------------------------------------------
-            // REWRITE PLAYLIST
-            // -------------------------------------------------
-
-            const rewritten =
-                rewriteVSMovM3u8(
-                    playlist,
-                    targetUrl,
-                    referer
-                );
-
-
-            console.log(
-                "[VSMOV HLS PROXY] PLAYLIST:",
-                playlist.length,
-                "→",
-                rewritten.length
-            );
-
-
-            // -------------------------------------------------
-            // RESPONSE HEADERS
-            // -------------------------------------------------
-
-            res.set(
-                "Content-Type",
-                "application/vnd.apple.mpegurl"
-            );
-
-
-            res.set(
-                "Access-Control-Allow-Origin",
-                "*"
-            );
-
-
-            res.set(
-                "Access-Control-Allow-Headers",
-                "*"
-            );
-
-
-            res.set(
-                "Cache-Control",
-                "no-cache, no-store, must-revalidate"
-            );
-
-
-            res.send(
-                rewritten
-            );
-
-
-        } catch (e) {
-
-            console.log(
-                "[VSMOV HLS PROXY ERROR]:",
-                e?.response?.status ||
-                e?.message ||
-                e
-            );
-
-
-            if (
-                !res.headersSent
-            ) {
-
-                return res
-                    .status(
-                        502
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "VSMov HLS proxy error"
-                    );
-
-            }
-
-        }
-
-    }
-);
-
-
-// =====================================================
-// 16.0.6. VSMOV SEGMENT PROXY
-//
-// .png
-//   ↓
-// download binary
-//   ↓
-// find MPEG-TS sync
-//   ↓
-// strip fake PNG prefix
-//   ↓
-// return MPEG-TS
-// =====================================================
-
-app.get(
-    "/vsmov-segment-proxy",
-    async (
-        req,
-        res
-    ) => {
-
-        try {
-
-            const targetUrl =
-                String(
-                    req.query?.url ||
-                    ""
-                ).trim();
-
-
-            const referer =
-                normalizeVSMovReferer(
-                    req.query?.ref
-                );
-
-
-            console.log(
-                "[VSMOV SEGMENT PROXY] URL:",
-                targetUrl
-            );
-
-
-            // -------------------------------------------------
-            // VALIDATE TARGET
-            // -------------------------------------------------
-
-            if (
-                !targetUrl ||
-                !isValidVSMovStreamUrl(
-                    targetUrl
-                )
-            ) {
-
-                console.log(
-                    "[VSMOV SEGMENT PROXY] INVALID TARGET"
-                );
-
-
-                return res
-                    .status(
-                        400
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "Invalid VSMov segment URL"
-                    );
-
-            }
-
-
-            // -------------------------------------------------
-            // CLOUDSTREAM KHÔNG FORWARD RANGE
-            //
-            // Đây là điểm quan trọng.
-            //
-            // CloudStream interceptor:
-            //
-            // request.headers.remove("Range")
-            //
-            // nên proxy cũng không gửi Range lên VSMov.
-            // -------------------------------------------------
-
-            const response =
-                await axios.get(
-                    targetUrl,
-                    {
-                        timeout:
-                            20000,
-
-                        responseType:
-                            "arraybuffer",
-
-                        headers: {
-
-                            "Referer":
-                                referer,
-
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                            "Accept":
-                                "*/*"
-
-                        },
-
-                        validateStatus:
-                            status =>
-                                status >= 200 &&
-                                status < 300
-
-                    }
-                );
-
-
-            const input =
-                Buffer.from(
-                    response?.data ||
-                    []
-                );
-
-
-            if (
-                !input.length
-            ) {
-
-                console.log(
-                    "[VSMOV SEGMENT PROXY] EMPTY SEGMENT"
-                );
-
-
-                return res
-                    .status(
-                        502
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "Empty VSMov segment"
-                    );
-
-            }
-
-
-            const total =
-                input.length;
-
-
-            // -------------------------------------------------
-            // TÌM FAKE PNG PREFIX
-            // -------------------------------------------------
-
-            const prefix =
-                findVSMovPngPrefixLength(
-                    input
-                );
-
-
-            let output =
-                input;
-
-
-            if (
-                prefix > 0 &&
-                prefix < total
-            ) {
-
-                output =
-                    input.slice(
-                        prefix
-                    );
-
-
-                console.log(
-                    "[VSMOV SEGMENT PROXY] stripPng:",
-                    "prefix=",
-                    prefix,
-                    "payload=",
-                    output.length,
-                    "total=",
-                    total
-                );
-
-            } else {
-
-                console.log(
-                    "[VSMOV SEGMENT PROXY] no PNG prefix:",
-                    "total=",
-                    total
-                );
-
-            }
-
-
-            // -------------------------------------------------
-            // RESPONSE
-            //
-            // CloudStream sau khi strip:
-            //
-            // remove Content-Range
-            // remove Content-Length
-            // set Content-Length = payload
-            // -------------------------------------------------
-
-            res.removeHeader(
-                "Content-Range"
-            );
-
-
-            res.removeHeader(
-                "Content-Length"
-            );
-
-
-            res.removeHeader(
-                "Transfer-Encoding"
-            );
-
-
-            res.set(
-                "Content-Type",
-                "video/mp2t"
-            );
-
-
-            res.set(
-                "Content-Length",
-                String(
-                    output.length
-                )
-            );
-
-
-            res.set(
-                "Accept-Ranges",
-                "none"
-            );
-
-
-            res.set(
-                "Access-Control-Allow-Origin",
-                "*"
-            );
-
-
-            res.set(
-                "Access-Control-Allow-Headers",
-                "*"
-            );
-
-
-            res.set(
-                "Cache-Control",
-                "no-store, no-cache, must-revalidate"
-            );
-
-
-            return res.send(
-                output
-            );
-
-
-        } catch (e) {
-
-            console.log(
-                "[VSMOV SEGMENT PROXY ERROR]:",
-                e?.response?.status ||
-                e?.message ||
-                e
-            );
-
-
-            if (
-                !res.headersSent
-            ) {
-
-                return res
-                    .status(
-                        502
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "VSMov segment proxy error"
-                    );
-
-            }
-
-        }
-
-    }
-);
-
-
-// =====================================================
 // 16.1. VSMOV EMBED RESOLVER
 // =====================================================
 
@@ -19816,6 +19302,519 @@ app.get(
 
 </html>
         `);
+
+    }
+);
+
+// =====================================================
+// 16.0.5. VSMOV HLS PROXY
+//
+// MASTER M3U8
+//      ↓
+// GET playlist
+//      ↓
+// rewrite .png
+//      ↓
+// /vsmov-segment-proxy
+// =====================================================
+
+app.get(
+    "/vsmov-hls-proxy",
+    async (
+        req,
+        res
+    ) => {
+
+        try {
+
+            const targetUrl =
+                String(
+                    req.query?.url ||
+                    ""
+                ).trim();
+
+
+            const referer =
+                normalizeVSMovReferer(
+                    req.query?.ref
+                );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] URL:",
+                targetUrl
+            );
+
+
+            // -------------------------------------------------
+            // VALIDATE TARGET
+            // -------------------------------------------------
+
+            if (
+                !targetUrl ||
+                !isValidVSMovStreamUrl(
+                    targetUrl
+                )
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY] INVALID TARGET"
+                );
+
+
+                return res
+                    .status(
+                        400
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Invalid VSMov HLS URL"
+                    );
+
+            }
+
+
+            // -------------------------------------------------
+            // GET MASTER M3U8
+            // -------------------------------------------------
+
+            const response =
+                await axios.get(
+                    targetUrl,
+                    {
+                        timeout:
+                            15000,
+
+                        responseType:
+                            "text",
+
+                        headers: {
+
+                            "Referer":
+                                referer,
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*"
+
+                        }
+
+                    }
+                );
+
+
+            const playlist =
+                String(
+                    response?.data ||
+                    ""
+                );
+
+
+            if (
+                !playlist
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY] EMPTY PLAYLIST"
+                );
+
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Empty VSMov playlist"
+                    );
+
+            }
+
+
+            // -------------------------------------------------
+            // REWRITE PLAYLIST
+            // -------------------------------------------------
+
+            const rewritten =
+                rewriteVSMovM3u8(
+                    playlist,
+                    targetUrl,
+                    referer
+                );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] PLAYLIST:",
+                playlist.length,
+                "→",
+                rewritten.length
+            );
+
+
+            // -------------------------------------------------
+            // RESPONSE HEADERS
+            // -------------------------------------------------
+
+            res.set(
+                "Content-Type",
+                "application/vnd.apple.mpegurl"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+
+            res.set(
+                "Cache-Control",
+                "no-cache, no-store, must-revalidate"
+            );
+
+
+            res.send(
+                rewritten
+            );
+
+
+        } catch (e) {
+
+            console.log(
+                "[VSMOV HLS PROXY ERROR]:",
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+
+            if (
+                !res.headersSent
+            ) {
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "VSMov HLS proxy error"
+                    );
+
+            }
+
+        }
+
+    }
+);
+
+
+// =====================================================
+// 16.0.6. VSMOV SEGMENT PROXY
+//
+// .png
+//   ↓
+// download binary
+//   ↓
+// find MPEG-TS sync
+//   ↓
+// strip fake PNG prefix
+//   ↓
+// return MPEG-TS
+// =====================================================
+
+app.get(
+    "/vsmov-segment-proxy",
+    async (
+        req,
+        res
+    ) => {
+
+        try {
+
+            const targetUrl =
+                String(
+                    req.query?.url ||
+                    ""
+                ).trim();
+
+
+            const referer =
+                normalizeVSMovReferer(
+                    req.query?.ref
+                );
+
+
+            console.log(
+                "[VSMOV SEGMENT PROXY] URL:",
+                targetUrl
+            );
+
+
+            // -------------------------------------------------
+            // VALIDATE TARGET
+            // -------------------------------------------------
+
+            if (
+                !targetUrl ||
+                !isValidVSMovStreamUrl(
+                    targetUrl
+                )
+            ) {
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] INVALID TARGET"
+                );
+
+
+                return res
+                    .status(
+                        400
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Invalid VSMov segment URL"
+                    );
+
+            }
+
+
+            // -------------------------------------------------
+            // CLOUDSTREAM KHÔNG FORWARD RANGE
+            //
+            // Đây là điểm quan trọng.
+            //
+            // CloudStream interceptor:
+            //
+            // request.headers.remove("Range")
+            //
+            // nên proxy cũng không gửi Range lên VSMov.
+            // -------------------------------------------------
+
+            const response =
+                await axios.get(
+                    targetUrl,
+                    {
+                        timeout:
+                            20000,
+
+                        responseType:
+                            "arraybuffer",
+
+                        headers: {
+
+                            "Referer":
+                                referer,
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "*/*"
+
+                        },
+
+                        validateStatus:
+                            status =>
+                                status >= 200 &&
+                                status < 300
+
+                    }
+                );
+
+
+            const input =
+                Buffer.from(
+                    response?.data ||
+                    []
+                );
+
+
+            if (
+                !input.length
+            ) {
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] EMPTY SEGMENT"
+                );
+
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Empty VSMov segment"
+                    );
+
+            }
+
+
+            const total =
+                input.length;
+
+
+            // -------------------------------------------------
+            // TÌM FAKE PNG PREFIX
+            // -------------------------------------------------
+
+            const prefix =
+                findVSMovPngPrefixLength(
+                    input
+                );
+
+
+            let output =
+                input;
+
+
+            if (
+                prefix > 0 &&
+                prefix < total
+            ) {
+
+                output =
+                    input.slice(
+                        prefix
+                    );
+
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] stripPng:",
+                    "prefix=",
+                    prefix,
+                    "payload=",
+                    output.length,
+                    "total=",
+                    total
+                );
+
+            } else {
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] no PNG prefix:",
+                    "total=",
+                    total
+                );
+
+            }
+
+
+            // -------------------------------------------------
+            // RESPONSE
+            //
+            // CloudStream sau khi strip:
+            //
+            // remove Content-Range
+            // remove Content-Length
+            // set Content-Length = payload
+            // -------------------------------------------------
+
+            res.removeHeader(
+                "Content-Range"
+            );
+
+
+            res.removeHeader(
+                "Content-Length"
+            );
+
+
+            res.removeHeader(
+                "Transfer-Encoding"
+            );
+
+
+            res.set(
+                "Content-Type",
+                "video/mp2t"
+            );
+
+
+            res.set(
+                "Content-Length",
+                String(
+                    output.length
+                )
+            );
+
+
+            res.set(
+                "Accept-Ranges",
+                "none"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+
+            res.set(
+                "Cache-Control",
+                "no-store, no-cache, must-revalidate"
+            );
+
+
+            return res.send(
+                output
+            );
+
+
+        } catch (e) {
+
+            console.log(
+                "[VSMOV SEGMENT PROXY ERROR]:",
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+
+            if (
+                !res.headersSent
+            ) {
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "VSMov segment proxy error"
+                    );
+
+            }
+
+        }
 
     }
 );
