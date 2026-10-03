@@ -3281,14 +3281,12 @@ if (
 return {
 
     id:
-        "vnwpsw:" +
-        encodeURIComponent(
-            String(
-                item?.name ||
-                item?.origin_name ||
-                ""
-            )
-        ),
+    "vnwpsw:" +
+    String(
+        item?.name ||
+        item?.origin_name ||
+        ""
+    ),
 
     type:
 
