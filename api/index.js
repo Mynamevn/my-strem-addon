@@ -7384,6 +7384,10 @@ function rewriteVSMovM3u8(
 
     const output = [];
 
+    let segmentCount = 0;
+
+    let loggedSegment = false;
+
 
     for (
         let line
@@ -7429,13 +7433,11 @@ function rewriteVSMovM3u8(
 
 
             // ---------------------------------------------
-            // Nếu HLS có URI="..."
+            // HLS URI="..."
             //
             // Ví dụ:
             // #EXT-X-MAP:URI="..."
             // #EXT-X-KEY:URI="..."
-            //
-            // Chỉ rewrite nếu URI là streamvsmov.
             // ---------------------------------------------
 
             rewrittenLine =
@@ -7483,6 +7485,22 @@ function rewriteVSMovM3u8(
                             }
 
 
+                            if (
+                                !loggedSegment
+                            ) {
+
+                                console.log(
+                                    "[VSMOV HLS PROXY] URI REWRITE:",
+                                    absoluteUri,
+                                    "=>",
+                                    proxyUri
+                                );
+
+                                loggedSegment = true;
+
+                            }
+
+
                             return (
                                 "URI=" +
                                 quote +
@@ -7512,12 +7530,6 @@ function rewriteVSMovM3u8(
 
         // -------------------------------------------------
         // MEDIA SEGMENT
-        //
-        // master.m3u8 hiện tại của VSMov:
-        //
-        // https://p25.streamvsmov.com/....png
-        //
-        // → /vsmov-segment-proxy
         // -------------------------------------------------
 
         const rewritten =
@@ -7528,11 +7540,47 @@ function rewriteVSMovM3u8(
             );
 
 
+        if (
+            rewritten !== trimmed
+        ) {
+
+            segmentCount++;
+
+
+            // ---------------------------------------------
+            // DEBUG:
+            // LOG URL SEGMENT SAU KHI REWRITE
+            // ---------------------------------------------
+
+            if (
+                !loggedSegment
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY] SEGMENT REWRITE:",
+                    trimmed,
+                    "=>",
+                    rewritten
+                );
+
+                loggedSegment = true;
+
+            }
+
+        }
+
+
         output.push(
             rewritten
         );
 
     }
+
+
+    console.log(
+        "[VSMOV HLS PROXY] SEGMENTS REWRITTEN:",
+        segmentCount
+    );
 
 
     return output.join(
