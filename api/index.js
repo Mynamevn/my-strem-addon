@@ -15483,7 +15483,7 @@ const directStreams = [
 //
 // Tổng cộng fallback chung:
 //
-// 1. 1Phim32
+// 1. PhimLongTieng
 // 2. NguonC
 // 3. KKPhim2
 // =====================================================
@@ -15491,19 +15491,19 @@ const directStreams = [
 const externalStreams = [
 
     // -------------------------------------------------
-    // FALLBACK 1 — 1PHIM32
+    // FALLBACK 1 — PHIMLONGTIENG
     // -------------------------------------------------
 
     {
         name:
-            "🌐 [Fallback] 1Phim32",
+            "🌐 [Fallback] PhimLongTieng",
 
         title:
-            "Mở trang tìm kiếm 1Phim32 - " +
+            "Mở trang tìm kiếm PhimLongTieng - " +
             movieName,
 
         externalUrl:
-            "https://www.1phim32.com/search/" +
+            "https://phimlongtieng.link/search/" +
             toSlug(movieName) +
             "/"
     },
