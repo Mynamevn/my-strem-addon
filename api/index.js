@@ -3256,96 +3256,130 @@ async function fetchAnimationNew() {
 ============================================================ */
 
 function makeCatalogMeta(
-item,
-forcedType = null
+    item,
+    forcedType = null
 ) {
 
-const type =
-    forcedType ||
-    (
-        isSeriesItem(item)
-            ? "series"
-            : "movie"
-    );
-
-const poster =
-    catalogPoster(item);
-
-const imdbId =
-    item?.imdb?.id ||
-    item?.imdb_id ||
-    item?.imdb?.id ||
-    "";
-
-let imdbRating = null;
-
-const rawRating =
-    item?.imdb?.vote_average ??
-    item?.imdb?.rating ??
-    item?.tmdb?.vote_average ??
-    null;
-
-if (
-    rawRating !== null &&
-    rawRating !== undefined &&
-    rawRating !== ""
-) {
-
-    const parsed =
-        Number(
-            rawRating
+    const type =
+        forcedType ||
+        (
+            isSeriesItem(item)
+                ? "series"
+                : "movie"
         );
 
+    const poster =
+        catalogPoster(item);
+
+    const imdbId =
+        item?.imdb?.id ||
+        item?.imdb_id ||
+        "";
+
+    let imdbRating = null;
+
+    const rawRating =
+        item?.imdb?.vote_average ??
+        item?.imdb?.rating ??
+        item?.tmdb?.vote_average ??
+        null;
+
     if (
-        Number.isFinite(parsed) &&
-        parsed > 0
+        rawRating !== null &&
+        rawRating !== undefined &&
+        rawRating !== ""
     ) {
-        imdbRating =
-            Math.round(
-                parsed * 10
-            ) / 10;
+
+        const parsed =
+            Number(
+                rawRating
+            );
+
+        if (
+            Number.isFinite(parsed) &&
+            parsed > 0
+        ) {
+
+            imdbRating =
+                Math.round(
+                    parsed * 10
+                ) / 10;
+        }
     }
-}
 
-return {
+    /*
+     * Nếu catalog đã có IMDb ID hợp lệ,
+     * dùng IMDb ID làm ID chung cho Stremio.
+     *
+     * Nếu chưa có IMDb ID,
+     * giữ nguyên ID vnwpsw hiện tại.
+     */
 
-    id:
-        "vnwpsw:" +
-        encodeURIComponent(
-            String(
-                item?.name ||
-                item?.origin_name ||
-                ""
-            )
-        ),
+    const metaId =
+        /^tt\d+$/i.test(
+            String(imdbId)
+        )
+            ? String(imdbId)
+            : (
+                "vnwpsw:" +
+                encodeURIComponent(
+                    String(
+                        item?.name ||
+                        item?.origin_name ||
+                        ""
+                    )
+                )
+            );
 
-    type:
-
-        type,
-
-    name:
+    console.log(
+        "[CATALOG META] Name:",
         item?.name ||
         item?.origin_name ||
-        "Unknown",
+        "Unknown"
+    );
 
-    poster:
-        poster,
+    console.log(
+        "[CATALOG META] IMDb:",
+        imdbId ||
+        "NONE"
+    );
 
-    posterShape:
-        "poster",
+    console.log(
+        "[CATALOG META] Final ID:",
+        metaId
+    );
 
-    releaseInfo:
-        item?.year
-            ? String(
-                item.year
-            )
-            : undefined,
+    return {
 
-    imdbRating:
-        imdbRating !== null
-            ? imdbRating
-            : undefined
-};
+        id:
+            metaId,
+
+        type:
+            type,
+
+        name:
+            item?.name ||
+            item?.origin_name ||
+            "Unknown",
+
+        poster:
+            poster,
+
+        posterShape:
+            "poster",
+
+        releaseInfo:
+            item?.year
+                ? String(
+                    item.year
+                )
+                : undefined,
+
+        imdbRating:
+            imdbRating !== null
+                ? imdbRating
+                : undefined
+    };
 
 }
 
