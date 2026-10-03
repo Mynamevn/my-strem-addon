@@ -9043,12 +9043,7 @@ if (
             url:
                 apiProxyUrl,
 
-            behaviorHints: {
-
-                notWebReady:
-                    true
-
-            }
+            behaviorHints: {  }
 
         });
 
@@ -9132,12 +9127,7 @@ if (
                 url:
                     directProxyUrl,
 
-                behaviorHints: {
-
-                    notWebReady:
-                        true
-
-                }
+                behaviorHints: { }
 
             });
 
@@ -9285,12 +9275,7 @@ else {
                 url:
                     apiProxyUrl,
 
-                behaviorHints: {
-
-                    notWebReady:
-                        true
-
-                }
+                behaviorHints: { }
 
             });
 
@@ -9368,12 +9353,7 @@ else {
                     url:
                         directProxyUrl,
 
-                    behaviorHints: {
-
-                        notWebReady:
-                            true
-
-                    }
+                    behaviorHints: {  }
 
                 });
 
