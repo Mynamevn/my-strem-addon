@@ -9473,9 +9473,9 @@ else {
         // =================================================
 
         console.log(
-            "[VSMOV] FINAL STREAMS:",
-            streams.length
-        );
+    "[VSMOV] FINAL STREAM OBJECTS:",
+    JSON.stringify(streams, null, 2)
+);
 
 
         return streams;
