@@ -3405,11 +3405,202 @@ builder.defineCatalogHandler(
             let items = [];
             let forcedType = null;
 
+            const searchQuery =
+                String(
+                    args.extra?.search ||
+                    ""
+                ).trim();
+
+
             /* ========================================================
-               12.1 MOVIE TRENDING
+               12.1 SEARCH THẬT
                ======================================================== */
 
             if (
+                searchQuery
+            ) {
+
+                console.log(
+                    "[CATALOG] SEARCH MODE:",
+                    searchQuery
+                );
+
+
+                const searchUrl =
+                    "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                    encodeURIComponent(
+                        searchQuery
+                    ) +
+                    "&limit=24";
+
+
+                console.log(
+                    "[CATALOG] Search URL:",
+                    searchUrl
+                );
+
+
+                const searchRes =
+                    await axios.get(
+                        searchUrl,
+                        {
+                            timeout: 10000,
+
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                                "Accept":
+                                    "application/json"
+                            }
+                        }
+                    );
+
+
+                const searchData =
+                    searchRes?.data ||
+                    {};
+
+
+                items =
+                    searchData?.data?.items ||
+                    searchData?.items ||
+                    searchData?.results ||
+                    [];
+
+
+                if (
+                    !Array.isArray(
+                        items
+                    )
+                ) {
+
+                    items = [];
+
+                }
+
+
+                console.log(
+                    "[CATALOG] Search results:",
+                    items.length
+                );
+
+
+                /* ========================================================
+                   12.1.A SEARCH → MOVIE
+                   ======================================================== */
+
+                if (
+                    args.id ===
+                    "pa_movies_trending"
+                ) {
+
+                    forcedType =
+                        "movie";
+
+
+                    items =
+                        items.filter(
+                            item =>
+                                !isSeriesItem(
+                                    item
+                                )
+                        );
+
+                }
+
+
+                /* ========================================================
+                   12.1.B SEARCH → SERIES
+                   ======================================================== */
+
+                else if (
+                    args.id ===
+                    "pa_series_trending"
+                ) {
+
+                    forcedType =
+                        "series";
+
+
+                    items =
+                        items.filter(
+                            item =>
+                                isSeriesItem(
+                                    item
+                                )
+                        );
+
+                }
+
+
+                /* ========================================================
+                   12.1.C SEARCH → TVB
+                   ======================================================== */
+
+                else if (
+                    args.id ===
+                    "pa_tvb"
+                ) {
+
+                    /*
+                       TVB là catalog hỗn hợp.
+                       Không ép type.
+                    */
+
+                    forcedType =
+                        null;
+
+                }
+
+
+                /* ========================================================
+                   12.1.D SEARCH → DAILY
+                   ======================================================== */
+
+                else if (
+                    args.id ===
+                    "pa_daily"
+                ) {
+
+                    /*
+                       Search thật trước.
+                       Giữ nguyên movie/series của kết quả.
+                    */
+
+                    forcedType =
+                        null;
+
+                }
+
+
+                /* ========================================================
+                   12.1.E SEARCH → ANIMATION
+                   ======================================================== */
+
+                else if (
+                    args.id ===
+                    "pa_animation_new"
+                ) {
+
+                    /*
+                       Search thật trước.
+                       Không ép type.
+                    */
+
+                    forcedType =
+                        null;
+
+                }
+
+
+            }
+
+            /* ========================================================
+               12.2 MOVIE TRENDING
+               ======================================================== */
+
+            else if (
                 args.id ===
                 "pa_movies_trending"
             ) {
@@ -3424,11 +3615,13 @@ builder.defineCatalogHandler(
                 forcedType =
                     "movie";
 
+            }
+
             /* ========================================================
-               12.2 SERIES TRENDING
+               12.3 SERIES TRENDING
                ======================================================== */
 
-            } else if (
+            else if (
                 args.id ===
                 "pa_series_trending"
             ) {
@@ -3443,11 +3636,13 @@ builder.defineCatalogHandler(
                 forcedType =
                     "series";
 
+            }
+
             /* ========================================================
-               12.3 TVB
+               12.4 TVB
                ======================================================== */
 
-            } else if (
+            else if (
                 args.id ===
                 "pa_tvb"
             ) {
@@ -3473,11 +3668,13 @@ builder.defineCatalogHandler(
                 forcedType =
                     null;
 
+            }
+
             /* ========================================================
-               12.4 DAILY
+               12.5 DAILY
                ======================================================== */
 
-            } else if (
+            else if (
                 args.id ===
                 "pa_daily"
             ) {
@@ -3489,11 +3686,13 @@ builder.defineCatalogHandler(
                 items =
                     await fetchDailyCatalog();
 
+            }
+
             /* ========================================================
-               12.5 ANIMATION NEW
+               12.6 ANIMATION NEW
                ======================================================== */
 
-            } else if (
+            else if (
                 args.id ===
                 "pa_animation_new"
             ) {
@@ -3505,11 +3704,13 @@ builder.defineCatalogHandler(
                 items =
                     await fetchAnimationNew();
 
+            }
+
             /* ========================================================
-               12.6 UNKNOWN
+               12.7 UNKNOWN
                ======================================================== */
 
-            } else {
+            else {
 
                 console.log(
                     "[CATALOG] Unknown catalog:",
@@ -3521,40 +3722,6 @@ builder.defineCatalogHandler(
                 };
             }
 
-            /* ========================================================
-               12.7 SEARCH
-               ======================================================== */
-
-            if (
-                args.extra?.search
-            ) {
-
-                const q =
-                    catalogNormalize(
-                        args.extra.search
-                    );
-
-                items =
-                    items.filter(
-                        item => {
-
-                            const text =
-                                catalogNormalize(
-                                    [
-                                        item?.name,
-                                        item?.origin_name,
-                                        item?.original_name
-                                    ]
-                                        .filter(Boolean)
-                                        .join(" ")
-                                );
-
-                            return text.includes(
-                                q
-                            );
-                        }
-                    );
-            }
 
             /* ========================================================
                12.8 TYPE FILTER
@@ -3576,7 +3743,9 @@ builder.defineCatalogHandler(
                 items =
                     items.filter(
                         item =>
-                            !isSeriesItem(item)
+                            !isSeriesItem(
+                                item
+                            )
                     );
 
             } else if (
@@ -3587,9 +3756,12 @@ builder.defineCatalogHandler(
                 items =
                     items.filter(
                         item =>
-                            isSeriesItem(item)
+                            isSeriesItem(
+                                item
+                            )
                     );
             }
+
 
             /* ========================================================
                12.9 BUILD METAS
@@ -3613,6 +3785,7 @@ builder.defineCatalogHandler(
                             meta.id &&
                             meta.name
                     );
+
 
             /* ========================================================
                12.10 LOG
@@ -3646,9 +3819,11 @@ builder.defineCatalogHandler(
                 ).length
             );
 
+
             return {
                 metas
             };
+
 
         } catch (e) {
 
