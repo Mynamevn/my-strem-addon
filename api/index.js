@@ -9440,45 +9440,45 @@ else {
 }
 
 
-// =================================================
-// 16.11. FALLBACK MOVIE PAGE
-// =================================================
+/ =================================================
+        // 16.11. FALLBACK MOVIE PAGE
+        // =================================================
 
-if (
-    !streams.length
-) {
+        if (
+            !streams.length
+        ) {
 
-    const moviePageUrl =
-        "https://vsmov.com/phim/" +
-        encodeURIComponent(
-            movieSlug
+            const moviePageUrl =
+                "https://vsmov.com/phim/" +
+                encodeURIComponent(
+                    movieSlug
+                );
+
+
+            console.log(
+                "[VSMOV] No direct/embed stream"
+            );
+
+
+            console.log(
+                "[VSMOV] Movie page:",
+                moviePageUrl
+            );
+
+        }
+
+
+        // =================================================
+        // 16.12. FINAL
+        // =================================================
+
+        console.log(
+            "[VSMOV] FINAL STREAMS:",
+            streams.length
         );
 
 
-    console.log(
-        "[VSMOV] No direct/embed stream"
-    );
-
-
-    console.log(
-        "[VSMOV] Movie page:",
-        moviePageUrl
-    );
-
-}
-
-
-// =================================================
-// 16.12. FINAL
-// =================================================
-
-console.log(
-    "[VSMOV] FINAL STREAMS:",
-    streams.length
-);
-
-
-return streams;
+        return streams;
 
 
 } catch (e) {
