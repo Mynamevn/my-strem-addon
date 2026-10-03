@@ -9043,7 +9043,15 @@ if (
             url:
                 apiProxyUrl,
 
-            behaviorHints: {  }
+            behaviorHints:
+                isValidVSMovStreamUrl(
+                    apiM3u8
+                )
+                    ? {
+                        bingeGroup:
+                            "vsmov-hls"
+                    }
+                    : { }
 
         });
 
@@ -9127,7 +9135,15 @@ if (
                 url:
                     directProxyUrl,
 
-                behaviorHints: { }
+                behaviorHints:
+                    isValidVSMovStreamUrl(
+                        resolved.url
+                    )
+                        ? {
+                            bingeGroup:
+                                "vsmov-hls"
+                        }
+                        : { }
 
             });
 
