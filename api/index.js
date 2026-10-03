@@ -7016,10 +7016,6 @@ const VSMOV_PROXY_BASE =
     "https://my-strem-addon.vercel.app";
 
 
-// =====================================================
-// CREATE HLS PROXY URL
-// =====================================================
-
 function makeVSMovHlsProxyUrl(
     m3u8Url,
     referer = "https://vsmov.com/"
@@ -7036,21 +7032,6 @@ function makeVSMovHlsProxyUrl(
 
     }
 
-
-    /*
-     * QUAN TRỌNG:
-     *
-     * Trước đây:
-     *
-     * /vsmov-hls-proxy?url=...master.m3u8&ref=...
-     *
-     * Bây giờ:
-     *
-     * /vsmov-hls-proxy/master.m3u8?url=...&ref=...
-     *
-     * Mục đích là để URL stream mà Stremio nhìn thấy
-     * có đuôi .m3u8 ngay trên path.
-     */
 
     return (
         VSMOV_PROXY_BASE +
