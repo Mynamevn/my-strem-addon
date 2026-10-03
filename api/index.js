@@ -13,72 +13,101 @@ const manifest = {
     description: "He thong gop nguon truc tiep",
 
     resources: ["catalog", "meta", "stream"],
-    types: ["movie", "series"],
-    idPrefixes: ["tt", "vnwpsw"],
+
+    types: [
+        "movie",
+        "series",
+        "MOVINA"
+    ],
+
+    idPrefixes: [
+        "tt",
+        "vnwpsw"
+    ],
 
     catalogs: [
 
-{
-    type: "movie",
-    id: "pa_movies_trending",
-    name: "Phim lẻ - Trending",
-    extra: [
-        {
-            name: "search",
-            isRequired: false
-        }
-    ]
-},
+        /* ========================================================
+           MOVINA - PHIM LẺ TRENDING
+           ======================================================== */
 
-{
-    type: "series",
-    id: "pa_series_trending",
-    name: "Phim bộ - Trending",
-    extra: [
         {
-            name: "search",
-            isRequired: false
-        }
-    ]
-},
+            type: "MOVINA",
+            id: "pa_movies_trending",
+            name: "Phim lẻ - Trending",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
+        },
 
-{
-    type: "movie",
-    id: "pa_tvb",
-    name: "🇭🇰 TVB",
-    extra: [
+        /* ========================================================
+           MOVINA - PHIM BỘ TRENDING
+           ======================================================== */
+
         {
-            name: "search",
-            isRequired: false
-        }
-    ]
-},
+            type: "MOVINA",
+            id: "pa_series_trending",
+            name: "Phim bộ - Trending",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
+        },
 
-{
-    type: "movie",
-    id: "pa_daily",
-    name: "⭐ Phim trong ngày",
-    extra: [
+        /* ========================================================
+           MOVINA - TVB
+           ======================================================== */
+
         {
-            name: "search",
-            isRequired: false
-        }
-    ]
-},
+            type: "MOVINA",
+            id: "pa_tvb",
+            name: "🇭🇰 TVB",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
+        },
 
-{
-    type: "movie",
-    id: "pa_animation_new",
-    name: "🐼 Hoạt hình - New",
-    extra: [
+        /* ========================================================
+           MOVINA - PHIM TRONG NGÀY
+           ======================================================== */
+
         {
-            name: "search",
-            isRequired: false
-        }
-    ]
-}
+            type: "MOVINA",
+            id: "pa_daily",
+            name: "⭐ Phim trong ngày",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
+        },
 
-]
+        /* ========================================================
+           MOVINA - HOẠT HÌNH
+           ======================================================== */
+
+        {
+            type: "MOVINA",
+            id: "pa_animation_new",
+            name: "🐼 Hoạt hình - New",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
+        }
+
+    ]
 };
 
 const builder = new addonBuilder(manifest);
