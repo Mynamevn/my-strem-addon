@@ -19351,6 +19351,8 @@ app.get(
 //      ↓
 // GET playlist
 //      ↓
+// validate HLS
+//      ↓
 // rewrite .png
 //      ↓
 // /vsmov-segment-proxy
@@ -19449,7 +19451,26 @@ app.get(
                 String(
                     response?.data ||
                     ""
-                );
+                ).trim();
+
+
+            console.log(
+                "[VSMOV HLS PROXY] SOURCE STATUS:",
+                response?.status
+            );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] SOURCE TYPE:",
+                response?.headers?.["content-type"] ||
+                ""
+            );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] PLAYLIST LENGTH:",
+                playlist.length
+            );
 
 
             if (
@@ -19476,6 +19497,73 @@ app.get(
 
 
             // -------------------------------------------------
+            // BASIC HLS VALIDATION
+            // -------------------------------------------------
+
+            const isHls =
+                playlist
+                    .startsWith(
+                        "#EXTM3U"
+                    );
+
+
+            const hasExtInf =
+                playlist.includes(
+                    "#EXTINF:"
+                );
+
+
+            const hasSegmentUrl =
+                /https?:\/\/[^\s]+/i
+                    .test(
+                        playlist
+                    );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] HLS CHECK:",
+                {
+                    isHls,
+                    hasExtInf,
+                    hasSegmentUrl
+                }
+            );
+
+
+            if (
+                !isHls ||
+                !hasExtInf
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY] INVALID HLS PLAYLIST"
+                );
+
+
+                console.log(
+                    "[VSMOV HLS PROXY] BODY:",
+                    playlist.slice(
+                        0,
+                        1000
+                    )
+                );
+
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Invalid VSMov HLS playlist"
+                    );
+
+            }
+
+
+            // -------------------------------------------------
             // REWRITE PLAYLIST
             // -------------------------------------------------
 
@@ -19487,21 +19575,118 @@ app.get(
                 );
 
 
+            const rewrittenText =
+                String(
+                    rewritten ||
+                    ""
+                ).trim();
+
+
             console.log(
                 "[VSMOV HLS PROXY] PLAYLIST:",
                 playlist.length,
                 "→",
-                rewritten.length
+                rewrittenText.length
             );
+
+
+            // -------------------------------------------------
+            // DEBUG FIRST LINES
+            // -------------------------------------------------
+
+            console.log(
+                "[VSMOV HLS PROXY] OUTPUT:",
+                rewrittenText
+                    .split("\n")
+                    .slice(
+                        0,
+                        14
+                    )
+                    .join("\n")
+            );
+
+
+            // -------------------------------------------------
+            // FINAL VALIDATION
+            // -------------------------------------------------
+
+            const rewrittenIsHls =
+                rewrittenText
+                    .startsWith(
+                        "#EXTM3U"
+                    );
+
+
+            const rewrittenHasExtInf =
+                rewrittenText.includes(
+                    "#EXTINF:"
+                );
+
+
+            const rewrittenHasProxy =
+                rewrittenText.includes(
+                    "/vsmov-segment-proxy?"
+                );
+
+
+            console.log(
+                "[VSMOV HLS PROXY] FINAL CHECK:",
+                {
+                    rewrittenIsHls,
+                    rewrittenHasExtInf,
+                    rewrittenHasProxy
+                }
+            );
+
+
+            if (
+                !rewrittenIsHls ||
+                !rewrittenHasExtInf ||
+                !rewrittenHasProxy
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY] REWRITE FAILED"
+                );
+
+
+                return res
+                    .status(
+                        502
+                    )
+                    .type(
+                        "text/plain"
+                    )
+                    .send(
+                        "Invalid rewritten VSMov HLS playlist"
+                    );
+
+            }
 
 
             // -------------------------------------------------
             // RESPONSE HEADERS
             // -------------------------------------------------
 
+            res.status(
+                200
+            );
+
+
             res.set(
                 "Content-Type",
-                "application/vnd.apple.mpegurl"
+                "application/vnd.apple.mpegurl; charset=utf-8"
+            );
+
+
+            res.set(
+                "Content-Length",
+                Buffer
+                    .byteLength(
+                        rewrittenText,
+                        "utf8"
+                    )
+                    .toString()
             );
 
 
@@ -19518,13 +19703,41 @@ app.get(
 
 
             res.set(
+                "Access-Control-Allow-Methods",
+                "GET, HEAD, OPTIONS"
+            );
+
+
+            res.set(
                 "Cache-Control",
                 "no-cache, no-store, must-revalidate"
             );
 
 
+            res.set(
+                "Pragma",
+                "no-cache"
+            );
+
+
+            res.set(
+                "Expires",
+                "0"
+            );
+
+
+            res.set(
+                "Accept-Ranges",
+                "none"
+            );
+
+
+            // -------------------------------------------------
+            // SEND HLS PLAYLIST
+            // -------------------------------------------------
+
             res.send(
-                rewritten
+                rewrittenText
             );
 
 
@@ -19536,6 +19749,23 @@ app.get(
                 e?.message ||
                 e
             );
+
+
+            if (
+                e?.response?.data
+            ) {
+
+                console.log(
+                    "[VSMOV HLS PROXY ERROR BODY]:",
+                    String(
+                        e.response.data
+                    ).slice(
+                        0,
+                        500
+                    )
+                );
+
+            }
 
 
             if (
@@ -19559,6 +19789,7 @@ app.get(
 
     }
 );
+
 
 
 // =====================================================
