@@ -19977,48 +19977,36 @@ app.get(
 // =====================================================
 // 16.0.6. VSMOV SEGMENT PROXY
 //
-// Vsmov trả về file .png giả nhưng payload thật là MPEG-TS.
+// VSMov trả về file .png giả nhưng payload thật là MPEG-TS.
 //
-// Bản này chuyển sang STREAMING:
+// Mục tiêu:
 //
 // SOURCE VSMov
 //      ↓
-// axios responseType=stream
+// responseType = stream
 //      ↓
-// phát hiện fake PNG prefix
+// bỏ fake PNG prefix
 //      ↓
-// giữ lại MPEG-TS payload
+// MPEG-TS stream
 //      ↓
-// stream trực tiếp xuống Stremio
+// Stremio
 //
-// Không cần chờ tải xong toàn bộ 2–3 MB.
+// Không chờ tải xong toàn bộ segment mới bắt đầu gửi.
 //
-// Cache:
-// - Chỉ cache segment đã tải hoàn chỉnh.
-// - Cache vẫn giữ tối đa 5 segment.
-// - TTL vẫn 45 giây.
+// CACHE:
+// - chỉ cache segment đã tải hoàn chỉnh
+// - TTL 45 giây
+// - tối đa 5 segment
 //
-// In-flight:
-// - Nếu một segment đang được tải bởi request khác,
-//   request sau sẽ chờ kết quả và nhận từ cache sau khi
-//   request đầu hoàn tất.
-// - Request đầu tiên vẫn được STREAM trực tiếp.
+// IN-FLIGHT:
+// - request đầu tiên stream trực tiếp
+// - request trùng trong lúc đang tải sẽ chờ request đầu
+// - sau khi hoàn tất, request chờ nhận payload hoàn chỉnh
 // =====================================================
 
 
 // =====================================================
-// VSMOV STREAM TRANSFORM
-//
-// Nhiệm vụ:
-//
-// 1. Nhận từng chunk từ VSMov.
-// 2. Tìm fake PNG prefix.
-// 3. Khi tìm thấy MPEG-TS:
-//      - bỏ prefix
-//      - push payload ngay xuống response
-// 4. Thu thập payload để cache sau khi tải xong.
-//
-// Không buffer toàn bộ source trước khi trả response.
+// NODE STREAM
 // =====================================================
 
 const {
@@ -20026,33 +20014,252 @@ const {
 } = require("stream");
 
 
-class VSMovSegmentTransform extends Transform {
+// =====================================================
+// VSMOV SEGMENT CACHE
+// =====================================================
+
+const VSMOV_SEGMENT_CACHE =
+    new Map();
+
+const VSMOV_SEGMENT_CACHE_TTL =
+    45 * 1000; // 45 giây
+
+const VSMOV_SEGMENT_CACHE_MAX =
+    5; // giữ tối đa 5 segment
+
+
+// =====================================================
+// VSMOV SEGMENT IN-FLIGHT
+//
+// Map:
+// targetUrl -> Promise<Buffer>
+//
+// Promise chỉ dùng cho các request trùng.
+// Request đầu tiên KHÔNG await Promise này để stream.
+//
+// =====================================================
+
+const VSMOV_SEGMENT_INFLIGHT =
+    new Map();
+
+
+// =====================================================
+// VSMOV SEGMENT CACHE GET
+// =====================================================
+
+function getVSMovSegmentCache(
+    targetUrl
+) {
+
+    try {
+
+        const entry =
+            VSMOV_SEGMENT_CACHE.get(
+                targetUrl
+            );
+
+
+        if (!entry) {
+            return null;
+        }
+
+
+        const age =
+            Date.now() -
+            Number(
+                entry.createdAt || 0
+            );
+
+
+        if (
+            age >
+            VSMOV_SEGMENT_CACHE_TTL
+        ) {
+
+            VSMOV_SEGMENT_CACHE.delete(
+                targetUrl
+            );
+
+
+            console.log(
+                "[VSMOV SEGMENT CACHE] EXPIRED:",
+                targetUrl
+            );
+
+
+            return null;
+        }
+
+
+        console.log(
+            "[VSMOV SEGMENT CACHE] HIT:",
+            "ageMs=" + age,
+            "bytes=" +
+                (
+                    entry.buffer?.length ||
+                    0
+                )
+        );
+
+
+        return entry.buffer;
+
+    } catch (e) {
+
+        console.log(
+            "[VSMOV SEGMENT CACHE] GET ERROR:",
+            e?.message || e
+        );
+
+
+        return null;
+    }
+}
+
+
+// =====================================================
+// VSMOV SEGMENT CACHE SET
+// =====================================================
+
+function setVSMovSegmentCache(
+    targetUrl,
+    buffer
+) {
+
+    try {
+
+        if (
+            !targetUrl ||
+            !buffer ||
+            !buffer.length
+        ) {
+            return;
+        }
+
+
+        // Đưa entry mới nhất về cuối Map
+        VSMOV_SEGMENT_CACHE.delete(
+            targetUrl
+        );
+
+
+        VSMOV_SEGMENT_CACHE.set(
+            targetUrl,
+            {
+                buffer,
+                createdAt:
+                    Date.now()
+            }
+        );
+
+
+        // Giới hạn số segment trong RAM
+        while (
+            VSMOV_SEGMENT_CACHE.size >
+            VSMOV_SEGMENT_CACHE_MAX
+        ) {
+
+            const oldestKey =
+                VSMOV_SEGMENT_CACHE
+                    .keys()
+                    .next()
+                    .value;
+
+
+            if (!oldestKey) {
+                break;
+            }
+
+
+            const oldest =
+                VSMOV_SEGMENT_CACHE.get(
+                    oldestKey
+                );
+
+
+            console.log(
+                "[VSMOV SEGMENT CACHE] EVICT:",
+                oldestKey,
+                "bytes=" +
+                    (
+                        oldest?.buffer?.length ||
+                        0
+                    )
+            );
+
+
+            VSMOV_SEGMENT_CACHE.delete(
+                oldestKey
+            );
+        }
+
+
+        console.log(
+            "[VSMOV SEGMENT CACHE] STORED:",
+            "bytes=" +
+                buffer.length,
+            "entries=" +
+                VSMOV_SEGMENT_CACHE.size
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[VSMOV SEGMENT CACHE] SET ERROR:",
+            e?.message || e
+        );
+    }
+}
+
+
+// =====================================================
+// VSMOV MPEG-TS TRANSFORM
+//
+// Nhiệm vụ:
+//
+// 1. Nhận chunk từ VSMov.
+// 2. Tìm fake PNG prefix.
+// 3. Khi tìm thấy MPEG-TS:
+//      -> bỏ prefix
+//      -> push MPEG-TS ngay xuống response
+// 4. Đồng thời giữ lại payload để cache.
+//
+// Không cần đợi toàn bộ source tải xong.
+// =====================================================
+
+class VSMovMpegTsTransform
+    extends Transform {
 
     constructor(options = {}) {
 
         super(options);
 
+
         this.pending =
             Buffer.alloc(0);
+
 
         this.prefixResolved =
             false;
 
-        this.prefixLength =
-            0;
 
         this.outputChunks =
             [];
 
+
         this.outputBytes =
             0;
 
+
+        // Không giữ vô hạn nếu source bất thường.
         this.maxProbeBytes =
             128 * 1024;
     }
 
 
-    _pushPayload(buffer) {
+    pushPayload(
+        buffer
+    ) {
 
         if (
             !buffer ||
@@ -20061,13 +20268,17 @@ class VSMovSegmentTransform extends Transform {
             return;
         }
 
+
         this.outputChunks.push(
             buffer
         );
 
+
         this.outputBytes +=
             buffer.length;
 
+
+        // Gửi ngay xuống response
         this.push(
             buffer
         );
@@ -20088,29 +20299,32 @@ class VSMovSegmentTransform extends Transform {
                     : Buffer.from(chunk);
 
 
-            if (!incoming.length) {
+            if (
+                !incoming.length
+            ) {
                 return callback();
             }
 
 
             // =============================================
-            // PREFIX ĐÃ XÁC ĐỊNH
+            // ĐÃ TÌM THẤY MPEG-TS
             // =============================================
 
             if (
                 this.prefixResolved
             ) {
 
-                this._pushPayload(
+                this.pushPayload(
                     incoming
                 );
+
 
                 return callback();
             }
 
 
             // =============================================
-            // GỘP CHUNK ĐỂ TÌM MPEG-TS SYNC
+            // GỘP CHUNK
             // =============================================
 
             this.pending =
@@ -20127,10 +20341,7 @@ class VSMovSegmentTransform extends Transform {
 
 
             // =============================================
-            // TRƯỜNG HỢP KHÔNG CÓ PNG PREFIX
-            //
-            // Nếu byte đầu tiên đã là 0x47 thì source
-            // vốn đã là MPEG-TS.
+            // SOURCE ĐÃ LÀ MPEG-TS
             // =============================================
 
             if (
@@ -20141,19 +20352,20 @@ class VSMovSegmentTransform extends Transform {
                 this.prefixResolved =
                     true;
 
-                this.prefixLength =
-                    0;
 
                 console.log(
-                    "[VSMOV STREAM] MPEG-TS START AT 0"
+                    "[VSMOV STREAM] MPEG-TS START: prefix=0"
                 );
 
-                this._pushPayload(
+
+                this.pushPayload(
                     pending
                 );
 
+
                 this.pending =
                     Buffer.alloc(0);
+
 
                 return callback();
             }
@@ -20177,9 +20389,6 @@ class VSMovSegmentTransform extends Transform {
                 this.prefixResolved =
                     true;
 
-                this.prefixLength =
-                    prefix;
-
 
                 const payload =
                     pending.slice(
@@ -20191,29 +20400,28 @@ class VSMovSegmentTransform extends Transform {
                     "[VSMOV STREAM] PNG PREFIX FOUND:",
                     "prefix=",
                     prefix,
-                    "payloadChunk=",
+                    "payload=",
                     payload.length
                 );
 
 
-                this._pushPayload(
+                this.pushPayload(
                     payload
                 );
 
+
                 this.pending =
                     Buffer.alloc(0);
+
 
                 return callback();
             }
 
 
             // =============================================
-            // CHƯA TÌM THẤY PREFIX
+            // CHƯA TÌM ĐƯỢC PREFIX
             //
-            // Giữ một lượng dữ liệu nhỏ để chờ chunk tiếp theo.
-            //
-            // Prefix VSMov hiện tại thường chỉ khoảng vài trăm
-            // byte, nên 128 KB là dư rất nhiều.
+            // Chờ thêm chunk.
             // =============================================
 
             if (
@@ -20221,15 +20429,6 @@ class VSMovSegmentTransform extends Transform {
                 this.maxProbeBytes
             ) {
 
-                console.log(
-                    "[VSMOV STREAM] PREFIX NOT FOUND AFTER:",
-                    this.pending.length,
-                    "bytes"
-                );
-
-
-                // Nếu vẫn chưa xác định được MPEG-TS,
-                // không gửi dữ liệu nghi ngờ xuống player.
                 return callback(
                     new Error(
                         "VSMov MPEG-TS prefix not found"
@@ -20247,19 +20446,18 @@ class VSMovSegmentTransform extends Transform {
     }
 
 
-    _flush(callback) {
+    _flush(
+        callback
+    ) {
 
         try {
-
-            // =============================================
-            // SOURCE KẾT THÚC NHƯNG PREFIX CHƯA RESOLVE
-            // =============================================
 
             if (
                 !this.prefixResolved &&
                 this.pending.length
             ) {
 
+                // Source kết thúc mà byte đầu đã là MPEG-TS
                 if (
                     this.pending[0] === 0x47
                 ) {
@@ -20267,12 +20465,11 @@ class VSMovSegmentTransform extends Transform {
                     this.prefixResolved =
                         true;
 
-                    this.prefixLength =
-                        0;
 
-                    this._pushPayload(
+                    this.pushPayload(
                         this.pending
                     );
+
 
                     this.pending =
                         Buffer.alloc(0);
@@ -20281,7 +20478,7 @@ class VSMovSegmentTransform extends Transform {
 
                     return callback(
                         new Error(
-                            "VSMov stream ended before MPEG-TS payload was found"
+                            "VSMov stream ended before MPEG-TS payload"
                         )
                     );
                 }
@@ -20302,8 +20499,10 @@ class VSMovSegmentTransform extends Transform {
         if (
             !this.outputChunks.length
         ) {
+
             return Buffer.alloc(0);
         }
+
 
         return Buffer.concat(
             this.outputChunks,
@@ -20314,15 +20513,19 @@ class VSMovSegmentTransform extends Transform {
 
 
 // =====================================================
-// VSMOV STREAM SESSION
+// VSMOV DOWNLOAD + STREAM SESSION
 //
-// Session dùng để:
-// - request đầu tiên stream trực tiếp
-// - đồng thời tạo Promise hoàn tất để cache
-// - request trùng trong lúc đang tải có thể chờ Promise
+// Chỉ có nhiệm vụ:
+//
+// - mở connection tới VSMov
+// - trả source stream
+// - transform source thành MPEG-TS
+// - tạo Promise để cache/in-flight
+//
+// Request đầu tiên sẽ pipe transform -> res trực tiếp.
 // =====================================================
 
-async function createVSMovSegmentSession(
+async function startVSMovSegmentStream(
     targetUrl,
     referer
 ) {
@@ -20341,7 +20544,8 @@ async function createVSMovSegmentSession(
         await axios.get(
             targetUrl,
             {
-                timeout: 30000,
+                timeout:
+                    30000,
 
                 responseType:
                     "stream",
@@ -20382,139 +20586,164 @@ async function createVSMovSegmentSession(
 
 
     const transform =
-        new VSMovSegmentTransform();
+        new VSMovMpegTsTransform();
 
 
-    // =============================================
-    // PIPE SOURCE -> TRANSFORM
-    // =============================================
+    sourceStream.on(
+        "error",
+        error => {
+
+            console.log(
+                "[VSMOV SEGMENT SOURCE] STREAM ERROR:",
+                error?.message || error
+            );
+
+
+            transform.destroy(
+                error
+            );
+        }
+    );
+
 
     sourceStream.pipe(
         transform
     );
 
 
+    // =============================================
+    // PROMISE CHO CACHE / IN-FLIGHT
+    //
+    // Request đầu tiên không await Promise này.
+    // =============================================
+
+    let resolveFinished;
+    let rejectFinished;
+
+
     const finishedPromise =
         new Promise(
             (resolve, reject) => {
 
-                let settled =
-                    false;
+                resolveFinished =
+                    resolve;
 
-
-                const finishSuccess =
-                    () => {
-
-                        if (settled) return;
-
-                        settled = true;
-
-
-                        try {
-
-                            const output =
-                                transform.getOutputBuffer();
-
-
-                            const sourceMs =
-                                Date.now() -
-                                startedAt;
-
-
-                            if (
-                                !output ||
-                                !output.length
-                            ) {
-
-                                return reject(
-                                    new Error(
-                                        "Empty VSMov MPEG-TS output"
-                                    )
-                                );
-                            }
-
-
-                            const looksLikeTs =
-                                output.length >= 188 &&
-                                output[0] === 0x47;
-
-
-                            console.log(
-                                "[VSMOV SEGMENT SOURCE] STREAM DONE:",
-                                {
-                                    sourceMs,
-                                    outputBytes:
-                                        output.length,
-                                    mpegTs:
-                                        looksLikeTs
-                                }
-                            );
-
-
-                            if (!looksLikeTs) {
-
-                                return reject(
-                                    new Error(
-                                        "VSMov output is not MPEG-TS"
-                                    )
-                                );
-                            }
-
-
-                            // =================================
-                            // CACHE CHỈ SAU KHI HOÀN TẤT
-                            // =================================
-
-                            setVSMovSegmentCache(
-                                targetUrl,
-                                output
-                            );
-
-
-                            resolve(
-                                output
-                            );
-
-                        } catch (e) {
-
-                            reject(e);
-                        }
-                    };
-
-
-                const finishError =
-                    (error) => {
-
-                        if (settled) return;
-
-                        settled = true;
-
-                        reject(
-                            error instanceof Error
-                                ? error
-                                : new Error(
-                                    String(error || "VSMov stream error")
-                                )
-                        );
-                    };
-
-
-                transform.once(
-                    "finish",
-                    finishSuccess
-                );
-
-                transform.once(
-                    "error",
-                    finishError
-                );
-
-                sourceStream.once(
-                    "error",
-                    finishError
-                );
+                rejectFinished =
+                    reject;
             }
         );
+
+
+    // =============================================
+    // SOURCE / TRANSFORM ERROR
+    // =============================================
+
+    const handleError =
+        error => {
+
+            rejectFinished(
+                error instanceof Error
+                    ? error
+                    : new Error(
+                        String(
+                            error ||
+                            "VSMov stream error"
+                        )
+                    )
+            );
+        };
+
+
+    sourceStream.once(
+        "error",
+        handleError
+    );
+
+
+    transform.once(
+        "error",
+        handleError
+    );
+
+
+    // =============================================
+    // TRANSFORM FINISH
+    //
+    // Chỉ lúc này mới cache.
+    // =============================================
+
+    transform.once(
+        "finish",
+        () => {
+
+            try {
+
+                const output =
+                    transform.getOutputBuffer();
+
+
+                const sourceMs =
+                    Date.now() -
+                    startedAt;
+
+
+                if (
+                    !output ||
+                    !output.length
+                ) {
+
+                    throw new Error(
+                        "Empty VSMov MPEG-TS output"
+                    );
+                }
+
+
+                const looksLikeTs =
+                    output.length >= 188 &&
+                    output[0] === 0x47;
+
+
+                console.log(
+                    "[VSMOV SEGMENT SOURCE] STREAM DONE:",
+                    {
+                        sourceMs,
+                        outputBytes:
+                            output.length,
+                        mpegTs:
+                            looksLikeTs
+                    }
+                );
+
+
+                if (
+                    !looksLikeTs
+                ) {
+
+                    throw new Error(
+                        "VSMov output is not MPEG-TS"
+                    );
+                }
+
+
+                // Cache chỉ sau khi toàn bộ segment hoàn tất
+                setVSMovSegmentCache(
+                    targetUrl,
+                    output
+                );
+
+
+                resolveFinished(
+                    output
+                );
+
+            } catch (e) {
+
+                rejectFinished(
+                    e
+                );
+            }
+        }
+    );
 
 
     return {
@@ -20534,10 +20763,18 @@ app.get(
         "/vsmov-segment-proxy",
         "/vsmov-segment-proxy/segment.ts"
     ],
-    async (req, res) => {
+
+    async (
+        req,
+        res
+    ) => {
 
         const requestStartedAt =
             Date.now();
+
+
+        let sourceStream = null;
+        let transform = null;
 
 
         try {
@@ -20559,10 +20796,12 @@ app.get(
                 req.path
             );
 
+
             console.log(
                 "[VSMOV SEGMENT PROXY] URL:",
                 targetUrl
             );
+
 
             console.log(
                 "[VSMOV SEGMENT PROXY] REFERER:",
@@ -20585,6 +20824,7 @@ app.get(
                     "[VSMOV SEGMENT PROXY] INVALID TARGET"
                 );
 
+
                 return res
                     .status(400)
                     .type("text/plain")
@@ -20606,22 +20846,19 @@ app.get(
 
             if (cached) {
 
-                const cacheSendStartedAt =
+                const cacheStartedAt =
                     Date.now();
-
-
-                console.log(
-                    "[VSMOV SEGMENT PROXY] CACHE HIT -> SEND"
-                );
 
 
                 res.removeHeader(
                     "Content-Range"
                 );
 
+
                 res.removeHeader(
                     "Content-Length"
                 );
+
 
                 res.removeHeader(
                     "Transfer-Encoding"
@@ -20633,6 +20870,7 @@ app.get(
                     "video/mp2t"
                 );
 
+
                 res.set(
                     "Content-Length",
                     String(
@@ -20640,35 +20878,42 @@ app.get(
                     )
                 );
 
+
                 res.set(
                     "Accept-Ranges",
                     "none"
                 );
+
 
                 res.set(
                     "Access-Control-Allow-Origin",
                     "*"
                 );
 
+
                 res.set(
                     "Access-Control-Allow-Headers",
                     "*"
                 );
+
 
                 res.set(
                     "Access-Control-Allow-Methods",
                     "GET, HEAD, OPTIONS"
                 );
 
+
                 res.set(
                     "Cache-Control",
                     "no-store, no-cache, must-revalidate"
                 );
 
+
                 res.set(
                     "Pragma",
                     "no-cache"
                 );
+
 
                 res.set(
                     "Expires",
@@ -20689,7 +20934,7 @@ app.get(
                             "sendMs=" +
                                 (
                                     finishedAt -
-                                    cacheSendStartedAt
+                                    cacheStartedAt
                                 ),
                             "totalMs=" +
                                 (
@@ -20712,20 +20957,17 @@ app.get(
             // =============================================
             // IN-FLIGHT HIT
             //
-            // Một request khác đang stream segment này.
-            //
-            // Request hiện tại không tạo thêm connection tới
-            // VSMov. Nó chờ source hiện tại hoàn tất.
-            // Sau đó lấy output đã cache.
+            // Request đầu tiên đang stream segment này.
+            // Request hiện tại chờ Promise hoàn tất.
             // =============================================
 
-            const existingInflight =
+            const inflight =
                 VSMOV_SEGMENT_INFLIGHT.get(
                     targetUrl
                 );
 
 
-            if (existingInflight) {
+            if (inflight) {
 
                 console.log(
                     "[VSMOV SEGMENT PROXY] IN-FLIGHT HIT:",
@@ -20736,13 +20978,14 @@ app.get(
                 try {
 
                     const output =
-                        await existingInflight;
+                        await inflight;
 
 
                     if (
                         !output ||
                         !output.length
                     ) {
+
                         throw new Error(
                             "Empty in-flight VSMov segment"
                         );
@@ -20753,9 +20996,11 @@ app.get(
                         "Content-Range"
                     );
 
+
                     res.removeHeader(
                         "Content-Length"
                     );
+
 
                     res.removeHeader(
                         "Transfer-Encoding"
@@ -20767,6 +21012,7 @@ app.get(
                         "video/mp2t"
                     );
 
+
                     res.set(
                         "Content-Length",
                         String(
@@ -20774,35 +21020,42 @@ app.get(
                         )
                     );
 
+
                     res.set(
                         "Accept-Ranges",
                         "none"
                     );
+
 
                     res.set(
                         "Access-Control-Allow-Origin",
                         "*"
                     );
 
+
                     res.set(
                         "Access-Control-Allow-Headers",
                         "*"
                     );
+
 
                     res.set(
                         "Access-Control-Allow-Methods",
                         "GET, HEAD, OPTIONS"
                     );
 
+
                     res.set(
                         "Cache-Control",
                         "no-store, no-cache, must-revalidate"
                     );
 
+
                     res.set(
                         "Pragma",
                         "no-cache"
                     );
+
 
                     res.set(
                         "Expires",
@@ -20846,6 +21099,7 @@ app.get(
                             );
                     }
 
+
                     return;
                 }
             }
@@ -20854,14 +21108,22 @@ app.get(
             // =============================================
             // FIRST REQUEST
             //
-            // Tạo streaming session.
+            // Mở source stream.
             // =============================================
 
             const session =
-                await createVSMovSegmentSession(
+                await startVSMovSegmentStream(
                     targetUrl,
                     referer
                 );
+
+
+            sourceStream =
+                session.sourceStream;
+
+
+            transform =
+                session.transform;
 
 
             const finishedPromise =
@@ -20870,9 +21132,6 @@ app.get(
 
             // =============================================
             // ĐĂNG KÝ IN-FLIGHT
-            //
-            // Promise này resolve khi toàn bộ segment đã
-            // tải xong và cache đã được lưu.
             // =============================================
 
             VSMOV_SEGMENT_INFLIGHT.set(
@@ -20887,20 +21146,28 @@ app.get(
             );
 
 
+            // Tránh unhandled rejection.
+            // Request đầu tiên vẫn stream trực tiếp.
+            finishedPromise.catch(
+                () => {}
+            );
+
+
             // =============================================
             // RESPONSE HEADERS
             //
-            // Không biết Content-Length trước vì đang stream.
-            // Vì vậy KHÔNG set Content-Length.
+            // Streaming nên không set Content-Length.
             // =============================================
 
             res.removeHeader(
                 "Content-Range"
             );
 
+
             res.removeHeader(
                 "Content-Length"
             );
+
 
             res.removeHeader(
                 "Transfer-Encoding"
@@ -20912,109 +21179,46 @@ app.get(
                 "video/mp2t"
             );
 
+
             res.set(
                 "Accept-Ranges",
                 "none"
             );
+
 
             res.set(
                 "Access-Control-Allow-Origin",
                 "*"
             );
 
+
             res.set(
                 "Access-Control-Allow-Headers",
                 "*"
             );
+
 
             res.set(
                 "Access-Control-Allow-Methods",
                 "GET, HEAD, OPTIONS"
             );
 
+
             res.set(
                 "Cache-Control",
                 "no-store, no-cache, must-revalidate"
             );
+
 
             res.set(
                 "Pragma",
                 "no-cache"
             );
 
+
             res.set(
                 "Expires",
                 "0"
-            );
-
-
-            const streamStartedAt =
-                Date.now();
-
-
-            // =============================================
-            // STREAM ERROR
-            // =============================================
-
-            session.transform.once(
-                "error",
-                (error) => {
-
-                    console.log(
-                        "[VSMOV SEGMENT PROXY] STREAM ERROR:",
-                        error?.message || error
-                    );
-
-
-                    if (
-                        !res.headersSent
-                    ) {
-
-                        res
-                            .status(502)
-                            .type("text/plain")
-                            .send(
-                                "VSMov segment stream error"
-                            );
-
-                    } else {
-
-                        res.destroy(
-                            error
-                        );
-                    }
-                }
-            );
-
-
-            session.sourceStream.once(
-                "error",
-                (error) => {
-
-                    console.log(
-                        "[VSMOV SEGMENT PROXY] SOURCE STREAM ERROR:",
-                        error?.message || error
-                    );
-
-
-                    if (
-                        !res.headersSent
-                    ) {
-
-                        res
-                            .status(502)
-                            .type("text/plain")
-                            .send(
-                                "VSMov source stream error"
-                            );
-
-                    } else {
-
-                        res.destroy(
-                            error
-                        );
-                    }
-                }
             );
 
 
@@ -21038,14 +21242,16 @@ app.get(
 
                             responseMs:
                                 finishedAt -
-                                streamStartedAt,
+                                requestStartedAt,
 
                             totalMs:
                                 finishedAt -
                                 requestStartedAt,
 
                             bytes:
-                                session.transform.outputBytes
+                                transform
+                                    ?.outputBytes ||
+                                0
                         }
                     );
                 }
@@ -21073,29 +21279,81 @@ app.get(
 
 
             // =============================================
-            // STREAM SOURCE -> TRANSFORM -> STREMIO
+            // TRANSFORM ERROR
             // =============================================
 
-            console.log(
-                "[VSMOV SEGMENT PROXY] STREAM PIPE:",
-                targetUrl
+            transform.once(
+                "error",
+                error => {
+
+                    console.log(
+                        "[VSMOV SEGMENT PROXY] TRANSFORM ERROR:",
+                        error?.message || error
+                    );
+
+
+                    if (
+                        !res.headersSent
+                    ) {
+
+                        return res
+                            .status(502)
+                            .type("text/plain")
+                            .send(
+                                "VSMov segment transform error"
+                            );
+                    }
+
+
+                    try {
+                        res.destroy(
+                            error
+                        );
+                    } catch (_) {}
+                }
             );
 
 
-            session.transform.pipe(
-                res
+            // =============================================
+            // SOURCE ERROR
+            // =============================================
+
+            sourceStream.once(
+                "error",
+                error => {
+
+                    console.log(
+                        "[VSMOV SEGMENT PROXY] SOURCE ERROR:",
+                        error?.message || error
+                    );
+
+
+                    if (
+                        !res.headersSent
+                    ) {
+
+                        return res
+                            .status(502)
+                            .type("text/plain")
+                            .send(
+                                "VSMov source stream error"
+                            );
+                    }
+
+
+                    try {
+                        res.destroy(
+                            error
+                        );
+                    } catch (_) {}
+                }
             );
 
 
             // =============================================
-            // CLEAN IN-FLIGHT
+            // IN-FLIGHT CLEANUP
             //
-            // Không await ở đây.
-            //
-            // Response đầu tiên phải tiếp tục stream ngay.
-            // Promise chỉ dùng để:
-            // - cache
-            // - các request trùng chờ
+            // Promise hoàn tất sau khi source đã tải xong.
             // =============================================
 
             finishedPromise
@@ -21105,7 +21363,8 @@ app.get(
                         if (
                             VSMOV_SEGMENT_INFLIGHT.get(
                                 targetUrl
-                            ) === finishedPromise
+                            ) ===
+                            finishedPromise
                         ) {
 
                             VSMOV_SEGMENT_INFLIGHT.delete(
@@ -21125,8 +21384,31 @@ app.get(
                 );
 
 
-            // Không res.send() ở đây.
-            // transform.pipe(res) đã quản lý response.
+            // =============================================
+            // STREAM
+            //
+            // Đây là điểm quan trọng:
+            //
+            // transform -> res
+            //
+            // Không await finishedPromise.
+            // Không res.send().
+            //
+            // Stremio nhận MPEG-TS ngay khi transform
+            // tìm được payload.
+            // =============================================
+
+            console.log(
+                "[VSMOV SEGMENT PROXY] STREAM PIPE:",
+                targetUrl
+            );
+
+
+            transform.pipe(
+                res
+            );
+
+
             return;
 
         } catch (e) {
@@ -21158,8 +21440,13 @@ app.get(
                     );
             }
 
+
             try {
-                res.destroy(e);
+
+                res.destroy(
+                    e
+                );
+
             } catch (_) {}
         }
     }
