@@ -19437,20 +19437,17 @@ app.get(
 //      ↓
 // validate HLS
 //      ↓
-// rewrite .png
+// rewrite .png → /vsmov-segment-proxy/segment.ts
 //      ↓
-// /vsmov-segment-proxy
+// return HLS playlist
 //
-// Hỗ trợ cả:
+// Hỗ trợ:
 //
 // /vsmov-hls-proxy?url=...master.m3u8
 //
 // và:
 //
 // /vsmov-hls-proxy/master.m3u8?url=...
-//
-// URL mới có .m3u8 trên path để client/player
-// nhận diện rõ đây là HLS.
 // =====================================================
 
 app.get(
@@ -19649,7 +19646,8 @@ app.get(
 
             if (
                 !isHls ||
-                !hasExtInf
+                !hasExtInf ||
+                !hasSegmentUrl
             ) {
 
                 console.log(
@@ -19711,10 +19709,14 @@ app.get(
             // DEBUG FIRST LINES
             // -------------------------------------------------
 
+            const outputLines =
+                rewrittenText
+                    .split("\n");
+
+
             console.log(
                 "[VSMOV HLS PROXY] OUTPUT:",
-                rewrittenText
-                    .split("\n")
+                outputLines
                     .slice(
                         0,
                         14
@@ -19729,8 +19731,7 @@ app.get(
 
             console.log(
                 "[VSMOV HLS PROXY] OUTPUT TAIL:",
-                rewrittenText
-                    .split("\n")
+                outputLines
                     .slice(
                         -6
                     )
@@ -19756,9 +19757,9 @@ app.get(
 
 
             const rewrittenHasProxy =
-    rewrittenText.includes(
-        "/vsmov-segment-proxy/segment.ts?"
-    );
+                rewrittenText.includes(
+                    "/vsmov-segment-proxy/segment.ts?"
+                );
 
 
             const rewrittenHasEndList =
@@ -19767,13 +19768,23 @@ app.get(
                 );
 
 
+            const rewrittenUrlCount =
+                (
+                    rewrittenText.match(
+                        /https?:\/\/[^\s]+/gi
+                    ) ||
+                    []
+                ).length;
+
+
             console.log(
                 "[VSMOV HLS PROXY] FINAL CHECK:",
                 {
                     rewrittenIsHls,
                     rewrittenHasExtInf,
                     rewrittenHasProxy,
-                    rewrittenHasEndList
+                    rewrittenHasEndList,
+                    rewrittenUrlCount
                 }
             );
 
@@ -19807,6 +19818,13 @@ app.get(
             // RESPONSE HEADERS
             // -------------------------------------------------
 
+            const playlistBuffer =
+                Buffer.from(
+                    rewrittenText,
+                    "utf8"
+                );
+
+
             res.status(
                 200
             );
@@ -19814,18 +19832,21 @@ app.get(
 
             res.set(
                 "Content-Type",
-                "application/vnd.apple.mpegurl; charset=utf-8"
+                "application/vnd.apple.mpegurl"
             );
 
 
             res.set(
                 "Content-Length",
-                Buffer
-                    .byteLength(
-                        rewrittenText,
-                        "utf8"
-                    )
-                    .toString()
+                String(
+                    playlistBuffer.length
+                )
+            );
+
+
+            res.set(
+                "Content-Disposition",
+                "inline; filename=\"master.m3u8\""
             );
 
 
@@ -19871,12 +19892,35 @@ app.get(
             );
 
 
+            res.set(
+                "X-Content-Type-Options",
+                "nosniff"
+            );
+
+
+            // -------------------------------------------------
+            // DEBUG RESPONSE
+            // -------------------------------------------------
+
+            console.log(
+                "[VSMOV HLS PROXY] RESPONSE:",
+                {
+                    contentType:
+                        "application/vnd.apple.mpegurl",
+                    contentLength:
+                        playlistBuffer.length,
+                    proxySegments:
+                        rewrittenUrlCount
+                }
+            );
+
+
             // -------------------------------------------------
             // SEND HLS PLAYLIST
             // -------------------------------------------------
 
-            res.send(
-                rewrittenText
+            return res.send(
+                playlistBuffer
             );
 
 
