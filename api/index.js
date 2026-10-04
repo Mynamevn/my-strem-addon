@@ -20012,7 +20012,7 @@ const VSMOV_SEGMENT_CACHE_TTL =
     45 * 1000; // 45 giây
 
 const VSMOV_SEGMENT_CACHE_MAX =
-    2; // tránh giữ quá nhiều segment 6-17 MB
+    5; // giữ tối đa 5 segment
 
 
 // =====================================================
