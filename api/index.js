@@ -19756,9 +19756,9 @@ app.get(
 
 
             const rewrittenHasProxy =
-                rewrittenText.includes(
-                    "/vsmov-segment-proxy?"
-                );
+    rewrittenText.includes(
+        "/vsmov-segment-proxy/segment.ts?"
+    );
 
 
             const rewrittenHasEndList =
