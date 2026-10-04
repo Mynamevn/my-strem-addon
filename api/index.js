@@ -7289,6 +7289,18 @@ function normalizeVSMovReferer(
 
 // =====================================================
 // 16.0.3. REWRITE ONE VSMOV SEGMENT
+//
+// VSMov dùng segment .png nhưng payload thật là MPEG-TS.
+//
+// Thay vì trả:
+//
+// /vsmov-segment-proxy?url=...png
+//
+// ta trả:
+//
+// /vsmov-segment-proxy/segment.ts?url=...png
+//
+// để HLS player nhận diện đây là media segment.
 // =====================================================
 
 function rewriteVSMovSegmentUrl(
@@ -7334,16 +7346,21 @@ function rewriteVSMovSegmentUrl(
 
 
         const proxyUrl =
-            makeVSMovSegmentProxyUrl(
-                absoluteUrl,
-                referer
+            VSMOV_PROXY_BASE +
+            "/vsmov-segment-proxy/segment.ts?url=" +
+            encodeURIComponent(
+                absoluteUrl
+            ) +
+            "&ref=" +
+            encodeURIComponent(
+                String(
+                    referer ||
+                    "https://vsmov.com/"
+                ).trim()
             );
 
 
-        return (
-            proxyUrl ||
-            value
-        );
+        return proxyUrl;
 
 
     } catch (e) {
@@ -7366,20 +7383,36 @@ function rewriteVSMovM3u8(
 ) {
 
     const source =
-        String(playlist || "");
+        String(
+            playlist ||
+            ""
+        );
 
-    if (!source.trim()) {
+
+    if (
+        !source.trim()
+    ) {
+
         return source;
+
     }
 
 
     const lines =
-        source.split(/\r?\n/);
+        source.split(
+            /\r?\n/
+        );
+
 
     const output = [];
 
-    let rewrittenCount = 0;
-    let urlCount = 0;
+
+    let rewrittenCount =
+        0;
+
+
+    let urlCount =
+        0;
 
 
     for (
@@ -7391,17 +7424,28 @@ function rewriteVSMovM3u8(
         const originalLine =
             lines[i];
 
+
         const line =
-            String(originalLine || "").trim();
+            String(
+                originalLine ||
+                ""
+            ).trim();
 
 
         // -------------------------------------------------
         // EMPTY LINE
         // -------------------------------------------------
 
-        if (!line) {
-            output.push(originalLine);
+        if (
+            !line
+        ) {
+
+            output.push(
+                originalLine
+            );
+
             continue;
+
         }
 
 
@@ -7409,26 +7453,27 @@ function rewriteVSMovM3u8(
         // HLS TAG / COMMENT
         // -------------------------------------------------
 
-        if (line.startsWith("#")) {
-
-            /*
-             * Một số HLS tag có URI="..."
-             * Ví dụ EXT-X-MEDIA / EXT-X-KEY.
-             *
-             * Chỉ rewrite URI nếu URI thực sự là
-             * VSMov stream URL.
-             */
+        if (
+            line.startsWith(
+                "#"
+            )
+        ) {
 
             const rewrittenLine =
                 line.replace(
                     /URI="([^"]+)"/gi,
-                    (match, rawUri) => {
+                    (
+                        match,
+                        rawUri
+                    ) => {
 
                         try {
 
                             const absoluteUri =
                                 new URL(
-                                    String(rawUri).trim(),
+                                    String(
+                                        rawUri
+                                    ).trim(),
                                     baseUrl
                                 ).toString();
 
@@ -7438,19 +7483,27 @@ function rewriteVSMovM3u8(
                                     absoluteUri
                                 )
                             ) {
+
                                 return match;
+
                             }
 
 
                             const proxyUri =
-                                makeVSMovSegmentProxyUrl(
+                                rewriteVSMovSegmentUrl(
                                     absoluteUri,
+                                    baseUrl,
                                     referer
                                 );
 
 
-                            if (!proxyUri) {
+                            if (
+                                !proxyUri ||
+                                proxyUri === absoluteUri
+                            ) {
+
                                 return match;
+
                             }
 
 
@@ -7471,10 +7524,13 @@ function rewriteVSMovM3u8(
                                 '"'
                             );
 
+
                         } catch (e) {
 
                             return match;
+
                         }
+
                     }
                 );
 
@@ -7483,7 +7539,9 @@ function rewriteVSMovM3u8(
                 rewrittenLine
             );
 
+
             continue;
+
         }
 
 
@@ -7505,7 +7563,6 @@ function rewriteVSMovM3u8(
 
             /*
              * Chỉ rewrite URL thuộc VSMov.
-             * Nếu không phải VSMov thì giữ nguyên.
              */
 
             if (
@@ -7519,40 +7576,50 @@ function rewriteVSMovM3u8(
                 );
 
                 continue;
+
             }
 
 
             const proxyUrl =
-                makeVSMovSegmentProxyUrl(
+                rewriteVSMovSegmentUrl(
                     absoluteUrl,
+                    baseUrl,
                     referer
                 );
 
 
-            if (!proxyUrl) {
+            if (
+                !proxyUrl ||
+                proxyUrl === absoluteUrl
+            ) {
 
                 output.push(
                     originalLine
                 );
 
                 continue;
+
             }
 
 
             rewrittenCount++;
 
 
-            if (rewrittenCount === 1) {
+            if (
+                rewrittenCount === 1
+            ) {
 
                 console.log(
                     "[VSMOV HLS PROXY] FIRST SEGMENT:",
                     absoluteUrl
                 );
 
+
                 console.log(
                     "[VSMOV HLS PROXY] FIRST PROXY:",
                     proxyUrl
                 );
+
             }
 
 
@@ -7563,20 +7630,19 @@ function rewriteVSMovM3u8(
 
         } catch (e) {
 
-            /*
-             * Không làm hỏng playlist nếu một URL
-             * bất thường không parse được.
-             */
-
             output.push(
                 originalLine
             );
+
         }
+
     }
 
 
     const result =
-        output.join("\n");
+        output.join(
+            "\n"
+        );
 
 
     console.log(
@@ -7584,21 +7650,27 @@ function rewriteVSMovM3u8(
         urlCount
     );
 
+
     console.log(
         "[VSMOV HLS PROXY] REWRITTEN:",
         rewrittenCount
     );
 
+
     console.log(
         "[VSMOV HLS PROXY] OUTPUT FIRST LINES:",
         result
             .split("\n")
-            .slice(0, 14)
+            .slice(
+                0,
+                14
+            )
             .join("\n")
     );
 
 
     return result;
+
 }
 
 
@@ -19861,19 +19933,23 @@ app.get(
 // =====================================================
 // 16.0.6. VSMOV SEGMENT PROXY
 //
-// .png
-//   ↓
-// download binary
-//   ↓
-// find MPEG-TS sync
-//   ↓
-// strip fake PNG prefix
-//   ↓
-// return MPEG-TS
+// Hỗ trợ:
+//
+// /vsmov-segment-proxy?url=...png
+//
+// và:
+//
+// /vsmov-segment-proxy/segment.ts?url=...png
+//
+// Vsmov trả về file .png giả nhưng payload thật là MPEG-TS.
+// Proxy sẽ tìm MPEG-TS sync byte rồi loại bỏ fake PNG prefix.
 // =====================================================
 
 app.get(
-    "/vsmov-segment-proxy",
+    [
+        "/vsmov-segment-proxy",
+        "/vsmov-segment-proxy/segment.ts"
+    ],
     async (
         req,
         res
@@ -19895,8 +19971,20 @@ app.get(
 
 
             console.log(
+                "[VSMOV SEGMENT PROXY] PATH:",
+                req.path
+            );
+
+
+            console.log(
                 "[VSMOV SEGMENT PROXY] URL:",
                 targetUrl
+            );
+
+
+            console.log(
+                "[VSMOV SEGMENT PROXY] REFERER:",
+                referer
             );
 
 
@@ -19931,15 +20019,10 @@ app.get(
 
 
             // -------------------------------------------------
-            // CLOUDSTREAM KHÔNG FORWARD RANGE
+            // DOWNLOAD ORIGINAL VSMOV .PNG
             //
-            // Đây là điểm quan trọng.
-            //
-            // CloudStream interceptor:
-            //
-            // request.headers.remove("Range")
-            //
-            // nên proxy cũng không gửi Range lên VSMov.
+            // Không forward Range.
+            // Giống CloudStream interceptor.
             // -------------------------------------------------
 
             const response =
@@ -20009,7 +20092,7 @@ app.get(
 
 
             // -------------------------------------------------
-            // TÌM FAKE PNG PREFIX
+            // FIND FAKE PNG PREFIX
             // -------------------------------------------------
 
             const prefix =
@@ -20055,13 +20138,35 @@ app.get(
 
 
             // -------------------------------------------------
+            // BASIC MPEG-TS VALIDATION
+            // -------------------------------------------------
+
+            const looksLikeTs =
+                output.length >= 188 &&
+                output[0] === 0x47;
+
+
+            console.log(
+                "[VSMOV SEGMENT PROXY] MPEG-TS:",
+                looksLikeTs,
+                "length=",
+                output.length
+            );
+
+
+            if (
+                !looksLikeTs
+            ) {
+
+                console.log(
+                    "[VSMOV SEGMENT PROXY] WARNING: output does not start with MPEG-TS sync byte"
+                );
+
+            }
+
+
+            // -------------------------------------------------
             // RESPONSE
-            //
-            // CloudStream sau khi strip:
-            //
-            // remove Content-Range
-            // remove Content-Length
-            // set Content-Length = payload
             // -------------------------------------------------
 
             res.removeHeader(
@@ -20112,8 +20217,26 @@ app.get(
 
 
             res.set(
+                "Access-Control-Allow-Methods",
+                "GET, HEAD, OPTIONS"
+            );
+
+
+            res.set(
                 "Cache-Control",
                 "no-store, no-cache, must-revalidate"
+            );
+
+
+            res.set(
+                "Pragma",
+                "no-cache"
+            );
+
+
+            res.set(
+                "Expires",
+                "0"
             );
 
 
