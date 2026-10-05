@@ -5919,6 +5919,1520 @@ console.log(
 );
 
 // ============================================================
+// ANIME47 RESOLVER
+// ============================================================
+//
+// BƯỚC 3 — ĐƯA ANIME47 VÀO RESOLVER ENGINE
+//
+// Anime47 có một số đặc thù:
+//
+//   - stream URL
+//   - server_name
+//   - player_type
+//   - subtitles
+//   - header/interceptor cho nonprofit.asia
+//   - một số CDN có wrapper MPEG-TS giả
+//
+// Ở BƯỚC 3 này:
+//
+// Provider:
+//     chỉ cung cấp raw stream
+//
+// Resolver:
+//     nhận raw stream và chuẩn hóa metadata
+//
+// QUAN TRỌNG:
+//
+// Chưa thay đổi logic Anime47 hiện tại.
+// Chưa tự động xử lý lại byte-transform ở đây nếu
+// provider hiện tại đã xử lý nó.
+//
+// Mục tiêu trước tiên:
+//
+//     Anime47
+//        ↓
+//     Normalized Stream
+//        ↓
+//     Anime47 Resolver
+//        ↓
+//     Normalized Stream
+//
+// ============================================================
+
+registerStreamResolver(
+    createStreamResolver({
+
+        id: "anime47",
+
+        name: "Anime47 Resolver",
+
+        description:
+            "Anime47 stream resolver. Preserves Anime47 stream URL, headers, subtitles and server metadata.",
+
+        priority: 90,
+
+        canResolve: (
+            stream,
+            context = {}
+        ) => {
+
+            if (
+                !stream ||
+                typeof stream !== "object"
+            ) {
+                return false;
+            }
+
+            return (
+                String(
+                    stream.provider ||
+                    stream.source ||
+                    ""
+                )
+                .toLowerCase()
+                .trim()
+                === "anime47"
+            );
+        },
+
+        async resolve(
+            stream,
+            context = {}
+        ) {
+
+            console.log(
+                "[ANIME47 RESOLVER] START:",
+                stream.title ||
+                stream.name ||
+                "Untitled"
+            );
+
+            console.log(
+                "[ANIME47 RESOLVER] SERVER:",
+                stream.serverName ||
+                stream.server_name ||
+                ""
+            );
+
+            console.log(
+                "[ANIME47 RESOLVER] TYPE:",
+                stream.type ||
+                stream.player_type ||
+                "unknown"
+            );
+
+            console.log(
+                "[ANIME47 RESOLVER] URL:",
+                stream.url ||
+                stream.externalUrl ||
+                ""
+            );
+
+
+            // ------------------------------------------------
+            // Headers
+            // ------------------------------------------------
+            //
+            // Giữ nguyên headers mà Anime47 provider đã
+            // chuẩn bị.
+            //
+            // Resolver không tự thêm header mới ở BƯỚC 3,
+            // nhằm tránh thay đổi hành vi hiện tại.
+            // ------------------------------------------------
+
+            const headers =
+                stream.headers &&
+                typeof stream.headers === "object"
+                    ? {
+                        ...stream.headers
+                    }
+                    : {};
+
+
+            // ------------------------------------------------
+            // Subtitles
+            // ------------------------------------------------
+
+            const subtitles =
+                Array.isArray(
+                    stream.subtitles
+                )
+                    ? stream.subtitles
+                    : [];
+
+
+            // ------------------------------------------------
+            // Behavior hints
+            // ------------------------------------------------
+
+            const behaviorHints =
+                stream.behaviorHints &&
+                typeof stream.behaviorHints === "object"
+                    ? {
+                        ...stream.behaviorHints
+                    }
+                    : {};
+
+
+            // ------------------------------------------------
+            // Resolver result
+            // ------------------------------------------------
+
+            const result = {
+
+                url:
+                    stream.url,
+
+                externalUrl:
+                    stream.externalUrl,
+
+                title:
+                    stream.title,
+
+                name:
+                    stream.name,
+
+                type:
+                    stream.type ||
+                    stream.player_type ||
+                    "unknown",
+
+                source:
+                    stream.source ||
+                    "anime47",
+
+                provider:
+                    "anime47",
+
+                serverName:
+                    stream.serverName ||
+                    stream.server_name,
+
+                headers,
+
+                subtitles,
+
+                behaviorHints,
+
+                resolverOptions:
+                    stream.resolverOptions &&
+                    typeof stream.resolverOptions === "object"
+                        ? {
+                            ...stream.resolverOptions
+                        }
+                        : {}
+            };
+
+
+            console.log(
+                "[ANIME47 RESOLVER] PASS:",
+                result.url ||
+                result.externalUrl ||
+                ""
+            );
+
+
+            return result;
+        }
+
+    })
+);
+
+
+console.log(
+    "[ANIME47 RESOLVER] Registered:",
+    !!getStreamResolver("anime47")
+);
+
+// ============================================================
+// ANIME47 PROVIDER
+// ============================================================
+//
+// BƯỚC 3 — ANIME47 PROVIDER
+//
+// Provider này được xây từ các rule đã reverse-engineer
+// từ Anime47 classes.dex.
+//
+// Pipeline:
+//
+//   Anime47 API
+//        ↓
+//   Search
+//        ↓
+//   Anime Info
+//        ↓
+//   Episodes
+//        ↓
+//   Watch Episode
+//        ↓
+//   Raw Streams
+//        ↓
+//   Normalized Streams
+//        ↓
+//   Anime47 Resolver
+//
+// Provider chỉ tìm nguồn.
+// Resolver chịu trách nhiệm xử lý stream đặc thù.
+//
+// ============================================================
+
+
+// ============================================================
+// 1. ANIME47 CONFIG
+// ============================================================
+
+const ANIME47_CONFIG = {
+
+    apiBase:
+        "https://anime47.love/api",
+
+    webBase:
+        "https://anime47.best",
+
+    language:
+        "vi",
+
+    timeout:
+        10000,
+
+    userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/131.0.0.0 Safari/537.36"
+};
+
+
+// ============================================================
+// 2. ANIME47 HTTP HEADERS
+// ============================================================
+
+function getAnime47Headers(
+    extra = {}
+) {
+
+    return {
+
+        "User-Agent":
+            ANIME47_CONFIG.userAgent,
+
+        "Accept":
+            "application/json, text/plain, */*",
+
+        "Accept-Language":
+            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+        ...extra
+    };
+}
+
+
+// ============================================================
+// 3. ANIME47 GET
+// ============================================================
+
+async function anime47Get(
+    path,
+    params = {}
+) {
+
+    const url =
+        ANIME47_CONFIG.apiBase +
+        path;
+
+    console.log(
+        "[ANIME47 API] GET:",
+        url,
+        params
+    );
+
+    const response =
+        await axios.get(
+            url,
+            {
+                params,
+
+                timeout:
+                    ANIME47_CONFIG.timeout,
+
+                headers:
+                    getAnime47Headers()
+            }
+        );
+
+    return response.data;
+}
+
+
+// ============================================================
+// 4. NORMALIZE TITLE
+// ============================================================
+
+function normalizeAnime47Title(
+    value
+) {
+
+    return String(
+        value || ""
+    )
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(
+            /[\u0300-\u036f]/g,
+            ""
+        )
+        .replace(
+            /đ/g,
+            "d"
+        )
+        .replace(
+            /[^a-z0-9]+/g,
+            " "
+        )
+        .replace(
+            /\s+/g,
+            " "
+        )
+        .trim();
+}
+
+
+// ============================================================
+// 5. EXTRACT ARRAY
+// ============================================================
+//
+// Anime47 classes.dex có nhiều model wrapper.
+// Hàm này giúp provider chịu được các wrapper:
+//
+// data
+// data.items
+// data.results
+// data.animes
+// data.data
+// etc.
+//
+// ============================================================
+
+function anime47ExtractArray(
+    payload
+) {
+
+    if (
+        Array.isArray(payload)
+    ) {
+        return payload;
+    }
+
+    if (
+        !payload ||
+        typeof payload !== "object"
+    ) {
+        return [];
+    }
+
+    const candidates = [
+
+        payload.data,
+
+        payload.items,
+
+        payload.results,
+
+        payload.animes,
+
+        payload.episodes,
+
+        payload.streams,
+
+        payload.data?.items,
+
+        payload.data?.results,
+
+        payload.data?.animes,
+
+        payload.data?.episodes,
+
+        payload.data?.streams
+
+    ];
+
+    for (
+        const value
+        of candidates
+    ) {
+
+        if (
+            Array.isArray(value)
+        ) {
+            return value;
+        }
+    }
+
+    return [];
+}
+
+
+// ============================================================
+// 6. SEARCH ANIME47
+// ============================================================
+//
+// Reverse rule:
+//
+//     /search/full/?lang=vi&keyword=
+//
+// ============================================================
+
+async function searchAnime47(
+    movieName
+) {
+
+    const keyword =
+        String(
+            movieName || ""
+        ).trim();
+
+    if (!keyword) {
+        return [];
+    }
+
+    try {
+
+        const data =
+            await anime47Get(
+                "/search/full/",
+                {
+                    lang:
+                        ANIME47_CONFIG.language,
+
+                    keyword
+                }
+            );
+
+        const items =
+            anime47ExtractArray(
+                data
+            );
+
+        console.log(
+            "[ANIME47] SEARCH RESULTS:",
+            items.length
+        );
+
+        return items;
+
+    } catch (error) {
+
+        console.log(
+            "[ANIME47 SEARCH ERROR]:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return [];
+    }
+}
+
+
+// ============================================================
+// 7. PICK SEARCH RESULT
+// ============================================================
+
+function pickAnime47Result(
+    items,
+    movieName
+) {
+
+    if (
+        !Array.isArray(items) ||
+        !items.length
+    ) {
+        return null;
+    }
+
+    const target =
+        normalizeAnime47Title(
+            movieName
+        );
+
+    let best =
+        null;
+
+    let bestScore =
+        -Infinity;
+
+    for (
+        const item
+        of items
+    ) {
+
+        if (
+            !item ||
+            typeof item !== "object"
+        ) {
+            continue;
+        }
+
+        const title =
+            item.name ||
+            item.title ||
+            item.original_name ||
+            item.originalName ||
+            item.en_name ||
+            item.english_name ||
+            item.japanese_name ||
+            "";
+
+        const normalized =
+            normalizeAnime47Title(
+                title
+            );
+
+        if (!normalized) {
+            continue;
+        }
+
+        let score =
+            0;
+
+        if (
+            normalized === target
+        ) {
+            score += 1000;
+        }
+
+        if (
+            normalized.includes(target) &&
+            target.length >= 3
+        ) {
+            score += 500;
+        }
+
+        if (
+            target.includes(normalized) &&
+            normalized.length >= 3
+        ) {
+            score += 450;
+        }
+
+        const targetWords =
+            target.split(" ")
+                .filter(
+                    word =>
+                        word.length >= 2
+                );
+
+        const itemWords =
+            normalized.split(" ");
+
+        for (
+            const word
+            of targetWords
+        ) {
+
+            if (
+                itemWords.includes(word)
+            ) {
+                score += 30;
+            }
+        }
+
+        if (
+            score > bestScore
+        ) {
+
+            bestScore =
+                score;
+
+            best =
+                item;
+        }
+    }
+
+    if (!best) {
+        best = items[0];
+    }
+
+    console.log(
+        "[ANIME47] SELECTED:",
+        JSON.stringify(
+            best
+        )
+    );
+
+    return best;
+}
+
+
+// ============================================================
+// 8. GET ANIME INFO
+// ============================================================
+//
+// Reverse rule:
+//
+//     /anime/info/
+//
+// ID được lấy từ search result.
+//
+// ============================================================
+
+async function getAnime47Info(
+    anime
+) {
+
+    if (
+        !anime ||
+        typeof anime !== "object"
+    ) {
+        return null;
+    }
+
+    const animeId =
+        anime.id ??
+        anime.anime_id ??
+        anime.animeId ??
+        anime._id ??
+        anime.slug ??
+        anime.key;
+
+    if (
+        animeId === undefined ||
+        animeId === null ||
+        !String(animeId).trim()
+    ) {
+
+        console.log(
+            "[ANIME47] INFO: Missing anime id"
+        );
+
+        return null;
+    }
+
+    try {
+
+        const data =
+            await anime47Get(
+                "/anime/info/" +
+                encodeURIComponent(
+                    String(animeId)
+                ),
+                {
+                    lang:
+                        ANIME47_CONFIG.language
+                }
+            );
+
+        console.log(
+            "[ANIME47] INFO OK:",
+            String(animeId)
+        );
+
+        return data;
+
+    } catch (error) {
+
+        console.log(
+            "[ANIME47 INFO ERROR]:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return null;
+    }
+}
+
+
+// ============================================================
+// 9. EXTRACT EPISODES
+// ============================================================
+
+function extractAnime47Episodes(
+    info
+) {
+
+    if (
+        !info ||
+        typeof info !== "object"
+    ) {
+        return [];
+    }
+
+    const directCandidates = [
+
+        info.episodes,
+
+        info.data?.episodes,
+
+        info.anime?.episodes,
+
+        info.data?.anime?.episodes,
+
+        info.result?.episodes
+
+    ];
+
+    for (
+        const value
+        of directCandidates
+    ) {
+
+        if (
+            Array.isArray(value)
+        ) {
+            return value;
+        }
+    }
+
+    return anime47ExtractArray(
+        info
+    );
+}
+
+
+// ============================================================
+// 10. EPISODE NUMBER
+// ============================================================
+
+function getAnime47EpisodeNumber(
+    episode
+) {
+
+    if (
+        episode === null ||
+        episode === undefined
+    ) {
+        return 0;
+    }
+
+    if (
+        typeof episode === "number"
+    ) {
+        return episode;
+    }
+
+    if (
+        typeof episode === "string"
+    ) {
+
+        const match =
+            episode.match(
+                /\d+/
+            );
+
+        return match
+            ? Number(match[0])
+            : 0;
+    }
+
+    return Number(
+        episode.number ??
+        episode.episode ??
+        episode.episodeNumber ??
+        episode.ep ??
+        episode.ep_number ??
+        episode.order ??
+        episode.index ??
+        0
+    ) || 0;
+}
+
+
+// ============================================================
+// 11. PICK EPISODE
+// ============================================================
+
+function pickAnime47Episode(
+    episodes,
+    episodeNumber
+) {
+
+    if (
+        !Array.isArray(episodes) ||
+        !episodes.length
+    ) {
+        return null;
+    }
+
+    const target =
+        Number(
+            episodeNumber
+        ) || 1;
+
+    let exact =
+        episodes.find(
+            episode =>
+                getAnime47EpisodeNumber(
+                    episode
+                ) === target
+        );
+
+    if (exact) {
+        return exact;
+    }
+
+    // -----------------------------------------------
+    // Một số API có thể trả episode theo index.
+    // -----------------------------------------------
+
+    if (
+        episodes[target - 1]
+    ) {
+
+        return episodes[
+            target - 1
+        ];
+    }
+
+    return null;
+}
+
+
+// ============================================================
+// 12. GET EPISODE DETAILS
+// ============================================================
+//
+// Reverse rule:
+//
+//     /episodes?lang=vi
+//
+// Một số version API gắn episode id vào query.
+// Ta lấy id từ episode object.
+//
+// ============================================================
+
+async function getAnime47Episodes(
+    anime,
+    info
+) {
+
+    const animeId =
+        anime?.id ??
+        anime?.anime_id ??
+        anime?.animeId ??
+        anime?._id ??
+        anime?.slug ??
+        anime?.key;
+
+    try {
+
+        const data =
+            await anime47Get(
+                "/episodes",
+                {
+                    lang:
+                        ANIME47_CONFIG.language,
+
+                    id:
+                        animeId
+                }
+            );
+
+        const episodes =
+            anime47ExtractArray(
+                data
+            );
+
+        if (
+            episodes.length
+        ) {
+
+            console.log(
+                "[ANIME47] EPISODES:",
+                episodes.length
+            );
+
+            return episodes;
+        }
+
+    } catch (error) {
+
+        console.log(
+            "[ANIME47 EPISODES ERROR]:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+    }
+
+    return extractAnime47Episodes(
+        info
+    );
+}
+
+
+// ============================================================
+// 13. GET WATCH EPISODE
+// ============================================================
+//
+// Reverse rule:
+//
+//     /anime/watch/episode/{id}?lang=vi
+//
+// ============================================================
+
+async function getAnime47Watch(
+    episode
+) {
+
+    if (
+        !episode ||
+        typeof episode !== "object"
+    ) {
+        return null;
+    }
+
+    const episodeId =
+        episode.id ??
+        episode.episode_id ??
+        episode.episodeId ??
+        episode._id ??
+        episode.key ??
+        episode.eid;
+
+    if (
+        episodeId === undefined ||
+        episodeId === null ||
+        !String(
+            episodeId
+        ).trim()
+    ) {
+
+        console.log(
+            "[ANIME47] WATCH: Missing episode id"
+        );
+
+        return null;
+    }
+
+    try {
+
+        const data =
+            await anime47Get(
+                "/anime/watch/episode/" +
+                encodeURIComponent(
+                    String(episodeId)
+                ),
+                {
+                    lang:
+                        ANIME47_CONFIG.language
+                }
+            );
+
+        console.log(
+            "[ANIME47] WATCH OK:",
+            String(episodeId)
+        );
+
+        return data;
+
+    } catch (error) {
+
+        console.log(
+            "[ANIME47 WATCH ERROR]:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return null;
+    }
+}
+
+
+// ============================================================
+// 14. EXTRACT WATCH STREAMS
+// ============================================================
+//
+// ApiWatchResponse.streams
+//
+// Các field đã reverse:
+//
+//     url
+//     server_name
+//     player_type
+//     subtitles
+//
+// ============================================================
+
+function extractAnime47Streams(
+    watchData
+) {
+
+    if (
+        !watchData ||
+        typeof watchData !== "object"
+    ) {
+        return [];
+    }
+
+    const directCandidates = [
+
+        watchData.streams,
+
+        watchData.data?.streams,
+
+        watchData.result?.streams,
+
+        watchData.data?.result?.streams
+
+    ];
+
+    for (
+        const streams
+        of directCandidates
+    ) {
+
+        if (
+            Array.isArray(
+                streams
+            )
+        ) {
+
+            return streams;
+        }
+    }
+
+    return [];
+}
+
+
+// ============================================================
+// 15. NORMALIZE ANIME47 STREAM
+// ============================================================
+
+function normalizeAnime47Stream(
+    rawStream,
+    context = {}
+) {
+
+    if (
+        !rawStream ||
+        typeof rawStream !== "object"
+    ) {
+        return null;
+    }
+
+    const url =
+        String(
+            rawStream.url ||
+            rawStream.stream_url ||
+            rawStream.video_url ||
+            rawStream.link ||
+            ""
+        ).trim();
+
+    const externalUrl =
+        String(
+            rawStream.externalUrl ||
+            rawStream.external_url ||
+            rawStream.embed ||
+            rawStream.embed_url ||
+            ""
+        ).trim();
+
+    if (
+        !url &&
+        !externalUrl
+    ) {
+        return null;
+    }
+
+    const serverName =
+        String(
+            rawStream.server_name ||
+            rawStream.serverName ||
+            rawStream.server ||
+            ""
+        ).trim();
+
+    const playerType =
+        String(
+            rawStream.player_type ||
+            rawStream.playerType ||
+            rawStream.type ||
+            "unknown"
+        ).trim();
+
+    const subtitles =
+        Array.isArray(
+            rawStream.subtitles
+        )
+            ? rawStream.subtitles
+            : [];
+
+
+    // ------------------------------------------------
+    // Headers
+    // ------------------------------------------------
+    //
+    // Resolver sẽ xử lý header/interceptor sau.
+    //
+    // Ở Provider chỉ giữ metadata.
+    // ------------------------------------------------
+
+    const headers = {};
+
+
+    return normalizeStream(
+
+        {
+
+            url:
+                url || undefined,
+
+            externalUrl:
+                externalUrl || undefined,
+
+            title:
+                context.title ||
+                "Anime47",
+
+            name:
+                "[Anime47] " +
+                (
+                    serverName ||
+                    "Stream"
+                ),
+
+            type:
+                playerType,
+
+            source:
+                "anime47",
+
+            provider:
+                "anime47",
+
+            serverName,
+
+            headers,
+
+            subtitles,
+
+            resolver:
+                "anime47",
+
+            resolverOptions: {
+
+                playerType,
+
+                serverName,
+
+                animeId:
+                    context.animeId ||
+                    "",
+
+                episodeId:
+                    context.episodeId ||
+                    ""
+            }
+
+        }
+
+    );
+}
+
+
+// ============================================================
+// 16. FETCH ANIME47
+// ============================================================
+//
+// Đây là function chính mà Stream Handler sẽ gọi.
+//
+// Signature:
+//
+//     fetchAnime47(
+//         movieName,
+//         seasonNumber,
+//         episodeNumber,
+//         streamType
+//     )
+//
+// ============================================================
+
+async function fetchAnime47(
+    movieName,
+    seasonNumber = 0,
+    episodeNumber = 0,
+    streamType = "series"
+) {
+
+    const streams = [];
+
+    try {
+
+        const targetName =
+            String(
+                movieName || ""
+            ).trim();
+
+        if (!targetName) {
+
+            console.log(
+                "[ANIME47] Empty movie name"
+            );
+
+            return streams;
+        }
+
+        const targetEpisode =
+            Number(
+                episodeNumber
+            ) || 1;
+
+
+        console.log(
+            "========== ANIME47 =========="
+        );
+
+        console.log(
+            "[ANIME47] Name:",
+            targetName
+        );
+
+        console.log(
+            "[ANIME47] Season:",
+            seasonNumber
+        );
+
+        console.log(
+            "[ANIME47] Episode:",
+            targetEpisode
+        );
+
+        console.log(
+            "[ANIME47] Type:",
+            streamType
+        );
+
+
+        // =================================================
+        // SEARCH
+        // =================================================
+
+        const searchResults =
+            await searchAnime47(
+                targetName
+            );
+
+        if (
+            !searchResults.length
+        ) {
+
+            console.log(
+                "[ANIME47] No search results"
+            );
+
+            return streams;
+        }
+
+
+        const selected =
+            pickAnime47Result(
+                searchResults,
+                targetName
+            );
+
+        if (!selected) {
+
+            console.log(
+                "[ANIME47] No matching anime"
+            );
+
+            return streams;
+        }
+
+
+        const animeId =
+            selected.id ??
+            selected.anime_id ??
+            selected.animeId ??
+            selected._id ??
+            selected.slug ??
+            selected.key;
+
+
+        // =================================================
+        // INFO
+        // =================================================
+
+        const info =
+            await getAnime47Info(
+                selected
+            );
+
+
+        // =================================================
+        // EPISODES
+        // =================================================
+
+        let episodes =
+            await getAnime47Episodes(
+                selected,
+                info
+            );
+
+
+        // =================================================
+        // Nếu info đã chứa episodes nhưng API
+        // /episodes không trả được thì dùng info.
+        // =================================================
+
+        if (
+            !episodes.length
+        ) {
+
+            episodes =
+                extractAnime47Episodes(
+                    info
+                );
+        }
+
+
+        if (
+            !episodes.length
+        ) {
+
+            console.log(
+                "[ANIME47] No episodes"
+            );
+
+            return streams;
+        }
+
+
+        const selectedEpisode =
+            pickAnime47Episode(
+                episodes,
+                targetEpisode
+            );
+
+
+        if (
+            !selectedEpisode
+        ) {
+
+            console.log(
+                "[ANIME47] Episode not found:",
+                targetEpisode
+            );
+
+            return streams;
+        }
+
+
+        const episodeId =
+            selectedEpisode.id ??
+            selectedEpisode.episode_id ??
+            selectedEpisode.episodeId ??
+            selectedEpisode._id ??
+            selectedEpisode.key ??
+            selectedEpisode.eid;
+
+
+        console.log(
+            "[ANIME47] Selected episode:",
+            JSON.stringify(
+                selectedEpisode
+            )
+        );
+
+
+        // =================================================
+        // WATCH
+        // =================================================
+
+        const watchData =
+            await getAnime47Watch(
+                selectedEpisode
+            );
+
+
+        const rawStreams =
+            extractAnime47Streams(
+                watchData
+            );
+
+
+        console.log(
+            "[ANIME47] RAW STREAM COUNT:",
+            rawStreams.length
+        );
+
+
+        // =================================================
+        // NORMALIZE
+        // =================================================
+
+        for (
+            const rawStream
+            of rawStreams
+        ) {
+
+            const normalized =
+                normalizeAnime47Stream(
+                    rawStream,
+                    {
+                        title:
+                            targetName,
+
+                        animeId:
+                            String(
+                                animeId ||
+                                ""
+                            ),
+
+                        episodeId:
+                            String(
+                                episodeId ||
+                                ""
+                            )
+                    }
+                );
+
+            if (
+                normalized
+            ) {
+
+                streams.push(
+                    normalized
+                );
+            }
+        }
+
+
+        console.log(
+            "[ANIME47] NORMALIZED STREAM COUNT:",
+            streams.length
+        );
+
+
+        console.log(
+            "[ANIME47] NORMALIZED STREAMS:",
+            JSON.stringify(
+                streams,
+                null,
+                2
+            )
+        );
+
+
+        return streams;
+
+    } catch (error) {
+
+        console.log(
+            "[ANIME47 ERROR]:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return streams;
+    }
+}
+
+// ============================================================
 // LIVE PROVIDER CONTRACT
 // ============================================================
 //
@@ -19785,6 +21299,106 @@ console.log(
     phimhdcs.length
 );
 
+
+// =====================================================
+// 10.1. ANIME47 PROVIDER TEST
+// =====================================================
+//
+// BƯỚC 3B — TEST PROVIDER ĐỘC LẬP
+//
+// Tạm thời CHỈ gọi Anime47 Provider để kiểm tra:
+//
+//     movieName
+//          ↓
+//     Anime47 Search
+//          ↓
+//     Anime Info
+//          ↓
+//     Episodes
+//          ↓
+//     Watch Episode
+//          ↓
+//     Raw Streams
+//          ↓
+//     Normalized Streams
+//
+// Chưa đưa Anime47 vào streams của Stremio.
+//
+// Mục đích:
+//
+//     - kiểm tra API
+//     - kiểm tra search
+//     - kiểm tra chọn đúng anime
+//     - kiểm tra episode
+//     - kiểm tra watch
+//     - kiểm tra raw streams
+//     - kiểm tra Normalized Stream
+//
+// VSMov không bị thay đổi.
+// =====================================================
+
+let anime47TestStreams = [];
+
+try {
+
+    anime47TestStreams =
+        await fetchAnime47(
+            movieName,
+            seasonNumber,
+            episodeNumber,
+            streamType
+        );
+
+} catch (e) {
+
+    console.log(
+        "[ANIME47 TEST ERROR]:",
+        e?.message ||
+        e
+    );
+
+    anime47TestStreams = [];
+}
+
+
+// =====================================================
+// 10.2. ANIME47 TEST RESULT
+// =====================================================
+
+console.log(
+    "[ANIME47 TEST] STREAM COUNT:",
+    anime47TestStreams.length
+);
+
+
+console.log(
+    "[ANIME47 TEST] STREAMS:",
+    JSON.stringify(
+        anime47TestStreams,
+        null,
+        2
+    )
+);
+
+
+// =====================================================
+// 10.3. ANIME47 TEST SUMMARY
+// =====================================================
+
+if (
+    anime47TestStreams.length
+) {
+
+    console.log(
+        "[ANIME47 TEST] SUCCESS — NORMALIZED STREAMS FOUND"
+    );
+
+} else {
+
+    console.log(
+        "[ANIME47 TEST] NO NORMALIZED STREAM FOUND"
+    );
+}
 
 // =====================================================
 // NGUONC CLIENT WIDGET
