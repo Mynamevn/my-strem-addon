@@ -5733,6 +5733,190 @@ registerStreamResolver(
 
 logStreamResolverRegistry();
 
+// ============================================================
+// VSMOV RESOLVER
+// ============================================================
+//
+// BƯỚC 2 — ĐƯA VSMOV VÀO RESOLVER ENGINE
+//
+// Kiến trúc:
+//
+//   VSMov Provider
+//        ↓
+//   Normalized Stream
+//        ↓
+//   resolver: "vsmov"
+//        ↓
+//   VSMov Resolver
+//        ↓
+//   Normalized Stream
+//        ↓
+//   Stremio Adapter
+//
+// IMPORTANT:
+//
+// Resolver này ở BƯỚC 2 chưa xử lý lại HLS / MPEG-TS.
+//
+// Toàn bộ logic VSMov hiện tại:
+//
+//   - resolveVSMovEmbed()
+//   - makeVSMovHlsProxyUrl()
+//   - /vsmov-hls-proxy
+//   - /vsmov-segment-proxy
+//   - fake PNG → MPEG-TS
+//
+// vẫn được giữ nguyên.
+//
+// Resolver chỉ làm nhiệm vụ:
+//
+//   1. nhận Normalized Stream
+//   2. xác nhận đây là stream của VSMov
+//   3. giữ nguyên URL / headers / metadata
+//   4. trả stream lại cho pipeline chung
+//
+// Sau khi VSMov chạy ổn qua pipeline này,
+// resolver sẽ được mở rộng ở các bước sau nếu cần.
+// ============================================================
+
+
+registerStreamResolver(
+    createStreamResolver({
+
+        id: "vsmov",
+
+        name: "VSMov Resolver",
+
+        description:
+            "VSMov stream resolver. Preserves the existing VSMov stream and proxy pipeline.",
+
+        priority: 100,
+
+        // ----------------------------------------------------
+        // CAN RESOLVE
+        // ----------------------------------------------------
+
+        canResolve: (
+            stream,
+            context = {}
+        ) => {
+
+            if (
+                !stream ||
+                typeof stream !== "object"
+            ) {
+                return false;
+            }
+
+            return (
+                String(
+                    stream.provider || ""
+                ).toLowerCase() ===
+                "vsmov"
+            );
+        },
+
+        // ----------------------------------------------------
+        // RESOLVE
+        // ----------------------------------------------------
+
+        async resolve(
+            stream,
+            context = {}
+        ) {
+
+            console.log(
+                "[VSMOV RESOLVER] START:",
+                stream.title ||
+                stream.name ||
+                "Untitled"
+            );
+
+            console.log(
+                "[VSMOV RESOLVER] Type:",
+                stream.type ||
+                "unknown"
+            );
+
+            console.log(
+                "[VSMOV RESOLVER] URL:",
+                stream.url ||
+                stream.externalUrl ||
+                ""
+            );
+
+            // ------------------------------------------------
+            // BƯỚC 2:
+            // KHÔNG thay đổi URL.
+            //
+            // VSMov đã tạo proxy URL ở Provider layer.
+            // Resolver không được proxy lần thứ hai.
+            // ------------------------------------------------
+
+            const result = {
+
+                url:
+                    stream.url,
+
+                externalUrl:
+                    stream.externalUrl,
+
+                title:
+                    stream.title,
+
+                name:
+                    stream.name,
+
+                type:
+                    stream.type,
+
+                source:
+                    stream.source ||
+                    "vsmov",
+
+                provider:
+                    "vsmov",
+
+                serverName:
+                    stream.serverName,
+
+                headers:
+                    stream.headers || {},
+
+                subtitles:
+                    Array.isArray(
+                        stream.subtitles
+                    )
+                        ? stream.subtitles
+                        : [],
+
+                behaviorHints:
+                    stream.behaviorHints || {},
+
+                resolverOptions:
+                    stream.resolverOptions || {}
+            };
+
+            console.log(
+                "[VSMOV RESOLVER] PASS:",
+                result.url ||
+                result.externalUrl ||
+                ""
+            );
+
+            return result;
+        }
+    })
+);
+
+
+// ============================================================
+// VSMOV RESOLVER REGISTRY CHECK
+// ============================================================
+
+console.log(
+    "[VSMOV RESOLVER] Registered:",
+    !!getStreamResolver("vsmov")
+);
 
 // ============================================================
 // LIVE PROVIDER CONTRACT
@@ -11498,91 +11682,231 @@ const toStremioStream = stream => {
         }
 
         // =====================================================
-        // 16.11. NORMALIZED RESULT
-        // =====================================================
+// 16.11. NORMALIZED RESULT
+// =====================================================
+//
+// BƯỚC 2:
+// Đưa Normalized Streams của VSMov qua Resolver Registry
+// trước khi chuyển sang object Stremio.
+//
+// QUAN TRỌNG:
+//
+// Không gọi lại:
+//   - resolveVSMovEmbed()
+//   - makeVSMovHlsProxyUrl()
+//   - vsmov-hls-proxy
+//   - vsmov-segment-proxy
+//
+// Những phần đó đã được xử lý ở phía trên.
+// Resolver chỉ nhận kết quả đã có.
+// =====================================================
 
-        console.log(
-            "[VSMOV] NORMALIZED STREAMS:",
-            JSON.stringify(
-                normalizedStreams,
-                null,
-                2
-            )
-        );
+console.log(
+    "[VSMOV] NORMALIZED STREAMS BEFORE RESOLVER:",
+    JSON.stringify(
+        normalizedStreams,
+        null,
+        2
+    )
+);
 
-        // =====================================================
-        // 16.12. CONVERT TO STREMIO
-        // =====================================================
 
-        for (
-            const normalized of normalizedStreams
-        ) {
+// =====================================================
+// 16.12. ATTACH VSMOV RESOLVER
+// =====================================================
+//
+// Mọi stream VSMov đi vào Resolver Engine đều được đánh dấu:
+//
+//     resolver: "vsmov"
+//
+// Các field khác giữ nguyên.
+// =====================================================
 
-            const stremioStream =
-                toStremioStream(
-                    normalized
-                );
+const resolverInputStreams =
+    normalizedStreams.map(
+        stream =>
+            createNormalizedStream({
 
-            if (
-                stremioStream
-            ) {
+                ...stream,
 
-                streams.push(
-                    stremioStream
-                );
+                provider:
+                    stream.provider ||
+                    "vsmov",
+
+                source:
+                    stream.source ||
+                    "vsmov",
+
+                resolver:
+                    "vsmov"
+            })
+    ).filter(Boolean);
+
+
+// =====================================================
+// 16.13. RESOLVE THROUGH REGISTRY
+// =====================================================
+
+let resolvedNormalizedStreams = [];
+
+try {
+
+    resolvedNormalizedStreams =
+        await resolveNormalizedStreams(
+            resolverInputStreams,
+            {
+                provider:
+                    "vsmov",
+
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
             }
-        }
-
-        // =====================================================
-        // 16.13. FINAL
-        // =====================================================
-
-        if (!streams.length) {
-
-            const moviePageUrl =
-                "https://vsmov.com/phim/" +
-                encodeURIComponent(
-                    movieSlug
-                );
-
-            console.log(
-                "[VSMOV] No direct/embed stream"
-            );
-
-            console.log(
-                "[VSMOV] Movie page:",
-                moviePageUrl
-            );
-        }
-
-        console.log(
-            "[VSMOV] NORMALIZED COUNT:",
-            normalizedStreams.length
         );
 
-        console.log(
-            "[VSMOV] FINAL STREMIO STREAM OBJECTS:",
-            JSON.stringify(
-                streams,
-                null,
-                2
-            )
+} catch (resolverError) {
+
+    console.log(
+        "[VSMOV RESOLVER PIPELINE ERROR]:",
+        resolverError?.message ||
+        resolverError
+    );
+
+    // -------------------------------------------------
+    // SAFETY FALLBACK
+    // -------------------------------------------------
+    //
+    // Nếu Resolver Engine có vấn đề,
+    // giữ nguyên normalizedStreams cũ.
+    //
+    // Điều này giúp BƯỚC 2 không làm mất VSMov.
+    // -------------------------------------------------
+
+    resolvedNormalizedStreams =
+        resolverInputStreams;
+}
+
+
+console.log(
+    "[VSMOV] RESOLVED NORMALIZED STREAMS:",
+    JSON.stringify(
+        resolvedNormalizedStreams,
+        null,
+        2
+    )
+);
+
+
+// =====================================================
+// 16.14. NORMALIZED → STREMIO
+// =====================================================
+//
+// Vẫn dùng toStremioStream() cũ của VSMov.
+//
+// Đây là chủ ý.
+//
+// BƯỚC 2 chỉ kiểm chứng:
+//
+//     Provider
+//        ↓
+//     Normalized Stream
+//        ↓
+//     Resolver Registry
+//        ↓
+//     Normalized Stream
+//
+// Chưa thay đổi adapter Stremio riêng của VSMov.
+//
+// Nhờ vậy các behavior hiện tại:
+//
+//   - [VSMov]
+//   - [VSMov Direct]
+//   - [VSMov Player]
+//   - bingeGroup
+//   - proxyHeaders
+//   - widgetPlayer
+//
+// vẫn được giữ nguyên.
+// =====================================================
+
+for (
+    const normalized
+    of resolvedNormalizedStreams
+) {
+
+    const stremioStream =
+        toStremioStream(
+            normalized
         );
 
-        return streams;
+    if (
+        stremioStream
+    ) {
 
-    } catch (e) {
-
-        console.log(
-            "[VSMOV ERROR]:",
-            e?.response?.status ||
-            e?.message ||
-            e
+        streams.push(
+            stremioStream
         );
-
-        return streams;
     }
 }
+
+
+// =====================================================
+// 16.15. FINAL
+// =====================================================
+
+if (!streams.length) {
+
+    const moviePageUrl =
+        "https://vsmov.com/phim/" +
+        encodeURIComponent(
+            movieSlug
+        );
+
+    console.log(
+        "[VSMOV] No direct/embed stream"
+    );
+
+    console.log(
+        "[VSMOV] Movie page:",
+        moviePageUrl
+    );
+}
+
+
+console.log(
+    "[VSMOV] NORMALIZED COUNT:",
+    resolvedNormalizedStreams.length
+);
+
+
+console.log(
+    "[VSMOV] FINAL STREMIO STREAM OBJECTS:",
+    JSON.stringify(
+        streams,
+        null,
+        2
+    )
+);
+
+
+return streams;
+
+
+} catch (e) {
+
+    console.log(
+        "[VSMOV ERROR]:",
+        e?.response?.status ||
+        e?.message ||
+        e
+    );
+
+    return streams;
+}
+}
+
 
 /* ============================================================
    PHIM LONG TIẾNG
