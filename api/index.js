@@ -5201,6 +5201,1504 @@ builder.defineMetaHandler(async (args) => {
 
 });
 
+// ============================================================
+// LIVE PROVIDER CONTRACT
+// ============================================================
+//
+// Mục tiêu:
+// - Chuẩn hóa mọi nguồn truyền hình / IPTV / Live Event.
+// - VMT TV chỉ là provider đầu tiên.
+// - Sau này provider khác có thể được nạp từ Configure/Repository
+//   mà không phải viết lại Stream Handler.
+//
+// Pipeline:
+//
+//   LIVE PROVIDER
+//        ↓
+//   LIVE ITEM
+//        ↓
+//   LIVE STREAM
+//        ↓
+//   NORMALIZED STREAM
+//        ↓
+//   STREMIO
+//
+// ============================================================
+
+const LIVE_PROVIDER_REGISTRY = new Map();
+
+// ============================================================
+// 1. LIVE PROVIDER CONTRACT
+// ============================================================
+
+function createLiveProvider(provider) {
+
+    if (!provider || typeof provider !== "object") {
+        throw new Error("Invalid LIVE provider");
+    }
+
+    const requiredFunctions = [
+        "getManifest",
+        "getHomeSections",
+        "getPrimaryCategories",
+        "getUrlList",
+        "getUrlSearch",
+        "getUrlDetail",
+        "parseListResponse",
+        "parseSearchResponse",
+        "parseMovieDetail",
+        "parseDetailResponse"
+    ];
+
+    for (const fn of requiredFunctions) {
+
+        if (typeof provider[fn] !== "function") {
+            throw new Error(
+                `[LIVE PROVIDER] Missing function: ${fn}`
+            );
+        }
+    }
+
+    return {
+
+        type: "LIVE",
+
+        id:
+            String(provider.id || "")
+                .trim(),
+
+        name:
+            String(provider.name || provider.id || "LIVE")
+                .trim(),
+
+        iconUrl:
+            String(provider.iconUrl || "")
+                .trim(),
+
+        manifest:
+            provider.manifest || null,
+
+        getManifest:
+            provider.getManifest,
+
+        getHomeSections:
+            provider.getHomeSections,
+
+        getPrimaryCategories:
+            provider.getPrimaryCategories,
+
+        getFilterConfig:
+            typeof provider.getFilterConfig === "function"
+                ? provider.getFilterConfig
+                : () => JSON.stringify({}),
+
+        getUrlList:
+            provider.getUrlList,
+
+        getUrlSearch:
+            provider.getUrlSearch,
+
+        getUrlDetail:
+            provider.getUrlDetail,
+
+        getUrlCategories:
+            typeof provider.getUrlCategories === "function"
+                ? provider.getUrlCategories
+                : () => "",
+
+        getUrlCountries:
+            typeof provider.getUrlCountries === "function"
+                ? provider.getUrlCountries
+                : () => "",
+
+        getUrlYears:
+            typeof provider.getUrlYears === "function"
+                ? provider.getUrlYears
+                : () => "",
+
+        parseListResponse:
+            provider.parseListResponse,
+
+        parseSearchResponse:
+            provider.parseSearchResponse,
+
+        parseMovieDetail:
+            provider.parseMovieDetail,
+
+        parseDetailResponse:
+            provider.parseDetailResponse,
+
+        parseCategoriesResponse:
+            typeof provider.parseCategoriesResponse === "function"
+                ? provider.parseCategoriesResponse
+                : () => [],
+
+        parseCountriesResponse:
+            typeof provider.parseCountriesResponse === "function"
+                ? provider.parseCountriesResponse
+                : () => [],
+
+        parseYearsResponse:
+            typeof provider.parseYearsResponse === "function"
+                ? provider.parseYearsResponse
+                : () => []
+    };
+}
+
+
+// ============================================================
+// 2. REGISTER LIVE PROVIDER
+// ============================================================
+
+function registerLiveProvider(provider) {
+
+    const normalized =
+        createLiveProvider(provider);
+
+    if (!normalized.id) {
+        throw new Error(
+            "[LIVE PROVIDER] Provider ID is required"
+        );
+    }
+
+    LIVE_PROVIDER_REGISTRY.set(
+        normalized.id,
+        normalized
+    );
+
+    console.log(
+        "[LIVE PROVIDER] REGISTERED:",
+        normalized.id,
+        normalized.name
+    );
+
+    return normalized;
+}
+
+
+// ============================================================
+// 3. GET LIVE PROVIDER
+// ============================================================
+
+function getLiveProvider(providerId) {
+
+    const id =
+        String(providerId || "")
+            .trim();
+
+    if (!id) {
+        return null;
+    }
+
+    return (
+        LIVE_PROVIDER_REGISTRY.get(id)
+        || null
+    );
+}
+
+
+// ============================================================
+// 4. GET ALL LIVE PROVIDERS
+// ============================================================
+
+function getAllLiveProviders() {
+
+    return Array.from(
+        LIVE_PROVIDER_REGISTRY.values()
+    );
+}
+
+
+// ============================================================
+// 5. NORMALIZED LIVE ITEM
+// ============================================================
+//
+// Mọi provider LIVE cuối cùng nên đưa dữ liệu về dạng này:
+//
+// {
+//     id,
+//     provider,
+//     title,
+//     posterUrl,
+//     backdropUrl,
+//     description,
+//     year,
+//     quality,
+//     episode_current,
+//     lang,
+//     category,
+//     country,
+//     type: "LIVE"
+// }
+//
+// ============================================================
+
+function normalizeLiveItem(item, providerId) {
+
+    if (!item || typeof item !== "object") {
+        return null;
+    }
+
+    const title =
+        String(
+            item.title ||
+            item.name ||
+            ""
+        ).trim();
+
+    if (!title) {
+        return null;
+    }
+
+    return {
+
+        id:
+            String(item.id || "").trim(),
+
+        provider:
+            String(
+                item.provider ||
+                providerId ||
+                ""
+            ).trim(),
+
+        title,
+
+        posterUrl:
+            String(
+                item.posterUrl ||
+                item.poster ||
+                item.logo ||
+                ""
+            ).trim(),
+
+        backdropUrl:
+            String(
+                item.backdropUrl ||
+                item.backdrop ||
+                item.posterUrl ||
+                item.logo ||
+                ""
+            ).trim(),
+
+        description:
+            String(
+                item.description ||
+                ""
+            ).trim(),
+
+        year:
+            Number(item.year || 0),
+
+        quality:
+            String(
+                item.quality ||
+                "LIVE"
+            ).trim(),
+
+        episode_current:
+            String(
+                item.episode_current ||
+                "Live"
+            ).trim(),
+
+        lang:
+            String(
+                item.lang ||
+                ""
+            ).trim(),
+
+        category:
+            String(
+                item.category ||
+                item.group ||
+                ""
+            ).trim(),
+
+        country:
+            String(
+                item.country ||
+                ""
+            ).trim(),
+
+        type: "LIVE"
+    };
+}
+
+
+// ============================================================
+// 6. NORMALIZED LIVE STREAM
+// ============================================================
+//
+// Đây là format chung mà Stremio Adapter sẽ nhận.
+//
+// url:
+//     M3U8 / MP4 / stream URL thực tế.
+//
+// externalUrl:
+//     Player / WebView fallback.
+//
+// headers:
+//     User-Agent / Referer / token headers.
+//
+// streamType:
+//     direct | hls | embed | player
+//
+// ============================================================
+
+function normalizeLiveStream(stream, providerId) {
+
+    if (!stream || typeof stream !== "object") {
+        return null;
+    }
+
+    const url =
+        String(
+            stream.url ||
+            ""
+        ).trim();
+
+    const externalUrl =
+        String(
+            stream.externalUrl ||
+            ""
+        ).trim();
+
+    if (!url && !externalUrl) {
+        return null;
+    }
+
+    const headers =
+        stream.headers &&
+        typeof stream.headers === "object"
+            ? stream.headers
+            : {};
+
+    return {
+
+        provider:
+            String(
+                stream.provider ||
+                providerId ||
+                ""
+            ).trim(),
+
+        title:
+            String(
+                stream.title ||
+                "LIVE"
+            ).trim(),
+
+        url,
+
+        externalUrl,
+
+        headers,
+
+        streamType:
+            String(
+                stream.streamType ||
+                stream.type ||
+                (url ? "direct" : "player")
+            ).trim(),
+
+        transformer:
+            stream.transformer || null,
+
+        playerUrl:
+            String(
+                stream.playerUrl ||
+                ""
+            ).trim(),
+
+        type: "LIVE"
+    };
+}
+
+
+// ============================================================
+// 7. LIVE PROVIDER → NORMALIZED ITEMS
+// ============================================================
+
+function normalizeLiveItems(items, providerId) {
+
+    if (!Array.isArray(items)) {
+        return [];
+    }
+
+    return items
+        .map(item =>
+            normalizeLiveItem(
+                item,
+                providerId
+            )
+        )
+        .filter(Boolean);
+}
+
+
+// ============================================================
+// 8. LIVE PROVIDER → NORMALIZED STREAMS
+// ============================================================
+
+function normalizeLiveStreams(streams, providerId) {
+
+    if (!Array.isArray(streams)) {
+        return [];
+    }
+
+    return streams
+        .map(stream =>
+            normalizeLiveStream(
+                stream,
+                providerId
+            )
+        )
+        .filter(Boolean);
+}
+
+
+// ============================================================
+// 9. LIVE PROVIDER STATUS
+// ============================================================
+
+function getLiveProviderInfo(providerId) {
+
+    const provider =
+        getLiveProvider(providerId);
+
+    if (!provider) {
+        return null;
+    }
+
+    return {
+
+        id: provider.id,
+
+        name: provider.name,
+
+        iconUrl: provider.iconUrl,
+
+        type: "LIVE",
+
+        enabled: true
+    };
+}
+
+
+// ============================================================
+// 10. DEBUG REGISTRY
+// ============================================================
+
+function logLiveProviderRegistry() {
+
+    const providers =
+        getAllLiveProviders();
+
+    console.log(
+        "[LIVE PROVIDER] TOTAL:",
+        providers.length
+    );
+
+    for (const provider of providers) {
+
+        console.log(
+            "[LIVE PROVIDER]",
+            provider.id,
+            "|",
+            provider.name
+        );
+    }
+}
+
+// ============================================================
+// 11. VMT TV - LIVE PROVIDER
+// ============================================================
+//
+// VMT TV là LIVE provider đầu tiên của MOVINA.
+//
+// Provider này đọc M3U từ repository VMT TV và chuyển toàn bộ
+// dữ liệu về LIVE Provider Contract.
+//
+// Sau này các provider truyền hình khác chỉ cần tạo adapter
+// cùng contract này và register vào LIVE_PROVIDER_REGISTRY.
+//
+// ============================================================
+
+
+// ============================================================
+// 11.1. VMT TV - MANIFEST
+// ============================================================
+
+const VMTTV_M3U_URL =
+    "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/vmttv";
+
+
+function vmtTvGetManifest() {
+
+    return JSON.stringify({
+
+        id: "vmttv",
+
+        name: "VMT TV",
+
+        version: "1.0.2",
+
+        baseUrl:
+            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main",
+
+        iconUrl:
+            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/Logo.png",
+
+        isEnabled: true,
+
+        type: "VIDEO",
+
+        layoutType: "HORIZONTAL",
+
+        playerType: "exoplayer"
+    });
+}
+
+
+// ============================================================
+// 11.2. VMT TV - HOME
+// ============================================================
+
+function vmtTvGetHomeSections() {
+
+    return JSON.stringify([
+
+        {
+            slug: "su-kien",
+
+            title: "🔴 Sự Kiện",
+
+            type: "Grid",
+
+            path: "vmttv"
+        }
+
+    ]);
+}
+
+
+// ============================================================
+// 11.3. VMT TV - CATEGORIES
+// ============================================================
+
+function vmtTvGetPrimaryCategories() {
+
+    return JSON.stringify([
+
+        { name: "FIFA WORLD CUP 2026", slug: "fifa-world-cup-2026" },
+        { name: "Sự Kiện", slug: "su-kien" },
+        { name: "THỂ THAO QT", slug: "the-thao-quoc-te" },
+        { name: "⚽ Thể thao QT", slug: "bong-da-quoc-te" },
+        { name: "TVB", slug: "tvb" },
+        { name: "LIVE EVENTS 🔴", slug: "live-events" },
+        { name: "Sự Kiện TV360", slug: "su-kien-tv360" },
+        { name: "Sự Kiện VTVPrime", slug: "su-kien-vtvprime" },
+        { name: "Rạp Phim", slug: "rap-phim" },
+        { name: "VTV", slug: "vtv" },
+        { name: "VTVcab", slug: "vtvcab" },
+        { name: "SCTV", slug: "sctv" },
+        { name: "📦 In The Box", slug: "in-the-box" },
+        { name: "HTV", slug: "htv" },
+        { name: "HTVC", slug: "htvc" },
+        { name: "🌐 Thiết yếu", slug: "thiet-yeu" },
+        { name: "Địa phương", slug: "dia-phuong" },
+        { name: "Quốc Tế", slug: "quoc-te" },
+        { name: "Radio", slug: "radio" },
+        { name: "🇻🇳 Vietnam Radio", slug: "vietnam-radio" },
+        { name: "🇬🇧 UK Radio", slug: "uk-radio" },
+        { name: "🇰🇷 Hàn Quốc", slug: "han-quoc" },
+        { name: "🇨🇳 Trung Quốc", slug: "trung-quoc" },
+        { name: "🇹🇭 Thái Lan", slug: "thai-lan" },
+        { name: "🇰🇭 Campuchia", slug: "campuchia" }
+
+    ]);
+}
+
+
+function vmtTvGetFilterConfig() {
+
+    return JSON.stringify({});
+}
+
+
+// ============================================================
+// 11.4. VMT TV - CATEGORY MAP
+// ============================================================
+
+const VMTTV_CATEGORY_MAP = {
+
+    "fifa-world-cup-2026":
+        "FIFA WORLD CUP 2026",
+
+    "su-kien":
+        "Sự Kiện",
+
+    "the-thao-quoc-te":
+        "THỂ THAO QUỐC TẾ",
+
+    "bong-da-quoc-te":
+        "⚽| Thể thao quốc tế",
+
+    "tvb":
+        "TVB",
+
+    "live-events":
+        "LIVE EVENTS 🔴",
+
+    "su-kien-tv360":
+        "Sự Kiện TV360",
+
+    "su-kien-vtvprime":
+        "Sự Kiện VTVPrime",
+
+    "rap-phim":
+        "Rạp Phim",
+
+    "vtv":
+        "VTV",
+
+    "vtvcab":
+        "VTVcab",
+
+    "sctv":
+        "SCTV",
+
+    "in-the-box":
+        "📦| In The Box",
+
+    "htv":
+        "HTV",
+
+    "htvc":
+        "HTVC",
+
+    "thiet-yeu":
+        "🌐| Thiết yếu",
+
+    "dia-phuong":
+        "Địa phương",
+
+    "quoc-te":
+        "Quốc Tế",
+
+    "radio":
+        "Radio",
+
+    "vietnam-radio":
+        "🇻🇳 Vietnam Radio",
+
+    "uk-radio":
+        "🇬🇧 UK Radio",
+
+    "han-quoc":
+        "🇰🇷| Hàn Quốc",
+
+    "trung-quoc":
+        "🇨🇳| Trung Quốc",
+
+    "thai-lan":
+        "🇹🇭| Thái Lan",
+
+    "campuchia":
+        "🇰🇭| Campuchia"
+};
+
+
+// ============================================================
+// 11.5. VMT TV - URL BUILDERS
+// ============================================================
+
+function vmtTvGetUrlList(slug, filtersJson) {
+
+    if (
+        slug &&
+        slug !== "all"
+    ) {
+
+        return (
+            VMTTV_M3U_URL +
+            "?cat=" +
+            encodeURIComponent(slug)
+        );
+    }
+
+    return VMTTV_M3U_URL;
+}
+
+
+function vmtTvGetUrlSearch(keyword, filtersJson) {
+
+    return (
+        VMTTV_M3U_URL +
+        "?search=" +
+        encodeURIComponent(keyword)
+    );
+}
+
+
+function vmtTvGetUrlDetail(slug) {
+
+    if (
+        String(slug || "")
+            .indexOf("http") === 0
+    ) {
+
+        return slug;
+    }
+
+    return (
+        VMTTV_M3U_URL +
+        "?id=" +
+        encodeURIComponent(slug)
+    );
+}
+
+
+function vmtTvGetUrlCategories() {
+
+    return "";
+}
+
+
+function vmtTvGetUrlCountries() {
+
+    return "";
+}
+
+
+function vmtTvGetUrlYears() {
+
+    return "";
+}
+
+
+// ============================================================
+// 11.6. VMT TV - M3U PARSER
+// ============================================================
+
+function vmtTvParseM3U(text) {
+
+    const lines =
+        String(text || "")
+            .split(/\r?\n/);
+
+    const channels = [];
+
+    let current = null;
+
+    for (
+        let i = 0;
+        i < lines.length;
+        i++
+    ) {
+
+        const line =
+            String(lines[i] || "")
+                .trim();
+
+        if (!line) {
+            continue;
+        }
+
+
+        // ----------------------------------------------------
+        // EXTINF
+        // ----------------------------------------------------
+
+        if (
+            line.indexOf("#EXTINF:") === 0
+        ) {
+
+            const commaIndex =
+                line.lastIndexOf(",");
+
+            const info =
+                commaIndex >= 0
+                    ? line.substring(
+                        0,
+                        commaIndex
+                    )
+                    : line;
+
+            const name =
+                commaIndex >= 0
+                    ? line.substring(
+                        commaIndex + 1
+                    ).trim()
+                    : "";
+
+
+            const groupMatch =
+                info.match(
+                    /group-title="([^"]*)"/i
+                );
+
+            const logoMatch =
+                info.match(
+                    /tvg-logo="([^"]*)"/i
+                );
+
+            const tvgIdMatch =
+                info.match(
+                    /tvg-id="([^"]*)"/i
+                );
+
+
+            current = {
+
+                group:
+                    groupMatch
+                        ? groupMatch[1]
+                        : "",
+
+                logo:
+                    logoMatch
+                        ? logoMatch[1]
+                        : "",
+
+                tvgId:
+                    tvgIdMatch
+                        ? tvgIdMatch[1]
+                        : "",
+
+                name,
+
+                index:
+                    channels.length,
+
+                url: "",
+
+                userAgent: ""
+            };
+
+            continue;
+        }
+
+
+        // ----------------------------------------------------
+        // VLC USER-AGENT
+        // ----------------------------------------------------
+
+        if (
+            line.indexOf(
+                "#EXTVLCOPT:http-user-agent="
+            ) === 0
+        ) {
+
+            if (current) {
+
+                current.userAgent =
+                    line.substring(
+                        "#EXTVLCOPT:http-user-agent="
+                            .length
+                    ).trim();
+            }
+
+            continue;
+        }
+
+
+        // ----------------------------------------------------
+        // IGNORE OTHER DIRECTIVES
+        // ----------------------------------------------------
+
+        if (
+            line.charAt(0) === "#"
+        ) {
+
+            continue;
+        }
+
+
+        // ----------------------------------------------------
+        // STREAM URL
+        // ----------------------------------------------------
+
+        if (
+            line.indexOf("http") === 0 ||
+            line.indexOf("//") === 0
+        ) {
+
+            if (current) {
+
+                current.url =
+                    line.indexOf("//") === 0
+                        ? "https:" + line
+                        : line;
+
+                channels.push(current);
+
+                current = null;
+            }
+        }
+    }
+
+    return channels;
+}
+
+
+// ============================================================
+// 11.7. VMT TV - CHANNEL ID
+// ============================================================
+
+function vmtTvMakeChannelId(channel) {
+
+    if (
+        channel &&
+        channel.tvgId
+    ) {
+
+        return channel.tvgId;
+    }
+
+    return (
+        (channel?.group || "unknown") +
+        "::" +
+        (channel?.name || "") +
+        "::" +
+        (channel?.index ?? 0)
+    );
+}
+
+
+function vmtTvFindChannelById(
+    channels,
+    channelId
+) {
+
+    if (!Array.isArray(channels)) {
+        return null;
+    }
+
+    for (
+        let i = 0;
+        i < channels.length;
+        i++
+    ) {
+
+        if (
+            vmtTvMakeChannelId(channels[i]) ===
+            channelId
+        ) {
+
+            return channels[i];
+        }
+    }
+
+    return null;
+}
+
+
+// ============================================================
+// 11.8. VMT TV - LIST RESPONSE
+// ============================================================
+
+function vmtTvParseListResponse(
+    apiResponseJson,
+    apiUrl
+) {
+
+    const channels =
+        vmtTvParseM3U(
+            apiResponseJson
+        );
+
+
+    let filtered =
+        channels;
+
+
+    // --------------------------------------------------------
+    // CATEGORY FILTER
+    // --------------------------------------------------------
+
+    try {
+
+        const parsedUrl =
+            new URL(apiUrl);
+
+        const categorySlug =
+            parsedUrl.searchParams.get("cat");
+
+        if (
+            categorySlug &&
+            VMTTV_CATEGORY_MAP[categorySlug]
+        ) {
+
+            const categoryName =
+                VMTTV_CATEGORY_MAP[
+                    categorySlug
+                ];
+
+            filtered =
+                channels.filter(channel =>
+                    String(
+                        channel.group || ""
+                    ).trim() ===
+                    categoryName
+                );
+        }
+
+    } catch (e) {
+
+        console.log(
+            "[VMTTV] CATEGORY PARSE ERROR:",
+            e?.message || e
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // SEARCH FILTER
+    // --------------------------------------------------------
+
+    try {
+
+        const parsedUrl =
+            new URL(apiUrl);
+
+        const search =
+            String(
+                parsedUrl.searchParams.get("search") ||
+                ""
+            )
+            .trim()
+            .toLowerCase();
+
+        if (search) {
+
+            filtered =
+                filtered.filter(channel =>
+                    String(
+                        channel.name || ""
+                    )
+                    .toLowerCase()
+                    .includes(search)
+                );
+        }
+
+    } catch (e) {
+
+        console.log(
+            "[VMTTV] SEARCH PARSE ERROR:",
+            e?.message || e
+        );
+    }
+
+
+    return filtered.map(channel => ({
+
+        id:
+            vmtTvMakeChannelId(
+                channel
+            ),
+
+        title:
+            channel.name,
+
+        posterUrl:
+            channel.logo || "",
+
+        backdropUrl:
+            channel.logo || "",
+
+        year: 0,
+
+        quality: "LIVE",
+
+        episode_current:
+            channel.group || "Live",
+
+        lang:
+            channel.group || ""
+    }));
+}
+
+
+// ============================================================
+// 11.9. VMT TV - SEARCH RESPONSE
+// ============================================================
+
+function vmtTvParseSearchResponse(
+    apiResponseJson,
+    apiUrl
+) {
+
+    return vmtTvParseListResponse(
+        apiResponseJson,
+        apiUrl
+    );
+}
+
+
+// ============================================================
+// 11.10. VMT TV - DETAIL RESPONSE
+// ============================================================
+
+function vmtTvParseMovieDetail(
+    apiResponseJson,
+    apiUrl
+) {
+
+    const channels =
+        vmtTvParseM3U(
+            apiResponseJson
+        );
+
+
+    let channelId = "";
+
+
+    try {
+
+        const parsedUrl =
+            new URL(apiUrl);
+
+        channelId =
+            parsedUrl.searchParams.get("id") ||
+            "";
+
+    } catch (e) {
+
+        console.log(
+            "[VMTTV] DETAIL URL ERROR:",
+            e?.message || e
+        );
+    }
+
+
+    let channel =
+        vmtTvFindChannelById(
+            channels,
+            channelId
+        );
+
+
+    // --------------------------------------------------------
+    // FALLBACK BY INDEX
+    // --------------------------------------------------------
+
+    if (!channel && channelId) {
+
+        const parts =
+            channelId.split("::");
+
+        const last =
+            parts[parts.length - 1];
+
+        const index =
+            Number(last);
+
+        if (
+            Number.isInteger(index) &&
+            channels[index]
+        ) {
+
+            channel =
+                channels[index];
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // FALLBACK BY CHANNEL NAME
+    // --------------------------------------------------------
+
+    if (!channel && channelId) {
+
+        const parts =
+            channelId.split("::");
+
+        if (parts.length >= 2) {
+
+            const name =
+                parts[
+                    parts.length - 2
+                ];
+
+            channel =
+                channels.find(item =>
+                    String(
+                        item.name || ""
+                    ) === name
+                );
+        }
+    }
+
+
+    if (!channel) {
+
+        return null;
+    }
+
+
+    let episodeId =
+        channel.url || "";
+
+
+    if (
+        channel.userAgent
+    ) {
+
+        episodeId +=
+            "|ua=" +
+            encodeURIComponent(
+                channel.userAgent
+            );
+    }
+
+
+    return {
+
+        title:
+            channel.name,
+
+        posterUrl:
+            channel.logo || "",
+
+        backdropUrl:
+            channel.logo || "",
+
+        description:
+            "LIVE - " +
+            (channel.group || "VMT TV"),
+
+        year: 0,
+
+        quality: "LIVE",
+
+        episode_current: "Live",
+
+        lang:
+            channel.group || "",
+
+        category:
+            channel.group || "",
+
+        country: "",
+
+        director:
+            "VMT TV",
+
+        servers: [
+
+            {
+
+                name:
+                    channel.group ||
+                    "Live Source",
+
+                episodes: [
+
+                    {
+
+                        id:
+                            episodeId,
+
+                        title:
+                            channel.name,
+
+                        name:
+                            channel.name
+                    }
+
+                ]
+            }
+
+        ]
+    };
+}
+
+
+// ============================================================
+// 11.11. VMT TV - STREAM DETAIL
+// ============================================================
+
+function vmtTvParseDetailResponse(
+    apiResponseJson,
+    apiUrl
+) {
+
+    const raw =
+        String(
+            apiUrl || ""
+        ).trim();
+
+    if (!raw) {
+        return null;
+    }
+
+
+    let streamUrl =
+        raw;
+
+    let userAgent =
+        "";
+
+
+    // --------------------------------------------------------
+    // EXTRACT |ua=
+    // --------------------------------------------------------
+
+    const uaIndex =
+        raw.indexOf("|ua=");
+
+    if (uaIndex >= 0) {
+
+        streamUrl =
+            raw.substring(
+                0,
+                uaIndex
+            );
+
+        userAgent =
+            decodeURIComponent(
+                raw.substring(
+                    uaIndex + 4
+                )
+            );
+    }
+
+
+    if (!userAgent) {
+
+        userAgent =
+            "Mozilla/5.0 (Linux; Android 10; K) " +
+            "AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) " +
+            "Chrome/131.0.0.0 Mobile Safari/537.36";
+    }
+
+
+    return {
+
+        url:
+            streamUrl,
+
+        headers: {
+
+            "User-Agent":
+                userAgent
+        },
+
+        subtitles: [],
+
+        type: "LIVE"
+    };
+}
+
+
+// ============================================================
+// 11.12. VMT TV - OPTIONAL PARSERS
+// ============================================================
+
+function vmtTvParseCategoriesResponse() {
+
+    return Object.keys(
+        VMTTV_CATEGORY_MAP
+    ).map(slug => ({
+
+        id: slug,
+
+        name:
+            VMTTV_CATEGORY_MAP[slug]
+    }));
+}
+
+
+function vmtTvParseCountriesResponse() {
+
+    return [];
+}
+
+
+function vmtTvParseYearsResponse() {
+
+    return [];
+}
+
+
+// ============================================================
+// 11.13. REGISTER VMT TV
+// ============================================================
+
+const VMTTV_PROVIDER =
+    registerLiveProvider({
+
+        id: "vmttv",
+
+        name: "VMT TV",
+
+        iconUrl:
+            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/Logo.png",
+
+        manifest:
+            vmtTvGetManifest(),
+
+        getManifest:
+            vmtTvGetManifest,
+
+        getHomeSections:
+            vmtTvGetHomeSections,
+
+        getPrimaryCategories:
+            vmtTvGetPrimaryCategories,
+
+        getFilterConfig:
+            vmtTvGetFilterConfig,
+
+        getUrlList:
+            vmtTvGetUrlList,
+
+        getUrlSearch:
+            vmtTvGetUrlSearch,
+
+        getUrlDetail:
+            vmtTvGetUrlDetail,
+
+        getUrlCategories:
+            vmtTvGetUrlCategories,
+
+        getUrlCountries:
+            vmtTvGetUrlCountries,
+
+        getUrlYears:
+            vmtTvGetUrlYears,
+
+        parseListResponse:
+            vmtTvParseListResponse,
+
+        parseSearchResponse:
+            vmtTvParseSearchResponse,
+
+        parseMovieDetail:
+            vmtTvParseMovieDetail,
+
+        parseDetailResponse:
+            vmtTvParseDetailResponse,
+
+        parseCategoriesResponse:
+            vmtTvParseCategoriesResponse,
+
+        parseCountriesResponse:
+            vmtTvParseCountriesResponse,
+
+        parseYearsResponse:
+            vmtTvParseYearsResponse
+    });
+
+
+console.log(
+    "[VMTTV] LIVE PROVIDER READY:",
+    VMTTV_PROVIDER.id,
+    VMTTV_PROVIDER.name
+);
 
 // =====================================================
 // 14. NGUONC - API SEARCH + API DETAIL
