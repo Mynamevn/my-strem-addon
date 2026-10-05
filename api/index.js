@@ -8281,94 +8281,162 @@ async function fetchVSMov(
     };
 
     // =====================================================
-    // 16.0.B. NORMALIZED → STREMIO
-    // =====================================================
+// 16.0.B. NORMALIZED → STREMIO
+// =====================================================
 
-    const toStremioStream = stream => {
+const toStremioStream = stream => {
 
-        if (!stream || typeof stream !== "object") {
-            return null;
-        }
+    if (!stream || typeof stream !== "object") {
+        return null;
+    }
 
-        const url =
-            String(stream.url || "").trim();
+    const url =
+        String(stream.url || "").trim();
 
-        const externalUrl =
-            String(stream.externalUrl || "").trim();
+    const externalUrl =
+        String(stream.externalUrl || "").trim();
 
-        if (!url && !externalUrl) {
-            return null;
-        }
+    if (!url && !externalUrl) {
+        return null;
+    }
 
-        const result = {
-            name:
-                stream.providerName
-                    ? "▶️ [" + stream.providerName + "]"
-                    : "▶️ [VSMov]",
+    // -------------------------------------------------
+    // SOURCE TYPE
+    // -------------------------------------------------
+    //
+    // Giữ rõ nguồn để Stremio hiển thị:
+    //
+    // vsmov-api
+    //      → link_m3u8 trực tiếp từ API
+    //
+    // vsmov-direct
+    //      → embed được resolve thành M3U8
+    //
+    // vsmov-player
+    //      → mở embed player
+    // -------------------------------------------------
 
-            title:
-                String(stream.title || "Full").trim()
+    let streamLabel = "[VSMov]";
+
+    if (stream.type === "embed") {
+
+        streamLabel =
+            "[VSMov Player]";
+
+    } else if (
+        stream.type === "hls" &&
+        stream.referer &&
+        stream.referer !== "https://vsmov.com/"
+    ) {
+
+        streamLabel =
+            "[VSMov Direct]";
+
+    } else if (
+        stream.type === "hls"
+    ) {
+
+        streamLabel =
+            "[VSMov]";
+
+    }
+
+    const result = {
+        name:
+            "▶️ " +
+            streamLabel +
+            (
+                stream.serverName
+                    ? " " + stream.serverName
+                    : ""
+            ),
+
+        title:
+            String(
+                stream.title ||
+                "Full"
+            ).trim()
+    };
+
+    // -------------------------------------------------
+    // DIRECT URL
+    // -------------------------------------------------
+
+    if (url) {
+        result.url = url;
+    }
+
+    // -------------------------------------------------
+    // EXTERNAL / PLAYER URL
+    // -------------------------------------------------
+
+    if (externalUrl) {
+        result.externalUrl = externalUrl;
+    }
+
+    // -------------------------------------------------
+    // HEADERS
+    // -------------------------------------------------
+
+    if (
+        stream.headers &&
+        typeof stream.headers === "object" &&
+        Object.keys(stream.headers).length
+    ) {
+
+        result.behaviorHints = {
+            ...(result.behaviorHints || {}),
+
+            proxyHeaders: {
+                request:
+                    stream.headers
+            }
+        };
+    }
+
+    // -------------------------------------------------
+    // BINGE GROUP
+    // -------------------------------------------------
+
+    if (
+        stream.type === "embed"
+    ) {
+
+        result.behaviorHints = {
+            ...(result.behaviorHints || {}),
+
+            bingeGroup:
+                "vsmov"
         };
 
-        if (url) {
-            result.url = url;
-        }
+    } else {
 
-        if (externalUrl) {
-            result.externalUrl = externalUrl;
-        }
+        result.behaviorHints = {
+            ...(result.behaviorHints || {}),
 
-        // -------------------------------------------------
-        // Headers
-        // -------------------------------------------------
+            bingeGroup:
+                "vsmov-hls"
+        };
+    }
 
-        if (
-            stream.headers &&
-            typeof stream.headers === "object" &&
-            Object.keys(stream.headers).length
-        ) {
-            result.behaviorHints = {
-                ...(result.behaviorHints || {}),
-                proxyHeaders: {
-                    request:
-                        stream.headers
-                }
-            };
-        }
+    // -------------------------------------------------
+    // WIDGET PLAYER
+    // -------------------------------------------------
 
-        // -------------------------------------------------
-        // Binge group
-        // -------------------------------------------------
+    if (stream.playerUrl) {
 
-        if (stream.provider === "vsmov") {
+        result.externalUrl =
+            stream.playerUrl;
 
-            result.behaviorHints = {
-                ...(result.behaviorHints || {}),
-                bingeGroup:
-                    externalUrl
-                        ? "vsmov"
-                        : "vsmov-hls"
-            };
-        }
+        result.widgetPlayer =
+            stream.playerUrl;
 
-        // -------------------------------------------------
-        // Widget player
-        // -------------------------------------------------
+        result.widgetPlayerStates =
+            ["replaceplayer"];
+    }
 
-        if (stream.playerUrl) {
-
-            result.externalUrl =
-                stream.playerUrl;
-
-            result.widgetPlayer =
-                stream.playerUrl;
-
-            result.widgetPlayerStates =
-                ["replaceplayer"];
-        }
-
-        return result;
-    };
+    return result;
+};
 
     const streams = [];
 
