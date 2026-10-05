@@ -5201,6 +5201,539 @@ builder.defineMetaHandler(async (args) => {
 
 });
 
+
+// ============================================================
+// NORMALIZED STREAM CONTRACT + RESOLVER REGISTRY
+// ============================================================
+//
+// Kiến trúc chung:
+//
+//   PROVIDER
+//      ↓
+//   RAW STREAM
+//      ↓
+//   RESOLVER
+//      ↓
+//   NORMALIZED STREAM
+//      ↓
+//   STREMIO
+//
+// Provider chỉ có nhiệm vụ tìm nguồn.
+// Resolver chịu trách nhiệm xử lý đặc thù của nguồn:
+//   - headers / referer / origin
+//   - HLS proxy
+//   - fake container / byte transform
+//   - embed
+//   - token / signed URL
+//
+// ============================================================
+
+
+// ============================================================
+// 1. NORMALIZED STREAM CONTRACT
+// ============================================================
+
+function createNormalizedStream(input = {}) {
+    if (!input || typeof input !== "object") {
+        return null;
+    }
+
+    const url = String(input.url || "").trim();
+    const externalUrl = String(input.externalUrl || "").trim();
+
+    if (!url && !externalUrl) {
+        return null;
+    }
+
+    const stream = {
+        url: url || undefined,
+        externalUrl: externalUrl || undefined,
+
+        title: String(input.title || "").trim(),
+        name: String(input.name || "").trim(),
+
+        type: String(input.type || "unknown").trim(),
+
+        source: String(input.source || "").trim(),
+        provider: String(input.provider || "").trim(),
+
+        serverName: String(input.serverName || "").trim(),
+
+        headers:
+            input.headers && typeof input.headers === "object"
+                ? { ...input.headers }
+                : {},
+
+        subtitles:
+            Array.isArray(input.subtitles)
+                ? input.subtitles
+                : [],
+
+        resolver:
+            String(input.resolver || "").trim(),
+
+        resolverOptions:
+            input.resolverOptions &&
+            typeof input.resolverOptions === "object"
+                ? { ...input.resolverOptions }
+                : {},
+
+        behaviorHints:
+            input.behaviorHints &&
+            typeof input.behaviorHints === "object"
+                ? { ...input.behaviorHints }
+                : {}
+    };
+
+    // Xóa field undefined để object sạch hơn.
+    if (!stream.url) delete stream.url;
+    if (!stream.externalUrl) delete stream.externalUrl;
+    if (!stream.title) delete stream.title;
+    if (!stream.name) delete stream.name;
+    if (!stream.serverName) delete stream.serverName;
+    if (!stream.resolver) delete stream.resolver;
+
+    return stream;
+}
+
+
+// ============================================================
+// 2. NORMALIZE RAW STREAM
+// ============================================================
+
+function normalizeStream(input = {}, defaults = {}) {
+    if (!input || typeof input !== "object") {
+        return null;
+    }
+
+    return createNormalizedStream({
+        ...defaults,
+        ...input,
+
+        headers: {
+            ...(defaults.headers || {}),
+            ...(input.headers || {})
+        },
+
+        behaviorHints: {
+            ...(defaults.behaviorHints || {}),
+            ...(input.behaviorHints || {})
+        },
+
+        resolverOptions: {
+            ...(defaults.resolverOptions || {}),
+            ...(input.resolverOptions || {})
+        }
+    });
+}
+
+
+function normalizeStreams(streams, defaults = {}) {
+    if (!Array.isArray(streams)) {
+        return [];
+    }
+
+    return streams
+        .map(stream => normalizeStream(stream, defaults))
+        .filter(Boolean);
+}
+
+
+// ============================================================
+// 3. RESOLVER REGISTRY
+// ============================================================
+
+const STREAM_RESOLVER_REGISTRY = new Map();
+
+
+// ------------------------------------------------------------
+// createStreamResolver()
+// ------------------------------------------------------------
+
+function createStreamResolver({
+    id,
+    name = "",
+    description = "",
+    canResolve = null,
+    resolve = null,
+    priority = 0
+} = {}) {
+
+    if (!id) {
+        throw new Error("Stream resolver requires id");
+    }
+
+    if (typeof resolve !== "function") {
+        throw new Error(
+            "Stream resolver '" + id + "' requires resolve()"
+        );
+    }
+
+    return {
+        id: String(id),
+        name: String(name || id),
+        description: String(description || ""),
+        priority: Number(priority) || 0,
+
+        canResolve:
+            typeof canResolve === "function"
+                ? canResolve
+                : () => true,
+
+        resolve
+    };
+}
+
+
+// ------------------------------------------------------------
+// registerStreamResolver()
+// ------------------------------------------------------------
+
+function registerStreamResolver(resolver) {
+    if (!resolver || !resolver.id) {
+        throw new Error("Invalid stream resolver");
+    }
+
+    STREAM_RESOLVER_REGISTRY.set(
+        String(resolver.id),
+        resolver
+    );
+
+    console.log(
+        "[RESOLVER] Registered:",
+        resolver.id
+    );
+
+    return resolver;
+}
+
+
+// ------------------------------------------------------------
+// getStreamResolver()
+// ------------------------------------------------------------
+
+function getStreamResolver(id) {
+    if (!id) {
+        return null;
+    }
+
+    return STREAM_RESOLVER_REGISTRY.get(
+        String(id)
+    ) || null;
+}
+
+
+// ------------------------------------------------------------
+// getAllStreamResolvers()
+// ------------------------------------------------------------
+
+function getAllStreamResolvers() {
+    return Array.from(
+        STREAM_RESOLVER_REGISTRY.values()
+    ).sort(
+        (a, b) =>
+            Number(b.priority || 0) -
+            Number(a.priority || 0)
+    );
+}
+
+
+// ============================================================
+// 4. RESOLVER EXECUTION
+// ============================================================
+
+async function resolveNormalizedStream(stream, context = {}) {
+
+    if (!stream || typeof stream !== "object") {
+        return null;
+    }
+
+    const resolverId =
+        String(stream.resolver || "").trim();
+
+    // Không có resolver:
+    // stream đã có thể dùng trực tiếp.
+    if (!resolverId) {
+        return createNormalizedStream(stream);
+    }
+
+    const resolver =
+        getStreamResolver(resolverId);
+
+    if (!resolver) {
+        console.log(
+            "[RESOLVER] NOT FOUND:",
+            resolverId
+        );
+
+        return createNormalizedStream(stream);
+    }
+
+    try {
+
+        const canResolve =
+            await resolver.canResolve(
+                stream,
+                context
+            );
+
+        if (!canResolve) {
+            console.log(
+                "[RESOLVER] SKIP:",
+                resolver.id
+            );
+
+            return createNormalizedStream(stream);
+        }
+
+        console.log(
+            "[RESOLVER] RUN:",
+            resolver.id
+        );
+
+        const result =
+            await resolver.resolve(
+                stream,
+                context
+            );
+
+        if (!result) {
+            console.log(
+                "[RESOLVER] EMPTY:",
+                resolver.id
+            );
+
+            return null;
+        }
+
+        return createNormalizedStream({
+            ...stream,
+            ...result,
+
+            headers: {
+                ...(stream.headers || {}),
+                ...(result.headers || {})
+            },
+
+            behaviorHints: {
+                ...(stream.behaviorHints || {}),
+                ...(result.behaviorHints || {})
+            },
+
+            resolverOptions: {
+                ...(stream.resolverOptions || {}),
+                ...(result.resolverOptions || {})
+            }
+        });
+
+    } catch (error) {
+
+        console.log(
+            "[RESOLVER ERROR]",
+            resolver.id,
+            error?.message || error
+        );
+
+        return null;
+    }
+}
+
+
+// ============================================================
+// 5. RESOLVE MANY STREAMS
+// ============================================================
+
+async function resolveNormalizedStreams(
+    streams,
+    context = {}
+) {
+
+    if (!Array.isArray(streams)) {
+        return [];
+    }
+
+    const results =
+        await Promise.allSettled(
+            streams.map(stream =>
+                resolveNormalizedStream(
+                    stream,
+                    context
+                )
+            )
+        );
+
+    return results
+        .filter(
+            result =>
+                result.status === "fulfilled" &&
+                result.value
+        )
+        .map(
+            result =>
+                result.value
+        );
+}
+
+
+// ============================================================
+// 6. STREAM → STREMIO
+// ============================================================
+
+function normalizedStreamToStremio(stream) {
+
+    if (!stream || typeof stream !== "object") {
+        return null;
+    }
+
+    const url =
+        String(stream.url || "").trim();
+
+    const externalUrl =
+        String(stream.externalUrl || "").trim();
+
+    if (!url && !externalUrl) {
+        return null;
+    }
+
+    const result = {};
+
+    if (stream.name) {
+        result.name = stream.name;
+    }
+
+    if (stream.title) {
+        result.title = stream.title;
+    }
+
+    if (url) {
+        result.url = url;
+    }
+
+    if (externalUrl) {
+        result.externalUrl = externalUrl;
+    }
+
+    if (
+        stream.headers &&
+        typeof stream.headers === "object" &&
+        Object.keys(stream.headers).length
+    ) {
+        result.behaviorHints = {
+            ...(result.behaviorHints || {}),
+            proxyHeaders: {
+                request: stream.headers
+            }
+        };
+    }
+
+    if (
+        stream.behaviorHints &&
+        typeof stream.behaviorHints === "object"
+    ) {
+        result.behaviorHints = {
+            ...(result.behaviorHints || {}),
+            ...stream.behaviorHints
+        };
+    }
+
+    if (
+        Array.isArray(stream.subtitles) &&
+        stream.subtitles.length
+    ) {
+        result.subtitles = stream.subtitles;
+    }
+
+    return result;
+}
+
+
+function normalizedStreamsToStremio(streams) {
+
+    if (!Array.isArray(streams)) {
+        return [];
+    }
+
+    return streams
+        .map(normalizedStreamToStremio)
+        .filter(Boolean);
+}
+
+
+// ============================================================
+// 7. RESOLVER REGISTRY INFO
+// ============================================================
+
+function getStreamResolverInfo() {
+
+    return getAllStreamResolvers().map(
+        resolver => ({
+            id: resolver.id,
+            name: resolver.name,
+            description: resolver.description,
+            priority: resolver.priority
+        })
+    );
+}
+
+
+function logStreamResolverRegistry() {
+
+    console.log(
+        "[RESOLVER REGISTRY]",
+        getStreamResolverInfo()
+    );
+}
+
+
+// ============================================================
+// 8. BUILT-IN PASSTHROUGH RESOLVER
+// ============================================================
+//
+// Resolver này không xử lý gì cả.
+//
+// Nó tồn tại để sau này mọi source đều có thể đi qua cùng
+// một pipeline:
+//
+// Provider → Resolver → NormalizedStream → Stremio
+//
+// ============================================================
+
+registerStreamResolver(
+    createStreamResolver({
+
+        id: "passthrough",
+
+        name: "Passthrough",
+
+        description:
+            "Use the stream URL directly without transformation.",
+
+        priority: 0,
+
+        canResolve: () => true,
+
+        async resolve(stream) {
+
+            return {
+                url: stream.url,
+                externalUrl: stream.externalUrl,
+                headers: stream.headers || {},
+                subtitles: stream.subtitles || [],
+                behaviorHints:
+                    stream.behaviorHints || {}
+            };
+        }
+    })
+);
+
+
+// ============================================================
+// 9. INITIAL REGISTRY LOG
+// ============================================================
+
+logStreamResolverRegistry();
+
+
 // ============================================================
 // LIVE PROVIDER CONTRACT
 // ============================================================
