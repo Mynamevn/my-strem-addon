@@ -8668,6 +8668,14 @@ function vmtTvGetFilterConfig() {
 // ============================================================
 // 11.4. VMT TV - CATEGORY MAP
 // ============================================================
+//
+// IMPORTANT:
+// Các value bên dưới phải khớp EXACT với group-title trong M3U
+// và với tên category trong vmtTvGetPrimaryCategories().
+//
+// Không thêm dấu "|" vào tên category.
+//
+// ============================================================
 
 const VMTTV_CATEGORY_MAP = {
 
@@ -8678,10 +8686,10 @@ const VMTTV_CATEGORY_MAP = {
         "Sự Kiện",
 
     "the-thao-quoc-te":
-        "THỂ THAO QUỐC TẾ",
+        "THỂ THAO QT",
 
     "bong-da-quoc-te":
-        "⚽| Thể thao quốc tế",
+        "⚽ Thể thao QT",
 
     "tvb":
         "TVB",
@@ -8708,7 +8716,7 @@ const VMTTV_CATEGORY_MAP = {
         "SCTV",
 
     "in-the-box":
-        "📦| In The Box",
+        "📦 In The Box",
 
     "htv":
         "HTV",
@@ -8717,7 +8725,7 @@ const VMTTV_CATEGORY_MAP = {
         "HTVC",
 
     "thiet-yeu":
-        "🌐| Thiết yếu",
+        "🌐 Thiết yếu",
 
     "dia-phuong":
         "Địa phương",
@@ -8735,16 +8743,16 @@ const VMTTV_CATEGORY_MAP = {
         "🇬🇧 UK Radio",
 
     "han-quoc":
-        "🇰🇷| Hàn Quốc",
+        "🇰🇷 Hàn Quốc",
 
     "trung-quoc":
-        "🇨🇳| Trung Quốc",
+        "🇨🇳 Trung Quốc",
 
     "thai-lan":
-        "🇹🇭| Thái Lan",
+        "🇹🇭 Thái Lan",
 
     "campuchia":
-        "🇰🇭| Campuchia"
+        "🇰🇭 Campuchia"
 };
 
 
