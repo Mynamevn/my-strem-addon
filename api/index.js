@@ -115,15 +115,39 @@ const manifest = {
                 },
 
                 {
-                    name: "genre",
-                    isRequired: false,
+    name: "genre",
+    isRequired: false,
 
-                    options: Object.values(
-                        VMTTV_CATEGORY_MAP
-                    ),
+    options: [
+        "FIFA WORLD CUP 2026",
+        "Sự Kiện",
+        "THỂ THAO QT",
+        "⚽ Thể thao QT",
+        "TVB",
+        "LIVE EVENTS 🔴",
+        "Sự Kiện TV360",
+        "Sự Kiện VTVPrime",
+        "Rạp Phim",
+        "VTV",
+        "VTVcab",
+        "SCTV",
+        "📦 In The Box",
+        "HTV",
+        "HTVC",
+        "🌐 Thiết yếu",
+        "Địa phương",
+        "Quốc Tế",
+        "Radio",
+        "🇻🇳 Vietnam Radio",
+        "🇬🇧 UK Radio",
+        "🇰🇷 Hàn Quốc",
+        "🇨🇳 Trung Quốc",
+        "🇹🇭 Thái Lan",
+        "🇰🇭 Campuchia"
+    ],
 
-                    optionsLimit: 1
-                }
+    optionsLimit: 1
+}
             ]
         }
     ]
