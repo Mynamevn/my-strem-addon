@@ -105,59 +105,88 @@ const manifest = {
             ]
         },
 
-        // =====================================================
-        // LIVE TV
-        // =====================================================
+       // =====================================================
+// TV / IPTV
+// =====================================================
+//
+// MOVINA UI:
+//
+//     MOVINA
+//        └── TV / IPTV
+//              ├── VMT TV
+//              ├── IPTV
+//              └── ...
+//
+// `pa_tv` là catalog HUB.
+// Các provider thật như `pa_vmttv` vẫn là catalog riêng.
+//
+// =====================================================
 
-        {
+{
     type: "MOVINA",
+
+    id: "pa_tv",
+
+    name: "📺 TV / IPTV",
+
+    extra: [
+        {
+            name: "search",
+            isRequired: false
+        }
+    ]
+},
+
+{
+    type: "tv",
 
     id: "pa_vmttv",
 
     name: "🔴 VMT TV",
 
-            extra: [
-                {
-                    name: "search",
-                    isRequired: false
-                },
+    extra: [
+        {
+            name: "search",
+            isRequired: false
+        },
 
-                {
-    name: "genre",
-    isRequired: false,
+        {
+            name: "genre",
 
-    options: [
-        "FIFA WORLD CUP 2026",
-        "Sự Kiện",
-        "THỂ THAO QT",
-        "⚽ Thể thao QT",
-        "TVB",
-        "LIVE EVENTS 🔴",
-        "Sự Kiện TV360",
-        "Sự Kiện VTVPrime",
-        "Rạp Phim",
-        "VTV",
-        "VTVcab",
-        "SCTV",
-        "📦 In The Box",
-        "HTV",
-        "HTVC",
-        "🌐 Thiết yếu",
-        "Địa phương",
-        "Quốc Tế",
-        "Radio",
-        "🇻🇳 Vietnam Radio",
-        "🇬🇧 UK Radio",
-        "🇰🇷 Hàn Quốc",
-        "🇨🇳 Trung Quốc",
-        "🇹🇭 Thái Lan",
-        "🇰🇭 Campuchia"
-    ],
+            isRequired: false,
 
-    optionsLimit: 1
-}
-            ]
+            options: [
+                "FIFA WORLD CUP 2026",
+                "Sự Kiện",
+                "THỂ THAO QT",
+                "⚽ Thể thao QT",
+                "TVB",
+                "LIVE EVENTS 🔴",
+                "Sự Kiện TV360",
+                "Sự Kiện VTVPrime",
+                "Rạp Phim",
+                "VTV",
+                "VTVcab",
+                "SCTV",
+                "📦 In The Box",
+                "HTV",
+                "HTVC",
+                "🌐 Thiết yếu",
+                "Địa phương",
+                "Quốc Tế",
+                "Radio",
+                "🇻🇳 Vietnam Radio",
+                "🇬🇧 UK Radio",
+                "🇰🇷 Hàn Quốc",
+                "🇨🇳 Trung Quốc",
+                "🇹🇭 Thái Lan",
+                "🇰🇭 Campuchia"
+            ],
+
+            optionsLimit: 1
         }
+    ]
+}
     ]
 };
 
@@ -3463,8 +3492,133 @@ builder.defineCatalogHandler(
                     ""
                 ).trim();
 
+/* ========================================================
+   12.0 MOVINA TV / IPTV HUB
+   ======================================================== */
+
+if (
+    args.id ===
+    "pa_tv"
+) {
+
+    console.log(
+        "[CATALOG] Mode: MOVINA TV / IPTV HUB"
+    );
+
+    try {
+
+        const tvProviders =
+            getMovinaProvidersByCategory(
+                "tv"
+            )
+            .filter(
+                provider =>
+                    provider.enabled
+            );
+
+        console.log(
+            "[MOVINA TV HUB] Providers:",
+            tvProviders.length
+        );
+
+        const metas =
+            tvProviders
+                .map(
+                    provider => {
+
+                        const catalogId =
+                            provider
+                                .metadata
+                                ?.catalogId;
+
+                        if (!catalogId) {
+
+                            console.log(
+                                "[MOVINA TV HUB] SKIP:",
+                                provider.id,
+                                "| missing catalogId"
+                            );
+
+                            return null;
+                        }
+
+                        const providerName =
+                            provider.name ||
+                            provider.id;
+
+                        return {
+
+                            id:
+                                `movina-tv:${provider.id}`,
+
+                            type:
+                                "MOVINA",
+
+                            name:
+                                providerName,
+
+                            poster:
+                                provider.iconUrl ||
+                                "",
+
+                            posterShape:
+                                "square",
+
+                            description:
+                                `MOVINA TV / IPTV Provider: ${providerName}`,
+
+                            links: [
+
+                                {
+                                    name:
+                                        `Mở ${providerName}`,
+
+                                    category:
+                                        "catalog",
+
+                                    url:
+                                        `stremio:///discover/${encodeURIComponent(
+                                            "https://my-strem-addon.vercel.app/manifest.json"
+                                        )}/tv/${encodeURIComponent(
+                                            catalogId
+                                        )}`
+                                }
+
+                            ]
+                        };
+                    }
+                )
+                .filter(
+                    meta =>
+                        meta &&
+                        meta.id &&
+                        meta.name
+                );
+
+        console.log(
+            "[MOVINA TV HUB] Metas:",
+            metas.length
+        );
+
+        return {
+            metas
+        };
+
+    } catch (e) {
+
+        console.error(
+            "[MOVINA TV HUB] ERROR:",
+            e
+        );
+
+        return {
+            metas: []
+        };
+    }
+}
+
             /* ========================================================
-               12.0 VMT TV
+               12.1 VMT TV
                ======================================================== */
 
             const vmttvProvider =
