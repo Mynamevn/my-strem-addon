@@ -105,7 +105,7 @@ const manifest = {
             ]
         },
 
-       // =====================================================
+      // =====================================================
 // TV / IPTV HUB
 // =====================================================
 //
@@ -116,8 +116,6 @@ const manifest = {
 //     VMT TV  → pa_vmttv
 //     IPTV    → pa_iptv
 //     ...
-//
-// KHÔNG khai báo các catalog provider thật ở đây.
 //
 // Provider catalog sẽ được mở bằng Stremio Deep Link
 // từ Meta Item của TV / IPTV Hub.
@@ -137,7 +135,8 @@ const manifest = {
             isRequired: false
         }
     ]
-}
+},
+
 {
     type: "tv",
 
@@ -146,12 +145,10 @@ const manifest = {
     name: "VMT TV",
 
     extra: [
-
         {
             name: "genre",
 
-            isRequired:
-                true,
+            isRequired: true,
 
             options: [
                 "FIFA WORLD CUP 2026",
@@ -181,13 +178,12 @@ const manifest = {
                 "🇰🇭 Campuchia"
             ],
 
-            optionsLimit:
-                1
+            optionsLimit: 1
         }
     ]
 }
-    ]
-};
+
+];
 
 const builder =
     new addonBuilder(manifest);
