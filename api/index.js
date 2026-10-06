@@ -3467,10 +3467,18 @@ builder.defineCatalogHandler(
                12.0 VMT TV
                ======================================================== */
 
-            if (
-                args.id ===
-                "pa_vmttv"
-            ) {
+            const vmttvProvider =
+    getAllMovinaProviders()
+        .find(
+            provider =>
+                provider.enabled &&
+                provider.category === "tv" &&
+                provider.metadata?.catalogId === args.id
+        );
+
+if (
+    vmttvProvider
+) {
 
                 console.log(
                     "[CATALOG] Mode: VMT TV"
@@ -10055,7 +10063,13 @@ const MOVINA_VMTTV_PROVIDER =
         },
 
         adapter:
-            VMTTV_PROVIDER
+            VMTTV_PROVIDER,
+
+        metadata: {
+
+            catalogId:
+                "pa_vmttv"
+        }
     });
 
 
@@ -10065,12 +10079,9 @@ console.log(
     MOVINA_VMTTV_PROVIDER.category
 );
 
+
 // ============================================================
 // bn-12. DEBUG MOVINA PROVIDER REGISTRY
-// ============================================================
-//
-// Kiểm tra Registry trung tâm sau khi VMT TV được đăng ký.
-//
 // ============================================================
 
 logMovinaProviderRegistry();
