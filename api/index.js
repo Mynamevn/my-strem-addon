@@ -3445,7 +3445,28 @@ builder.defineCatalogHandler(
 
 /* ========================================================
    12.0 MOVINA TV / IPTV HUB
-   ======================================================== */
+   ========================================================
+//
+// TV / IPTV Hub:
+//
+//     MOVINA
+//        └── TV / IPTV
+//              └── VMT TV
+//
+// Provider thật vẫn được quản lý bởi:
+//
+//     MOVINA_PROVIDER_REGISTRY
+//
+// Meta provider sử dụng:
+//
+//     type: "tv"
+//     id:   "vmttv:catalog"
+//
+// vì manifest MOVINA đã có:
+//
+//     idPrefixes: ["tt", "vnwpsw:", "vmttv:"]
+//
+// ======================================================== */
 
 if (
     args.id ===
@@ -3500,10 +3521,12 @@ if (
                         return {
 
                             id:
-                                `movina-tv:${provider.id}`,
+                                `vmttv:${provider.id === "vmttv"
+                                    ? "catalog"
+                                    : provider.id}`,
 
                             type:
-                                "MOVINA",
+                                "tv",
 
                             name:
                                 providerName,
@@ -3518,24 +3541,11 @@ if (
                             description:
                                 `MOVINA TV / IPTV Provider: ${providerName}`,
 
-                            links: [
+                            behaviorHints: {
 
-                                {
-                                    name:
-                                        `Mở ${providerName}`,
-
-                                    category:
-                                        "catalog",
-
-                                    url:
-                                        `stremio:///discover/${encodeURIComponent(
-                                            "https://my-strem-addon.vercel.app/manifest.json"
-                                        )}/tv/${encodeURIComponent(
-                                            catalogId
-                                        )}`
-                                }
-
-                            ]
+                                isLive:
+                                    true
+                            }
                         };
                     }
                 )
@@ -4143,53 +4153,42 @@ builder.defineMetaHandler(async (args) => {
 // 13.0 MOVINA TV / IPTV PROVIDER META
 // ========================================================
 //
-// Meta Item:
+// Provider Meta:
 //
-//     TV / IPTV
-//          ↓
-//       VMT TV
+//     vmttv:catalog
 //
-// ID:
+// Đây là Meta thật với:
 //
-//     movina-tv:vmttv
+//     type: "tv"
 //
-// Meta này không chứa channel.
+// nên Stremio sẽ route request về MOVINA thông qua:
 //
-// Nó chỉ đóng vai trò Provider Item và cung cấp
-// Deep Link tới catalog thật:
+//     idPrefixes: ["vmttv:"]
 //
-//     tv / pa_vmttv
+// Meta này không phải channel.
+//
+// Nó là "Provider Entry" của TV / IPTV Hub.
 //
 // ========================================================
 
-const movinaTvPrefix =
-    "movina-tv:";
-
-const rawMovinaTvId =
+const movinaTvMetaId =
     String(
         args.id ||
         ""
     ).trim();
 
 if (
-    rawMovinaTvId.startsWith(
-        movinaTvPrefix
-    )
+    movinaTvMetaId ===
+    "vmttv:catalog"
 ) {
 
-    const providerId =
-        rawMovinaTvId.slice(
-            movinaTvPrefix.length
-        );
-
     console.log(
-        "[META] MOVINA TV PROVIDER:",
-        providerId
+        "[META] MOVINA TV PROVIDER: vmttv"
     );
 
     const provider =
         getMovinaProvider(
-            providerId
+            "vmttv"
         );
 
     if (
@@ -4199,20 +4198,19 @@ if (
     ) {
 
         console.log(
-            "[META] MOVINA TV PROVIDER NOT FOUND:",
-            providerId
+            "[META] MOVINA TV PROVIDER NOT FOUND: vmttv"
         );
 
         return {
             meta: {
                 id:
-                    rawMovinaTvId,
+                    "vmttv:catalog",
 
                 type:
-                    "MOVINA",
+                    "tv",
 
                 name:
-                    "TV Provider",
+                    "VMT TV",
 
                 poster:
                     "",
@@ -4221,7 +4219,7 @@ if (
                     "square",
 
                 description:
-                    "MOVINA TV / IPTV Provider"
+                    "VMT TV Provider"
             }
         };
     }
@@ -4235,16 +4233,16 @@ if (
 
         console.log(
             "[META] MOVINA TV PROVIDER MISSING CATALOG:",
-            providerId
+            provider.id
         );
 
         return {
             meta: {
                 id:
-                    rawMovinaTvId,
+                    "vmttv:catalog",
 
                 type:
-                    "MOVINA",
+                    "tv",
 
                 name:
                     provider.name,
@@ -4254,7 +4252,10 @@ if (
                     "",
 
                 posterShape:
-                    "square"
+                    "square",
+
+                description:
+                    "VMT TV catalog is unavailable"
             }
         };
     }
@@ -4284,10 +4285,10 @@ if (
         meta: {
 
             id:
-                rawMovinaTvId,
+                "vmttv:catalog",
 
             type:
-                "MOVINA",
+                "tv",
 
             name:
                 provider.name,
@@ -4300,13 +4301,19 @@ if (
                 "square",
 
             description:
-                `MOVINA TV / IPTV Provider: ${provider.name}`,
+                "VMT TV — Live TV / IPTV",
+
+            behaviorHints: {
+
+                isLive:
+                    true
+            },
 
             links: [
 
                 {
                     name:
-                        `Mở ${provider.name}`,
+                        "📺 Mở VMT TV",
 
                     category:
                         "catalog",
