@@ -106,37 +106,82 @@ const manifest = {
         },
 
       // =====================================================
-        // TV / IPTV HUB
-        // =====================================================
-        //
-        // `pa_tv` là catalog duy nhất được expose ở tầng MOVINA.
-        //
-        // Các provider thật:
-        //
-        //     VMT TV  → pa_vmttv
-        //     IPTV    → pa_iptv
-        //     ...
-        //
-        // Provider catalog không expose trực tiếp trong Manifest.
-        // Provider thật được mở bằng Stremio Deep Link
-        // từ Meta Item của TV / IPTV Hub.
-        //
-        // =====================================================
+// TV / IPTV HUB
+// =====================================================
+//
+// `pa_tv` là catalog duy nhất được expose ở tầng MOVINA.
+//
+// Các provider thật:
+//
+//     VMT TV  → pa_vmttv
+//     IPTV    → pa_iptv
+//     ...
+//
+// Provider catalog sẽ được mở bằng Stremio Deep Link
+// từ Meta Item của TV / IPTV Hub.
+//
+// =====================================================
 
+{
+    type: "MOVINA",
+
+    id: "pa_tv",
+
+    name: "📺 TV / IPTV",
+
+    extra: [
         {
-            type: "MOVINA",
-
-            id: "pa_tv",
-
-            name: "📺 TV / IPTV",
-
-            extra: [
-                {
-                    name: "search",
-                    isRequired: false
-                }
-            ]
+            name: "search",
+            isRequired: false
         }
+    ]
+},
+
+{
+    type: "tv",
+
+    id: "pa_vmttv",
+
+    name: "VMT TV",
+
+    extra: [
+        {
+            name: "genre",
+
+            isRequired: true,
+
+            options: [
+                "FIFA WORLD CUP 2026",
+                "Sự Kiện",
+                "THỂ THAO QT",
+                "⚽ Thể thao QT",
+                "TVB",
+                "LIVE EVENTS 🔴",
+                "Sự Kiện TV360",
+                "Sự Kiện VTVPrime",
+                "Rạp Phim",
+                "VTV",
+                "VTVcab",
+                "SCTV",
+                "📦 In The Box",
+                "HTV",
+                "HTVC",
+                "🌐 Thiết yếu",
+                "Địa phương",
+                "Quốc Tế",
+                "Radio",
+                "🇻🇳 Vietnam Radio"
+                "🇬🇧 UK Radio",
+                "🇰🇷 Hàn Quốc",
+                "🇨🇳 Trung Quốc",
+                "🇹🇭 Thái Lan",
+                "🇰🇭 Campuchia"
+            ],
+
+            optionsLimit: 1
+        }
+    ]
+}
 
     ]
 
