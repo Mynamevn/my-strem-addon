@@ -171,7 +171,6 @@ const manifest = {
                 "Quốc Tế",
                 "Radio",
                 "🇻🇳 Vietnam Radio",
-                "🇬🇧 UK Radio",
                 "🇰🇷 Hàn Quốc",
                 "🇨🇳 Trung Quốc",
                 "🇹🇭 Thái Lan",
@@ -181,9 +180,7 @@ const manifest = {
             optionsLimit: 1
         }
     ]
-}
-
-];
+};
 
 const builder =
     new addonBuilder(manifest);
