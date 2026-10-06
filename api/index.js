@@ -9995,6 +9995,77 @@ console.log(
 );
 
 // ============================================================
+// bn-11. REGISTER VMT TV INTO MOVINA REGISTRY
+// ============================================================
+//
+// Bridge:
+//
+//     VMTTV_PROVIDER
+//            ↓
+//     MOVINA_PROVIDER_REGISTRY
+//
+// VMT TV vẫn giữ LIVE_PROVIDER_REGISTRY riêng.
+// Block này chỉ đăng ký VMT TV vào Registry trung tâm MOVINA.
+//
+// ============================================================
+
+const MOVINA_VMTTV_PROVIDER =
+    registerMovinaProvider({
+
+        id:
+            "vmttv",
+
+        name:
+            "VMT TV",
+
+        category:
+            "tv",
+
+        kind:
+            "m3u",
+
+        sourceUrl:
+            VMTTV_M3U_URL,
+
+        enabled:
+            true,
+
+        iconUrl:
+            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/Logo.png",
+
+        capabilities: {
+
+            catalog:
+                true,
+
+            search:
+                true,
+
+            genre:
+                true,
+
+            meta:
+                true,
+
+            stream:
+                true,
+
+            live:
+                true
+        },
+
+        adapter:
+            VMTTV_PROVIDER
+    });
+
+
+console.log(
+    "[VMTTV] MOVINA PROVIDER READY:",
+    MOVINA_VMTTV_PROVIDER.id,
+    MOVINA_VMTTV_PROVIDER.category
+);
+
+// ============================================================
 // VMT TV → STREMIO TV ADAPTER
 // ============================================================
 //
