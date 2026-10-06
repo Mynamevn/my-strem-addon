@@ -170,7 +170,7 @@ const manifest = {
                 "Địa phương",
                 "Quốc Tế",
                 "Radio",
-                "🇻🇳 Vietnam Radio"
+                "🇻🇳 Vietnam Radio",
                 "🇬🇧 UK Radio",
                 "🇰🇷 Hàn Quốc",
                 "🇨🇳 Trung Quốc",
