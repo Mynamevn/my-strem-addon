@@ -21950,9 +21950,20 @@ builder.defineStreamHandler(async (args) => {
                 );
 
                 console.log(
-                    "[VMTTV STREAM] Streams:",
-                    streams.length
-                );
+    "[VMTTV STREAM] Streams:",
+    streams.length
+);
+
+console.log(
+    "[VMTTV STREAM] Details:",
+    streams.map(s => ({
+        url: s.url,
+        externalUrl: s.externalUrl,
+        type: s.type,
+        streamType: s.streamType,
+        headers: s.headers
+    }))
+);
 
                 return {
                     streams
