@@ -8040,174 +8040,189 @@ console.log(
 );
 
 // ============================================================
-// LIVE PROVIDER CONTRACT
+// BL-MOVINA SOURCE / PROVIDER REGISTRY
 // ============================================================
 //
 // Mục tiêu:
-// - Chuẩn hóa mọi nguồn truyền hình / IPTV / Live Event.
-// - VMT TV chỉ là provider đầu tiên.
-// - Sau này provider khác có thể được nạp từ Configure/Repository
-//   mà không phải viết lại Stream Handler.
+// - Registry trung tâm của toàn bộ source/provider trong MOVINA.
+// - Không phụ thuộc riêng vào Movie / CS3 / LIVE.
+// - User Configure sau này sẽ quản lý source tại đây.
 //
-// Pipeline:
+// Category:
 //
-//   LIVE PROVIDER
-//        ↓
-//   LIVE ITEM
-//        ↓
-//   LIVE STREAM
-//        ↓
-//   NORMALIZED STREAM
-//        ↓
-//   STREMIO
+//   native
+//       → Native Movie / Video
+//
+//   cs3
+//       → CloudStream / CS3
+//
+//   tv
+//       → TV / IPTV
+//
+// kind là loại implementation nội bộ:
+//
+//   api
+//   scrape
+//   plugin
+//   m3u
+//   iptv
+//   ...
+//
+// Registry này KHÔNG thay thế các registry chuyên biệt hiện tại.
+// Ví dụ:
+//
+//   MOVINA PROVIDER REGISTRY
+//          ↓
+//   category: "tv"
+//          ↓
+//   LIVE_PROVIDER_REGISTRY
+//          ↓
+//   VMT TV
 //
 // ============================================================
 
-const LIVE_PROVIDER_REGISTRY = new Map();
+const MOVINA_PROVIDER_REGISTRY = new Map();
+
 
 // ============================================================
-// 1. LIVE PROVIDER CONTRACT
+// bn-1. MOVINA PROVIDER CONTRACT
 // ============================================================
 
-function createLiveProvider(provider) {
+function createMovinaProvider(provider) {
 
     if (!provider || typeof provider !== "object") {
-        throw new Error("Invalid LIVE provider");
+
+        throw new Error(
+            "[MOVINA PROVIDER] Invalid provider"
+        );
     }
 
-    const requiredFunctions = [
-        "getManifest",
-        "getHomeSections",
-        "getPrimaryCategories",
-        "getUrlList",
-        "getUrlSearch",
-        "getUrlDetail",
-        "parseListResponse",
-        "parseSearchResponse",
-        "parseMovieDetail",
-        "parseDetailResponse"
+    const id =
+        String(
+            provider.id || ""
+        ).trim();
+
+    if (!id) {
+
+        throw new Error(
+            "[MOVINA PROVIDER] Provider ID is required"
+        );
+    }
+
+    const name =
+        String(
+            provider.name ||
+            id
+        ).trim();
+
+    const category =
+        String(
+            provider.category ||
+            ""
+        ).trim().toLowerCase();
+
+    const allowedCategories = [
+        "native",
+        "cs3",
+        "tv"
     ];
 
-    for (const fn of requiredFunctions) {
+    if (
+        !allowedCategories.includes(
+            category
+        )
+    ) {
 
-        if (typeof provider[fn] !== "function") {
-            throw new Error(
-                `[LIVE PROVIDER] Missing function: ${fn}`
-            );
-        }
+        throw new Error(
+            `[MOVINA PROVIDER] Invalid category: ${category}`
+        );
     }
+
+    const kind =
+        String(
+            provider.kind ||
+            ""
+        ).trim().toLowerCase();
 
     return {
 
-        type: "LIVE",
+        id,
 
-        id:
-            String(provider.id || "")
-                .trim(),
+        name,
 
-        name:
-            String(provider.name || provider.id || "LIVE")
-                .trim(),
+        category,
+
+        kind,
+
+        sourceUrl:
+            String(
+                provider.sourceUrl ||
+                ""
+            ).trim(),
+
+        enabled:
+            provider.enabled !== false,
 
         iconUrl:
-            String(provider.iconUrl || "")
-                .trim(),
+            String(
+                provider.iconUrl ||
+                ""
+            ).trim(),
 
-        manifest:
-            provider.manifest || null,
+        capabilities:
+            provider.capabilities &&
+            typeof provider.capabilities === "object"
+                ? {
+                    ...provider.capabilities
+                }
+                : {},
 
-        getManifest:
-            provider.getManifest,
+        adapter:
+            provider.adapter ||
+            null,
 
-        getHomeSections:
-            provider.getHomeSections,
+        resolver:
+            provider.resolver ||
+            null,
 
-        getPrimaryCategories:
-            provider.getPrimaryCategories,
-
-        getFilterConfig:
-            typeof provider.getFilterConfig === "function"
-                ? provider.getFilterConfig
-                : () => JSON.stringify({}),
-
-        getUrlList:
-            provider.getUrlList,
-
-        getUrlSearch:
-            provider.getUrlSearch,
-
-        getUrlDetail:
-            provider.getUrlDetail,
-
-        getUrlCategories:
-            typeof provider.getUrlCategories === "function"
-                ? provider.getUrlCategories
-                : () => "",
-
-        getUrlCountries:
-            typeof provider.getUrlCountries === "function"
-                ? provider.getUrlCountries
-                : () => "",
-
-        getUrlYears:
-            typeof provider.getUrlYears === "function"
-                ? provider.getUrlYears
-                : () => "",
-
-        parseListResponse:
-            provider.parseListResponse,
-
-        parseSearchResponse:
-            provider.parseSearchResponse,
-
-        parseMovieDetail:
-            provider.parseMovieDetail,
-
-        parseDetailResponse:
-            provider.parseDetailResponse,
-
-        parseCategoriesResponse:
-            typeof provider.parseCategoriesResponse === "function"
-                ? provider.parseCategoriesResponse
-                : () => [],
-
-        parseCountriesResponse:
-            typeof provider.parseCountriesResponse === "function"
-                ? provider.parseCountriesResponse
-                : () => [],
-
-        parseYearsResponse:
-            typeof provider.parseYearsResponse === "function"
-                ? provider.parseYearsResponse
-                : () => []
+        metadata:
+            provider.metadata &&
+            typeof provider.metadata === "object"
+                ? {
+                    ...provider.metadata
+                }
+                : {}
     };
 }
 
 
 // ============================================================
-// 2. REGISTER LIVE PROVIDER
+// bn-2. REGISTER MOVINA PROVIDER
 // ============================================================
 
-function registerLiveProvider(provider) {
+function registerMovinaProvider(provider) {
 
     const normalized =
-        createLiveProvider(provider);
-
-    if (!normalized.id) {
-        throw new Error(
-            "[LIVE PROVIDER] Provider ID is required"
+        createMovinaProvider(
+            provider
         );
-    }
 
-    LIVE_PROVIDER_REGISTRY.set(
+    MOVINA_PROVIDER_REGISTRY.set(
         normalized.id,
         normalized
     );
 
     console.log(
-        "[LIVE PROVIDER] REGISTERED:",
+        "[MOVINA PROVIDER] REGISTERED:",
         normalized.id,
-        normalized.name
+        "|",
+        normalized.name,
+        "|",
+        normalized.category,
+        "|",
+        normalized.kind,
+        "| enabled:",
+        normalized.enabled
     );
 
     return normalized;
@@ -8215,295 +8230,193 @@ function registerLiveProvider(provider) {
 
 
 // ============================================================
-// 3. GET LIVE PROVIDER
+// bn-3. GET MOVINA PROVIDER
 // ============================================================
 
-function getLiveProvider(providerId) {
+function getMovinaProvider(providerId) {
 
     const id =
-        String(providerId || "")
-            .trim();
+        String(
+            providerId || ""
+        ).trim();
 
     if (!id) {
         return null;
     }
 
     return (
-        LIVE_PROVIDER_REGISTRY.get(id)
-        || null
+        MOVINA_PROVIDER_REGISTRY.get(
+            id
+        ) || null
     );
 }
 
 
 // ============================================================
-// 4. GET ALL LIVE PROVIDERS
+// bn-4. GET ALL MOVINA PROVIDERS
 // ============================================================
 
-function getAllLiveProviders() {
+function getAllMovinaProviders() {
 
     return Array.from(
-        LIVE_PROVIDER_REGISTRY.values()
+        MOVINA_PROVIDER_REGISTRY.values()
     );
 }
 
 
 // ============================================================
-// 5. NORMALIZED LIVE ITEM
-// ============================================================
-//
-// Mọi provider LIVE cuối cùng nên đưa dữ liệu về dạng này:
-//
-// {
-//     id,
-//     provider,
-//     title,
-//     posterUrl,
-//     backdropUrl,
-//     description,
-//     year,
-//     quality,
-//     episode_current,
-//     lang,
-//     category,
-//     country,
-//     type: "LIVE"
-// }
-//
+// bn-5. GET PROVIDERS BY CATEGORY
 // ============================================================
 
-function normalizeLiveItem(item, providerId) {
+function getMovinaProvidersByCategory(
+    category
+) {
 
-    if (!item || typeof item !== "object") {
-        return null;
-    }
-
-    const title =
+    const normalizedCategory =
         String(
-            item.title ||
-            item.name ||
-            ""
-        ).trim();
+            category || ""
+        ).trim().toLowerCase();
 
-    if (!title) {
-        return null;
-    }
-
-    return {
-
-        id:
-            String(item.id || "").trim(),
-
-        provider:
-            String(
-                item.provider ||
-                providerId ||
-                ""
-            ).trim(),
-
-        title,
-
-        posterUrl:
-            String(
-                item.posterUrl ||
-                item.poster ||
-                item.logo ||
-                ""
-            ).trim(),
-
-        backdropUrl:
-            String(
-                item.backdropUrl ||
-                item.backdrop ||
-                item.posterUrl ||
-                item.logo ||
-                ""
-            ).trim(),
-
-        description:
-            String(
-                item.description ||
-                ""
-            ).trim(),
-
-        year:
-            Number(item.year || 0),
-
-        quality:
-            String(
-                item.quality ||
-                "LIVE"
-            ).trim(),
-
-        episode_current:
-            String(
-                item.episode_current ||
-                "Live"
-            ).trim(),
-
-        lang:
-            String(
-                item.lang ||
-                ""
-            ).trim(),
-
-        category:
-            String(
-                item.category ||
-                item.group ||
-                ""
-            ).trim(),
-
-        country:
-            String(
-                item.country ||
-                ""
-            ).trim(),
-
-        type: "LIVE"
-    };
-}
-
-
-// ============================================================
-// 6. NORMALIZED LIVE STREAM
-// ============================================================
-//
-// Đây là format chung mà Stremio Adapter sẽ nhận.
-//
-// url:
-//     M3U8 / MP4 / stream URL thực tế.
-//
-// externalUrl:
-//     Player / WebView fallback.
-//
-// headers:
-//     User-Agent / Referer / token headers.
-//
-// streamType:
-//     direct | hls | embed | player
-//
-// ============================================================
-
-function normalizeLiveStream(stream, providerId) {
-
-    if (!stream || typeof stream !== "object") {
-        return null;
-    }
-
-    const url =
-        String(
-            stream.url ||
-            ""
-        ).trim();
-
-    const externalUrl =
-        String(
-            stream.externalUrl ||
-            ""
-        ).trim();
-
-    if (!url && !externalUrl) {
-        return null;
-    }
-
-    const headers =
-        stream.headers &&
-        typeof stream.headers === "object"
-            ? stream.headers
-            : {};
-
-    return {
-
-        provider:
-            String(
-                stream.provider ||
-                providerId ||
-                ""
-            ).trim(),
-
-        title:
-            String(
-                stream.title ||
-                "LIVE"
-            ).trim(),
-
-        url,
-
-        externalUrl,
-
-        headers,
-
-        streamType:
-            String(
-                stream.streamType ||
-                stream.type ||
-                (url ? "direct" : "player")
-            ).trim(),
-
-        transformer:
-            stream.transformer || null,
-
-        playerUrl:
-            String(
-                stream.playerUrl ||
-                ""
-            ).trim(),
-
-        type: "LIVE"
-    };
-}
-
-
-// ============================================================
-// 7. LIVE PROVIDER → NORMALIZED ITEMS
-// ============================================================
-
-function normalizeLiveItems(items, providerId) {
-
-    if (!Array.isArray(items)) {
+    if (!normalizedCategory) {
         return [];
     }
 
-    return items
-        .map(item =>
-            normalizeLiveItem(
-                item,
-                providerId
-            )
-        )
-        .filter(Boolean);
+    return getAllMovinaProviders()
+        .filter(
+            provider =>
+                provider.category ===
+                normalizedCategory
+        );
 }
 
 
 // ============================================================
-// 8. LIVE PROVIDER → NORMALIZED STREAMS
+// bn-6. ENABLE PROVIDER
 // ============================================================
 
-function normalizeLiveStreams(streams, providerId) {
-
-    if (!Array.isArray(streams)) {
-        return [];
-    }
-
-    return streams
-        .map(stream =>
-            normalizeLiveStream(
-                stream,
-                providerId
-            )
-        )
-        .filter(Boolean);
-}
-
-
-// ============================================================
-// 9. LIVE PROVIDER STATUS
-// ============================================================
-
-function getLiveProviderInfo(providerId) {
+function enableMovinaProvider(
+    providerId
+) {
 
     const provider =
-        getLiveProvider(providerId);
+        getMovinaProvider(
+            providerId
+        );
+
+    if (!provider) {
+
+        console.log(
+            "[MOVINA PROVIDER] ENABLE FAILED:",
+            providerId
+        );
+
+        return null;
+    }
+
+    provider.enabled = true;
+
+    console.log(
+        "[MOVINA PROVIDER] ENABLED:",
+        provider.id,
+        provider.name
+    );
+
+    return provider;
+}
+
+
+// ============================================================
+// bn-7. DISABLE PROVIDER
+// ============================================================
+
+function disableMovinaProvider(
+    providerId
+) {
+
+    const provider =
+        getMovinaProvider(
+            providerId
+        );
+
+    if (!provider) {
+
+        console.log(
+            "[MOVINA PROVIDER] DISABLE FAILED:",
+            providerId
+        );
+
+        return null;
+    }
+
+    provider.enabled = false;
+
+    console.log(
+        "[MOVINA PROVIDER] DISABLED:",
+        provider.id,
+        provider.name
+    );
+
+    return provider;
+}
+
+
+// ============================================================
+// bn-8. REMOVE PROVIDER
+// ============================================================
+
+function removeMovinaProvider(
+    providerId
+) {
+
+    const id =
+        String(
+            providerId || ""
+        ).trim();
+
+    if (!id) {
+        return false;
+    }
+
+    const existed =
+        MOVINA_PROVIDER_REGISTRY.has(
+            id
+        );
+
+    if (!existed) {
+
+        console.log(
+            "[MOVINA PROVIDER] REMOVE FAILED:",
+            id
+        );
+
+        return false;
+    }
+
+    MOVINA_PROVIDER_REGISTRY.delete(
+        id
+    );
+
+    console.log(
+        "[MOVINA PROVIDER] REMOVED:",
+        id
+    );
+
+    return true;
+}
+
+
+// ============================================================
+// bn-9. PROVIDER STATUS
+// ============================================================
+
+function getMovinaProviderInfo(
+    providerId
+) {
+
+    const provider =
+        getMovinaProvider(
+            providerId
+        );
 
     if (!provider) {
         return null;
@@ -8511,43 +8424,69 @@ function getLiveProviderInfo(providerId) {
 
     return {
 
-        id: provider.id,
+        id:
+            provider.id,
 
-        name: provider.name,
+        name:
+            provider.name,
 
-        iconUrl: provider.iconUrl,
+        category:
+            provider.category,
 
-        type: "LIVE",
+        kind:
+            provider.kind,
 
-        enabled: true
+        sourceUrl:
+            provider.sourceUrl,
+
+        enabled:
+            provider.enabled,
+
+        iconUrl:
+            provider.iconUrl,
+
+        capabilities:
+            {
+                ...provider.capabilities
+            }
     };
 }
 
 
 // ============================================================
-// 10. DEBUG REGISTRY
+// bn-10. DEBUG MOVINA PROVIDER REGISTRY
 // ============================================================
 
-function logLiveProviderRegistry() {
+function logMovinaProviderRegistry() {
 
     const providers =
-        getAllLiveProviders();
+        getAllMovinaProviders();
 
     console.log(
-        "[LIVE PROVIDER] TOTAL:",
+        "[MOVINA PROVIDER] TOTAL:",
         providers.length
     );
 
-    for (const provider of providers) {
+    for (
+        const provider
+        of providers
+    ) {
 
         console.log(
-            "[LIVE PROVIDER]",
+            "[MOVINA PROVIDER]",
             provider.id,
             "|",
-            provider.name
+            provider.name,
+            "| category:",
+            provider.category,
+            "| kind:",
+            provider.kind,
+            "| enabled:",
+            provider.enabled
         );
     }
 }
+
 
 // ============================================================
 // 11. VMT TV - LIVE PROVIDER
