@@ -179,10 +179,8 @@ const manifest = {
 
             optionsLimit: 1
         }
-            ]
-        }
     ]
-};
+},
 
 const builder =
     new addonBuilder(manifest);
