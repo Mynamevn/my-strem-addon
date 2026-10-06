@@ -179,6 +179,8 @@ const manifest = {
 
             optionsLimit: 1
         }
+            ]
+        }
     ]
 };
 
