@@ -8487,6 +8487,515 @@ function logMovinaProviderRegistry() {
     }
 }
 
+// ============================================================
+// LIVE PROVIDER CONTRACT
+// ============================================================
+//
+// Mục tiêu:
+// - Chuẩn hóa mọi nguồn truyền hình / IPTV / Live Event.
+// - VMT TV chỉ là provider đầu tiên.
+// - Sau này provider khác có thể được nạp từ Configure/Repository
+//   mà không phải viết lại Stream Handler.
+//
+// Pipeline:
+//
+//   LIVE PROVIDER
+//        ↓
+//   LIVE ITEM
+//        ↓
+//   LIVE STREAM
+//        ↓
+//   NORMALIZED STREAM
+//        ↓
+//   STREMIO
+//
+// ============================================================
+
+const LIVE_PROVIDER_REGISTRY = new Map();
+
+// ============================================================
+// 1. LIVE PROVIDER CONTRACT
+// ============================================================
+
+function createLiveProvider(provider) {
+
+    if (!provider || typeof provider !== "object") {
+        throw new Error("Invalid LIVE provider");
+    }
+
+    const requiredFunctions = [
+        "getManifest",
+        "getHomeSections",
+        "getPrimaryCategories",
+        "getUrlList",
+        "getUrlSearch",
+        "getUrlDetail",
+        "parseListResponse",
+        "parseSearchResponse",
+        "parseMovieDetail",
+        "parseDetailResponse"
+    ];
+
+    for (const fn of requiredFunctions) {
+
+        if (typeof provider[fn] !== "function") {
+            throw new Error(
+                `[LIVE PROVIDER] Missing function: ${fn}`
+            );
+        }
+    }
+
+    return {
+
+        type: "LIVE",
+
+        id:
+            String(provider.id || "")
+                .trim(),
+
+        name:
+            String(provider.name || provider.id || "LIVE")
+                .trim(),
+
+        iconUrl:
+            String(provider.iconUrl || "")
+                .trim(),
+
+        manifest:
+            provider.manifest || null,
+
+        getManifest:
+            provider.getManifest,
+
+        getHomeSections:
+            provider.getHomeSections,
+
+        getPrimaryCategories:
+            provider.getPrimaryCategories,
+
+        getFilterConfig:
+            typeof provider.getFilterConfig === "function"
+                ? provider.getFilterConfig
+                : () => JSON.stringify({}),
+
+        getUrlList:
+            provider.getUrlList,
+
+        getUrlSearch:
+            provider.getUrlSearch,
+
+        getUrlDetail:
+            provider.getUrlDetail,
+
+        getUrlCategories:
+            typeof provider.getUrlCategories === "function"
+                ? provider.getUrlCategories
+                : () => "",
+
+        getUrlCountries:
+            typeof provider.getUrlCountries === "function"
+                ? provider.getUrlCountries
+                : () => "",
+
+        getUrlYears:
+            typeof provider.getUrlYears === "function"
+                ? provider.getUrlYears
+                : () => "",
+
+        parseListResponse:
+            provider.parseListResponse,
+
+        parseSearchResponse:
+            provider.parseSearchResponse,
+
+        parseMovieDetail:
+            provider.parseMovieDetail,
+
+        parseDetailResponse:
+            provider.parseDetailResponse,
+
+        parseCategoriesResponse:
+            typeof provider.parseCategoriesResponse === "function"
+                ? provider.parseCategoriesResponse
+                : () => [],
+
+        parseCountriesResponse:
+            typeof provider.parseCountriesResponse === "function"
+                ? provider.parseCountriesResponse
+                : () => [],
+
+        parseYearsResponse:
+            typeof provider.parseYearsResponse === "function"
+                ? provider.parseYearsResponse
+                : () => []
+    };
+}
+
+
+// ============================================================
+// 2. REGISTER LIVE PROVIDER
+// ============================================================
+
+function registerLiveProvider(provider) {
+
+    const normalized =
+        createLiveProvider(provider);
+
+    if (!normalized.id) {
+        throw new Error(
+            "[LIVE PROVIDER] Provider ID is required"
+        );
+    }
+
+    LIVE_PROVIDER_REGISTRY.set(
+        normalized.id,
+        normalized
+    );
+
+    console.log(
+        "[LIVE PROVIDER] REGISTERED:",
+        normalized.id,
+        normalized.name
+    );
+
+    return normalized;
+}
+
+
+// ============================================================
+// 3. GET LIVE PROVIDER
+// ============================================================
+
+function getLiveProvider(providerId) {
+
+    const id =
+        String(providerId || "")
+            .trim();
+
+    if (!id) {
+        return null;
+    }
+
+    return (
+        LIVE_PROVIDER_REGISTRY.get(id)
+        || null
+    );
+}
+
+
+// ============================================================
+// 4. GET ALL LIVE PROVIDERS
+// ============================================================
+
+function getAllLiveProviders() {
+
+    return Array.from(
+        LIVE_PROVIDER_REGISTRY.values()
+    );
+}
+
+
+// ============================================================
+// 5. NORMALIZED LIVE ITEM
+// ============================================================
+//
+// Mọi provider LIVE cuối cùng nên đưa dữ liệu về dạng này:
+//
+// {
+//     id,
+//     provider,
+//     title,
+//     posterUrl,
+//     backdropUrl,
+//     description,
+//     year,
+//     quality,
+//     episode_current,
+//     lang,
+//     category,
+//     country,
+//     type: "LIVE"
+// }
+//
+// ============================================================
+
+function normalizeLiveItem(item, providerId) {
+
+    if (!item || typeof item !== "object") {
+        return null;
+    }
+
+    const title =
+        String(
+            item.title ||
+            item.name ||
+            ""
+        ).trim();
+
+    if (!title) {
+        return null;
+    }
+
+    return {
+
+        id:
+            String(item.id || "").trim(),
+
+        provider:
+            String(
+                item.provider ||
+                providerId ||
+                ""
+            ).trim(),
+
+        title,
+
+        posterUrl:
+            String(
+                item.posterUrl ||
+                item.poster ||
+                item.logo ||
+                ""
+            ).trim(),
+
+        backdropUrl:
+            String(
+                item.backdropUrl ||
+                item.backdrop ||
+                item.posterUrl ||
+                item.logo ||
+                ""
+            ).trim(),
+
+        description:
+            String(
+                item.description ||
+                ""
+            ).trim(),
+
+        year:
+            Number(item.year || 0),
+
+        quality:
+            String(
+                item.quality ||
+                "LIVE"
+            ).trim(),
+
+        episode_current:
+            String(
+                item.episode_current ||
+                "Live"
+            ).trim(),
+
+        lang:
+            String(
+                item.lang ||
+                ""
+            ).trim(),
+
+        category:
+            String(
+                item.category ||
+                item.group ||
+                ""
+            ).trim(),
+
+        country:
+            String(
+                item.country ||
+                ""
+            ).trim(),
+
+        type: "LIVE"
+    };
+}
+
+
+// ============================================================
+// 6. NORMALIZED LIVE STREAM
+// ============================================================
+//
+// Đây là format chung mà Stremio Adapter sẽ nhận.
+//
+// url:
+//     M3U8 / MP4 / stream URL thực tế.
+//
+// externalUrl:
+//     Player / WebView fallback.
+//
+// headers:
+//     User-Agent / Referer / token headers.
+//
+// streamType:
+//     direct | hls | embed | player
+//
+// ============================================================
+
+function normalizeLiveStream(stream, providerId) {
+
+    if (!stream || typeof stream !== "object") {
+        return null;
+    }
+
+    const url =
+        String(
+            stream.url ||
+            ""
+        ).trim();
+
+    const externalUrl =
+        String(
+            stream.externalUrl ||
+            ""
+        ).trim();
+
+    if (!url && !externalUrl) {
+        return null;
+    }
+
+    const headers =
+        stream.headers &&
+        typeof stream.headers === "object"
+            ? stream.headers
+            : {};
+
+    return {
+
+        provider:
+            String(
+                stream.provider ||
+                providerId ||
+                ""
+            ).trim(),
+
+        title:
+            String(
+                stream.title ||
+                "LIVE"
+            ).trim(),
+
+        url,
+
+        externalUrl,
+
+        headers,
+
+        streamType:
+            String(
+                stream.streamType ||
+                stream.type ||
+                (url ? "direct" : "player")
+            ).trim(),
+
+        transformer:
+            stream.transformer || null,
+
+        playerUrl:
+            String(
+                stream.playerUrl ||
+                ""
+            ).trim(),
+
+        type: "LIVE"
+    };
+}
+
+
+// ============================================================
+// 7. LIVE PROVIDER → NORMALIZED ITEMS
+// ============================================================
+
+function normalizeLiveItems(items, providerId) {
+
+    if (!Array.isArray(items)) {
+        return [];
+    }
+
+    return items
+        .map(item =>
+            normalizeLiveItem(
+                item,
+                providerId
+            )
+        )
+        .filter(Boolean);
+}
+
+
+// ============================================================
+// 8. LIVE PROVIDER → NORMALIZED STREAMS
+// ============================================================
+
+function normalizeLiveStreams(streams, providerId) {
+
+    if (!Array.isArray(streams)) {
+        return [];
+    }
+
+    return streams
+        .map(stream =>
+            normalizeLiveStream(
+                stream,
+                providerId
+            )
+        )
+        .filter(Boolean);
+}
+
+
+// ============================================================
+// 9. LIVE PROVIDER STATUS
+// ============================================================
+
+function getLiveProviderInfo(providerId) {
+
+    const provider =
+        getLiveProvider(providerId);
+
+    if (!provider) {
+        return null;
+    }
+
+    return {
+
+        id: provider.id,
+
+        name: provider.name,
+
+        iconUrl: provider.iconUrl,
+
+        type: "LIVE",
+
+        enabled: true
+    };
+}
+
+
+// ============================================================
+// 10. DEBUG REGISTRY
+// ============================================================
+
+function logLiveProviderRegistry() {
+
+    const providers =
+        getAllLiveProviders();
+
+    console.log(
+        "[LIVE PROVIDER] TOTAL:",
+        providers.length
+    );
+
+    for (const provider of providers) {
+
+        console.log(
+            "[LIVE PROVIDER]",
+            provider.id,
+            "|",
+            provider.name
+        );
+    }
+}
 
 // ============================================================
 // 11. VMT TV - LIVE PROVIDER
