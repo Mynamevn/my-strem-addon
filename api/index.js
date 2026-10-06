@@ -106,19 +106,21 @@ const manifest = {
         },
 
        // =====================================================
-// TV / IPTV
+// TV / IPTV HUB
 // =====================================================
 //
-// MOVINA UI:
+// `pa_tv` là catalog duy nhất được expose ở tầng MOVINA.
 //
-//     MOVINA
-//        └── TV / IPTV
-//              ├── VMT TV
-//              ├── IPTV
-//              └── ...
+// Các provider thật:
 //
-// `pa_tv` là catalog HUB.
-// Các provider thật như `pa_vmttv` vẫn là catalog riêng.
+//     VMT TV  → pa_vmttv
+//     IPTV    → pa_iptv
+//     ...
+//
+// KHÔNG khai báo các catalog provider thật ở đây.
+//
+// Provider catalog sẽ được mở bằng Stremio Deep Link
+// từ Meta Item của TV / IPTV Hub.
 //
 // =====================================================
 
@@ -133,57 +135,6 @@ const manifest = {
         {
             name: "search",
             isRequired: false
-        }
-    ]
-},
-
-{
-    type: "tv",
-
-    id: "pa_vmttv",
-
-    name: "🔴 VMT TV",
-
-    extra: [
-        {
-            name: "search",
-            isRequired: false
-        },
-
-        {
-            name: "genre",
-
-            isRequired: false,
-
-            options: [
-                "FIFA WORLD CUP 2026",
-                "Sự Kiện",
-                "THỂ THAO QT",
-                "⚽ Thể thao QT",
-                "TVB",
-                "LIVE EVENTS 🔴",
-                "Sự Kiện TV360",
-                "Sự Kiện VTVPrime",
-                "Rạp Phim",
-                "VTV",
-                "VTVcab",
-                "SCTV",
-                "📦 In The Box",
-                "HTV",
-                "HTVC",
-                "🌐 Thiết yếu",
-                "Địa phương",
-                "Quốc Tế",
-                "Radio",
-                "🇻🇳 Vietnam Radio",
-                "🇬🇧 UK Radio",
-                "🇰🇷 Hàn Quốc",
-                "🇨🇳 Trung Quốc",
-                "🇹🇭 Thái Lan",
-                "🇰🇭 Campuchia"
-            ],
-
-            optionsLimit: 1
         }
     ]
 }
@@ -4187,6 +4138,187 @@ if (
    ============================================================ */
 
 builder.defineMetaHandler(async (args) => {
+
+// ========================================================
+// 13.0 MOVINA TV / IPTV PROVIDER META
+// ========================================================
+//
+// Meta Item:
+//
+//     TV / IPTV
+//          ↓
+//       VMT TV
+//
+// ID:
+//
+//     movina-tv:vmttv
+//
+// Meta này không chứa channel.
+//
+// Nó chỉ đóng vai trò Provider Item và cung cấp
+// Deep Link tới catalog thật:
+//
+//     tv / pa_vmttv
+//
+// ========================================================
+
+const movinaTvPrefix =
+    "movina-tv:";
+
+const rawMovinaTvId =
+    String(
+        args.id ||
+        ""
+    ).trim();
+
+if (
+    rawMovinaTvId.startsWith(
+        movinaTvPrefix
+    )
+) {
+
+    const providerId =
+        rawMovinaTvId.slice(
+            movinaTvPrefix.length
+        );
+
+    console.log(
+        "[META] MOVINA TV PROVIDER:",
+        providerId
+    );
+
+    const provider =
+        getMovinaProvider(
+            providerId
+        );
+
+    if (
+        !provider ||
+        provider.category !== "tv" ||
+        !provider.enabled
+    ) {
+
+        console.log(
+            "[META] MOVINA TV PROVIDER NOT FOUND:",
+            providerId
+        );
+
+        return {
+            meta: {
+                id:
+                    rawMovinaTvId,
+
+                type:
+                    "MOVINA",
+
+                name:
+                    "TV Provider",
+
+                poster:
+                    "",
+
+                posterShape:
+                    "square",
+
+                description:
+                    "MOVINA TV / IPTV Provider"
+            }
+        };
+    }
+
+    const catalogId =
+        provider
+            .metadata
+            ?.catalogId;
+
+    if (!catalogId) {
+
+        console.log(
+            "[META] MOVINA TV PROVIDER MISSING CATALOG:",
+            providerId
+        );
+
+        return {
+            meta: {
+                id:
+                    rawMovinaTvId,
+
+                type:
+                    "MOVINA",
+
+                name:
+                    provider.name,
+
+                poster:
+                    provider.iconUrl ||
+                    "",
+
+                posterShape:
+                    "square"
+            }
+        };
+    }
+
+    const addonManifestUrl =
+        "https://my-strem-addon.vercel.app/manifest.json";
+
+    const catalogDeepLink =
+        `stremio:///discover/${encodeURIComponent(
+            addonManifestUrl
+        )}/tv/${encodeURIComponent(
+            catalogId
+        )}`;
+
+    console.log(
+        "[META] MOVINA TV CATALOG:",
+        catalogId
+    );
+
+    console.log(
+        "[META] MOVINA TV DEEP LINK:",
+        catalogDeepLink
+    );
+
+    return {
+
+        meta: {
+
+            id:
+                rawMovinaTvId,
+
+            type:
+                "MOVINA",
+
+            name:
+                provider.name,
+
+            poster:
+                provider.iconUrl ||
+                "",
+
+            posterShape:
+                "square",
+
+            description:
+                `MOVINA TV / IPTV Provider: ${provider.name}`,
+
+            links: [
+
+                {
+                    name:
+                        `Mở ${provider.name}`,
+
+                    category:
+                        "catalog",
+
+                    url:
+                        catalogDeepLink
+                }
+
+            ]
+        }
+    };
+}
 
     console.log(
         "[META] type:",
