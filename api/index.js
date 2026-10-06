@@ -1,35 +1,41 @@
-const { addonBuilder, getRouter } = require('stremio-addon-sdk');
-const axios = require('axios');
-const cheerio = require('cheerio');
-
-const crypto = require('crypto');
-const http2 = require('http2');
-const express = require('express');
-
 const manifest = {
-    id: "community.paproplayer.multisource.v2000",
-    version: "0.1.0",
-    name: "MOVINA",
-    description: "He thong gop nguon truc tiep",
 
-    resources: ["catalog", "meta", "stream"],
+    id:
+        "community.paproplayer.multisource.v2000",
+
+    version:
+        "0.1.0",
+
+    name:
+        "MOVINA",
+
+    description:
+        "He thong gop nguon truc tiep",
+
+    resources: [
+        "catalog",
+        "meta",
+        "stream"
+    ],
 
     types: [
         "movie",
         "series",
+        "tv",
         "MOVINA"
     ],
 
     idPrefixes: [
         "tt",
-        "vnwpsw"
+        "vnwpsw:",
+        "vmttv:"
     ],
 
     catalogs: [
 
-        /* ========================================================
-           MOVINA - PHIM LẺ TRENDING
-           ======================================================== */
+        // =====================================================
+        // VOD
+        // =====================================================
 
         {
             type: "MOVINA",
@@ -43,10 +49,6 @@ const manifest = {
             ]
         },
 
-        /* ========================================================
-           MOVINA - PHIM BỘ TRENDING
-           ======================================================== */
-
         {
             type: "MOVINA",
             id: "pa_series_trending",
@@ -58,10 +60,6 @@ const manifest = {
                 }
             ]
         },
-
-        /* ========================================================
-           MOVINA - TVB
-           ======================================================== */
 
         {
             type: "MOVINA",
@@ -75,10 +73,6 @@ const manifest = {
             ]
         },
 
-        /* ========================================================
-           MOVINA - PHIM TRONG NGÀY
-           ======================================================== */
-
         {
             type: "MOVINA",
             id: "pa_daily",
@@ -91,10 +85,6 @@ const manifest = {
             ]
         },
 
-        /* ========================================================
-           MOVINA - HOẠT HÌNH
-           ======================================================== */
-
         {
             type: "MOVINA",
             id: "pa_animation_new",
@@ -105,12 +95,42 @@ const manifest = {
                     isRequired: false
                 }
             ]
-        }
+        },
 
+        // =====================================================
+        // LIVE TV
+        // =====================================================
+
+        {
+            type: "tv",
+
+            id: "pa_vmttv",
+
+            name: "🔴 VMT TV",
+
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                },
+
+                {
+                    name: "genre",
+                    isRequired: false,
+
+                    options: Object.values(
+                        VMTTV_CATEGORY_MAP
+                    ),
+
+                    optionsLimit: 1
+                }
+            ]
+        }
     ]
 };
 
-const builder = new addonBuilder(manifest);
+const builder =
+    new addonBuilder(manifest);
 
 
 /* ============================================================
@@ -3412,6 +3432,149 @@ builder.defineCatalogHandler(
                 ).trim();
 
             /* ========================================================
+               12.0 VMT TV
+               ======================================================== */
+
+            if (
+                args.id ===
+                "pa_vmttv"
+            ) {
+
+                console.log(
+                    "[CATALOG] Mode: VMT TV"
+                );
+
+                /*
+                   VMT TV sử dụng M3U trực tiếp.
+                   Không cần EPG ở giai đoạn này.
+
+                   Nếu có genre:
+                   Stremio gửi args.extra.genre
+                   và ta lọc theo group-title của M3U.
+                */
+
+                try {
+
+                    const channels =
+                        await fetchVmtTvChannels();
+
+                    console.log(
+                        "[VMTTV CATALOG] Total channels:",
+                        channels.length
+                    );
+
+                    let filteredChannels =
+                        channels;
+
+                    const genre =
+                        String(
+                            args.extra?.genre ||
+                            ""
+                        ).trim();
+
+                    if (
+                        genre
+                    ) {
+
+                        filteredChannels =
+                            channels.filter(
+                                channel =>
+                                    String(
+                                        channel.group ||
+                                        ""
+                                    ).trim() ===
+                                    genre
+                            );
+
+                        console.log(
+                            "[VMTTV CATALOG] Genre:",
+                            genre,
+                            "| Results:",
+                            filteredChannels.length
+                        );
+
+                    }
+
+                    /*
+                       Search riêng cho VMT TV.
+                    */
+
+                    const searchQuery =
+                        String(
+                            args.extra?.search ||
+                            ""
+                        ).trim()
+                        .toLowerCase();
+
+                    if (
+                        searchQuery
+                    ) {
+
+                        filteredChannels =
+                            filteredChannels.filter(
+                                channel =>
+                                    String(
+                                        channel.name ||
+                                        ""
+                                    )
+                                    .toLowerCase()
+                                    .includes(
+                                        searchQuery
+                                    )
+                            );
+
+                        console.log(
+                            "[VMTTV CATALOG] Search:",
+                            searchQuery,
+                            "| Results:",
+                            filteredChannels.length
+                        );
+
+                    }
+
+                    const metas =
+                        filteredChannels
+                            .slice(
+                                0,
+                                CATALOG_TARGET
+                            )
+                            .map(
+                                channel =>
+                                    makeVmtTvCatalogMeta(
+                                        channel
+                                    )
+                            )
+                            .filter(
+                                meta =>
+                                    meta?.id &&
+                                    meta?.name
+                            );
+
+                    console.log(
+                        "[VMTTV CATALOG] Metas:",
+                        metas.length
+                    );
+
+                    return {
+                        metas
+                    };
+
+                } catch (e) {
+
+                    console.error(
+                        "[VMTTV CATALOG ERROR]",
+                        e?.message ||
+                        e
+                    );
+
+                    return {
+                        metas: []
+                    };
+
+                }
+            }
+
+            /* ========================================================
                12.1 MOVIE TRENDING
                ======================================================== */
 
@@ -3845,6 +4008,91 @@ builder.defineMetaHandler(async (args) => {
 
         if (!rawId) {
             return { meta: null };
+        }
+
+        // =====================================================
+        // 13.0. VMT TV META
+        // =====================================================
+
+        if (
+            rawId.startsWith("vmttv:") &&
+            String(args.type || "").trim() === "tv"
+        ) {
+
+            console.log(
+                "[META] VMT TV channel:",
+                rawId
+            );
+
+            try {
+
+                const channelId =
+                    decodeVmtTvStremioId(
+                        rawId
+                    );
+
+                if (!channelId) {
+
+                    console.log(
+                        "[VMTTV META] Empty channel ID"
+                    );
+
+                    return {
+                        meta: null
+                    };
+
+                }
+
+                const channels =
+                    await fetchVmtTvChannels();
+
+                const channel =
+                    vmtTvFindChannelById(
+                        channels,
+                        channelId
+                    );
+
+                if (!channel) {
+
+                    console.log(
+                        "[VMTTV META] Channel not found:",
+                        channelId
+                    );
+
+                    return {
+                        meta: null
+                    };
+
+                }
+
+                const meta =
+                    makeVmtTvMeta(
+                        channel
+                    );
+
+                console.log(
+                    "[VMTTV META] OK:",
+                    meta?.name ||
+                    channel.name
+                );
+
+                return {
+                    meta
+                };
+
+            } catch (e) {
+
+                console.error(
+                    "[VMTTV META ERROR]",
+                    e?.message ||
+                    e
+                );
+
+                return {
+                    meta: null
+                };
+
+            }
         }
 
         // =====================================================
@@ -9256,6 +9504,326 @@ console.log(
     "[VMTTV] LIVE PROVIDER READY:",
     VMTTV_PROVIDER.id,
     VMTTV_PROVIDER.name
+);
+
+// ============================================================
+// VMT TV → STREMIO TV ADAPTER
+// ============================================================
+//
+// VMT TV Provider vẫn giữ nguyên contract LIVE.
+// Block này chỉ chuyển LIVE Provider → Stremio.
+//
+// Pipeline:
+//
+// VMTTV_PROVIDER
+//      ↓
+// M3U
+//      ↓
+// LIVE ITEM
+//      ↓
+// NORMALIZED LIVE STREAM
+//      ↓
+// STREMIO tv
+//
+// ============================================================
+
+
+async function fetchVmtTvChannels() {
+
+    try {
+
+        const response =
+            await axios.get(
+                VMTTV_M3U_URL,
+                {
+                    timeout: 15000,
+
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0",
+
+                        "Accept":
+                            "*/*"
+                    }
+                }
+            );
+
+        return vmtTvParseM3U(
+            response.data
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[VMTTV STREMIO] M3U ERROR:",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+        return [];
+    }
+}
+
+
+// ============================================================
+// VMT TV CHANNEL ID
+// ============================================================
+//
+// Stremio ID:
+//
+//     vmttv:<encoded-channel-id>
+//
+// Ví dụ:
+//
+//     vmttv:TVB%3A%3ATVB%20Jade%3A%3A12
+//
+// ============================================================
+
+function makeVmtTvStremioId(channelId) {
+
+    return (
+        "vmttv:" +
+        encodeURIComponent(
+            String(
+                channelId || ""
+            )
+        )
+    );
+}
+
+
+function decodeVmtTvStremioId(id) {
+
+    const raw =
+        String(id || "")
+            .trim();
+
+    if (
+        !raw.startsWith("vmttv:")
+    ) {
+        return "";
+    }
+
+    try {
+
+        return decodeURIComponent(
+            raw.substring(
+                "vmttv:".length
+            )
+        );
+
+    } catch (e) {
+
+        return raw.substring(
+            "vmttv:".length
+        );
+    }
+}
+
+
+// ============================================================
+// VMT TV → STREMIO META PREVIEW
+// ============================================================
+
+function makeVmtTvCatalogMeta(channel) {
+
+    if (!channel) {
+        return null;
+    }
+
+    const channelId =
+        vmtTvMakeChannelId(
+            channel
+        );
+
+    const title =
+        String(
+            channel.name ||
+            "VMT TV"
+        ).trim();
+
+    const poster =
+        String(
+            channel.logo ||
+            ""
+        ).trim();
+
+    const category =
+        String(
+            channel.group ||
+            "LIVE"
+        ).trim();
+
+    return {
+
+        id:
+            makeVmtTvStremioId(
+                channelId
+            ),
+
+        type:
+            "tv",
+
+        name:
+            title,
+
+        poster:
+            poster,
+
+        posterShape:
+            "square",
+
+        description:
+            "🔴 LIVE • " +
+            category,
+
+        genres: [
+            category
+        ],
+
+        releaseInfo:
+            "LIVE",
+
+        behaviorHints: {
+            isLive: true
+        }
+    };
+}
+
+
+// ============================================================
+// VMT TV → STREMIO FULL META
+// ============================================================
+
+function makeVmtTvMeta(channel) {
+
+    const preview =
+        makeVmtTvCatalogMeta(
+            channel
+        );
+
+    if (!preview) {
+        return null;
+    }
+
+    return {
+
+        ...preview,
+
+        background:
+            channel.logo ||
+            "",
+
+        logo:
+            channel.logo ||
+            "",
+
+        country:
+            "",
+
+        language:
+            "",
+
+        videos: [
+            {
+                id:
+                    preview.id,
+
+                title:
+                    channel.name,
+
+                released:
+                    new Date().toISOString(),
+
+                thumbnail:
+                    channel.logo ||
+                    "",
+
+                available:
+                    true
+            }
+        ]
+    };
+}
+
+
+// ============================================================
+// VMT TV → NORMALIZED STREAM
+// ============================================================
+
+async function resolveVmtTvChannel(
+    channelId
+) {
+
+    const channels =
+        await fetchVmtTvChannels();
+
+    const channel =
+        vmtTvFindChannelById(
+            channels,
+            channelId
+        );
+
+    if (!channel) {
+
+        console.log(
+            "[VMTTV STREMIO] CHANNEL NOT FOUND:",
+            channelId
+        );
+
+        return [];
+    }
+
+    if (!channel.url) {
+
+        console.log(
+            "[VMTTV STREMIO] CHANNEL HAS NO URL:",
+            channel.name
+        );
+
+        return [];
+    }
+
+    const rawStream = {
+
+        url:
+            channel.url,
+
+        headers:
+            channel.userAgent
+                ? {
+                    "User-Agent":
+                        channel.userAgent
+                }
+                : {},
+
+        title:
+            channel.name,
+
+        type:
+            "LIVE"
+    };
+
+
+    const normalized =
+        normalizeLiveStream(
+            rawStream,
+            "vmttv"
+        );
+
+    if (!normalized) {
+        return [];
+    }
+
+    return [
+        normalized
+    ];
+}
+
+
+console.log(
+    "[VMTTV STREMIO ADAPTER] READY"
 );
 
 // =====================================================
@@ -20844,6 +21412,78 @@ builder.defineStreamHandler(async (args) => {
             streams: []
         };
     }
+    
+            // =====================================================
+        // VMT TV LIVE STREAM
+        // =====================================================
+
+        if (
+            streamType === "tv" &&
+            rawId.startsWith("vmttv:")
+        ) {
+
+            console.log(
+                "[STREAM] VMT TV request:",
+                rawId
+            );
+
+            try {
+
+                const channelId =
+                    decodeVmtTvStremioId(
+                        rawId
+                    );
+
+                if (!channelId) {
+
+                    console.log(
+                        "[VMTTV STREAM] Empty channel ID"
+                    );
+
+                    return {
+                        streams: []
+                    };
+
+                }
+
+                const liveStreams =
+                    await resolveVmtTvChannel(
+                        channelId
+                    );
+
+                const streams =
+                    normalizedStreamsToStremio(
+                        liveStreams
+                    );
+
+                console.log(
+                    "[VMTTV STREAM] Channel:",
+                    channelId
+                );
+
+                console.log(
+                    "[VMTTV STREAM] Streams:",
+                    streams.length
+                );
+
+                return {
+                    streams
+                };
+
+            } catch (e) {
+
+                console.error(
+                    "[VMTTV STREAM ERROR]",
+                    e?.message ||
+                    e
+                );
+
+                return {
+                    streams: []
+                };
+
+            }
+        }
 
     // =====================================================
     // 2. XÁC ĐỊNH TÊN + NĂM + SEASON + EPISODE
