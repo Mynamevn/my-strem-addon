@@ -8488,16 +8488,6 @@ function logMovinaProviderRegistry() {
 }
 
 // ============================================================
-// bn-11. DEBUG MOVINA PROVIDER REGISTRY
-// ============================================================
-//
-// Kiểm tra Registry trung tâm sau khi VMT TV được đăng ký.
-//
-// ============================================================
-
-logMovinaProviderRegistry();
-
-// ============================================================
 // LIVE PROVIDER CONTRACT
 // ============================================================
 //
@@ -10074,6 +10064,16 @@ console.log(
     MOVINA_VMTTV_PROVIDER.id,
     MOVINA_VMTTV_PROVIDER.category
 );
+
+// ============================================================
+// bn-12. DEBUG MOVINA PROVIDER REGISTRY
+// ============================================================
+//
+// Kiểm tra Registry trung tâm sau khi VMT TV được đăng ký.
+//
+// ============================================================
+
+logMovinaProviderRegistry();
 
 // ============================================================
 // VMT TV → STREMIO TV ADAPTER
