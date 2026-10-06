@@ -1,3 +1,11 @@
+const { addonBuilder, getRouter } = require('stremio-addon-sdk');
+const axios = require('axios');
+const cheerio = require('cheerio');
+
+const crypto = require('crypto');
+const http2 = require('http2');
+const express = require('express');
+
 const manifest = {
 
     id:
