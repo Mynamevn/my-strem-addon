@@ -110,11 +110,11 @@ const manifest = {
         // =====================================================
 
         {
-            type: "tv",
+    type: "MOVINA",
 
-            id: "pa_vmttv",
+    id: "pa_vmttv",
 
-            name: "🔴 VMT TV",
+    name: "🔴 VMT TV",
 
             extra: [
                 {
@@ -8496,7 +8496,7 @@ function logMovinaProviderRegistry() {
 }
 
 // ============================================================
-// LIVE PROVIDER CONTRACT
+// BL-LIVE PROVIDER CONTRACT
 // ============================================================
 //
 // Mục tiêu:
@@ -8522,7 +8522,7 @@ function logMovinaProviderRegistry() {
 const LIVE_PROVIDER_REGISTRY = new Map();
 
 // ============================================================
-// 1. LIVE PROVIDER CONTRACT
+// bn-1. LIVE PROVIDER CONTRACT
 // ============================================================
 
 function createLiveProvider(provider) {
@@ -8641,7 +8641,7 @@ function createLiveProvider(provider) {
 
 
 // ============================================================
-// 2. REGISTER LIVE PROVIDER
+// bn-2. REGISTER LIVE PROVIDER
 // ============================================================
 
 function registerLiveProvider(provider) {
@@ -8671,7 +8671,7 @@ function registerLiveProvider(provider) {
 
 
 // ============================================================
-// 3. GET LIVE PROVIDER
+// bn-3. GET LIVE PROVIDER
 // ============================================================
 
 function getLiveProvider(providerId) {
@@ -8692,7 +8692,7 @@ function getLiveProvider(providerId) {
 
 
 // ============================================================
-// 4. GET ALL LIVE PROVIDERS
+// bn-4. GET ALL LIVE PROVIDERS
 // ============================================================
 
 function getAllLiveProviders() {
@@ -8704,7 +8704,7 @@ function getAllLiveProviders() {
 
 
 // ============================================================
-// 5. NORMALIZED LIVE ITEM
+// bn-5. NORMALIZED LIVE ITEM
 // ============================================================
 //
 // Mọi provider LIVE cuối cùng nên đưa dữ liệu về dạng này:
@@ -8821,7 +8821,7 @@ function normalizeLiveItem(item, providerId) {
 
 
 // ============================================================
-// 6. NORMALIZED LIVE STREAM
+// bn-6. NORMALIZED LIVE STREAM
 // ============================================================
 //
 // Đây là format chung mà Stremio Adapter sẽ nhận.
@@ -8911,7 +8911,7 @@ function normalizeLiveStream(stream, providerId) {
 
 
 // ============================================================
-// 7. LIVE PROVIDER → NORMALIZED ITEMS
+// bn-7. LIVE PROVIDER → NORMALIZED ITEMS
 // ============================================================
 
 function normalizeLiveItems(items, providerId) {
@@ -8932,7 +8932,7 @@ function normalizeLiveItems(items, providerId) {
 
 
 // ============================================================
-// 8. LIVE PROVIDER → NORMALIZED STREAMS
+// bn-8. LIVE PROVIDER → NORMALIZED STREAMS
 // ============================================================
 
 function normalizeLiveStreams(streams, providerId) {
@@ -8953,7 +8953,7 @@ function normalizeLiveStreams(streams, providerId) {
 
 
 // ============================================================
-// 9. LIVE PROVIDER STATUS
+// bn-9. LIVE PROVIDER STATUS
 // ============================================================
 
 function getLiveProviderInfo(providerId) {
@@ -8981,7 +8981,7 @@ function getLiveProviderInfo(providerId) {
 
 
 // ============================================================
-// 10. DEBUG REGISTRY
+// bn-10. DEBUG REGISTRY
 // ============================================================
 
 function logLiveProviderRegistry() {
@@ -9006,7 +9006,7 @@ function logLiveProviderRegistry() {
 }
 
 // ============================================================
-// 11. VMT TV - LIVE PROVIDER
+// bn-11. VMT TV - LIVE PROVIDER
 // ============================================================
 //
 // VMT TV là LIVE provider đầu tiên của MOVINA.
@@ -9021,7 +9021,7 @@ function logLiveProviderRegistry() {
 
 
 // ============================================================
-// 11.1. VMT TV - MANIFEST
+// bn-11.1. VMT TV - MANIFEST
 // ============================================================
 
 const VMTTV_M3U_URL =
@@ -9056,7 +9056,7 @@ function vmtTvGetManifest() {
 
 
 // ============================================================
-// 11.2. VMT TV - HOME
+// bn-11.2. VMT TV - HOME
 // ============================================================
 
 function vmtTvGetHomeSections() {
@@ -9078,7 +9078,7 @@ function vmtTvGetHomeSections() {
 
 
 // ============================================================
-// 11.3. VMT TV - CATEGORIES
+// bn-11.3. VMT TV - CATEGORIES
 // ============================================================
 
 function vmtTvGetPrimaryCategories() {
@@ -9122,7 +9122,7 @@ function vmtTvGetFilterConfig() {
 
 
 // ============================================================
-// 11.4. VMT TV - CATEGORY MAP
+// bn-11.4. VMT TV - CATEGORY MAP
 // ============================================================
 //
 // IMPORTANT:
@@ -9213,7 +9213,7 @@ const VMTTV_CATEGORY_MAP = {
 
 
 // ============================================================
-// 11.5. VMT TV - URL BUILDERS
+// bn-11.5. VMT TV - URL BUILDERS
 // ============================================================
 
 function vmtTvGetUrlList(slug, filtersJson) {
@@ -9281,7 +9281,7 @@ function vmtTvGetUrlYears() {
 
 
 // ============================================================
-// 11.6. VMT TV - M3U PARSER
+// bn-11.6. VMT TV - M3U PARSER
 // ============================================================
 
 function vmtTvParseM3U(text) {
@@ -9446,7 +9446,7 @@ function vmtTvParseM3U(text) {
 
 
 // ============================================================
-// 11.7. VMT TV - CHANNEL ID
+// bn-11.7. VMT TV - CHANNEL ID
 // ============================================================
 
 function vmtTvMakeChannelId(channel) {
@@ -9498,7 +9498,7 @@ function vmtTvFindChannelById(
 
 
 // ============================================================
-// 11.8. VMT TV - LIST RESPONSE
+// bn-11.8. VMT TV - LIST RESPONSE
 // ============================================================
 
 function vmtTvParseListResponse(
@@ -9624,7 +9624,7 @@ function vmtTvParseListResponse(
 
 
 // ============================================================
-// 11.9. VMT TV - SEARCH RESPONSE
+// bn-11.9. VMT TV - SEARCH RESPONSE
 // ============================================================
 
 function vmtTvParseSearchResponse(
@@ -9640,7 +9640,7 @@ function vmtTvParseSearchResponse(
 
 
 // ============================================================
-// 11.10. VMT TV - DETAIL RESPONSE
+// bn-11.10. VMT TV - DETAIL RESPONSE
 // ============================================================
 
 function vmtTvParseMovieDetail(
@@ -9819,7 +9819,7 @@ function vmtTvParseMovieDetail(
 
 
 // ============================================================
-// 11.11. VMT TV - STREAM DETAIL
+// bn-11.11. VMT TV - STREAM DETAIL
 // ============================================================
 
 function vmtTvParseDetailResponse(
@@ -9897,7 +9897,7 @@ function vmtTvParseDetailResponse(
 
 
 // ============================================================
-// 11.12. VMT TV - OPTIONAL PARSERS
+// bn-11.12. VMT TV - OPTIONAL PARSERS
 // ============================================================
 
 function vmtTvParseCategoriesResponse() {
@@ -9927,7 +9927,7 @@ function vmtTvParseYearsResponse() {
 
 
 // ============================================================
-// 11.13. REGISTER VMT TV
+// bn-11.13. REGISTER VMT TV
 // ============================================================
 
 const VMTTV_PROVIDER =
