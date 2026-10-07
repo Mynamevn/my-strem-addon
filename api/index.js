@@ -10808,46 +10808,41 @@ function makeVmtTvMeta(channel) {
             channel
         );
 
+
     if (!preview) {
         return null;
     }
+
 
     return {
 
         ...preview,
 
+
         background:
             channel.logo ||
             "",
+
 
         logo:
             channel.logo ||
             "",
 
+
         country:
             "",
+
 
         language:
             "",
 
-        // ========================================================
+
+        // ====================================================
         // NAVIGATION
-        // ========================================================
-        //
-        // Kênh thật vẫn phát bình thường.
-        //
-        // Nhưng trên Meta của kênh, thêm một link để người dùng
-        // có thể quay trực tiếp về danh sách GROUP của VMT TV.
-        //
-        //     VTV1
-        //       ↓
-        //     ↩️ Về danh sách nhóm
-        //       ↓
-        //     VTV / HTV / TVB / ...
-        //
-        // ========================================================
+        // ====================================================
 
         links: [
+
             ...(Array.isArray(preview.links)
                 ? preview.links
                 : []),
@@ -10869,7 +10864,13 @@ function makeVmtTvMeta(channel) {
             }
         ],
 
+
+        // ====================================================
+        // VIDEO PREVIEW
+        // ====================================================
+
         videos: [
+
             {
                 id:
                     preview.id,
