@@ -34,12 +34,12 @@ const manifest = {
     ],
 
     idPrefixes: [
-    "tt",
-    "vnwpsw:",
-    "vmttv:",
-    "movina-tv:",
-    "vmttv-group:"
-],
+        "tt",
+        "vnwpsw:",
+        "vmttv:",
+        "movina-tv:",
+        "vmttv-group:"
+    ],
 
     catalogs: [
 
@@ -107,62 +107,97 @@ const manifest = {
             ]
         },
 
-      // =====================================================
-// TV / IPTV HUB
-// =====================================================
-//
-// `pa_tv` là catalog MOVINA duy nhất cho TV / IPTV.
-//
-// Provider thật được lấy từ:
-//     MOVINA_PROVIDER_REGISTRY
-//
-// Ví dụ:
-//
-//     vmttv  → VMT TV
-//     iptv_a → IPTV A
-//     iptv_b → IPTV B
-//
-// Không expose provider TV thành `type: "tv"` catalog riêng.
-// Như vậy Stremio không tự gom chúng vào "TV Channels".
-//
-// =====================================================
-
-{
-    type: "MOVINA",
-
-    id: "pa_tv",
-
-    name: "📺 TV / IPTV",
-
-    extra: [
+        // =====================================================
+        // TV / IPTV ROOT
+        // =====================================================
 
         {
-            name: "provider",
+            type: "MOVINA",
 
-            isRequired: false,
+            id: "pa_tv",
 
-            options: [
-                "vmttv"
-            ],
+            name: "📺 TV / IPTV",
 
-            optionsLimit: 1
+            extra: [
+
+                {
+                    name: "provider",
+
+                    isRequired: false,
+
+                    options: [
+                        "vmttv"
+                    ],
+
+                    optionsLimit: 1
+                },
+
+                {
+                    name: "search",
+
+                    isRequired: false
+                }
+            ]
         },
 
+        // =====================================================
+        // TV / IPTV CHANNEL VIEW
+        // =====================================================
+        //
+        // Catalog phụ.
+        //
+        // KHÔNG dùng làm catalog Board chính.
+        //
+        // Dùng để mở:
+        //
+        //     Provider
+        //          ↓
+        //        Group
+        //          ↓
+        //     pa_tv_channels
+        //          ↓
+        //       Channels
+        //
+        // Genre được truyền vào đây để lọc channel.
+        //
+        // =====================================================
+
         {
-            name: "genre",
+            type: "MOVINA",
 
-            isRequired: false,
+            id: "pa_tv_channels",
 
-            optionsLimit: 1
-        },
+            name: "📺 TV Channels",
 
-        {
-            name: "search",
+            extra: [
 
-            isRequired: false
+                {
+                    name: "provider",
+
+                    isRequired: true,
+
+                    options: [
+                        "vmttv"
+                    ],
+
+                    optionsLimit: 1
+                },
+
+                {
+                    name: "genre",
+
+                    isRequired: true,
+
+                    optionsLimit: 1
+                },
+
+                {
+                    name: "search",
+
+                    isRequired: false
+                }
+            ]
         }
-    ]
-}
 
     ]
 
