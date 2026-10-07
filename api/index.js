@@ -34,10 +34,12 @@ const manifest = {
     ],
 
     idPrefixes: [
-        "tt",
-        "vnwpsw:",
-        "vmttv:"
-    ],
+    "tt",
+    "vnwpsw:",
+    "vmttv:",
+    "movina-tv:",
+    "vmttv-group:"
+],
 
     catalogs: [
 
@@ -47,11 +49,8 @@ const manifest = {
 
         {
             type: "MOVINA",
-
             id: "pa_movies_trending",
-
             name: "Phim lẻ - Trending",
-
             extra: [
                 {
                     name: "search",
@@ -62,11 +61,8 @@ const manifest = {
 
         {
             type: "MOVINA",
-
             id: "pa_series_trending",
-
             name: "Phim bộ - Trending",
-
             extra: [
                 {
                     name: "search",
@@ -77,11 +73,8 @@ const manifest = {
 
         {
             type: "MOVINA",
-
             id: "pa_tvb",
-
             name: "🇭🇰 TVB",
-
             extra: [
                 {
                     name: "search",
@@ -92,11 +85,8 @@ const manifest = {
 
         {
             type: "MOVINA",
-
             id: "pa_daily",
-
             name: "⭐ Phim trong ngày",
-
             extra: [
                 {
                     name: "search",
@@ -107,11 +97,8 @@ const manifest = {
 
         {
             type: "MOVINA",
-
             id: "pa_animation_new",
-
             name: "🐼 Hoạt hình - New",
-
             extra: [
                 {
                     name: "search",
@@ -120,47 +107,65 @@ const manifest = {
             ]
         },
 
-        // =====================================================
-        // NATIVE TV CHANNELS
-        // =====================================================
-        //
-        // VMT TV không còn là:
-        //
-        //     MOVINA → TV / IPTV → Provider → Group
-        //
-        // mà trở thành Native TV Channels:
-        //
-        //     TV Channels → Group Filter → Channel
-        //
-        // Group được lấy từ `channel.group`.
-        //
-        // =====================================================
+      // =====================================================
+// TV / IPTV HUB
+// =====================================================
+//
+// `pa_tv` là catalog MOVINA duy nhất cho TV / IPTV.
+//
+// Provider thật được lấy từ:
+//     MOVINA_PROVIDER_REGISTRY
+//
+// Ví dụ:
+//
+//     vmttv  → VMT TV
+//     iptv_a → IPTV A
+//     iptv_b → IPTV B
+//
+// Không expose provider TV thành `type: "tv"` catalog riêng.
+// Như vậy Stremio không tự gom chúng vào "TV Channels".
+//
+// =====================================================
+
+{
+    type: "MOVINA",
+
+    id: "pa_tv",
+
+    name: "📺 TV / IPTV",
+
+    extra: [
 
         {
-            type: "tv",
+            name: "provider",
 
-            id: "tv_channels",
+            isRequired: false,
 
-            name: "📺 TV Channels",
+            options: [
+                "vmttv"
+            ],
 
-            extra: [
+            optionsLimit: 1
+        },
 
-                {
-                    name: "genre",
+        {
+            name: "genre",
 
-                    isRequired: false,
+            isRequired: false,
 
-                    optionsLimit: 1
-                },
+            optionsLimit: 1
+        },
 
-                {
-                    name: "search",
+        {
+            name: "search",
 
-                    isRequired: false
-                }
-            ]
+            isRequired: false
         }
     ]
+}
+
+    ]
+
 };
 
 const builder =
@@ -3466,212 +3471,344 @@ builder.defineCatalogHandler(
                 ).trim();
 
 /* ============================================================
-   BL-12.0 NATIVE TV CHANNELS
+   12.0 MOVINA TV / IPTV HUB
    ============================================================
 //
 // MOVINA
+//    └── TV / IPTV
+//          └── Provider
+//                └── Group
+//                      └── Channel
 //
-//     📺 TV Channels
-//          ↓
-//       Group Filter
-//          ↓
-//       Channel
-//          ↓
-//        Stream
+// Provider được xác định bằng:
 //
-// Không còn:
+//     args.extra.provider
 //
-//     Provider → Meta → Group → Meta → Channel
+// Ví dụ:
 //
-// VMT TV hiện là nguồn channel native.
-// Group được xử lý bằng catalog genre filter.
+//     pa_tv?provider=vmttv
 //
 // ============================================================ */
 
 if (
-    args.id === "tv_channels" &&
-    String(args.type || "").trim() === "tv"
+    args.id === "pa_tv"
 ) {
 
-    const requestedGenre =
+    const providerId =
         String(
-            args.extra?.genre ||
+            args.extra?.provider ||
             ""
         ).trim();
 
-    const searchQuery =
-        String(
-            args.extra?.search ||
-            ""
-        ).trim()
-        .toLowerCase();
+    const provider =
+        providerId
+            ? getMovinaProvider(providerId)
+            : null;
+
 
     console.log(
-        "[NATIVE TV]",
-        "genre:",
-        requestedGenre || "(ALL)",
-        "| search:",
-        searchQuery || "(none)"
+        "[MOVINA TV HUB]",
+        "provider:",
+        providerId || "(hub)"
     );
 
-    try {
 
-        const channels =
-            await fetchVmtTvChannels();
+    // ========================================================
+    // 12.0.1 MOVINA TV PROVIDER HUB
+    // ========================================================
 
-        let filteredChannels =
-            channels;
-
-        // =====================================================
-        // bn-12.1 GROUP FILTER
-        // =====================================================
-
-        if (
-            requestedGenre
-        ) {
-
-            filteredChannels =
-                filteredChannels.filter(
-                    channel =>
-                        String(
-                            channel.group ||
-                            ""
-                        ).trim() ===
-                        requestedGenre
-                );
-        }
-
-        // =====================================================
-        // bn-12.2 SEARCH FILTER
-        // =====================================================
-
-        if (
-            searchQuery
-        ) {
-
-            filteredChannels =
-                filteredChannels.filter(
-                    channel => {
-
-                        const name =
-                            String(
-                                channel.name ||
-                                ""
-                            ).toLowerCase();
-
-                        const id =
-                            String(
-                                channel.id ||
-                                ""
-                            ).toLowerCase();
-
-                        return (
-                            name.includes(
-                                searchQuery
-                            ) ||
-                            id.includes(
-                                searchQuery
-                            )
-                        );
-                    }
-                );
-        }
+    if (
+        provider &&
+        provider.enabled &&
+        provider.category === "tv"
+    ) {
 
         console.log(
-            "[NATIVE TV] Channels:",
-            filteredChannels.length
+            "[MOVINA TV HUB] PROVIDER:",
+            provider.id,
+            provider.name
         );
 
-        // =====================================================
-        // bn-12.3 CHANNEL META PREVIEW
-        // =====================================================
 
-        const metas =
-            filteredChannels.map(
-                channel => {
+        // ====================================================
+        // VMT TV
+        // ====================================================
 
-                    const channelId =
-                        String(
-                            channel.id ||
-                            channel.tvgId ||
-                            channel.name ||
-                            ""
-                        ).trim();
+        if (
+            provider.id === "vmttv"
+        ) {
 
-                    return {
+            const vmttvGenre =
+                String(
+                    args.extra?.genre ||
+                    ""
+                ).trim();
 
-                        id:
-                            makeVmtTvStremioId(
-                                channelId
-                            ),
 
-                        type:
-                            "tv",
+            // ==================================================
+// VMT TV GROUP HUB
+// ==================================================
+//
+// Khi chỉ có:
+//
+//     provider=vmttv
+//
+// hoặc:
+//
+//     provider=vmttv&genre=__VMTTV_HUB__
+//
+// đều phải mở GROUP HUB.
+//
+// Không được trả channel list ở bước này.
+//
+// ==================================================
 
-                        name:
-                            String(
-                                channel.name ||
-                                channelId
-                            ).trim(),
+if (
+    !vmttvGenre ||
+    vmttvGenre === "__VMTTV_HUB__"
+) {
 
-                        poster:
-                            String(
-                                channel.logo ||
-                                MOVINA_VMTTV_PROVIDER.iconUrl ||
-                                ""
-                            ).trim(),
+                const channels =
+                    await fetchVmtTvChannels();
 
-                        posterShape:
-                            "square",
 
-                        description:
-                            String(
-                                channel.group ||
-                                "VMT TV"
-                            ).trim(),
+                const groups =
+                    Array.from(
+                        new Set(
+                            channels
+                                .map(
+                                    channel =>
+                                        String(
+                                            channel.group ||
+                                            ""
+                                        ).trim()
+                                )
+                                .filter(Boolean)
+                        )
+                    );
 
-                        genres:
-                            channel.group
-                                ? [
-                                    String(
-                                        channel.group
-                                    ).trim()
-                                ]
-                                : [
-                                    "TV"
+
+                console.log(
+                    "[VMTTV GROUP HUB] Groups:",
+                    groups.length
+                );
+
+
+                const metas =
+                    groups.map(
+                        group => {
+
+                            const groupChannels =
+                                channels.filter(
+                                    channel =>
+                                        String(
+                                            channel.group ||
+                                            ""
+                                        ).trim() === group
+                                );
+
+
+                            const firstChannel =
+                                groupChannels[0];
+
+
+                            const poster =
+                                String(
+                                    firstChannel?.logo ||
+                                    provider.iconUrl ||
+                                    ""
+                                ).trim();
+
+
+                            return {
+
+                                id:
+                                    "vmttv-group:" +
+                                    encodeURIComponent(
+                                        group
+                                    ),
+
+                                type:
+                                    "tv",
+
+                                name:
+                                    "📺 " + group,
+
+                                poster,
+
+                                posterShape:
+                                    "square",
+
+                                description:
+                                    `${groupChannels.length} kênh`,
+
+                                genres: [
+                                    group
                                 ],
 
-                        releaseInfo:
-                            "LIVE",
+                                releaseInfo:
+                                    "LIVE",
 
-                        behaviorHints: {
-                            isLive: true
+                                behaviorHints: {
+                                    isLive: true
+                                },
+
+                                links: [
+
+                                    {
+                                        name:
+                                            "▶️ MỞ " +
+                                            group,
+
+                                        category:
+                                            "catalog",
+
+                                        url:
+                                            "stremio:///discover/" +
+                                            encodeURIComponent(
+                                                "https://my-strem-addon.vercel.app/manifest.json"
+                                            ) +
+                                            "/MOVINA/pa_tv?" +
+                                            "provider=vmttv" +
+                                            "&genre=" +
+                                            encodeURIComponent(
+                                                group
+                                            )
+                                    }
+
+                                ]
+                            };
                         }
-                    };
-                }
-            );
+                    );
 
-        return {
-            metas
-        };
 
-    } catch (e) {
+                return {
+                    metas
+                };
+            }
 
-        console.error(
-            "[NATIVE TV ERROR]",
-            e?.message ||
-            e
+
+            // ==================================================
+            // VMT TV — GROUP / GENRE
+            // ==================================================
+
+            if (
+                vmttvGenre
+            ) {
+
+                const channels =
+                    await fetchVmtTvChannels();
+
+
+                const filteredChannels =
+                    channels.filter(
+                        channel =>
+                            String(
+                                channel.group ||
+                                ""
+                            ).trim() ===
+                            vmttvGenre
+                    );
+
+
+                console.log(
+                    "[VMTTV GROUP]",
+                    vmttvGenre,
+                    "Channels:",
+                    filteredChannels.length
+                );
+
+
+                const metas =
+                    filteredChannels.map(
+                        channel =>
+                            makeVmtTvCatalogMeta(
+                                channel
+                            )
+                    );
+
+
+                return {
+                    metas
+                };
+            }
+        }
+    }
+
+
+    // ========================================================
+    // MOVINA TV ROOT
+    // ========================================================
+    //
+    // Không có provider:
+    //
+    //     pa_tv
+    //
+    // → hiển thị các TV providers từ Registry.
+    //
+    // ========================================================
+
+    const tvProviders =
+        getMovinaProvidersByCategory(
+            "tv"
+        )
+        .filter(
+            provider =>
+                provider.enabled
         );
 
-        return {
-            metas: []
-        };
-    }
+
+    const metas =
+        tvProviders.map(
+            provider => ({
+
+                id:
+    "movina-tv:" +
+    encodeURIComponent(
+        provider.id
+    ),
+
+                type:
+                    "tv",
+
+                name:
+                    "🔴 " +
+                    provider.name,
+
+                poster:
+                    provider.iconUrl ||
+                    "",
+
+                posterShape:
+                    "square",
+
+                description:
+                    "MOVINA TV / IPTV Provider: " +
+                    provider.name,
+
+                releaseInfo:
+                    "LIVE TV",
+
+                genres: [
+                    "LIVE TV",
+                    "IPTV"
+                ],
+
+                behaviorHints: {
+                    isLive: true
+                }
+            })
+        );
+
+
+    return {
+        metas
+    };
 }
 
-/* ============================================================
-   BL-12.3 MOVIE TRENDING
-   ============================================================ */
+            /* ========================================================
+               12.1 MOVIE TRENDING
+               ======================================================== */
 
             if (
                 args.id ===
@@ -4093,25 +4230,18 @@ builder.defineMetaHandler(async (args) => {
 // BL-13.0. VMT TV PROVIDER META
 // ============================================================
 //
-// Click:
+// VMT TV là provider thuộc:
+//     MOVINA_PROVIDER_REGISTRY
 //
-//     🔴 VMT TV
+// Provider Meta ID:
+//     movina-tv:vmttv
 //
-// → mở Provider Detail.
+// Channel Meta ID:
+//     vmttv:<channelId>
 //
-// Provider Detail hiển thị trực tiếp các GROUP.
-//
-// Không còn:
-//
-//     [▶️ MỞ VMT TV]
-//
-// Navigation:
-//
-//     VMT TV
-//        ↓
-//     Group
-//        ↓
-//     Channel
+// Hai loại ID này phải tách riêng:
+//     movina-tv:vmttv  → Provider
+//     vmttv:sctv1hd    → Channel thật
 //
 // ============================================================
 
@@ -4148,8 +4278,29 @@ const MOVINA_VMTTV_META = {
         isLive: true
     },
 
-    links: []
+    links: [
 
+        {
+            name:
+                "▶️ MỞ VMT TV — CHỌN NHÓM KÊNH",
+
+            category:
+                "catalog",
+
+            url:
+                "stremio:///discover/" +
+                encodeURIComponent(
+                    "https://my-strem-addon.vercel.app/manifest.json"
+                ) +
+                "/MOVINA/pa_tv?" +
+                "provider=vmttv" +
+                "&genre=" +
+                encodeURIComponent(
+                    "__VMTTV_HUB__"
+                )
+        }
+
+    ]
 };
 
     console.log(
@@ -4190,6 +4341,215 @@ const MOVINA_VMTTV_META = {
 //
 // =====================================================
 
+// -----------------------------------------------------
+// bn-13.1A. MOVINA TV PROVIDER META
+// -----------------------------------------------------
+
+if (
+    rawId.startsWith("movina-tv:") &&
+    String(args.type || "").trim() === "tv"
+) {
+
+    console.log(
+        "[META] MOVINA TV PROVIDER:",
+        rawId
+    );
+
+    const providerId =
+        rawId.substring(
+            "movina-tv:".length
+        ).trim();
+
+    if (
+        providerId === "vmttv"
+    ) {
+
+        console.log(
+            "[META] VMT TV PROVIDER META"
+        );
+
+        return {
+            meta:
+                MOVINA_VMTTV_META
+        };
+
+    }
+
+    console.log(
+        "[META] Unknown MOVINA TV provider:",
+        providerId
+    );
+
+    return {
+        meta: null
+    };
+}
+
+// -----------------------------------------------------
+// bn-13.2. VMT TV GROUP META
+// -----------------------------------------------------
+//
+// Group ID:
+//
+//     vmttv-group:<group>
+//
+// Ví dụ:
+//
+//     vmttv-group:VTV
+//     vmttv-group:SCTV
+//
+// Khi Stremio click Group Meta:
+//
+//     /meta/tv/vmttv-group:VTV
+//
+// Meta này sẽ cung cấp deep-link quay lại:
+//
+//     pa_tv
+//       ?provider=vmttv
+//       &genre=VTV
+//
+// -----------------------------------------------------
+
+if (
+    rawId.startsWith("vmttv-group:") &&
+    String(args.type || "").trim() === "tv"
+) {
+
+    const groupName =
+        decodeURIComponent(
+            rawId.substring(
+                "vmttv-group:".length
+            )
+        ).trim();
+
+    console.log(
+        "[VMTTV GROUP META]:",
+        groupName
+    );
+
+    if (!groupName) {
+
+        console.log(
+            "[VMTTV GROUP META] Empty group"
+        );
+
+        return {
+            meta: null
+        };
+    }
+
+    let groupCount = 0;
+    let poster = "";
+
+    try {
+
+        const channels =
+            await fetchVmtTvChannels();
+
+        const groupChannels =
+            channels.filter(
+                channel =>
+                    String(
+                        channel.group ||
+                        ""
+                    ).trim() ===
+                    groupName
+            );
+
+        groupCount =
+            groupChannels.length;
+
+        const firstChannel =
+            groupChannels[0];
+
+        poster =
+            String(
+                firstChannel?.logo ||
+                MOVINA_VMTTV_PROVIDER.iconUrl ||
+                ""
+            ).trim();
+
+        console.log(
+            "[VMTTV GROUP META] Channels:",
+            groupCount
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[VMTTV GROUP META ERROR]",
+            e?.message ||
+            e
+        );
+
+    }
+
+    return {
+
+        meta: {
+
+            id:
+                rawId,
+
+            type:
+                "tv",
+
+            name:
+                "📺 " +
+                groupName,
+
+            poster:
+                poster,
+
+            posterShape:
+                "square",
+
+            description:
+                groupCount > 0
+                    ? `${groupCount} kênh`
+                    : "Nhóm kênh VMT TV",
+
+            genres: [
+                groupName,
+                "LIVE TV",
+                "IPTV"
+            ],
+
+            releaseInfo:
+                "LIVE",
+
+            behaviorHints: {
+                isLive: true
+            },
+
+            links: [
+
+                {
+                    name:
+                        "▶️ MỞ " +
+                        groupName,
+
+                    category:
+                        "catalog",
+
+                    url:
+                        "stremio:///discover/" +
+                        encodeURIComponent(
+                            "https://my-strem-addon.vercel.app/manifest.json"
+                        ) +
+                        "/MOVINA/pa_tv?" +
+                        "provider=vmttv" +
+                        "&genre=" +
+                        encodeURIComponent(
+                            groupName
+                        )
+                }
+
+            ]
+        }
+
+    };
+}
 
 // -----------------------------------------------------
 // bn-13.1B. VMT TV CHANNEL META
