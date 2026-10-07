@@ -10974,6 +10974,45 @@ function makeVmtTvMeta(channel) {
         language:
             "",
 
+        // ========================================================
+        // NAVIGATION
+        // ========================================================
+        //
+        // Kênh thật vẫn phát bình thường.
+        //
+        // Nhưng trên Meta của kênh, thêm một link để người dùng
+        // có thể quay trực tiếp về danh sách GROUP của VMT TV.
+        //
+        //     VTV1
+        //       ↓
+        //     ↩️ Về danh sách nhóm
+        //       ↓
+        //     VTV / HTV / TVB / ...
+        //
+        // ========================================================
+
+        links: [
+            ...(Array.isArray(preview.links)
+                ? preview.links
+                : []),
+
+            {
+                name:
+                    "↩️ VỀ DANH SÁCH NHÓM",
+
+                category:
+                    "catalog",
+
+                url:
+                    "stremio:///discover/" +
+                    encodeURIComponent(
+                        "https://my-strem-addon.vercel.app/manifest.json"
+                    ) +
+                    "/MOVINA/pa_tv?" +
+                    "provider=vmttv"
+            }
+        ],
+
         videos: [
             {
                 id:
