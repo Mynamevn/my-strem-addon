@@ -4520,36 +4520,28 @@ if (
     };
 }
 
-// -----------------------------------------------------
-// bn-13.2. VMT TV GROUP META
-// -----------------------------------------------------
+// bn-13.2 VMT TV GROUP META
+// ============================================================
 //
-// Group ID:
+// GROUP META KHÔNG PHẢI LÀ CHANNEL.
 //
-//     vmttv-group:<group>
+// Không được:
+//     behaviorHints.isLive = true
 //
-// Ví dụ:
+// nếu không Stremio sẽ gọi:
 //
-//     vmttv-group:VTV
-//     vmttv-group:SCTV
+//     /stream/tv/vmttv-group:VTV
 //
-// Khi Stremio click Group Meta:
+// thay vì mở link catalog:
 //
-//     /meta/tv/vmttv-group:VTV
+//     pa_tv_channels?provider=vmttv&genre=VTV
 //
-// Meta này sẽ cung cấp deep-link quay lại:
-//
-//     pa_tv
-//       ?provider=vmttv
-//       &genre=VTV
-//
-// -----------------------------------------------------
+// ============================================================
 
 if (
     rawId.startsWith("vmttv-group:") &&
     String(args.type || "").trim() === "tv"
 ) {
-
     const groupName =
         decodeURIComponent(
             rawId.substring(
@@ -4563,7 +4555,6 @@ if (
     );
 
     if (!groupName) {
-
         console.log(
             "[VMTTV GROUP META] Empty group"
         );
@@ -4577,7 +4568,6 @@ if (
     let poster = "";
 
     try {
-
         const channels =
             await fetchVmtTvChannels();
 
@@ -4608,19 +4598,15 @@ if (
             "[VMTTV GROUP META] Channels:",
             groupCount
         );
-
     } catch (e) {
-
         console.log(
             "[VMTTV GROUP META ERROR]",
             e?.message ||
             e
         );
-
     }
 
     return {
-
         meta: {
 
             id:
@@ -4653,12 +4639,21 @@ if (
             releaseInfo:
                 "LIVE",
 
+            // ====================================================
+            // QUAN TRỌNG:
+            //
+            // GROUP KHÔNG ĐƯỢC ĐÁNH DẤU isLive.
+            //
+            // Nếu có isLive:true, Stremio coi group như một
+            // channel thật và gọi Stream Handler.
+            //
+            // ====================================================
+
             behaviorHints: {
-                isLive: true
+                isPlayable: false
             },
 
             links: [
-
                 {
                     name:
                         "▶️ MỞ " +
@@ -4672,17 +4667,15 @@ if (
                         encodeURIComponent(
                             "https://my-strem-addon.vercel.app/manifest.json"
                         ) +
-                        "/MOVINA/pa_tv?" +
+                        "/MOVINA/pa_tv_channels?" +
                         "provider=vmttv" +
                         "&genre=" +
                         encodeURIComponent(
                             groupName
                         )
                 }
-
             ]
         }
-
     };
 }
 
