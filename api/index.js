@@ -3791,34 +3791,24 @@ if (
 }
 
 
-// ============================================================
-// 12.0B MOVINA TV CHANNELS
-// ============================================================
-//
-// Catalog này hiển thị các channel thuộc một GROUP.
-//
-// Ví dụ:
-//
-//     pa_tv_channels
-//         provider=vmttv
-//         genre=VTV
-//
-//     → VTV1
-//     → VTV2
-//     → VTV3
-//     → ...
-//
-// Card đầu tiên:
-//
-//     ↩️ VỀ DANH SÁCH NHÓM
-//
-// chỉ dùng để quay lại:
-//
-//     pa_tv?provider=vmttv
-//
-// Không phải channel thật.
-// Không có stream.
-// ============================================================
+
+ // ============================================================
+ //
+ //     pa_tv_channels
+ //         provider=vmttv
+ //         genre=VTV
+ //
+ //     → VTV1
+ //     → VTV2
+ //     → VTV3
+ //     → ...
+ //
+ // Không tạo Meta "back" giả ở đây.
+ //
+ // Nút quay về nhóm đã được Stremio hiển thị ở sidebar
+ // thông qua catalog navigation.
+ //
+ // ============================================================
 
 if (
     args.id === "pa_tv_channels"
@@ -3907,73 +3897,18 @@ if (
             filteredChannels.length
         );
 
-        // ====================================================
-        // BACK TO GROUP HUB
-        // ====================================================
-
-        const backMeta = {
-
-            id:
-                "vmttv-back:" +
-                encodeURIComponent(
-                    genre
-                ),
-
-            type:
-                "tv",
-
-            name:
-                "↩️ VỀ DANH SÁCH NHÓM",
-
-            poster:
-                provider.iconUrl ||
-                "",
-
-            posterShape:
-                "square",
-
-            description:
-                "Quay lại danh sách nhóm kênh VMT TV",
-
-            genres: [
-                "NAVIGATION"
-            ],
-
-            releaseInfo:
-                "BACK",
-
-            links: [
-                {
-                    name:
-                        "↩️ VỀ DANH SÁCH NHÓM",
-
-                    category:
-                        "catalog",
-
-                    url:
-                        "stremio:///discover/" +
-                        encodeURIComponent(
-                            "https://my-strem-addon.vercel.app/manifest.json"
-                        ) +
-                        "/MOVINA/pa_tv?" +
-                        "provider=vmttv"
-                }
-            ]
-        };
-
-        const channelMetas =
-            filteredChannels.map(
-                channel =>
-                    makeVmtTvCatalogMeta(
-                        channel
-                    )
-            );
+        const metas =
+            filteredChannels
+                .map(
+                    channel =>
+                        makeVmtTvCatalogMeta(
+                            channel
+                        )
+                )
+                .filter(Boolean);
 
         return {
-            metas: [
-                backMeta,
-                ...channelMetas
-            ]
+            metas
         };
     }
 
