@@ -4510,27 +4510,54 @@ if (
             },
 
             links: [
-                {
-                    name:
-                        "▶️ MỞ " +
-                        groupName,
 
-                    category:
-                        "catalog",
+    // ========================================================
+    // MỞ DANH SÁCH KÊNH CỦA GROUP
+    // ========================================================
 
-                    url:
-                        "stremio:///discover/" +
-                        encodeURIComponent(
-                            "https://my-strem-addon.vercel.app/manifest.json"
-                        ) +
-                        "/MOVINA/pa_tv?" +
-                        "provider=vmttv" +
-                        "&genre=" +
-                        encodeURIComponent(
-                            groupName
-                        )
-                }
-            ]
+    {
+        name:
+            "▶️ MỞ " +
+            groupName,
+
+        category:
+            "catalog",
+
+        url:
+            "stremio:///discover/" +
+            encodeURIComponent(
+                "https://my-strem-addon.vercel.app/manifest.json"
+            ) +
+            "/MOVINA/pa_tv?" +
+            "provider=vmttv" +
+            "&genre=" +
+            encodeURIComponent(
+                groupName
+            )
+    },
+
+
+    // ========================================================
+    // QUAY LẠI DANH SÁCH GROUP
+    // ========================================================
+
+    {
+        name:
+            "↩️ VỀ DANH SÁCH NHÓM",
+
+        category:
+            "catalog",
+
+        url:
+            "stremio:///discover/" +
+            encodeURIComponent(
+                "https://my-strem-addon.vercel.app/manifest.json"
+            ) +
+            "/MOVINA/pa_tv?" +
+            "provider=vmttv"
+    }
+
+]
         }
     };
 }
