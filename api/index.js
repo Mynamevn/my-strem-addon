@@ -3471,7 +3471,7 @@ builder.defineCatalogHandler(
                 ).trim();
 
 /* ============================================================
-   12.0 MOVINA TV / IPTV HUB
+   BL-12.0 MOVINA TV / IPTV HUB
    ============================================================
 //
 // MOVINA
@@ -3480,13 +3480,21 @@ builder.defineCatalogHandler(
 //                └── Group
 //                      └── Channel
 //
+// Navigation:
+//
+//     TV / IPTV
+//         ↓
+//     Provider
+//         ↓
+//     Group
+//         ↓
+//     Channel
+//         ↓
+//     Play
+//
 // Provider được xác định bằng:
 //
 //     args.extra.provider
-//
-// Ví dụ:
-//
-//     pa_tv?provider=vmttv
 //
 // ============================================================ */
 
@@ -3505,7 +3513,6 @@ if (
             ? getMovinaProvider(providerId)
             : null;
 
-
     console.log(
         "[MOVINA TV HUB]",
         "provider:",
@@ -3514,7 +3521,7 @@ if (
 
 
     // ========================================================
-    // 12.0.1 MOVINA TV PROVIDER HUB
+    // bn-12.1 MOVINA TV PROVIDER HUB
     // ========================================================
 
     if (
@@ -3531,7 +3538,7 @@ if (
 
 
         // ====================================================
-        // VMT TV
+        // bn-12.1A VMT TV
         // ====================================================
 
         if (
@@ -3546,27 +3553,27 @@ if (
 
 
             // ==================================================
-// VMT TV GROUP HUB
-// ==================================================
-//
-// Khi chỉ có:
-//
-//     provider=vmttv
-//
-// hoặc:
-//
-//     provider=vmttv&genre=__VMTTV_HUB__
-//
-// đều phải mở GROUP HUB.
-//
-// Không được trả channel list ở bước này.
-//
-// ==================================================
+            // bn-12.1B VMT TV GROUP HUB
+            // ==================================================
+            //
+            // Khi:
+            //
+            //     provider=vmttv
+            //
+            // hoặc:
+            //
+            //     provider=vmttv&genre=__VMTTV_HUB__
+            //
+            // → luôn mở danh sách GROUP.
+            //
+            // Không trả channel list ở tầng này.
+            //
+            // ==================================================
 
-if (
-    !vmttvGenre ||
-    vmttvGenre === "__VMTTV_HUB__"
-) {
+            if (
+                !vmttvGenre ||
+                vmttvGenre === "__VMTTV_HUB__"
+            ) {
 
                 const channels =
                     await fetchVmtTvChannels();
@@ -3604,7 +3611,8 @@ if (
                                         String(
                                             channel.group ||
                                             ""
-                                        ).trim() === group
+                                        ).trim() ===
+                                        group
                                 );
 
 
@@ -3632,7 +3640,8 @@ if (
                                     "tv",
 
                                 name:
-                                    "📺 " + group,
+                                    "📺 " +
+                                    group,
 
                                 poster,
 
@@ -3651,32 +3660,7 @@ if (
 
                                 behaviorHints: {
                                     isLive: true
-                                },
-
-                                links: [
-
-                                    {
-                                        name:
-                                            "▶️ MỞ " +
-                                            group,
-
-                                        category:
-                                            "catalog",
-
-                                        url:
-                                            "stremio:///discover/" +
-                                            encodeURIComponent(
-                                                "https://my-strem-addon.vercel.app/manifest.json"
-                                            ) +
-                                            "/MOVINA/pa_tv?" +
-                                            "provider=vmttv" +
-                                            "&genre=" +
-                                            encodeURIComponent(
-                                                group
-                                            )
-                                    }
-
-                                ]
+                                }
                             };
                         }
                     );
@@ -3689,7 +3673,7 @@ if (
 
 
             // ==================================================
-            // VMT TV — GROUP / GENRE
+            // bn-12.1C VMT TV GROUP / GENRE
             // ==================================================
 
             if (
@@ -3737,7 +3721,7 @@ if (
 
 
     // ========================================================
-    // MOVINA TV ROOT
+    // bn-12.2 MOVINA TV ROOT
     // ========================================================
     //
     // Không có provider:
@@ -3745,6 +3729,34 @@ if (
     //     pa_tv
     //
     // → hiển thị các TV providers từ Registry.
+    //
+    // QUAN TRỌNG:
+    //
+    // Provider icon không còn dùng:
+    //
+    //     movina-tv:<provider>
+    //
+    // vì ID đó dẫn tới Meta Provider trung gian.
+    //
+    // Thay vào đó Provider icon dùng trực tiếp:
+    //
+    //     pa_tv?provider=<provider>
+    //
+    // Nhờ vậy:
+    //
+    //     Click VMT TV
+    //          ↓
+    //     Group Hub
+    //
+    // không còn:
+    //
+    //     Click VMT TV
+    //          ↓
+    //     Provider Meta
+    //          ↓
+    //     "MỞ VMT TV"
+    //          ↓
+    //     Group Hub
     //
     // ========================================================
 
@@ -3763,10 +3775,10 @@ if (
             provider => ({
 
                 id:
-    "movina-tv:" +
-    encodeURIComponent(
-        provider.id
-    ),
+                    "movina-tv:" +
+                    encodeURIComponent(
+                        provider.id
+                    ),
 
                 type:
                     "tv",
@@ -3796,7 +3808,35 @@ if (
 
                 behaviorHints: {
                     isLive: true
-                }
+                },
+
+                links: [
+
+                    {
+                        name:
+                            "▶️ MỞ " +
+                            provider.name,
+
+                        category:
+                            "catalog",
+
+                        url:
+                            "stremio:///discover/" +
+                            encodeURIComponent(
+                                "https://my-strem-addon.vercel.app/manifest.json"
+                            ) +
+                            "/MOVINA/pa_tv?" +
+                            "provider=" +
+                            encodeURIComponent(
+                                provider.id
+                            ) +
+                            "&genre=" +
+                            encodeURIComponent(
+                                "__VMTTV_HUB__"
+                            )
+                    }
+
+                ]
             })
         );
 
