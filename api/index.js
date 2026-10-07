@@ -3557,8 +3557,14 @@ if (
 //
 // → trả trực tiếp các channel thuộc VTV
 //
-// Navigation "Về danh sách nhóm" được gắn vào
-// Meta Preview đầu tiên, KHÔNG tạo backMeta riêng.
+// Link "↩️ VỀ DANH SÁCH NHÓM" phải được gắn
+// vào TẤT CẢ channel meta preview.
+//
+// Lý do:
+// Khi user mở một channel rồi nhấn Back,
+// Stremio có thể giữ focus ở chính channel đó.
+// Nếu chỉ channel đầu tiên có links,
+// nút "VỀ DANH SÁCH NHÓM" sẽ biến mất.
 //
 // ==================================================
 
@@ -3586,6 +3592,15 @@ if (
     );
 
 
+    const backToGroupsUrl =
+        "stremio:///discover/" +
+        encodeURIComponent(
+            "https://my-strem-addon.vercel.app/manifest.json"
+        ) +
+        "/MOVINA/pa_tv?" +
+        "provider=vmttv";
+
+
     const metas =
         filteredChannels
             .map(
@@ -3597,29 +3612,18 @@ if (
             .filter(Boolean);
 
 
-    // ========================================================
-    // NAVIGATION
-    // ========================================================
-    //
-    // Không thêm một card "Về danh sách nhóm".
-    //
-    // Gắn link vào Meta Preview đầu tiên để Stremio
-    // có thể sử dụng nó ở khu vực sidebar / Show.
-    //
-    // ========================================================
+    // ==================================================
+    // GẮN BACK LINK CHO TẤT CẢ CHANNEL META
+    // ==================================================
 
-    if (
-        metas.length > 0
+    for (
+        const meta of metas
     ) {
 
-        const firstMeta =
-            metas[0];
+        meta.links = [
 
-
-        firstMeta.links = [
-
-            ...(Array.isArray(firstMeta.links)
-                ? firstMeta.links
+            ...(Array.isArray(meta.links)
+                ? meta.links
                 : []),
 
             {
@@ -3630,22 +3634,25 @@ if (
                     "catalog",
 
                 url:
-                    "stremio:///discover/" +
-                    encodeURIComponent(
-                        "https://my-strem-addon.vercel.app/manifest.json"
-                    ) +
-                    "/MOVINA/pa_tv?" +
-                    "provider=vmttv"
+                    backToGroupsUrl
             }
+
         ];
     }
+
+
+    console.log(
+        "[VMTTV GROUP]",
+        genre,
+        "Back links:",
+        metas.length
+    );
 
 
     return {
         metas
     };
 }
-
 
             // ==================================================
             // 12.0B.2 GROUP HUB
