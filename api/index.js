@@ -34,10 +34,12 @@ const manifest = {
     ],
 
     idPrefixes: [
-        "tt",
-        "vnwpsw:",
-        "vmttv:"
-    ],
+    "tt",
+    "vnwpsw:",
+    "vmttv:",
+    "movina-tv:",
+    "vmttv-group:"
+],
 
     catalogs: [
 
