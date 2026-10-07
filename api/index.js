@@ -3544,12 +3544,27 @@ if (
 
 
             // ==================================================
-            // VMT TV GROUP HUB
-            // ==================================================
+// VMT TV GROUP HUB
+// ==================================================
+//
+// Khi chỉ có:
+//
+//     provider=vmttv
+//
+// hoặc:
+//
+//     provider=vmttv&genre=__VMTTV_HUB__
+//
+// đều phải mở GROUP HUB.
+//
+// Không được trả channel list ở bước này.
+//
+// ==================================================
 
-            if (
-                vmttvGenre === "__VMTTV_HUB__"
-            ) {
+if (
+    !vmttvGenre ||
+    vmttvGenre === "__VMTTV_HUB__"
+) {
 
                 const channels =
                     await fetchVmtTvChannels();
@@ -3715,28 +3730,6 @@ if (
                     metas
                 };
             }
-
-
-            // ==================================================
-            // VMT TV — DEFAULT
-            // ==================================================
-
-            const channels =
-                await fetchVmtTvChannels();
-
-
-            const metas =
-                channels.map(
-                    channel =>
-                        makeVmtTvCatalogMeta(
-                            channel
-                        )
-                );
-
-
-            return {
-                metas
-            };
         }
     }
 
@@ -3768,12 +3761,10 @@ if (
             provider => ({
 
                 id:
-                    provider.id === "vmttv"
-                        ? "vmttv:vmttv"
-                        : "movina-tv:" +
-                          encodeURIComponent(
-                              provider.id
-                          ),
+    "movina-tv:" +
+    encodeURIComponent(
+        provider.id
+    ),
 
                 type:
                     "tv",
@@ -4228,32 +4219,34 @@ if (
 );
 
 /* ============================================================
-   13. META
+   BL-13. META Handler
    ============================================================ */
 
 builder.defineMetaHandler(async (args) => {
 
 // ============================================================
-// bn-11.14. VMT TV PROVIDER META
+// BL-13.0. VMT TV PROVIDER META
 // ============================================================
 //
-// VMT TV không còn là catalog `tv` riêng.
-//
-// Nó là provider thuộc:
+// VMT TV là provider thuộc:
 //     MOVINA_PROVIDER_REGISTRY
 //
-// Deep Link:
+// Provider Meta ID:
+//     movina-tv:vmttv
 //
-//     VMT TV Meta
-//          ↓
-//     pa_tv?provider=vmttv&genre=__VMTTV_HUB__
+// Channel Meta ID:
+//     vmttv:<channelId>
+//
+// Hai loại ID này phải tách riêng:
+//     movina-tv:vmttv  → Provider
+//     vmttv:sctv1hd    → Channel thật
 //
 // ============================================================
 
 const MOVINA_VMTTV_META = {
 
     id:
-        "vmttv:vmttv",
+        "movina-tv:vmttv",
 
     type:
         "tv",
@@ -4325,92 +4318,170 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.0. VMT TV META
-        // =====================================================
+// bn-13.1. MOVINA TV PROVIDER META ROUTER
+// =====================================================
+//
+// Phân biệt:
+//
+//     movina-tv:vmttv
+//          ↓
+//     VMT TV PROVIDER META
+//
+//     vmttv:<channelId>
+//          ↓
+//     VMT TV CHANNEL META
+//
+// Không được để:
+//     movina-tv:vmttv
+//
+// rơi xuống nhánh vmttv:<channelId>,
+// vì khi đó "vmttv" sẽ bị hiểu là channelId.
+//
+// =====================================================
 
-        if (
-            rawId.startsWith("vmttv:") &&
-            String(args.type || "").trim() === "tv"
-        ) {
+// -----------------------------------------------------
+// bn-13.1A. MOVINA TV PROVIDER META
+// -----------------------------------------------------
 
-            console.log(
-                "[META] VMT TV channel:",
+if (
+    rawId.startsWith("movina-tv:") &&
+    String(args.type || "").trim() === "tv"
+) {
+
+    console.log(
+        "[META] MOVINA TV PROVIDER:",
+        rawId
+    );
+
+    const providerId =
+        rawId.substring(
+            "movina-tv:".length
+        ).trim();
+
+    if (
+        providerId === "vmttv"
+    ) {
+
+        console.log(
+            "[META] VMT TV PROVIDER META"
+        );
+
+        return {
+            meta:
+                MOVINA_VMTTV_META
+        };
+
+    }
+
+    console.log(
+        "[META] Unknown MOVINA TV provider:",
+        providerId
+    );
+
+    return {
+        meta: null
+    };
+}
+
+
+// -----------------------------------------------------
+// bn-13.1B. VMT TV CHANNEL META
+// -----------------------------------------------------
+//
+// Chỉ xử lý channel thật:
+//
+//     vmttv:<channelId>
+//
+// Ví dụ:
+//
+//     vmttv:sctv1hd
+//     vmttv:vtv1
+//
+// -----------------------------------------------------
+
+if (
+    rawId.startsWith("vmttv:") &&
+    String(args.type || "").trim() === "tv"
+) {
+
+    console.log(
+        "[META] VMT TV channel:",
+        rawId
+    );
+
+    try {
+
+        const channelId =
+            decodeVmtTvStremioId(
                 rawId
             );
 
-            try {
+        if (!channelId) {
 
-                const channelId =
-                    decodeVmtTvStremioId(
-                        rawId
-                    );
+            console.log(
+                "[VMTTV META] Empty channel ID"
+            );
 
-                if (!channelId) {
+            return {
+                meta: null
+            };
 
-                    console.log(
-                        "[VMTTV META] Empty channel ID"
-                    );
-
-                    return {
-                        meta: null
-                    };
-
-                }
-
-                const channels =
-                    await fetchVmtTvChannels();
-
-                const channel =
-                    vmtTvFindChannelById(
-                        channels,
-                        channelId
-                    );
-
-                if (!channel) {
-
-                    console.log(
-                        "[VMTTV META] Channel not found:",
-                        channelId
-                    );
-
-                    return {
-                        meta: null
-                    };
-
-                }
-
-                const meta =
-                    makeVmtTvMeta(
-                        channel
-                    );
-
-                console.log(
-                    "[VMTTV META] OK:",
-                    meta?.name ||
-                    channel.name
-                );
-
-                return {
-                    meta
-                };
-
-            } catch (e) {
-
-                console.error(
-                    "[VMTTV META ERROR]",
-                    e?.message ||
-                    e
-                );
-
-                return {
-                    meta: null
-                };
-
-            }
         }
 
+        const channels =
+            await fetchVmtTvChannels();
+
+        const channel =
+            vmtTvFindChannelById(
+                channels,
+                channelId
+            );
+
+        if (!channel) {
+
+            console.log(
+                "[VMTTV META] Channel not found:",
+                channelId
+            );
+
+            return {
+                meta: null
+            };
+
+        }
+
+        const meta =
+            makeVmtTvMeta(
+                channel
+            );
+
+        console.log(
+            "[VMTTV META] OK:",
+            meta?.name ||
+            channel.name
+        );
+
+        return {
+            meta
+        };
+
+    } catch (e) {
+
+        console.error(
+            "[VMTTV META ERROR]",
+            e?.message ||
+            e
+        );
+
+        return {
+            meta: null
+        };
+
+    }
+}
+
         // =====================================================
-        // 13.1. GIẢI MÃ TÊN PHIM
+        // bn-13.1. GIẢI MÃ TÊN PHIM
         // =====================================================
 
         let movieName = "";
@@ -4505,7 +4576,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.2. TÌM PHIM TRÊN PHIMAPI
+        // bn-13.2. TÌM PHIM TRÊN PHIMAPI
         // =====================================================
 
         const searchUrl =
@@ -4547,7 +4618,7 @@ const MOVINA_VMTTV_META = {
         );
 
         // =====================================================
-        // 13.3. CHỌN KẾT QUẢ KHỚP TÊN
+        // bn-13.3. CHỌN KẾT QUẢ KHỚP TÊN
         // =====================================================
 
         const normalizeTitle =
@@ -4710,7 +4781,7 @@ const MOVINA_VMTTV_META = {
         );
 
         // =====================================================
-        // 13.4. LẤY DETAIL PHIM
+        // bn-13.4. LẤY DETAIL PHIM
         // =====================================================
 
         let detail =
@@ -4768,7 +4839,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.5. XÁC ĐỊNH TYPE THỰC
+        // bn-13.5. XÁC ĐỊNH TYPE THỰC
         // =====================================================
 
         const sourceType =
@@ -4789,7 +4860,7 @@ const MOVINA_VMTTV_META = {
                 : "movie";
 
         // =====================================================
-        // 13.6. POSTER
+        // bn-13.6. POSTER
         // =====================================================
 
         const poster =
@@ -4797,7 +4868,7 @@ const MOVINA_VMTTV_META = {
             makePosterUrl(item);
 
         // =====================================================
-        // 13.7. BACKGROUND
+        // bn-13.7. BACKGROUND
         // =====================================================
 
         let background = "";
@@ -4819,7 +4890,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.8. NỘI DUNG THẬT
+        // bn-13.8. NỘI DUNG THẬT
         // =====================================================
 
         let description =
@@ -4871,7 +4942,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.9. IMDb TỪ PHIMAPI
+        // bn-13.9. IMDb TỪ PHIMAPI
         // =====================================================
 
         if (!imdbId) {
@@ -4903,7 +4974,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.10. NẾU PHIMAPI KHÔNG CÓ IMDb
+        // bn-13.10. NẾU PHIMAPI KHÔNG CÓ IMDb
         //         → TÌM IMDb QUA CINEMETA
         //
         // Ưu tiên:
@@ -5263,7 +5334,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.11. IMDb RATING
+        // bn-13.11. IMDb RATING
         // =====================================================
 
         let imdbRating = null;
@@ -5391,7 +5462,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.12. THỂ LOẠI
+        // bn-13.12. THỂ LOẠI
         // =====================================================
 
         const genres =
@@ -5422,7 +5493,7 @@ const MOVINA_VMTTV_META = {
                 );
 
         // =====================================================
-        // 13.13. VIDEOS CHO SERIES
+        // bn-13.13. VIDEOS CHO SERIES
         //
         // Stremio:
         //   video.id = metaId:season:episode
@@ -5661,7 +5732,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-        // 13.14. META SERIES - THÔNG TIN + VIDEOS
+        // bn-13.14. META SERIES - THÔNG TIN + VIDEOS
         // =====================================================
 
         const meta = {
@@ -5765,7 +5836,7 @@ const MOVINA_VMTTV_META = {
 
 
 // ============================================================
-// NORMALIZED STREAM CONTRACT + RESOLVER REGISTRY
+// BL-NORMALIZED STREAM CONTRACT + RESOLVER REGISTRY
 // ============================================================
 //
 // Kiến trúc chung:
