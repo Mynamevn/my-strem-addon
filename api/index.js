@@ -4383,6 +4383,171 @@ if (
     };
 }
 
+// -----------------------------------------------------
+// bn-13.2. VMT TV GROUP META
+// -----------------------------------------------------
+//
+// Group ID:
+//
+//     vmttv-group:<group>
+//
+// Ví dụ:
+//
+//     vmttv-group:VTV
+//     vmttv-group:SCTV
+//
+// Khi Stremio click Group Meta:
+//
+//     /meta/tv/vmttv-group:VTV
+//
+// Meta này sẽ cung cấp deep-link quay lại:
+//
+//     pa_tv
+//       ?provider=vmttv
+//       &genre=VTV
+//
+// -----------------------------------------------------
+
+if (
+    rawId.startsWith("vmttv-group:") &&
+    String(args.type || "").trim() === "tv"
+) {
+
+    const groupName =
+        decodeURIComponent(
+            rawId.substring(
+                "vmttv-group:".length
+            )
+        ).trim();
+
+    console.log(
+        "[VMTTV GROUP META]:",
+        groupName
+    );
+
+    if (!groupName) {
+
+        console.log(
+            "[VMTTV GROUP META] Empty group"
+        );
+
+        return {
+            meta: null
+        };
+    }
+
+    let groupCount = 0;
+    let poster = "";
+
+    try {
+
+        const channels =
+            await fetchVmtTvChannels();
+
+        const groupChannels =
+            channels.filter(
+                channel =>
+                    String(
+                        channel.group ||
+                        ""
+                    ).trim() ===
+                    groupName
+            );
+
+        groupCount =
+            groupChannels.length;
+
+        const firstChannel =
+            groupChannels[0];
+
+        poster =
+            String(
+                firstChannel?.logo ||
+                MOVINA_VMTTV_PROVIDER.iconUrl ||
+                ""
+            ).trim();
+
+        console.log(
+            "[VMTTV GROUP META] Channels:",
+            groupCount
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[VMTTV GROUP META ERROR]",
+            e?.message ||
+            e
+        );
+
+    }
+
+    return {
+
+        meta: {
+
+            id:
+                rawId,
+
+            type:
+                "tv",
+
+            name:
+                "📺 " +
+                groupName,
+
+            poster:
+                poster,
+
+            posterShape:
+                "square",
+
+            description:
+                groupCount > 0
+                    ? `${groupCount} kênh`
+                    : "Nhóm kênh VMT TV",
+
+            genres: [
+                groupName,
+                "LIVE TV",
+                "IPTV"
+            ],
+
+            releaseInfo:
+                "LIVE",
+
+            behaviorHints: {
+                isLive: true
+            },
+
+            links: [
+
+                {
+                    name:
+                        "▶️ MỞ " +
+                        groupName,
+
+                    category:
+                        "catalog",
+
+                    url:
+                        "stremio:///discover/" +
+                        encodeURIComponent(
+                            "https://my-strem-addon.vercel.app/manifest.json"
+                        ) +
+                        "/MOVINA/pa_tv?" +
+                        "provider=vmttv" +
+                        "&genre=" +
+                        encodeURIComponent(
+                            groupName
+                        )
+                }
+
+            ]
+        }
+
+    };
+}
 
 // -----------------------------------------------------
 // bn-13.1B. VMT TV CHANNEL META
