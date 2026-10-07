@@ -3550,54 +3550,101 @@ if (
 
 
             // ==================================================
-            // 12.0B.1 GROUP SELECTED
-            // ==================================================
-            //
-            // /pa_tv?provider=vmttv&genre=VTV
-            //
-            // → trả trực tiếp các channel thuộc VTV
-            //
-            // ==================================================
+// 12.0B.1 GROUP SELECTED
+// ==================================================
+//
+// /pa_tv?provider=vmttv&genre=VTV
+//
+// → trả trực tiếp các channel thuộc VTV
+//
+// Navigation "Về danh sách nhóm" được gắn vào
+// Meta Preview đầu tiên, KHÔNG tạo backMeta riêng.
+//
+// ==================================================
 
-            if (
-                genre &&
-                genre !== "__VMTTV_HUB__"
-            ) {
+if (
+    genre &&
+    genre !== "__VMTTV_HUB__"
+) {
 
-                const filteredChannels =
-                    channels.filter(
-                        channel =>
-                            String(
-                                channel.group ||
-                                ""
-                            ).trim() ===
-                            genre
-                    );
-
-
-                console.log(
-                    "[VMTTV GROUP]",
-                    genre,
-                    "Channels:",
-                    filteredChannels.length
-                );
+    const filteredChannels =
+        channels.filter(
+            channel =>
+                String(
+                    channel.group ||
+                    ""
+                ).trim() ===
+                genre
+        );
 
 
-                const metas =
-                    filteredChannels
-                        .map(
-                            channel =>
-                                makeVmtTvCatalogMeta(
-                                    channel
-                                )
-                        )
-                        .filter(Boolean);
+    console.log(
+        "[VMTTV GROUP]",
+        genre,
+        "Channels:",
+        filteredChannels.length
+    );
 
 
-                return {
-                    metas
-                };
+    const metas =
+        filteredChannels
+            .map(
+                channel =>
+                    makeVmtTvCatalogMeta(
+                        channel
+                    )
+            )
+            .filter(Boolean);
+
+
+    // ========================================================
+    // NAVIGATION
+    // ========================================================
+    //
+    // Không thêm một card "Về danh sách nhóm".
+    //
+    // Gắn link vào Meta Preview đầu tiên để Stremio
+    // có thể sử dụng nó ở khu vực sidebar / Show.
+    //
+    // ========================================================
+
+    if (
+        metas.length > 0
+    ) {
+
+        const firstMeta =
+            metas[0];
+
+
+        firstMeta.links = [
+
+            ...(Array.isArray(firstMeta.links)
+                ? firstMeta.links
+                : []),
+
+            {
+                name:
+                    "↩️ VỀ DANH SÁCH NHÓM",
+
+                category:
+                    "catalog",
+
+                url:
+                    "stremio:///discover/" +
+                    encodeURIComponent(
+                        "https://my-strem-addon.vercel.app/manifest.json"
+                    ) +
+                    "/MOVINA/pa_tv?" +
+                    "provider=vmttv"
             }
+        ];
+    }
+
+
+    return {
+        metas
+    };
+}
 
 
             // ==================================================
