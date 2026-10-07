@@ -167,7 +167,7 @@ const manifest = {
 
             id: "pa_tv_channels",
 
-            name: "📺 TV Channels",
+            name: "📺 TV / IPTV",
 
             extra: [
 
@@ -3791,36 +3791,34 @@ if (
 }
 
 
-// ========================================================
-// 12.0B. TV CHANNEL CATALOG
-// ========================================================
+// ============================================================
+// 12.0B MOVINA TV CHANNELS
+// ============================================================
 //
-//     pa_tv_channels
-//
-// Bắt buộc:
-//
-//     provider
-//     genre
+// Catalog này hiển thị các channel thuộc một GROUP.
 //
 // Ví dụ:
 //
 //     pa_tv_channels
-//       ?provider=vmttv
-//       &genre=VTV
+//         provider=vmttv
+//         genre=VTV
 //
-// Catalog này CHỈ trả channel.
+//     → VTV1
+//     → VTV2
+//     → VTV3
+//     → ...
 //
-// Quan trọng:
+// Card đầu tiên:
 //
-//     pa_tv không còn nhận genre.
+//     ↩️ VỀ DANH SÁCH NHÓM
 //
-// Vì vậy khi quay lại:
+// chỉ dùng để quay lại:
 //
-//     pa_tv
+//     pa_tv?provider=vmttv
 //
-// sẽ trở về Group Hub thay vì giữ Group cũ.
-//
-// ========================================================
+// Không phải channel thật.
+// Không có stream.
+// ============================================================
 
 if (
     args.id === "pa_tv_channels"
@@ -3832,24 +3830,19 @@ if (
             ""
         ).trim();
 
-
     const genre =
         String(
             args.extra?.genre ||
             ""
         ).trim();
 
-
     console.log(
         "[MOVINA TV CHANNELS]",
         "provider:",
-        providerId ||
-        "(none)",
+        providerId || "(none)",
         "| genre:",
-        genre ||
-        "(none)"
+        genre || "(none)"
     );
-
 
     if (
         !providerId ||
@@ -3865,12 +3858,10 @@ if (
         };
     }
 
-
     const provider =
         getMovinaProvider(
             providerId
         );
-
 
     if (
         !provider ||
@@ -3888,10 +3879,9 @@ if (
         };
     }
 
-
-    // ====================================================
-    // VMT TV CHANNELS
-    // ====================================================
+    // ========================================================
+    // VMT TV
+    // ========================================================
 
     if (
         provider.id === "vmttv"
@@ -3899,7 +3889,6 @@ if (
 
         const channels =
             await fetchVmtTvChannels();
-
 
         const filteredChannels =
             channels.filter(
@@ -3911,7 +3900,6 @@ if (
                     genre
             );
 
-
         console.log(
             "[VMTTV GROUP]",
             genre,
@@ -3919,8 +3907,61 @@ if (
             filteredChannels.length
         );
 
+        // ====================================================
+        // BACK TO GROUP HUB
+        // ====================================================
 
-        const metas =
+        const backMeta = {
+
+            id:
+                "vmttv-back:" +
+                encodeURIComponent(
+                    genre
+                ),
+
+            type:
+                "tv",
+
+            name:
+                "↩️ VỀ DANH SÁCH NHÓM",
+
+            poster:
+                provider.iconUrl ||
+                "",
+
+            posterShape:
+                "square",
+
+            description:
+                "Quay lại danh sách nhóm kênh VMT TV",
+
+            genres: [
+                "NAVIGATION"
+            ],
+
+            releaseInfo:
+                "BACK",
+
+            links: [
+                {
+                    name:
+                        "↩️ VỀ DANH SÁCH NHÓM",
+
+                    category:
+                        "catalog",
+
+                    url:
+                        "stremio:///discover/" +
+                        encodeURIComponent(
+                            "https://my-strem-addon.vercel.app/manifest.json"
+                        ) +
+                        "/MOVINA/pa_tv?" +
+                        "provider=vmttv"
+                }
+            ]
+        };
+
+        const channelMetas =
             filteredChannels.map(
                 channel =>
                     makeVmtTvCatalogMeta(
@@ -3928,12 +3969,13 @@ if (
                     )
             );
 
-
         return {
-            metas
+            metas: [
+                backMeta,
+                ...channelMetas
+            ]
         };
     }
-
 
     return {
         metas: []
