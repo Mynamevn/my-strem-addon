@@ -6733,20 +6733,17 @@ function normalizedStreamToStremio(stream) {
         return null;
     }
 
-
     const url =
         String(
             stream.url ||
             ""
         ).trim();
 
-
     const externalUrl =
         String(
             stream.externalUrl ||
             ""
         ).trim();
-
 
     if (
         !url &&
@@ -6755,9 +6752,7 @@ function normalizedStreamToStremio(stream) {
         return null;
     }
 
-
     const result = {};
-
 
     // -------------------------------------------------
     // NAME
@@ -6768,11 +6763,8 @@ function normalizedStreamToStremio(stream) {
     ) {
 
         result.name =
-            String(
-                stream.name
-            );
+            stream.name;
     }
-
 
     // -------------------------------------------------
     // TITLE
@@ -6783,93 +6775,80 @@ function normalizedStreamToStremio(stream) {
     ) {
 
         result.title =
-            String(
-                stream.title
-            );
+            stream.title;
     }
-
 
     // -------------------------------------------------
     // URL
     // -------------------------------------------------
 
-    if (url) {
+    if (
+        url
+    ) {
 
         result.url =
             url;
     }
 
-
     // -------------------------------------------------
     // EXTERNAL URL
     // -------------------------------------------------
 
-    if (externalUrl) {
+    if (
+        externalUrl
+    ) {
 
         result.externalUrl =
             externalUrl;
     }
 
-
     // -------------------------------------------------
     // BEHAVIOR HINTS
     // -------------------------------------------------
 
-    const behaviorHints = {};
-
-
-    // Copy provider-defined behavior hints first.
-
     if (
         stream.behaviorHints &&
-        typeof stream.behaviorHints ===
-            "object"
+        typeof stream.behaviorHints === "object"
     ) {
 
-        Object.assign(
-            behaviorHints,
-            stream.behaviorHints
-        );
+        result.behaviorHints = {
+            ...stream.behaviorHints
+        };
     }
 
-
     // -------------------------------------------------
-    // PROXY HEADERS
+    // HEADERS
+    //
+    // Khi dùng proxyHeaders:
+    //
+    // Stremio yêu cầu:
+    //
+    //     notWebReady: true
+    //
     // -------------------------------------------------
 
     if (
         stream.headers &&
-        typeof stream.headers ===
-            "object" &&
+        typeof stream.headers === "object" &&
         Object.keys(
             stream.headers
         ).length
     ) {
 
-        behaviorHints.proxyHeaders = {
+        result.behaviorHints = {
 
-            request:
-                {
-                    ...stream.headers
-                }
+            ...(result.behaviorHints || {}),
+
+            notWebReady:
+                true,
+
+            proxyHeaders: {
+
+                request:
+                    stream.headers
+            }
         };
     }
-
-
-    // -------------------------------------------------
-    // APPLY BEHAVIOR HINTS
-    // -------------------------------------------------
-
-    if (
-        Object.keys(
-            behaviorHints
-        ).length
-    ) {
-
-        result.behaviorHints =
-            behaviorHints;
-    }
-
 
     // -------------------------------------------------
     // SUBTITLES
@@ -6885,7 +6864,6 @@ function normalizedStreamToStremio(stream) {
         result.subtitles =
             stream.subtitles;
     }
-
 
     // -------------------------------------------------
     // DEBUG
@@ -6907,26 +6885,21 @@ function normalizedStreamToStremio(stream) {
                 url:
                     result.url,
 
-                externalUrl:
-                    result.externalUrl,
-
                 behaviorHints:
-                    result.behaviorHints,
-
-                subtitles:
-                    result.subtitles
+                    result.behaviorHints
             },
             null,
             2
         )
     );
 
-
     return result;
 }
 
 
-function normalizedStreamsToStremio(streams) {
+function normalizedStreamsToStremio(
+    streams
+) {
 
     if (
         !Array.isArray(
@@ -6936,7 +6909,6 @@ function normalizedStreamsToStremio(streams) {
 
         return [];
     }
-
 
     return streams
         .map(
