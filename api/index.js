@@ -17199,155 +17199,123 @@ async function animeHayResolveEmbed(
 // ANIMEHAY LOAD LINKS
 // =====================================================
 
-async function animeHayLoadLinks(
-    episodeUrl
-) {
+async function animeHayLoadLinks(episodeUrl, movieName = "", movieYear = 0, seasonNumber = 0, episodeNumber = 0) {
+  console.log("[ANIMEHAY] LOAD LINKS:", episodeUrl);
+
+  try {
+    console.log("[ANIMEHAY] DIRECT RESOLVE:", episodeUrl);
+
+    const links = await animeHayExtractVideoUrls(episodeUrl);
 
     console.log(
-        "[ANIMEHAY] LOAD LINKS:",
-        episodeUrl
+      "[ANIMEHAY] RESOLVED LINK DEBUG:",
+      JSON.stringify(links, null, 2)
     );
 
+    console.log("[ANIMEHAY] VIDEO URLS:", links.length);
 
-    if (
-        !episodeUrl
-    ) {
-
-        return [];
-
+    if (!links.length) {
+      console.log("[ANIMEHAY] NO VIDEO URL");
+      return [];
     }
 
+    const normalizedStreams = [];
 
-    const links =
-        await animeHayExtractVideoUrls(
-            episodeUrl
-        );
+    for (const link of links) {
+      if (!link?.url) continue;
+
+      const referer =
+        link.referer ||
+        episodeUrl ||
+        "https://animehay.tv/";
+
+      /*
+       * AnimeHay / VIPAH cần giữ Referer khi Stremio tải:
+       *
+       *   1. master.m3u8
+       *   2. child playlist
+       *   3. .ts / .m4s segments
+       *
+       * CloudStream AnimeHayProvider có video interceptor / referer
+       * handling ở tầng playback. MOVINA phải truyền thông tin này
+       * sang Stremio thông qua normalizedStream.headers.
+       */
+      const headers = {
+        Referer: referer,
+        Origin: "https://main.vipah06.xyz",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+      };
+
+      const normalized = createNormalizedStream({
+        provider: "animehay",
+        providerName: "AnimeHay",
+        source: "animehay",
+
+        url: link.url,
+        externalUrl: link.url,
+
+        type: link.isM3u8 ? "hls" : "direct",
+
+        quality: link.quality || 0,
+
+        title:
+          movieName
+            ? `${movieName} - Tập ${episodeNumber || ""}`.trim()
+            : "AnimeHay",
+
+        name: "AnimeHay",
+
+        serverName: "AnimeHay",
+
+        /*
+         * Giữ referer ở field riêng để resolver/debug vẫn biết
+         * nguồn gốc playback.
+         */
+        referer,
+
+        /*
+         * QUAN TRỌNG:
+         * normalizedStreamToStremio() của BL-30 sẽ đưa headers
+         * thành behaviorHints.proxyHeaders.request.
+         */
+        headers,
+
+        episode: episodeNumber || 0,
+        season: seasonNumber || 0,
+
+        resolver: "passthrough",
+
+        resolverOptions: {
+          referer,
+          headers
+        },
+
+        behaviorHints: {
+          bingeGroup: "animehay"
+        }
+      });
+
+      if (normalized) {
+        normalizedStreams.push(normalized);
+      }
+    }
 
     console.log(
-    "[ANIMEHAY] RESOLVED LINK DEBUG:",
-    JSON.stringify(
-        links,
-        null,
-        2
-    )
+      "[ANIMEHAY] NORMALIZED STREAMS:",
+      normalizedStreams.length
     );
 
-    console.log(
-        "[ANIMEHAY] VIDEO URLS:",
-        links.length
+    return normalizedStreams;
+  } catch (err) {
+    console.error(
+      "[ANIMEHAY] LOAD LINKS ERROR:",
+      err?.message || err
     );
 
-
-    if (
-        !links.length
-    ) {
-
-        console.log(
-            "[ANIMEHAY] NO VIDEO URLS"
-        );
-
-        return [];
-
-    }
-
-for (
-    const link
-    of links
-) {
-
-    try {
-
-        const probe =
-            await axios.get(
-                link.url,
-                {
-                    timeout: 10000,
-
-                    responseType:
-                        "arraybuffer",
-
-                    headers: {
-
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                        "Referer":
-                            link.referer ||
-                            episodeUrl,
-
-                        "Accept":
-                            "*/*",
-
-                        "Range":
-                            "bytes=0-1023"
-
-                    },
-
-                    validateStatus:
-                        () => true
-
-                }
-            );
-
-
-        const buffer =
-            Buffer.from(
-                probe.data || []
-            );
-
-
-        console.log(
-            "[ANIMEHAY] PROBE:",
-            JSON.stringify({
-
-                url:
-                    link.url,
-
-                status:
-                    probe.status,
-
-                contentType:
-                    probe.headers?.[
-                        "content-type"
-                    ] || "",
-
-                contentLength:
-                    probe.headers?.[
-                        "content-length"
-                    ] || "",
-
-                contentRange:
-                    probe.headers?.[
-                        "content-range"
-                    ] || "",
-
-                bytes:
-                    Array.from(
-                        buffer.slice(
-                            0,
-                            32
-                        )
-                    )
-
-            })
-        );
-
-
-    } catch (
-        probeError
-    ) {
-
-        console.log(
-            "[ANIMEHAY] PROBE ERROR:",
-            probeError?.message ||
-            probeError
-        );
-
-    }
-
-}
-    return links;
-
+    return [];
+  }
 }
 
 async function fetchAnimeHay(
