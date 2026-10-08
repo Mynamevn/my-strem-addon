@@ -7471,6 +7471,552 @@ function logMovinaProviderRegistry() {
 }
 
 // ============================================================
+// BL-50. CS3 / CLOUDSTREAM PROVIDER SYSTEM
+// ============================================================
+//
+// Mục tiêu:
+//
+//   Chuẩn hóa nhóm provider CloudStream / CS3.
+//
+// Pipeline:
+//
+//   CS3 PROVIDER
+//        ↓
+//   SEARCH
+//        ↓
+//   DETAIL
+//        ↓
+//   EPISODE
+//        ↓
+//   LOAD LINKS
+//        ↓
+//   LINK DATA
+//        ↓
+//   NORMALIZED STREAM
+//        ↓
+//   RESOLVER
+//        ↓
+//   STREMIO
+//
+// Provider CS3 KHÔNG được phép phụ thuộc trực tiếp
+// vào Stremio stream object.
+//
+// ============================================================
+
+const CS3_PROVIDER_REGISTRY =
+    new Map();
+
+
+// ============================================================
+// bn-1. CS3 PROVIDER CONTRACT
+// ============================================================
+
+function createCs3Provider(
+    provider
+) {
+
+    if (
+        !provider ||
+        typeof provider !== "object"
+    ) {
+        throw new Error(
+            "[CS3 PROVIDER] Invalid provider"
+        );
+    }
+
+
+    const id =
+        String(
+            provider.id ||
+            ""
+        )
+            .trim();
+
+
+    if (!id) {
+        throw new Error(
+            "[CS3 PROVIDER] Provider ID is required"
+        );
+    }
+
+
+    const name =
+        String(
+            provider.name ||
+            id
+        )
+            .trim();
+
+
+    return {
+
+        id,
+
+        name,
+
+        category:
+            "cs3",
+
+        kind:
+            String(
+                provider.kind ||
+                "plugin"
+            )
+                .trim()
+                .toLowerCase(),
+
+        sourceUrl:
+            String(
+                provider.sourceUrl ||
+                ""
+            )
+                .trim(),
+
+        enabled:
+            provider.enabled !== false,
+
+        capabilities:
+            provider.capabilities &&
+            typeof provider.capabilities === "object"
+                ? {
+                    ...provider.capabilities
+                }
+                : {},
+
+        adapter:
+            provider.adapter ||
+            null,
+
+        resolver:
+            provider.resolver ||
+            null,
+
+        metadata:
+            provider.metadata &&
+            typeof provider.metadata === "object"
+                ? {
+                    ...provider.metadata
+                }
+                : {}
+
+    };
+
+}
+
+
+// ============================================================
+// bn-2. REGISTER CS3 PROVIDER
+// ============================================================
+
+function registerCs3Provider(
+    provider
+) {
+
+    const normalized =
+        createCs3Provider(
+            provider
+        );
+
+
+    CS3_PROVIDER_REGISTRY.set(
+        normalized.id,
+        normalized
+    );
+
+
+    console.log(
+        "[CS3 PROVIDER] REGISTERED:",
+        normalized.id,
+        "|",
+        normalized.name,
+        "| enabled:",
+        normalized.enabled
+    );
+
+
+    return normalized;
+
+}
+
+
+// ============================================================
+// bn-3. GET CS3 PROVIDER
+// ============================================================
+
+function getCs3Provider(
+    providerId
+) {
+
+    const id =
+        String(
+            providerId ||
+            ""
+        )
+            .trim();
+
+
+    if (!id) {
+        return null;
+    }
+
+
+    return (
+        CS3_PROVIDER_REGISTRY.get(
+            id
+        ) ||
+        null
+    );
+
+}
+
+
+// ============================================================
+// bn-4. GET ALL CS3 PROVIDERS
+// ============================================================
+
+function getAllCs3Providers() {
+
+    return Array.from(
+        CS3_PROVIDER_REGISTRY.values()
+    );
+
+}
+
+
+// ============================================================
+// bn-5. ENABLE / DISABLE CS3 PROVIDER
+// ============================================================
+
+function setCs3ProviderEnabled(
+    providerId,
+    enabled
+) {
+
+    const provider =
+        getCs3Provider(
+            providerId
+        );
+
+
+    if (!provider) {
+
+        console.log(
+            "[CS3 PROVIDER] NOT FOUND:",
+            providerId
+        );
+
+        return null;
+
+    }
+
+
+    provider.enabled =
+        enabled === true;
+
+
+    console.log(
+        "[CS3 PROVIDER]",
+        provider.enabled
+            ? "ENABLED:"
+            : "DISABLED:",
+        provider.id
+    );
+
+
+    return provider;
+
+}
+
+
+// ============================================================
+// bn-6. CS3 CAPABILITY CHECK
+// ============================================================
+
+function cs3ProviderSupports(
+    provider,
+    capability
+) {
+
+    if (
+        !provider ||
+        !capability
+    ) {
+        return false;
+    }
+
+
+    return (
+        provider.capabilities &&
+        provider.capabilities[
+            capability
+        ] === true
+    );
+
+}
+
+
+// ============================================================
+// bn-7. DEBUG CS3 PROVIDER REGISTRY
+// ============================================================
+
+function logCs3ProviderRegistry() {
+
+    const providers =
+        getAllCs3Providers();
+
+
+    console.log(
+        "[CS3 PROVIDER] TOTAL:",
+        providers.length
+    );
+
+
+    for (
+        const provider
+        of providers
+    ) {
+
+        console.log(
+            "[CS3 PROVIDER]",
+            provider.id,
+            "|",
+            provider.name,
+            "| kind:",
+            provider.kind,
+            "| enabled:",
+            provider.enabled
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// bn-8. CS3 LINK DATA CONTRACT
+// ============================================================
+//
+// Đây là contract trung gian giữa CloudStream provider
+// và MOVINA NormalizedStream.
+//
+// Không chuyển thẳng LinkData thành Stremio stream.
+//
+// ============================================================
+
+function createCs3LinkData(
+    linkData = {}
+) {
+
+    if (
+        !linkData ||
+        typeof linkData !== "object"
+    ) {
+        return null;
+    }
+
+
+    const link =
+        String(
+            linkData.link ||
+            linkData.url ||
+            ""
+        )
+            .trim();
+
+
+    if (!link) {
+        return null;
+    }
+
+
+    return {
+
+        link,
+
+        referer:
+            String(
+                linkData.referer ||
+                ""
+            )
+                .trim(),
+
+        quality:
+            Number(
+                linkData.quality ||
+                0
+            ) || 0,
+
+        isM3u8:
+            linkData.isM3u8 === true,
+
+        headers:
+            linkData.headers &&
+            typeof linkData.headers === "object"
+                ? {
+                    ...linkData.headers
+                }
+                : {},
+
+        subtitles:
+            Array.isArray(
+                linkData.subtitles
+            )
+                ? linkData.subtitles
+                : [],
+
+        serverName:
+            String(
+                linkData.serverName ||
+                linkData.server ||
+                ""
+            )
+                .trim(),
+
+        metadata:
+            linkData.metadata &&
+            typeof linkData.metadata === "object"
+                ? {
+                    ...linkData.metadata
+                }
+                : {}
+
+    };
+
+}
+
+
+// ============================================================
+// bn-9. CS3 LINK DATA → NORMALIZED STREAM
+// ============================================================
+//
+// Chỉ làm mapping dữ liệu.
+//
+// Resolver sẽ xử lý:
+// - direct HLS
+// - iframe
+// - extractor
+// - token
+// - header
+// - proxy
+//
+// ============================================================
+
+function cs3LinkDataToNormalizedStream(
+    linkData,
+    context = {}
+) {
+
+    const data =
+        createCs3LinkData(
+            linkData
+        );
+
+
+    if (!data) {
+        return null;
+    }
+
+
+    const provider =
+        String(
+            context.provider ||
+            "cs3"
+        )
+            .trim();
+
+
+    const title =
+        String(
+            context.title ||
+            data.serverName ||
+            "CS3"
+        )
+            .trim();
+
+
+    const type =
+        data.isM3u8
+            ? "hls"
+            : (
+                context.type ||
+                "video"
+            );
+
+
+    return createNormalizedStream({
+
+        provider,
+
+        providerName:
+            String(
+                context.providerName ||
+                provider
+            )
+                .trim(),
+
+        source:
+            provider,
+
+        title,
+
+        name:
+            context.name ||
+            title,
+
+        url:
+            data.link,
+
+        type,
+
+        referer:
+            data.referer,
+
+        headers:
+            data.headers,
+
+        subtitles:
+            data.subtitles,
+
+        episode:
+            context.episode ||
+            0,
+
+        season:
+            context.season ||
+            0,
+
+        serverName:
+            data.serverName,
+
+        quality:
+            data.quality,
+
+        resolver:
+            context.resolver ||
+            "",
+
+        resolverOptions:
+            context.resolverOptions ||
+            {},
+
+        metadata:
+            data.metadata
+
+    });
+
+}
+
+
+// ============================================================
+// bn-10. CS3 SYSTEM READY
+// ============================================================
+
+console.log(
+    "[CS3 PROVIDER] SYSTEM READY"
+);
+
+
+// ============================================================
 // BL-80. LIVE / IPTV PROVIDER SYSTEM
 // ============================================================
 //
