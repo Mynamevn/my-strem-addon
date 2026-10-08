@@ -17223,6 +17223,14 @@ async function animeHayLoadLinks(
             episodeUrl
         );
 
+    console.log(
+    "[ANIMEHAY] RESOLVED LINK DEBUG:",
+    JSON.stringify(
+        links,
+        null,
+        2
+    )
+    );
 
     console.log(
         "[ANIMEHAY] VIDEO URLS:",
@@ -17242,7 +17250,102 @@ async function animeHayLoadLinks(
 
     }
 
+for (
+    const link
+    of links
+) {
 
+    try {
+
+        const probe =
+            await axios.get(
+                link.url,
+                {
+                    timeout: 10000,
+
+                    responseType:
+                        "arraybuffer",
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                        "Referer":
+                            link.referer ||
+                            episodeUrl,
+
+                        "Accept":
+                            "*/*",
+
+                        "Range":
+                            "bytes=0-1023"
+
+                    },
+
+                    validateStatus:
+                        () => true
+
+                }
+            );
+
+
+        const buffer =
+            Buffer.from(
+                probe.data || []
+            );
+
+
+        console.log(
+            "[ANIMEHAY] PROBE:",
+            JSON.stringify({
+
+                url:
+                    link.url,
+
+                status:
+                    probe.status,
+
+                contentType:
+                    probe.headers?.[
+                        "content-type"
+                    ] || "",
+
+                contentLength:
+                    probe.headers?.[
+                        "content-length"
+                    ] || "",
+
+                contentRange:
+                    probe.headers?.[
+                        "content-range"
+                    ] || "",
+
+                bytes:
+                    Array.from(
+                        buffer.slice(
+                            0,
+                            32
+                        )
+                    )
+
+            })
+        );
+
+
+    } catch (
+        probeError
+    ) {
+
+        console.log(
+            "[ANIMEHAY] PROBE ERROR:",
+            probeError?.message ||
+            probeError
+        );
+
+    }
+
+}
     return links;
 
 }
