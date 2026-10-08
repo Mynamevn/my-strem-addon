@@ -15928,215 +15928,1255 @@ function animeHayGetAndUnpack(
 }
 
 
-// ------------------------------------------------------------
-// Extract tất cả URL có khả năng là media/embed
-// ------------------------------------------------------------
+// =====================================================
+// ANIMEHAY DIRECT LINK RESOLVER
+// DEX-MATCHED LOADLINKS FLOW
+// =====================================================
 
-function animeHayExtractVideoUrls(
-    html,
-    baseUrl
+function animeHayUnescapeUrl(
+    value
 ) {
 
-    const results = [];
+    return String(
+        value || ""
+    )
+        .replace(
+            /\\u0026/gi,
+            "&"
+        )
+        .replace(
+            /\\u003d/gi,
+            "="
+        )
+        .replace(
+            /\\u002F/gi,
+            "/"
+        )
+        .replace(
+            /\\\//g,
+            "/"
+        )
+        .replace(
+            /&amp;/gi,
+            "&"
+        )
+        .trim();
+
+}
 
 
-    const add = (
-        rawUrl,
-        referer = baseUrl,
-        quality = 0
-    ) => {
+// =====================================================
+// ANIMEHAY PACKER UNPACK
+// CloudStream loadLinks() gọi getAndUnpack()
+// =====================================================
 
-        const url =
-            animeHayFixUrl(
-                rawUrl,
-                baseUrl
+function animeHayUnpackPacker(
+    packed
+) {
+
+    const source =
+        String(
+            packed || ""
+        );
+
+    if (
+        !source
+    ) {
+
+        return "";
+
+    }
+
+
+    /*
+     * Dean Edwards P.A.C.K.E.R.
+     *
+     * CloudStream sử dụng getAndUnpack()
+     * ở đây.
+     */
+
+    const match =
+        source.match(
+            /eval\(function\(p,a,c,k,e,[dr]\)\{[\s\S]*?\}\(\s*(['"])([\s\S]*?)\1\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(['"])([\s\S]*?)\5\.split\(['"]\|['"]\)/i
+        );
+
+
+    if (
+        !match
+    ) {
+
+        /*
+         * Có trường hợp script đã unpack sẵn.
+         */
+
+        return source;
+
+    }
+
+
+    let payload =
+        match[2];
+
+    let base =
+        Number(
+            match[3]
+        );
+
+    const count =
+        Number(
+            match[4]
+        );
+
+    const dictionary =
+        match[6]
+            .split("|");
+
+
+    if (
+        !Number.isFinite(
+            base
+        ) ||
+        !Number.isFinite(
+            count
+        )
+    ) {
+
+        return source;
+
+    }
+
+
+    function encodeBase(
+        value
+    ) {
+
+        const chars =
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        let n =
+            Number(
+                value
+            );
+
+        let result =
+            "";
+
+        do {
+
+            result =
+                chars[
+                    n % base
+                ] +
+                result;
+
+            n =
+                Math.floor(
+                    n / base
+                );
+
+        } while (
+            n > 0
+        );
+
+        return result;
+
+    }
+
+
+    for (
+        let i = count - 1;
+        i >= 0;
+        i--
+    ) {
+
+        const word =
+            dictionary[
+                i
+            ];
+
+        if (
+            !word
+        ) {
+
+            continue;
+
+        }
+
+
+        const token =
+            encodeBase(
+                i
             );
 
 
-        if (!url) {
+        /*
+         * Chỉ thay token khi nó là word boundary.
+         */
+
+        payload =
+            payload.replace(
+                new RegExp(
+                    "\\b" +
+                    token +
+                    "\\b",
+                    "g"
+                ),
+                word
+            );
+
+    }
+
+
+    return payload;
+
+}
+
+
+// =====================================================
+// EXTRACT URL TỪ TEXT
+// =====================================================
+
+function animeHayExtractPlayableUrls(
+    text,
+    baseUrl = ""
+) {
+
+    const result =
+        [];
+
+    const seen =
+        new Set();
+
+
+    function add(
+        raw,
+        referer = baseUrl
+    ) {
+
+        let url =
+            animeHayUnescapeUrl(
+                raw
+            );
+
+        if (
+            !url
+        ) {
+
             return;
+
         }
 
+
+        try {
+
+            if (
+                baseUrl
+            ) {
+
+                url =
+                    new URL(
+                        url,
+                        baseUrl
+                    ).toString();
+
+            }
+
+        } catch (e) {
+            // giữ nguyên
+        }
+
+
+        if (
+            !/^https?:\/\//i.test(
+                url
+            )
+        ) {
+
+            return;
+
+        }
+
+
+        /*
+         * DEX thực tế tạo LinkData từ URL.
+         * Chúng ta chỉ nhận các URL có khả năng
+         * là media hoặc player source.
+         */
 
         const lower =
             url.toLowerCase();
 
 
-        const looksLikeMedia =
-            /\.(m3u8|mp4)(?:$|\?)/i.test(
-                lower
-            ) ||
-
-            lower.includes(
-                ".m3u8"
-            ) ||
-
-            lower.includes(
-                "/embed/"
-            ) ||
-
-            lower.includes(
-                "/embed-jw/"
-            ) ||
-
-            /ssplay\.net/i.test(
-                lower
-            );
-
-
         if (
-            !looksLikeMedia
-        ) {
-
-            return;
-        }
-
-
-        if (
-            !results.some(
-                item =>
-                    item.url === url
-            )
-        ) {
-
-            results.push({
-
-                url,
-
-                referer:
-                    referer ||
-                    baseUrl,
-
-                quality:
-                    Number(
-                        quality || 0
-                    )
-            });
-        }
-    };
-
-
-    const source =
-        String(
-            html || ""
-        );
-
-
-    // --------------------------------------------------------
-    // 1. URL trực tiếp
-    // --------------------------------------------------------
-
-    const directRegex =
-        /https?:\/\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/gi;
-
-
-    for (
-        const url of
-        source.match(
-            directRegex
-        ) || []
-    ) {
-
-        add(
-            url,
-            baseUrl
-        );
-    }
-
-
-    // --------------------------------------------------------
-    // 2. file / fileUrl / videoUrl / M3U8_URL
-    // --------------------------------------------------------
-
-    const patterns = [
-
-        /["']file["']\s*:\s*["']([^"']+)["']/gi,
-
-        /["']fileUrl["']\s*:\s*["']([^"']+)["']/gi,
-
-        /["']videoUrl["']\s*:\s*["']([^"']+)["']/gi,
-
-        /["']videoUrls["']\s*:\s*["']([^"']+)["']/gi,
-
-        /M3U8_URL\s*[:=]\s*["']([^"']+)["']/gi,
-
-        /m3u8\s*[:=]\s*["']([^"']+)["']/gi
-
-    ];
-
-
-    for (
-        const regex of
-        patterns
-    ) {
-
-        let match;
-
-
-        while (
-            (
-                match =
-                regex.exec(
-                    source
+            !(
+                lower.includes(
+                    ".m3u8"
+                ) ||
+                lower.includes(
+                    ".mp4"
+                ) ||
+                lower.includes(
+                    "m3u8?"
+                ) ||
+                lower.includes(
+                    "playlist"
+                ) ||
+                lower.includes(
+                    "manifest"
+                ) ||
+                lower.includes(
+                    "/video/"
+                ) ||
+                lower.includes(
+                    "/stream/"
+                ) ||
+                lower.includes(
+                    "/hls/"
                 )
             )
         ) {
 
-            add(
-                match[1],
-                baseUrl
-            );
+            return;
+
         }
+
+
+        const key =
+            url;
+
+
+        if (
+            seen.has(
+                key
+            )
+        ) {
+
+            return;
+
+        }
+
+
+        seen.add(
+            key
+        );
+
+
+        result.push({
+
+            url:
+
+                url,
+
+            referer:
+
+                referer || "",
+
+            isM3u8:
+
+                lower.includes(
+                    ".m3u8"
+                ) ||
+                lower.includes(
+                    "m3u8?"
+                )
+
+        });
+
     }
 
 
-    // --------------------------------------------------------
-    // 3. JSON object:
-    //
-    // { "file": "...", "label": "720p" }
-    // --------------------------------------------------------
-
-    const jsonFileRegex =
-        /["']file["']\s*:\s*["']([^"']+)["'][^}]{0,300}?["'](?:label|quality)["']\s*:\s*["']?(\d{3,4})/gi;
+    const source =
+        String(
+            text || ""
+        );
 
 
-    let jsonMatch;
+    /*
+     * 1. M3U8_URL
+     *
+     * Đây là pattern DEX xác nhận.
+     */
+
+    const m3u8Matches =
+        source.matchAll(
+            /var\s+M3U8_URL\s*=\s*['"]([^'"]+)['"]/gi
+        );
 
 
-    while (
-        (
-            jsonMatch =
-            jsonFileRegex.exec(
-                source
-            )
-        )
+    for (
+        const match
+        of m3u8Matches
     ) {
 
         add(
-            jsonMatch[1],
-            baseUrl,
-            Number(
-                jsonMatch[2]
-            )
+            match[1],
+            baseUrl
         );
+
     }
 
 
-    return results;
+    /*
+     * 2. JSON-style file
+     *
+     * DEX xác nhận chuỗi:
+     *
+     * [{"file":"
+     */
+
+    const fileMatches =
+        source.matchAll(
+            /["']file["']\s*:\s*["']([^"']+)["']/gi
+        );
+
+
+    for (
+        const match
+        of fileMatches
+    ) {
+
+        add(
+            match[1],
+            baseUrl
+        );
+
+    }
+
+
+    /*
+     * 3. URL trực tiếp đã nằm trong JS.
+     */
+
+    const directMatches =
+        source.matchAll(
+            /https?:\/\/[^"'\\\s<>]+/gi
+        );
+
+
+    for (
+        const match
+        of directMatches
+    ) {
+
+        add(
+            match[0],
+            baseUrl
+        );
+
+    }
+
+
+    return result;
+
 }
 
 
-// ============================================================
-// ANIMEHAY — RESOLVE EMBED
-//
-// AnimeHay CloudStream:
-// iframe/embed → page → JS → getAndUnpack()
-// → file/videoUrls/M3U8 → LinkData
-// ============================================================
+// =====================================================
+// ANIMEHAY EXTRACT VIDEO URLS
+// =====================================================
+
+async function animeHayExtractVideoUrls(
+    episodeUrl
+) {
+
+    const urls =
+        [];
+
+    const seen =
+        new Set();
+
+
+    function addUrl(
+        item
+    ) {
+
+        if (
+            !item?.url
+        ) {
+
+            return;
+
+        }
+
+
+        const url =
+            animeHayUnescapeUrl(
+                item.url
+            );
+
+
+        if (
+            !/^https?:\/\//i.test(
+                url
+            )
+        ) {
+
+            return;
+
+        }
+
+
+        if (
+            seen.has(
+                url
+            )
+        ) {
+
+            return;
+
+        }
+
+
+        seen.add(
+            url
+        );
+
+
+        urls.push({
+
+            url:
+
+                url,
+
+            referer:
+
+                item.referer ||
+                episodeUrl ||
+                "",
+
+            quality:
+
+                Number(
+                    item.quality ||
+                    0
+                ) || 0,
+
+            isM3u8:
+
+                item.isM3u8 !==
+                undefined
+
+                    ? Boolean(
+                        item.isM3u8
+                    )
+
+                    :
+
+                    /\.m3u8(?:[?#]|$)/i.test(
+                        url
+                    )
+
+        });
+
+    }
+
+
+    if (
+        !episodeUrl
+    ) {
+
+        return urls;
+
+    }
+
+
+    console.log(
+        "[ANIMEHAY] DIRECT RESOLVE:",
+        episodeUrl
+    );
+
+
+    try {
+
+        /*
+         * =================================================
+         * STEP 1
+         * GET EPISODE / PLAYER PAGE
+         * =================================================
+         */
+
+        const response =
+            await axios.get(
+                episodeUrl,
+                {
+
+                    timeout:
+                        15000,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                        "Referer":
+                            episodeUrl
+
+                    }
+
+                }
+            );
+
+
+        const html =
+            String(
+                response?.data ||
+                ""
+            );
+
+
+        console.log(
+            "[ANIMEHAY] LINK PAGE LENGTH:",
+            html.length
+        );
+
+
+        /*
+         * =================================================
+         * STEP 2
+         * DEX: regex
+         *
+         * '([^']+)'\s*:\s*'([^']+)'
+         *
+         * Tạo map các URL trong JavaScript.
+         * =================================================
+         */
+
+        const variableMap =
+            new Map();
+
+
+        const variableRegex =
+            /'([^']+)'\s*:\s*'([^']+)'/g;
+
+
+        let variableMatch;
+
+
+        while (
+            (
+                variableMatch =
+                    variableRegex.exec(
+                        html
+                    )
+            )
+        ) {
+
+            variableMap.set(
+
+                variableMatch[1],
+
+                animeHayUnescapeUrl(
+                    variableMatch[2]
+                )
+
+            );
+
+        }
+
+
+        console.log(
+            "[ANIMEHAY] JS VARIABLE MAP:",
+            variableMap.size
+        );
+
+
+        /*
+         * =================================================
+         * STEP 3
+         * Tìm tất cả URL có /embed-jw/
+         *
+         * DEX:
+         * value.contains("/embed-jw/")
+         * =================================================
+         */
+
+        const embedCandidates =
+            [];
+
+
+        for (
+            const [
+                key,
+                value
+            ]
+            of variableMap
+        ) {
+
+            if (
+                String(
+                    value || ""
+                ).includes(
+                    "/embed-jw/"
+                )
+            ) {
+
+                embedCandidates.push({
+
+                    key:
+
+                        key,
+
+                    url:
+
+                        value
+
+                });
+
+            }
+
+        }
+
+
+        /*
+         * Ngoài map, scan toàn HTML để tránh
+         * trường hợp JS dùng double quote.
+         */
+
+        const embedRegex =
+            /https?:\/\/[^"'\\\s<>]*\/embed-jw\/[^"'\\\s<>]*/gi;
+
+
+        for (
+            const match
+            of html.matchAll(
+                embedRegex
+            )
+        ) {
+
+            embedCandidates.push({
+
+                key:
+
+                    "html",
+
+                url:
+
+                    animeHayUnescapeUrl(
+                        match[0]
+                    )
+
+            });
+
+        }
+
+
+        console.log(
+            "[ANIMEHAY] EMBED-JW CANDIDATES:",
+            embedCandidates.length
+        );
+
+
+        /*
+         * =================================================
+         * STEP 4
+         * Thử trực tiếp M3U8_URL trong trang đầu.
+         * =================================================
+         */
+
+        for (
+            const item
+            of animeHayExtractPlayableUrls(
+                html,
+                episodeUrl
+            )
+        ) {
+
+            addUrl(
+                item
+            );
+
+        }
+
+
+        /*
+         * =================================================
+         * STEP 5
+         * GET từng /embed-jw/
+         * =================================================
+         */
+
+        for (
+            const candidate
+            of embedCandidates
+        ) {
+
+            const embedUrl =
+                animeHayUnescapeUrl(
+                    candidate.url
+                );
+
+
+            if (
+                !embedUrl
+            ) {
+
+                continue;
+
+            }
+
+
+            console.log(
+                "[ANIMEHAY] EMBED-JW:",
+                embedUrl
+            );
+
+
+            try {
+
+                const embedResponse =
+                    await axios.get(
+                        embedUrl,
+                        {
+
+                            timeout:
+                                15000,
+
+                            headers: {
+
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+
+                                "Referer":
+                                    episodeUrl
+
+                            }
+
+                        }
+                    );
+
+
+                const embedHtml =
+                    String(
+                        embedResponse?.data ||
+                        ""
+                    );
+
+
+                console.log(
+                    "[ANIMEHAY] EMBED HTML LENGTH:",
+                    embedHtml.length
+                );
+
+
+                /*
+                 * DEX:
+                 *
+                 * var M3U8_URL = '...'
+                 */
+
+                for (
+                    const item
+                    of animeHayExtractPlayableUrls(
+                        embedHtml,
+                        embedUrl
+                    )
+                ) {
+
+                    if (
+                        !item.referer
+                    ) {
+
+                        item.referer =
+                            embedUrl;
+
+                    }
+
+
+                    addUrl(
+                        item
+                    );
+
+                }
+
+
+                /*
+                 * =================================================
+                 * STEP 6
+                 * ssplay.net
+                 *
+                 * DEX:
+                 * contains("https://ssplay.net/")
+                 * contains("https://ssplay.net/ok/")
+                 * =================================================
+                 */
+
+                if (
+                    embedUrl.includes(
+                        "https://ssplay.net/"
+                    ) ||
+                    embedUrl.includes(
+                        "https://ssplay.net/ok/"
+                    )
+                ) {
+
+                    const embedPage =
+                        cheerio.load(
+                            embedHtml
+                        );
+
+
+                    /*
+                     * DEX:
+                     * selectFirst("iframe")
+                     * attr("src")
+                     */
+
+                    const iframeSrc =
+                        embedPage(
+                            "iframe"
+                        )
+                            .first()
+                            .attr(
+                                "src"
+                            );
+
+
+                    if (
+                        iframeSrc
+                    ) {
+
+                        const iframeUrl =
+                            new URL(
+                                iframeSrc,
+                                embedUrl
+                            ).toString();
+
+
+                        console.log(
+                            "[ANIMEHAY] IFRAME:",
+                            iframeUrl
+                        );
+
+
+                        try {
+
+                            const iframeResponse =
+                                await axios.get(
+                                    iframeUrl,
+                                    {
+
+                                        timeout:
+                                            15000,
+
+                                        headers: {
+
+                                            "User-Agent":
+                                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+
+                                            "Referer":
+                                                embedUrl
+
+                                        }
+
+                                    }
+                                );
+
+
+                            const iframeHtml =
+                                String(
+                                    iframeResponse?.data ||
+                                    ""
+                                );
+
+
+                            console.log(
+                                "[ANIMEHAY] IFRAME HTML LENGTH:",
+                                iframeHtml.length
+                            );
+
+
+                            /*
+                             * =================================================
+                             * STEP 7
+                             * DEX EXACT:
+                             *
+                             * body script:containsData(
+                             *     function(p,a,c,k,e,d)
+                             * )
+                             *
+                             * then:
+                             * script.data()
+                             * getAndUnpack()
+                             * =================================================
+                             */
+
+                            const iframeDom =
+                                cheerio.load(
+                                    iframeHtml
+                                );
+
+
+                            const scripts =
+                                [];
+
+
+                            iframeDom(
+                                "body script"
+                            )
+                                .each(
+                                    (
+                                        index,
+                                        element
+                                    ) => {
+
+                                        const script =
+                                            iframeDom(
+                                                element
+                                            );
+
+
+                                        const data =
+                                            script.html() ||
+                                            script.text() ||
+                                            "";
+
+
+                                        if (
+                                            data.includes(
+                                                "function(p,a,c,k,e,d)"
+                                            )
+                                        ) {
+
+                                            scripts.push(
+                                                data
+                                            );
+
+                                        }
+
+                                    }
+                                );
+
+
+                            console.log(
+                                "[ANIMEHAY] PACKED SCRIPTS:",
+                                scripts.length
+                            );
+
+
+                            for (
+                                const script
+                                of scripts
+                            ) {
+
+                                /*
+                                 * CloudStream getAndUnpack()
+                                 */
+
+                                const unpacked =
+                                    animeHayUnpackPacker(
+                                        script
+                                    );
+
+
+                                console.log(
+                                    "[ANIMEHAY] UNPACKED SCRIPT LENGTH:",
+                                    unpacked.length
+                                );
+
+
+                                /*
+                                 * DEX:
+                                 *
+                                 * [{"file":"
+                                 */
+
+                                const fileMatches =
+                                    unpacked.matchAll(
+                                        /["']file["']\s*:\s*["']([^"']+)["']/gi
+                                    );
+
+
+                                for (
+                                    const match
+                                    of fileMatches
+                                ) {
+
+                                    let fileUrl =
+                                        animeHayUnescapeUrl(
+                                            match[1]
+                                        );
+
+
+                                    /*
+                                     * DEX:
+                                     *
+                                     * fixUrl(
+                                     *     fileUrl,
+                                     *     "https://ssplay.net"
+                                     * )
+                                     */
+
+                                    try {
+
+                                        fileUrl =
+                                            new URL(
+                                                fileUrl,
+                                                "https://ssplay.net"
+                                            ).toString();
+
+                                    } catch (e) {
+                                        // giữ nguyên
+                                    }
+
+
+                                    console.log(
+                                        "[ANIMEHAY] FILE:",
+                                        fileUrl
+                                    );
+
+
+                                    addUrl({
+
+                                        url:
+
+                                            fileUrl,
+
+                                        referer:
+
+                                            iframeUrl,
+
+                                        isM3u8:
+
+                                            /\.m3u8(?:[?#]|$)/i.test(
+                                                fileUrl
+                                            )
+
+                                    });
+
+                                }
+
+
+                                /*
+                                 * Một số bản unpack có URL
+                                 * trực tiếp nhưng không còn
+                                 * key "file".
+                                 */
+
+                                for (
+                                    const item
+                                    of animeHayExtractPlayableUrls(
+                                        unpacked,
+                                        iframeUrl
+                                    )
+                                ) {
+
+                                    if (
+                                        !item.referer
+                                    ) {
+
+                                        item.referer =
+                                            iframeUrl;
+
+                                    }
+
+
+                                    addUrl(
+                                        item
+                                    );
+
+                                }
+
+                            }
+
+                        } catch (
+                            iframeError
+                        ) {
+
+                            console.log(
+                                "[ANIMEHAY] IFRAME ERROR:",
+                                iframeError?.response?.status ||
+                                iframeError?.message ||
+                                iframeError
+                            );
+
+                        }
+
+                    }
+
+                }
+
+            } catch (
+                embedError
+            ) {
+
+                console.log(
+                    "[ANIMEHAY] EMBED ERROR:",
+                    embedError?.response?.status ||
+                    embedError?.message ||
+                    embedError
+                );
+
+            }
+
+        }
+
+
+        /*
+         * =================================================
+         * STEP 8
+         * Nếu chưa có link, scan toàn episode HTML
+         * một lần cuối.
+         * =================================================
+         */
+
+        if (
+            urls.length === 0
+        ) {
+
+            for (
+                const item
+                of animeHayExtractPlayableUrls(
+                    html,
+                    episodeUrl
+                )
+            ) {
+
+                addUrl(
+                    item
+                );
+
+            }
+
+        }
+
+
+        console.log(
+            "[ANIMEHAY] DIRECT URL COUNT:",
+            urls.length
+        );
+
+
+        return urls;
+
+    } catch (
+        error
+    ) {
+
+        console.log(
+            "[ANIMEHAY] DIRECT RESOLVE ERROR:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+
+        return urls;
+
+    }
+
+}
+
+
+// =====================================================
+// ANIMEHAY EMBED RESOLVER
+// =====================================================
 
 async function animeHayResolveEmbed(
     embedUrl,
-    referer
+    refererUrl = ""
 ) {
 
     if (
@@ -16144,959 +17184,68 @@ async function animeHayResolveEmbed(
     ) {
 
         return [];
+
     }
 
 
-    try {
+    return animeHayExtractVideoUrls(
+        embedUrl
+    );
 
-        console.log(
-            "[ANIMEHAY] RESOLVE EMBED:",
-            embedUrl
-        );
-
-
-        const response =
-            await axios.get(
-                embedUrl,
-                {
-                    timeout: 15000,
-                    maxRedirects: 5,
-
-                    validateStatus:
-                        () => true,
-
-                    headers: {
-
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-
-                        "Referer":
-                            referer ||
-                            embedUrl,
-
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/javascript,*/*"
-                    }
-                }
-            );
-
-
-        const html =
-            String(
-                response.data || ""
-            );
-
-
-        const finalUrl =
-            response?.request?.res?.responseUrl ||
-            embedUrl;
-
-
-        console.log(
-            "[ANIMEHAY] EMBED HTML LENGTH:",
-            html.length
-        );
-
-
-        // ----------------------------------------------------
-        // 1. Raw HTML
-        // ----------------------------------------------------
-
-        const found =
-            animeHayExtractVideoUrls(
-                html,
-                finalUrl
-            );
-
-
-        // ----------------------------------------------------
-        // 2. Unpack toàn bộ script
-        //
-        // Đây là phần mà code cũ hoàn toàn bỏ qua.
-        // ----------------------------------------------------
-
-        const $ =
-            cheerio.load(html);
-
-
-        $("script").each(
-            (_, el) => {
-
-                const script =
-                    $(el).html() ||
-                    "";
-
-
-                if (!script) {
-                    return;
-                }
-
-
-                const unpacked =
-                    animeHayGetAndUnpack(
-                        script
-                    );
-
-
-                if (
-                    !unpacked ||
-                    unpacked === script
-                ) {
-
-                    return;
-                }
-
-
-                found.push(
-                    ...animeHayExtractVideoUrls(
-                        unpacked,
-                        finalUrl
-                    )
-                );
-            }
-        );
-
-
-        // ----------------------------------------------------
-        // 3. iframe lồng nhau
-        // ----------------------------------------------------
-
-        const nestedFrames = [];
-
-
-        $("iframe[src], iframe[data-src], embed[src]").each(
-            (_, el) => {
-
-                const node =
-                    $(el);
-
-
-                const raw =
-                    node.attr("src") ||
-                    node.attr("data-src");
-
-
-                if (!raw) {
-                    return;
-                }
-
-
-                const nested =
-                    animeHayFixUrl(
-                        raw,
-                        finalUrl
-                    );
-
-
-                if (
-                    nested &&
-                    !nestedFrames.includes(
-                        nested
-                    ) &&
-                    nested !== embedUrl
-                ) {
-
-                    nestedFrames.push(
-                        nested
-                    );
-                }
-            }
-        );
-
-
-        console.log(
-            "[ANIMEHAY] NESTED EMBEDS:",
-            nestedFrames.length
-        );
-
-
-        for (
-            const nested of
-            nestedFrames
-        ) {
-
-            const nestedUrls =
-                await animeHayResolveEmbed(
-                    nested,
-                    finalUrl
-                );
-
-
-            found.push(
-                ...nestedUrls
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // 4. DEDUPE
-        // ----------------------------------------------------
-
-        const unique = [];
-
-
-        for (
-            const item of
-            found
-        ) {
-
-            if (
-                !item?.url
-            ) {
-
-                continue;
-            }
-
-
-            if (
-                !unique.some(
-                    x =>
-                        x.url ===
-                        item.url
-                )
-            ) {
-
-                unique.push(
-                    item
-                );
-            }
-        }
-
-
-        console.log(
-            "[ANIMEHAY] EMBED VIDEO URLS:",
-            unique.length
-        );
-
-
-        for (
-            const item of
-            unique
-        ) {
-
-            console.log(
-                "[ANIMEHAY] MEDIA:",
-                item.url
-            );
-        }
-
-
-        return unique;
-
-    } catch (e) {
-
-        console.log(
-            "[ANIMEHAY] EMBED ERROR:",
-            e?.message || e
-        );
-
-        return [];
-    }
 }
 
 
-// ============================================================
-// ANIMEHAY — LOAD LINKS
-//
-// Bám theo CloudStream AnimeHayProvider:
-//
-// episode page
-//      ↓
-// .list-server-items li
-//      ↓
-// server/link data
-//      ↓
-// iframe / embedUrl / JS
-//      ↓
-// getAndUnpack()
-//      ↓
-// file / videoUrls / M3U8
-//      ↓
-// LinkData
-// ============================================================
+// =====================================================
+// ANIMEHAY LOAD LINKS
+// =====================================================
 
 async function animeHayLoadLinks(
-    episodeUrl,
-    domain
+    episodeUrl
 ) {
 
-    try {
+    console.log(
+        "[ANIMEHAY] LOAD LINKS:",
+        episodeUrl
+    );
 
-        console.log(
-            "[ANIMEHAY] LOAD LINKS:",
+
+    if (
+        !episodeUrl
+    ) {
+
+        return [];
+
+    }
+
+
+    const links =
+        await animeHayExtractVideoUrls(
             episodeUrl
         );
 
 
-        const response =
-            await axios.get(
-                episodeUrl,
-                {
-                    timeout: 15000,
-                    maxRedirects: 5,
-
-                    validateStatus:
-                        () => true,
-
-                    headers: {
-
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-
-                        "Referer":
-                            domain + "/",
-
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/javascript,*/*"
-                    }
-                }
-            );
+    console.log(
+        "[ANIMEHAY] VIDEO URLS:",
+        links.length
+    );
 
 
-        const html =
-            String(
-                response.data || ""
-            );
-
-
-        const finalEpisodeUrl =
-            response?.request?.res?.responseUrl ||
-            episodeUrl;
-
+    if (
+        !links.length
+    ) {
 
         console.log(
-            "[ANIMEHAY] EPISODE HTML LENGTH:",
-            html.length
-        );
-
-
-        const $ =
-            cheerio.load(html);
-
-
-        const found = [];
-
-
-        const addMany =
-            items => {
-
-                for (
-                    const item of
-                    items || []
-                ) {
-
-                    if (
-                        !item?.url
-                    ) {
-
-                        continue;
-                    }
-
-
-                    if (
-                        !found.some(
-                            x =>
-                                x.url ===
-                                item.url
-                        )
-                    ) {
-
-                        found.push(
-                            item
-                        );
-                    }
-                }
-            };
-
-
-        // ====================================================
-        // 1. DIRECT MEDIA TRONG EPISODE
-        // ====================================================
-
-        addMany(
-            animeHayExtractVideoUrls(
-                html,
-                finalEpisodeUrl
-            )
-        );
-
-
-        // ====================================================
-        // 2. .list-server-items li
-        //
-        // ĐÂY LÀ SELECTOR QUAN TRỌNG ĐÃ XÁC NHẬN TỪ DEX.
-        // ====================================================
-
-        const serverItems =
-            [];
-
-
-        $(".list-server-items li").each(
-            (_, el) => {
-
-                const node =
-                    $(el);
-
-
-                const item = {
-
-                    html:
-                        $.html(
-                            el
-                        ),
-
-                    text:
-                        (
-                            node.text() ||
-                            ""
-                        ).trim(),
-
-                    href:
-                        node.find(
-                            "a[href]"
-                        )
-                        .first()
-                        .attr(
-                            "href"
-                        ),
-
-                    dataLink:
-                        node.attr(
-                            "data-link"
-                        ) ||
-                        node.find(
-                            "[data-link]"
-                        )
-                        .first()
-                        .attr(
-                            "data-link"
-                        ),
-
-                    dataUrl:
-                        node.attr(
-                            "data-url"
-                        ) ||
-                        node.find(
-                            "[data-url]"
-                        )
-                        .first()
-                        .attr(
-                            "data-url"
-                        ),
-
-                    dataVideo:
-                        node.attr(
-                            "data-video"
-                        ) ||
-                        node.find(
-                            "[data-video]"
-                        )
-                        .first()
-                        .attr(
-                            "data-video"
-                        ),
-
-                    dataEmbed:
-                        node.attr(
-                            "data-embed"
-                        ) ||
-                        node.find(
-                            "[data-embed]"
-                        )
-                        .first()
-                        .attr(
-                            "data-embed"
-                        )
-                };
-
-
-                serverItems.push(
-                    item
-                );
-            }
-        );
-
-
-        console.log(
-            "[ANIMEHAY] SERVER ITEMS:",
-            serverItems.length
-        );
-
-
-        // ----------------------------------------------------
-        // DEBUG có chủ đích:
-        // nếu server item tồn tại nhưng không có URL,
-        // cần nhìn chính xác HTML/data của nó.
-        // ----------------------------------------------------
-
-        for (
-            const item of
-            serverItems
-        ) {
-
-            console.log(
-                "[ANIMEHAY] SERVER ITEM:",
-                {
-                    text:
-                        item.text,
-
-                    href:
-                        item.href,
-
-                    dataLink:
-                        item.dataLink,
-
-                    dataUrl:
-                        item.dataUrl,
-
-                    dataVideo:
-                        item.dataVideo,
-
-                    dataEmbed:
-                        item.dataEmbed
-                }
-            );
-        }
-
-
-        // ====================================================
-        // 3. SERVER ITEM → URL
-        // ====================================================
-
-        const serverTargets =
-            [];
-
-
-        const addServerTarget =
-            (
-                raw,
-                referer
-            ) => {
-
-                const url =
-                    animeHayFixUrl(
-                        raw,
-                        finalEpisodeUrl
-                    );
-
-
-                if (!url) {
-                    return;
-                }
-
-
-                if (
-                    !serverTargets.some(
-                        x =>
-                            x.url ===
-                            url
-                    )
-                ) {
-
-                    serverTargets.push({
-
-                        url,
-
-                        referer:
-                            referer ||
-                            finalEpisodeUrl
-                    });
-                }
-            };
-
-
-        for (
-            const item of
-            serverItems
-        ) {
-
-            addServerTarget(
-                item.href,
-                finalEpisodeUrl
-            );
-
-
-            addServerTarget(
-                item.dataLink,
-                finalEpisodeUrl
-            );
-
-
-            addServerTarget(
-                item.dataUrl,
-                finalEpisodeUrl
-            );
-
-
-            addServerTarget(
-                item.dataVideo,
-                finalEpisodeUrl
-            );
-
-
-            addServerTarget(
-                item.dataEmbed,
-                finalEpisodeUrl
-            );
-        }
-
-
-        console.log(
-            "[ANIMEHAY] SERVER TARGETS:",
-            serverTargets.length
-        );
-
-
-        // ====================================================
-        // 4. TOÀN BỘ ATTRIBUTE CHỨA LINK
-        //
-        // Một số phiên bản AnimeHay nhúng link vào data-*.
-        // ====================================================
-
-        $(
-            "[data-link], [data-url], [data-video], [data-embed], [data-src]"
-        ).each(
-            (_, el) => {
-
-                const node =
-                    $(el);
-
-
-                const attrs = [
-
-                    "data-link",
-                    "data-url",
-                    "data-video",
-                    "data-embed",
-                    "data-src"
-
-                ];
-
-
-                for (
-                    const attr of
-                    attrs
-                ) {
-
-                    const raw =
-                        node.attr(
-                            attr
-                        );
-
-
-                    if (
-                        raw
-                    ) {
-
-                        addServerTarget(
-                            raw,
-                            finalEpisodeUrl
-                        );
-                    }
-                }
-            }
-        );
-
-
-        // ====================================================
-        // 5. SCRIPT TRONG EPISODE
-        //
-        // CloudStream có getAndUnpack().
-        // Vì vậy phải inspect/unpack JS trước khi kết luận
-        // "không có video".
-        // ====================================================
-
-        const scriptSources =
-            [];
-
-
-        $("script").each(
-            (_, el) => {
-
-                const script =
-                    $(el).html() ||
-                    "";
-
-
-                if (
-                    script.trim()
-                ) {
-
-                    scriptSources.push(
-                        script
-                    );
-                }
-            }
-        );
-
-
-        console.log(
-            "[ANIMEHAY] SCRIPT COUNT:",
-            scriptSources.length
-        );
-
-
-        for (
-            const script of
-            scriptSources
-        ) {
-
-            // Raw script
-            addMany(
-                animeHayExtractVideoUrls(
-                    script,
-                    finalEpisodeUrl
-                )
-            );
-
-
-            // Packed script
-            const unpacked =
-                animeHayGetAndUnpack(
-                    script
-                );
-
-
-            if (
-                unpacked &&
-                unpacked !== script
-            ) {
-
-                console.log(
-                    "[ANIMEHAY] UNPACKED SCRIPT LENGTH:",
-                    unpacked.length
-                );
-
-
-                addMany(
-                    animeHayExtractVideoUrls(
-                        unpacked,
-                        finalEpisodeUrl
-                    )
-                );
-            }
-        }
-
-
-        // ====================================================
-        // 6. IFRAME / EMBED TRỰC TIẾP
-        // ====================================================
-
-        const embedTargets =
-            [];
-
-
-        const addEmbed =
-            raw => {
-
-                const url =
-                    animeHayFixUrl(
-                        raw,
-                        finalEpisodeUrl
-                    );
-
-
-                if (!url) {
-                    return;
-                }
-
-
-                if (
-                    !embedTargets.includes(
-                        url
-                    )
-                ) {
-
-                    embedTargets.push(
-                        url
-                    );
-                }
-            };
-
-
-        $("iframe[src], iframe[data-src], embed[src]").each(
-            (_, el) => {
-
-                const node =
-                    $(el);
-
-
-                addEmbed(
-                    node.attr(
-                        "src"
-                    )
-                );
-
-
-                addEmbed(
-                    node.attr(
-                        "data-src"
-                    )
-                );
-            }
-        );
-
-
-        // ====================================================
-        // 7. SERVER TARGETS → EMBED RESOLVER
-        // ====================================================
-
-        for (
-            const target of
-            serverTargets
-        ) {
-
-            const lower =
-                target.url.toLowerCase();
-
-
-            if (
-                lower.includes(
-                    "/embed"
-                ) ||
-                lower.includes(
-                    "/embed-jw/"
-                ) ||
-                /ssplay\.net/i.test(
-                    lower
-                )
-            ) {
-
-                embedTargets.push(
-                    target.url
-                );
-            }
-
-            else if (
-                /\.(m3u8|mp4)(?:$|\?)/i.test(
-                    target.url
-                )
-            ) {
-
-                addMany([{
-
-                    url:
-                        target.url,
-
-                    referer:
-                        target.referer
-                }]);
-            }
-        }
-
-
-        // Dedupe embeds
-        const uniqueEmbeds =
-            [
-                ...new Set(
-                    embedTargets
-                )
-            ];
-
-
-        console.log(
-            "[ANIMEHAY] EMBED COUNT:",
-            uniqueEmbeds.length
-        );
-
-
-        for (
-            const embedUrl of
-            uniqueEmbeds
-        ) {
-
-            console.log(
-                "[ANIMEHAY] EMBED TARGET:",
-                embedUrl
-            );
-
-
-            const urls =
-                await animeHayResolveEmbed(
-                    embedUrl,
-                    finalEpisodeUrl
-                );
-
-
-            addMany(
-                urls
-            );
-        }
-
-
-        // ====================================================
-        // 8. FINAL
-        // ====================================================
-
-        const unique =
-            [];
-
-
-        for (
-            const item of
-            found
-        ) {
-
-            if (
-                !item?.url
-            ) {
-
-                continue;
-            }
-
-
-            if (
-                !unique.some(
-                    x =>
-                        x.url ===
-                        item.url
-                )
-            ) {
-
-                unique.push(
-                    item
-                );
-            }
-        }
-
-
-        console.log(
-            "[ANIMEHAY] VIDEO URLS:",
-            unique.length
-        );
-
-
-        for (
-            const item of
-            unique
-        ) {
-
-            console.log(
-                "[ANIMEHAY] VIDEO:",
-                item.url,
-                "REFERER:",
-                item.referer
-            );
-        }
-
-
-        return unique;
-
-    } catch (e) {
-
-        console.log(
-            "[ANIMEHAY] LOAD LINKS ERROR:",
-            e?.message || e
+            "[ANIMEHAY] NO VIDEO URLS"
         );
 
         return [];
+
     }
+
+
+    return links;
+
 }
-
-
-// ============================================================
-// ANIMEHAY — MAIN PROVIDER
-// ============================================================
 
 async function fetchAnimeHay(
     movieName,
