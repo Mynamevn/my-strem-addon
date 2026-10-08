@@ -7737,20 +7737,6 @@ function logLiveProviderRegistry() {
     }
 }
 
-    // ============================================================
-    // bn-11. VMT TV - LIVE PROVIDER
-    // ============================================================
-    //
-    // VMT TV là LIVE provider đầu tiên của MOVINA.
-    //
-    // Provider này đọc M3U từ repository VMT TV và chuyển toàn bộ
-    // dữ liệu về LIVE Provider Contract.
-    //
-    // Sau này các provider truyền hình khác chỉ cần tạo adapter
-    // cùng contract này và register vào LIVE_PROVIDER_REGISTRY.
-    //
-    // ============================================================
-
 
 // ============================================================
 // BL-81. VMT TV PROVIDER
