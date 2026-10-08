@@ -6068,28 +6068,30 @@ if (
 
 
 // ============================================================
-// BL-NORMALIZED STREAM CONTRACT + RESOLVER REGISTRY
+// BL-30. NORMALIZED STREAM CORE + RESOLVER ENGINE
 // ============================================================
 //
-// Kiến trúc chung:
+// Pipeline:
 //
 //   PROVIDER
 //      ↓
 //   RAW STREAM
 //      ↓
-//   RESOLVER
-//      ↓
 //   NORMALIZED STREAM
+//      ↓
+//   RESOLVER
 //      ↓
 //   STREMIO
 //
-// Provider chỉ có nhiệm vụ tìm nguồn.
-// Resolver chịu trách nhiệm xử lý đặc thù của nguồn:
-//   - headers / referer / origin
-//   - HLS proxy
-//   - fake container / byte transform
-//   - embed
-//   - token / signed URL
+// BL-30 chứa:
+//   - NormalizedStream contract
+//   - normalize helpers
+//   - Resolver Registry
+//   - Resolver execution
+//   - Normalized → Stremio adapter
+//
+// Provider không xử lý playback.
+// Resolver chịu trách nhiệm xử lý đặc thù của source.
 //
 // ============================================================
 
@@ -6599,12 +6601,14 @@ registerStreamResolver(
 logStreamResolverRegistry();
 
 // ============================================================
+// BL-32. RESOLVERS
+// ============================================================
 // VSMOV RESOLVER
 // ============================================================
 //
-// BƯỚC 2 — ĐƯA VSMOV VÀO RESOLVER ENGINE
+// VSMov là resolver đầu tiên được tích hợp vào Resolver Engine.
 //
-// Kiến trúc:
+// Pipeline:
 //
 //   VSMov Provider
 //        ↓
@@ -6620,9 +6624,9 @@ logStreamResolverRegistry();
 //
 // IMPORTANT:
 //
-// Resolver này ở BƯỚC 2 chưa xử lý lại HLS / MPEG-TS.
+// Resolver này hiện chưa thay đổi logic HLS / MPEG-TS.
 //
-// Toàn bộ logic VSMov hiện tại:
+// Các thành phần hiện tại vẫn được giữ nguyên:
 //
 //   - resolveVSMovEmbed()
 //   - makeVSMovHlsProxyUrl()
@@ -6630,17 +6634,12 @@ logStreamResolverRegistry();
 //   - /vsmov-segment-proxy
 //   - fake PNG → MPEG-TS
 //
-// vẫn được giữ nguyên.
-//
-// Resolver chỉ làm nhiệm vụ:
-//
+// Resolver chỉ:
 //   1. nhận Normalized Stream
-//   2. xác nhận đây là stream của VSMov
-//   3. giữ nguyên URL / headers / metadata
+//   2. xác nhận provider = vsmov
+//   3. giữ URL / headers / metadata
 //   4. trả stream lại cho pipeline chung
 //
-// Sau khi VSMov chạy ổn qua pipeline này,
-// resolver sẽ được mở rộng ở các bước sau nếu cần.
 // ============================================================
 
 
@@ -6785,13 +6784,10 @@ console.log(
 
 
 // ============================================================
-// BL-MOVINA SOURCE / PROVIDER REGISTRY
+// BL-40. MOVINA PROVIDER REGISTRY
 // ============================================================
 //
-// Mục tiêu:
-// - Registry trung tâm của toàn bộ source/provider trong MOVINA.
-// - Không phụ thuộc riêng vào Movie / CS3 / LIVE.
-// - User Configure sau này sẽ quản lý source tại đây.
+// Registry trung tâm của toàn bộ source/provider trong MOVINA.
 //
 // Category:
 //
@@ -6804,7 +6800,7 @@ console.log(
 //   tv
 //       → TV / IPTV
 //
-// kind là loại implementation nội bộ:
+// Kind:
 //
 //   api
 //   scrape
@@ -6813,27 +6809,20 @@ console.log(
 //   iptv
 //   ...
 //
-// Registry này KHÔNG thay thế các registry chuyên biệt hiện tại.
-// Ví dụ:
+// Configure sau này sẽ quản lý source/provider tại đây.
 //
-//   MOVINA PROVIDER REGISTRY
-//          ↓
-//   category: "tv"
-//          ↓
-//   LIVE_PROVIDER_REGISTRY
-//          ↓
-//   VMT TV
+// Registry này không thay thế các registry chuyên biệt.
+// Nó đóng vai trò registry cấp cao của MOVINA.
 //
 // ============================================================
 
-const MOVINA_PROVIDER_REGISTRY = new Map();
+    const MOVINA_PROVIDER_REGISTRY = new Map();
 
+    // ============================================================
+    // bn-1. MOVINA PROVIDER CONTRACT
+    // ============================================================
 
-// ============================================================
-// bn-1. MOVINA PROVIDER CONTRACT
-// ============================================================
-
-function createMovinaProvider(provider) {
+    function createMovinaProvider(provider) {
 
     if (!provider || typeof provider !== "object") {
 
@@ -6941,11 +6930,11 @@ function createMovinaProvider(provider) {
 }
 
 
-// ============================================================
-// bn-2. REGISTER MOVINA PROVIDER
-// ============================================================
+    // ============================================================
+    // bn-2. REGISTER MOVINA PROVIDER
+    // ============================================================
 
-function registerMovinaProvider(provider) {
+    function registerMovinaProvider(provider) {
 
     const normalized =
         createMovinaProvider(
@@ -6974,11 +6963,11 @@ function registerMovinaProvider(provider) {
 }
 
 
-// ============================================================
-// bn-3. GET MOVINA PROVIDER
-// ============================================================
+    // ============================================================
+    // bn-3. GET MOVINA PROVIDER
+    // ============================================================
 
-function getMovinaProvider(providerId) {
+    function getMovinaProvider(providerId) {
 
     const id =
         String(
@@ -6997,9 +6986,9 @@ function getMovinaProvider(providerId) {
 }
 
 
-// ============================================================
-// bn-4. GET ALL MOVINA PROVIDERS
-// ============================================================
+    // ============================================================
+    // bn-4. GET ALL MOVINA PROVIDERS
+    // ============================================================
 
 function getAllMovinaProviders() {
 
@@ -7009,9 +6998,9 @@ function getAllMovinaProviders() {
 }
 
 
-// ============================================================
-// bn-5. GET PROVIDERS BY CATEGORY
-// ============================================================
+    // ============================================================
+    // bn-5. GET PROVIDERS BY CATEGORY
+    // ============================================================
 
 function getMovinaProvidersByCategory(
     category
@@ -7035,9 +7024,9 @@ function getMovinaProvidersByCategory(
 }
 
 
-// ============================================================
-// bn-6. ENABLE PROVIDER
-// ============================================================
+    // ============================================================
+    // bn-6. ENABLE PROVIDER
+    // ============================================================
 
 function enableMovinaProvider(
     providerId
@@ -7070,9 +7059,9 @@ function enableMovinaProvider(
 }
 
 
-// ============================================================
-// bn-7. DISABLE PROVIDER
-// ============================================================
+    // ============================================================
+    // bn-7. DISABLE PROVIDER
+    // ============================================================
 
 function disableMovinaProvider(
     providerId
@@ -7105,9 +7094,9 @@ function disableMovinaProvider(
 }
 
 
-// ============================================================
-// bn-8. REMOVE PROVIDER
-// ============================================================
+    // ============================================================
+    // bn-8. REMOVE PROVIDER
+    // ============================================================
 
 function removeMovinaProvider(
     providerId
@@ -7150,9 +7139,9 @@ function removeMovinaProvider(
 }
 
 
-// ============================================================
-// bn-9. PROVIDER STATUS
-// ============================================================
+    // ============================================================
+    // bn-9. PROVIDER STATUS
+    // ============================================================
 
 function getMovinaProviderInfo(
     providerId
@@ -7198,9 +7187,9 @@ function getMovinaProviderInfo(
 }
 
 
-// ============================================================
-// bn-10. DEBUG MOVINA PROVIDER REGISTRY
-// ============================================================
+    // ============================================================
+    // bn-10. DEBUG MOVINA PROVIDER REGISTRY
+    // ============================================================
 
 function logMovinaProviderRegistry() {
 
@@ -7233,14 +7222,15 @@ function logMovinaProviderRegistry() {
 }
 
 // ============================================================
-// BL-LIVE PROVIDER CONTRACT
+// BL-80. LIVE / IPTV PROVIDER SYSTEM
 // ============================================================
 //
 // Mục tiêu:
-// - Chuẩn hóa mọi nguồn truyền hình / IPTV / Live Event.
-// - VMT TV chỉ là provider đầu tiên.
-// - Sau này provider khác có thể được nạp từ Configure/Repository
-//   mà không phải viết lại Stream Handler.
+//
+//   Chuẩn hóa mọi nguồn:
+//   - TV
+//   - IPTV
+//   - Live Event
 //
 // Pipeline:
 //
@@ -7254,13 +7244,18 @@ function logMovinaProviderRegistry() {
 //        ↓
 //   STREMIO
 //
+// VMT TV là provider LIVE đầu tiên.
+//
+// Sau này provider TV/IPTV khác có thể được
+// đăng ký mà không phải viết lại Stream Handler.
+//
 // ============================================================
 
-const LIVE_PROVIDER_REGISTRY = new Map();
+    const LIVE_PROVIDER_REGISTRY = new Map();
 
-// ============================================================
-// bn-1. LIVE PROVIDER CONTRACT
-// ============================================================
+    // ============================================================
+    // bn-1. LIVE PROVIDER CONTRACT
+    // ============================================================
 
 function createLiveProvider(provider) {
 
@@ -7377,9 +7372,9 @@ function createLiveProvider(provider) {
 }
 
 
-// ============================================================
-// bn-2. REGISTER LIVE PROVIDER
-// ============================================================
+    // ============================================================
+    // bn-2. REGISTER LIVE PROVIDER
+    // ============================================================
 
 function registerLiveProvider(provider) {
 
@@ -7407,9 +7402,9 @@ function registerLiveProvider(provider) {
 }
 
 
-// ============================================================
-// bn-3. GET LIVE PROVIDER
-// ============================================================
+    // ============================================================
+    // bn-3. GET LIVE PROVIDER
+    // ============================================================
 
 function getLiveProvider(providerId) {
 
@@ -7428,9 +7423,9 @@ function getLiveProvider(providerId) {
 }
 
 
-// ============================================================
-// bn-4. GET ALL LIVE PROVIDERS
-// ============================================================
+    // ============================================================
+    // bn-4. GET ALL LIVE PROVIDERS
+    // ============================================================
 
 function getAllLiveProviders() {
 
@@ -7440,29 +7435,29 @@ function getAllLiveProviders() {
 }
 
 
-// ============================================================
-// bn-5. NORMALIZED LIVE ITEM
-// ============================================================
-//
-// Mọi provider LIVE cuối cùng nên đưa dữ liệu về dạng này:
-//
-// {
-//     id,
-//     provider,
-//     title,
-//     posterUrl,
-//     backdropUrl,
-//     description,
-//     year,
-//     quality,
-//     episode_current,
-//     lang,
-//     category,
-//     country,
-//     type: "LIVE"
-// }
-//
-// ============================================================
+    // ============================================================
+    // bn-5. NORMALIZED LIVE ITEM
+    // ============================================================
+    //
+    // Mọi provider LIVE cuối cùng nên đưa dữ liệu về dạng này:
+    //
+    // {
+    //     id,
+    //     provider,
+    //     title,
+    //     posterUrl,
+    //     backdropUrl,
+    //     description,
+    //     year,
+    //     quality,
+    //     episode_current,
+    //     lang,
+    //     category,
+    //     country,
+    //     type: "LIVE"
+    // }
+    //
+    // ============================================================
 
 function normalizeLiveItem(item, providerId) {
 
@@ -7557,25 +7552,25 @@ function normalizeLiveItem(item, providerId) {
 }
 
 
-// ============================================================
-// bn-6. NORMALIZED LIVE STREAM
-// ============================================================
-//
-// Đây là format chung mà Stremio Adapter sẽ nhận.
-//
-// url:
-//     M3U8 / MP4 / stream URL thực tế.
-//
-// externalUrl:
-//     Player / WebView fallback.
-//
-// headers:
-//     User-Agent / Referer / token headers.
-//
-// streamType:
-//     direct | hls | embed | player
-//
-// ============================================================
+    // ============================================================
+    // bn-6. NORMALIZED LIVE STREAM
+    // ============================================================
+    //
+    // Đây là format chung mà Stremio Adapter sẽ nhận.
+    //
+    // url:
+    //     M3U8 / MP4 / stream URL thực tế.
+    //
+    // externalUrl:
+    //     Player / WebView fallback.
+    //
+    // headers:
+    //     User-Agent / Referer / token headers.
+    //
+    // streamType:
+    //     direct | hls | embed | player
+    //
+    // ============================================================
 
 function normalizeLiveStream(stream, providerId) {
 
@@ -7647,9 +7642,9 @@ function normalizeLiveStream(stream, providerId) {
 }
 
 
-// ============================================================
-// bn-7. LIVE PROVIDER → NORMALIZED ITEMS
-// ============================================================
+    // ============================================================
+    // bn-7. LIVE PROVIDER → NORMALIZED ITEMS
+    // ============================================================
 
 function normalizeLiveItems(items, providerId) {
 
@@ -7668,9 +7663,9 @@ function normalizeLiveItems(items, providerId) {
 }
 
 
-// ============================================================
-// bn-8. LIVE PROVIDER → NORMALIZED STREAMS
-// ============================================================
+    // ============================================================
+    // bn-8. LIVE PROVIDER → NORMALIZED STREAMS
+    // ============================================================
 
 function normalizeLiveStreams(streams, providerId) {
 
@@ -7689,9 +7684,9 @@ function normalizeLiveStreams(streams, providerId) {
 }
 
 
-// ============================================================
-// bn-9. LIVE PROVIDER STATUS
-// ============================================================
+    // ============================================================
+    // bn-9. LIVE PROVIDER STATUS
+    // ============================================================
 
 function getLiveProviderInfo(providerId) {
 
@@ -7717,9 +7712,9 @@ function getLiveProviderInfo(providerId) {
 }
 
 
-// ============================================================
-// bn-10. DEBUG REGISTRY
-// ============================================================
+    // ============================================================
+    // bn-10. DEBUG REGISTRY
+    // ============================================================
 
 function logLiveProviderRegistry() {
 
@@ -7742,23 +7737,41 @@ function logLiveProviderRegistry() {
     }
 }
 
-// ============================================================
-// bn-11. VMT TV - LIVE PROVIDER
-// ============================================================
-//
-// VMT TV là LIVE provider đầu tiên của MOVINA.
-//
-// Provider này đọc M3U từ repository VMT TV và chuyển toàn bộ
-// dữ liệu về LIVE Provider Contract.
-//
-// Sau này các provider truyền hình khác chỉ cần tạo adapter
-// cùng contract này và register vào LIVE_PROVIDER_REGISTRY.
-//
-// ============================================================
+    // ============================================================
+    // bn-11. VMT TV - LIVE PROVIDER
+    // ============================================================
+    //
+    // VMT TV là LIVE provider đầu tiên của MOVINA.
+    //
+    // Provider này đọc M3U từ repository VMT TV và chuyển toàn bộ
+    // dữ liệu về LIVE Provider Contract.
+    //
+    // Sau này các provider truyền hình khác chỉ cần tạo adapter
+    // cùng contract này và register vào LIVE_PROVIDER_REGISTRY.
+    //
+    // ============================================================
 
 
 // ============================================================
-// bn-11.1. VMT TV - MANIFEST
+// BL-81. VMT TV PROVIDER
+// ============================================================
+//
+// VMT TV là LIVE / IPTV provider.
+//
+// Pipeline:
+//
+//   VMT TV Provider
+//        ↓
+//   LIVE_PROVIDER_REGISTRY
+//        ↓
+//   MOVINA_PROVIDER_REGISTRY
+//        ↓
+//   VMT TV Adapter
+//        ↓
+//   Normalized LIVE Stream
+//        ↓
+//   Stremio
+//
 // ============================================================
 
 const VMTTV_M3U_URL =
@@ -7792,9 +7805,9 @@ function vmtTvGetManifest() {
 }
 
 
-// ============================================================
-// bn-11.2. VMT TV - HOME
-// ============================================================
+    // ============================================================
+    // bn-11.2. VMT TV - HOME
+    // ============================================================
 
 function vmtTvGetHomeSections() {
 
@@ -7814,9 +7827,9 @@ function vmtTvGetHomeSections() {
 }
 
 
-// ============================================================
-// bn-11.3. VMT TV - CATEGORIES
-// ============================================================
+    // ============================================================
+    // bn-11.3. VMT TV - CATEGORIES
+    // ============================================================
 
 function vmtTvGetPrimaryCategories() {
 
@@ -7858,17 +7871,17 @@ function vmtTvGetFilterConfig() {
 }
 
 
-// ============================================================
-// bn-11.4. VMT TV - CATEGORY MAP
-// ============================================================
-//
-// IMPORTANT:
-// Các value bên dưới phải khớp EXACT với group-title trong M3U
-// và với tên category trong vmtTvGetPrimaryCategories().
-//
-// Không thêm dấu "|" vào tên category.
-//
-// ============================================================
+    // ============================================================
+    // bn-11.4. VMT TV - CATEGORY MAP
+    // ============================================================
+    //
+    // IMPORTANT:
+    // Các value bên dưới phải khớp EXACT với group-title trong M3U
+    // và với tên category trong vmtTvGetPrimaryCategories().
+    //
+    // Không thêm dấu "|" vào tên category.
+    //
+    // ============================================================
 
 const VMTTV_CATEGORY_MAP = {
 
@@ -7949,9 +7962,9 @@ const VMTTV_CATEGORY_MAP = {
 };
 
 
-// ============================================================
-// bn-11.5. VMT TV - URL BUILDERS
-// ============================================================
+    // ============================================================
+    // bn-11.5. VMT TV - URL BUILDERS
+    // ============================================================
 
 function vmtTvGetUrlList(slug, filtersJson) {
 
@@ -8017,9 +8030,9 @@ function vmtTvGetUrlYears() {
 }
 
 
-// ============================================================
-// bn-11.6. VMT TV - M3U PARSER
-// ============================================================
+    // ============================================================
+    // bn-11.6. VMT TV - M3U PARSER
+    // ============================================================
 
 function vmtTvParseM3U(text) {
 
@@ -8182,9 +8195,9 @@ function vmtTvParseM3U(text) {
 }
 
 
-// ============================================================
-// bn-11.7. VMT TV - CHANNEL ID
-// ============================================================
+    // ============================================================
+    // bn-11.7. VMT TV - CHANNEL ID
+    // ============================================================
 
 function vmtTvMakeChannelId(channel) {
 
@@ -8234,9 +8247,9 @@ function vmtTvFindChannelById(
 }
 
 
-// ============================================================
-// bn-11.8. VMT TV - LIST RESPONSE
-// ============================================================
+    // ============================================================
+    // bn-11.8. VMT TV - LIST RESPONSE
+    // ============================================================
 
 function vmtTvParseListResponse(
     apiResponseJson,
@@ -8360,9 +8373,9 @@ function vmtTvParseListResponse(
 }
 
 
-// ============================================================
-// bn-11.9. VMT TV - SEARCH RESPONSE
-// ============================================================
+    // ============================================================
+    // bn-11.9. VMT TV - SEARCH RESPONSE
+    // ============================================================
 
 function vmtTvParseSearchResponse(
     apiResponseJson,
@@ -8376,9 +8389,9 @@ function vmtTvParseSearchResponse(
 }
 
 
-// ============================================================
-// bn-11.10. VMT TV - DETAIL RESPONSE
-// ============================================================
+    // ============================================================
+    // bn-11.10. VMT TV - DETAIL RESPONSE
+    // ============================================================
 
 function vmtTvParseMovieDetail(
     apiResponseJson,
@@ -8555,9 +8568,9 @@ function vmtTvParseMovieDetail(
 }
 
 
-// ============================================================
-// bn-11.11. VMT TV - STREAM DETAIL
-// ============================================================
+    // ============================================================
+    // bn-11.11. VMT TV - STREAM DETAIL
+    // ============================================================
 
 function vmtTvParseDetailResponse(
     apiResponseJson,
@@ -8633,9 +8646,9 @@ function vmtTvParseDetailResponse(
 }
 
 
-// ============================================================
-// bn-11.12. VMT TV - OPTIONAL PARSERS
-// ============================================================
+    // ============================================================
+    // bn-11.12. VMT TV - OPTIONAL PARSERS
+    // ============================================================
 
 function vmtTvParseCategoriesResponse() {
 
@@ -8663,9 +8676,9 @@ function vmtTvParseYearsResponse() {
 }
 
 
-// ============================================================
-// bn-11.13. REGISTER VMT TV
-// ============================================================
+    // ============================================================
+    // bn-11.13. REGISTER VMT TV
+    // ============================================================
 
 const VMTTV_PROVIDER =
     registerLiveProvider({
@@ -8739,29 +8752,29 @@ console.log(
     VMTTV_PROVIDER.name
 );
 
-// ============================================================
-// bn-11. REGISTER VMT TV INTO MOVINA REGISTRY
-// ============================================================
-//
-// Bridge:
-//
-//     VMTTV_PROVIDER
-//            ↓
-//     MOVINA_PROVIDER_REGISTRY
-//
-// VMT TV vẫn giữ LIVE_PROVIDER_REGISTRY riêng.
-//
-// MOVINA Registry bổ sung metadata cho:
-//
-//     TV / IPTV Hub
-//          ↓
-//       VMT TV
-//          ↓
-//       Genre Hub
-//          ↓
-//       Channel list
-//
-// ============================================================
+    // ============================================================
+    // bn-11. REGISTER VMT TV INTO MOVINA REGISTRY
+    // ============================================================
+    //
+    // Bridge:
+    //
+    //     VMTTV_PROVIDER
+    //            ↓
+    //     MOVINA_PROVIDER_REGISTRY
+    //
+    // VMT TV vẫn giữ LIVE_PROVIDER_REGISTRY riêng.
+    //
+    // MOVINA Registry bổ sung metadata cho:
+    //
+    //     TV / IPTV Hub
+    //          ↓
+    //       VMT TV
+    //          ↓
+    //       Genre Hub
+    //          ↓
+    //       Channel list
+    //
+    // ============================================================
 
 const MOVINA_VMTTV_PROVIDER =
     registerMovinaProvider({
@@ -8846,30 +8859,28 @@ console.log(
 );
 
 
-// ============================================================
-// bn-12. DEBUG MOVINA PROVIDER REGISTRY
-// ============================================================
+    // ============================================================
+    // bn-12. DEBUG MOVINA PROVIDER REGISTRY
+    // ============================================================
 
-logMovinaProviderRegistry();
+        logMovinaProviderRegistry();
 
 // ============================================================
-// VMT TV → STREMIO TV ADAPTER
+// BL-82. VMT TV → STREMIO ADAPTER
 // ============================================================
 //
-// VMT TV Provider vẫn giữ nguyên contract LIVE.
-// Block này chỉ chuyển LIVE Provider → Stremio.
+// Adapter riêng của VMT TV.
 //
-// Pipeline:
+// Không chứa logic tìm provider.
+// Không chứa logic registry.
 //
-// VMTTV_PROVIDER
-//      ↓
-// M3U
-//      ↓
-// LIVE ITEM
-//      ↓
-// NORMALIZED LIVE STREAM
-//      ↓
-// STREMIO tv
+// Nhiệm vụ:
+//
+//   VMT TV channel
+//        ↓
+//   Normalized LIVE Stream
+//        ↓
+//   Stremio TV stream
 //
 // ============================================================
 
@@ -9212,9 +9223,25 @@ console.log(
     "[VMTTV STREMIO ADAPTER] READY"
 );
 
-// =====================================================
-// 14. NGUONC - API SEARCH + API DETAIL
-// =====================================================
+// ============================================================
+// BL-51. NGUONC PROVIDER
+// ============================================================
+//
+// Provider đặc biệt:
+//
+//   API
+//    ↓
+//   Direct M3U8
+//    ↓
+//   Embed Resolver
+//    ↓
+//   NguonC Client / Widget fallback
+//
+// IMPORTANT:
+// Không loại bỏ client/widget fallback.
+// Không ép NguonC thành direct-only provider.
+//
+// ============================================================
 
 async function fetchNguonC(movieName) {
 
@@ -9823,10 +9850,28 @@ async function fetchNguonC(movieName) {
 }
 
 
-/* ============================================================
-   15. KKPHiM / PHIMAPI
-   YEAR + SEASON + EPISODE MATCHING
-   ============================================================ */
+// ============================================================
+// BL-52. KKPHIM PROVIDER
+// ============================================================
+//
+// Provider API:
+//
+//   Search
+//      ↓
+//   Movie matching
+//      ↓
+//   Year / IMDb validation
+//      ↓
+//   Episode
+//      ↓
+//   Direct stream
+//      ↓
+//   Stremio
+//
+// KKPhim hiện là provider API/direct.
+// Không thay đổi matching logic ở Step 2.
+//
+// ============================================================
 
 async function fetchKKPhim(
     movieName,
@@ -12190,20 +12235,33 @@ async function resolveVSMovEmbed(
 }
 
 
-// =====================================================
-// 16. VSMOV FETCH
-// =====================================================
+// ============================================================
+// BL-53. VSMOV PROVIDER
+// ============================================================
 //
-// KIẾN TRÚC:
-// VSMov Provider
-//      ↓
-// normalizedStreams
-//      ↓
-// Stremio adapter
+// Provider:
 //
-// Bản này vẫn giữ nguyên output của fetchVSMov()
-// để Block 8 hiện tại không cần sửa.
-// =====================================================
+//   VSMov API
+//       ↓
+//   Search / Match
+//       ↓
+//   link_m3u8 / link_embed
+//       ↓
+//   Normalized Stream
+//       ↓
+//   VSMov Resolver
+//       ↓
+//   Direct HLS / Player fallback
+//       ↓
+//   Stremio
+//
+// IMPORTANT:
+//
+// VSMov đang hoạt động ổn định.
+// Step 2 chỉ chuẩn hóa tên block.
+// KHÔNG refactor fetchVSMov() ở bước này.
+//
+// ============================================================
 
 async function fetchVSMov(
     movieName,
@@ -13703,10 +13761,34 @@ return streams;
 }
 
 
-/* ============================================================
-   PHIM LONG TIẾNG
-   Reverse-engineered from PhimLongTiengProvider
-   ============================================================ */
+// ============================================================
+// BL-54. PHIMLONGTIENG PROVIDER
+// ============================================================
+//
+// Provider:
+//
+//   Search
+//      ↓
+//   Candidate ranking
+//      ↓
+//   Version selection
+//      ↓
+//   Episode
+//      ↓
+//   Player page
+//      ↓
+//   Stream extraction
+//      ↓
+//   Proxy / Stremio
+//
+// Provider này có logic version:
+//   - Vietsub
+//   - Lồng Tiếng
+//   - Thuyết Minh
+//
+// KHÔNG thay đổi scoring / confidence ở Step 2.
+//
+// ============================================================
 
 async function scrapePhimLongTieng(
     movieName,
@@ -17312,9 +17394,34 @@ return finalStreams;
 
 }
 
-/* ============================================================
-   PHIMHDCS
-   ============================================================ */
+// ============================================================
+// BL-55. PHIMHDCS PROVIDER
+// ============================================================
+//
+// Provider:
+//
+//   Search
+//      ↓
+//   Detail
+//      ↓
+//   Episode
+//      ↓
+//   Server
+//      ↓
+//   Direct / Embed
+//      ↓
+//   Resolver / Player fallback
+//      ↓
+//   Stremio
+//
+// Có cả:
+//   - direct server
+//   - embed server
+//   - player fallback
+//
+// KHÔNG thay đổi extraction ở Step 2.
+//
+// ============================================================
 
 async function scrapePhimHDCS(
     movieName,
