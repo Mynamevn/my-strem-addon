@@ -6726,67 +6726,201 @@ async function resolveNormalizedStreams(
 
 function normalizedStreamToStremio(stream) {
 
-    if (!stream || typeof stream !== "object") {
+    if (
+        !stream ||
+        typeof stream !== "object"
+    ) {
         return null;
     }
+
 
     const url =
-        String(stream.url || "").trim();
+        String(
+            stream.url ||
+            ""
+        ).trim();
+
 
     const externalUrl =
-        String(stream.externalUrl || "").trim();
+        String(
+            stream.externalUrl ||
+            ""
+        ).trim();
 
-    if (!url && !externalUrl) {
+
+    if (
+        !url &&
+        !externalUrl
+    ) {
         return null;
     }
+
 
     const result = {};
 
-    if (stream.name) {
-        result.name = stream.name;
-    }
 
-    if (stream.title) {
-        result.title = stream.title;
-    }
-
-    if (url) {
-        result.url = url;
-    }
-
-    if (externalUrl) {
-        result.externalUrl = externalUrl;
-    }
+    // -------------------------------------------------
+    // NAME
+    // -------------------------------------------------
 
     if (
-        stream.headers &&
-        typeof stream.headers === "object" &&
-        Object.keys(stream.headers).length
+        stream.name
     ) {
-        result.behaviorHints = {
-            ...(result.behaviorHints || {}),
-            proxyHeaders: {
-                request: stream.headers
-            }
-        };
+
+        result.name =
+            String(
+                stream.name
+            );
     }
+
+
+    // -------------------------------------------------
+    // TITLE
+    // -------------------------------------------------
+
+    if (
+        stream.title
+    ) {
+
+        result.title =
+            String(
+                stream.title
+            );
+    }
+
+
+    // -------------------------------------------------
+    // URL
+    // -------------------------------------------------
+
+    if (url) {
+
+        result.url =
+            url;
+    }
+
+
+    // -------------------------------------------------
+    // EXTERNAL URL
+    // -------------------------------------------------
+
+    if (externalUrl) {
+
+        result.externalUrl =
+            externalUrl;
+    }
+
+
+    // -------------------------------------------------
+    // BEHAVIOR HINTS
+    // -------------------------------------------------
+
+    const behaviorHints = {};
+
+
+    // Copy provider-defined behavior hints first.
 
     if (
         stream.behaviorHints &&
-        typeof stream.behaviorHints === "object"
+        typeof stream.behaviorHints ===
+            "object"
     ) {
-        result.behaviorHints = {
-            ...(result.behaviorHints || {}),
-            ...stream.behaviorHints
+
+        Object.assign(
+            behaviorHints,
+            stream.behaviorHints
+        );
+    }
+
+
+    // -------------------------------------------------
+    // PROXY HEADERS
+    // -------------------------------------------------
+
+    if (
+        stream.headers &&
+        typeof stream.headers ===
+            "object" &&
+        Object.keys(
+            stream.headers
+        ).length
+    ) {
+
+        behaviorHints.proxyHeaders = {
+
+            request:
+                {
+                    ...stream.headers
+                }
         };
     }
 
+
+    // -------------------------------------------------
+    // APPLY BEHAVIOR HINTS
+    // -------------------------------------------------
+
     if (
-        Array.isArray(stream.subtitles) &&
+        Object.keys(
+            behaviorHints
+        ).length
+    ) {
+
+        result.behaviorHints =
+            behaviorHints;
+    }
+
+
+    // -------------------------------------------------
+    // SUBTITLES
+    // -------------------------------------------------
+
+    if (
+        Array.isArray(
+            stream.subtitles
+        ) &&
         stream.subtitles.length
     ) {
-        result.subtitles = stream.subtitles;
+
+        result.subtitles =
+            stream.subtitles;
     }
+
+
+    // -------------------------------------------------
+    // DEBUG
+    // -------------------------------------------------
+
+    console.log(
+        "[STREAM ADAPTER] OUT:",
+        JSON.stringify(
+            {
+                provider:
+                    stream.provider,
+
+                type:
+                    stream.type,
+
+                resolver:
+                    stream.resolver,
+
+                url:
+                    result.url,
+
+                externalUrl:
+                    result.externalUrl,
+
+                behaviorHints:
+                    result.behaviorHints,
+
+                subtitles:
+                    result.subtitles
+            },
+            null,
+            2
+        )
+    );
+
 
     return result;
 }
@@ -6794,13 +6928,23 @@ function normalizedStreamToStremio(stream) {
 
 function normalizedStreamsToStremio(streams) {
 
-    if (!Array.isArray(streams)) {
+    if (
+        !Array.isArray(
+            streams
+        )
+    ) {
+
         return [];
     }
 
+
     return streams
-        .map(normalizedStreamToStremio)
-        .filter(Boolean);
+        .map(
+            normalizedStreamToStremio
+        )
+        .filter(
+            Boolean
+        );
 }
 
 
