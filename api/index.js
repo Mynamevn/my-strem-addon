@@ -17199,123 +17199,703 @@ async function animeHayResolveEmbed(
 // ANIMEHAY LOAD LINKS
 // =====================================================
 
-async function animeHayLoadLinks(episodeUrl, movieName = "", movieYear = 0, seasonNumber = 0, episodeNumber = 0) {
-  console.log("[ANIMEHAY] LOAD LINKS:", episodeUrl);
+async function animeHayLoadLinks(
+    episodeUrl,
+    referer = ""
+) {
 
-  try {
-    console.log("[ANIMEHAY] DIRECT RESOLVE:", episodeUrl);
+    try {
 
-    const links = await animeHayExtractVideoUrls(episodeUrl);
+        console.log(
+            "[ANIMEHAY] LOAD LINKS:",
+            episodeUrl
+        );
 
-    console.log(
-      "[ANIMEHAY] RESOLVED LINK DEBUG:",
-      JSON.stringify(links, null, 2)
-    );
 
-    console.log("[ANIMEHAY] VIDEO URLS:", links.length);
+        const response =
+            await axios.get(
+                episodeUrl,
+                {
+                    timeout: 15000,
 
-    if (!links.length) {
-      console.log("[ANIMEHAY] NO VIDEO URL");
-      return [];
-    }
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                            "Chrome/156.0.0.0 Safari/537.36",
 
-    const normalizedStreams = [];
+                        "Referer":
+                            referer ||
+                            "https://animehay.tv/"
+                    }
+                }
+            );
 
-    for (const link of links) {
-      if (!link?.url) continue;
 
-      const referer =
-        link.referer ||
-        episodeUrl ||
-        "https://animehay.tv/";
+        const html =
+            String(
+                response?.data ||
+                ""
+            );
 
-      /*
-       * AnimeHay / VIPAH cần giữ Referer khi Stremio tải:
-       *
-       *   1. master.m3u8
-       *   2. child playlist
-       *   3. .ts / .m4s segments
-       *
-       * CloudStream AnimeHayProvider có video interceptor / referer
-       * handling ở tầng playback. MOVINA phải truyền thông tin này
-       * sang Stremio thông qua normalizedStream.headers.
-       */
-      const headers = {
-        Referer: referer,
-        Origin: "https://main.vipah06.xyz",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
-      };
 
-      const normalized = createNormalizedStream({
-        provider: "animehay",
-        providerName: "AnimeHay",
-        source: "animehay",
+        console.log(
+            "[ANIMEHAY] LINK PAGE LENGTH:",
+            html.length
+        );
 
-        url: link.url,
-        externalUrl: link.url,
 
-        type: link.isM3u8 ? "hls" : "direct",
+        if (!html) {
 
-        quality: link.quality || 0,
+            console.log(
+                "[ANIMEHAY] LINK PAGE EMPTY"
+            );
 
-        title:
-          movieName
-            ? `${movieName} - Tập ${episodeNumber || ""}`.trim()
-            : "AnimeHay",
-
-        name: "AnimeHay",
-
-        serverName: "AnimeHay",
-
-        /*
-         * Giữ referer ở field riêng để resolver/debug vẫn biết
-         * nguồn gốc playback.
-         */
-        referer,
-
-        /*
-         * QUAN TRỌNG:
-         * normalizedStreamToStremio() của BL-30 sẽ đưa headers
-         * thành behaviorHints.proxyHeaders.request.
-         */
-        headers,
-
-        episode: episodeNumber || 0,
-        season: seasonNumber || 0,
-
-        resolver: "passthrough",
-
-        resolverOptions: {
-          referer,
-          headers
-        },
-
-        behaviorHints: {
-          bingeGroup: "animehay"
+            return [];
         }
-      });
 
-      if (normalized) {
-        normalizedStreams.push(normalized);
-      }
+
+        const $ =
+            cheerio.load(
+                html
+            );
+
+
+        // =================================================
+        // JS VARIABLE MAP
+        // =================================================
+
+        const variableMap =
+            new Map();
+
+
+        const scriptTexts =
+            $("script")
+                .map(
+                    (
+                        _,
+                        el
+                    ) =>
+                        $(el).html() ||
+                        ""
+                )
+                .get();
+
+
+        for (
+            const script
+            of scriptTexts
+        ) {
+
+            const variableRegex =
+                /(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*["'`]([^"'`]+)["'`]/g;
+
+
+            let match;
+
+
+            while (
+                (match =
+                    variableRegex.exec(
+                        script
+                    ))
+            ) {
+
+                variableMap.set(
+                    match[1],
+                    match[2]
+                );
+            }
+        }
+
+
+        console.log(
+            "[ANIMEHAY] JS VARIABLE MAP:",
+            variableMap.size
+        );
+
+
+        // =================================================
+        // EMBED-JW
+        // =================================================
+
+        const embedCandidates =
+            [];
+
+
+        $("iframe[src], iframe[data-src], embed[src]")
+            .each(
+                (
+                    _,
+                    el
+                ) => {
+
+                    const raw =
+                        String(
+                            $(el).attr("src") ||
+                            $(el).attr("data-src") ||
+                            ""
+                        ).trim();
+
+
+                    if (
+                        raw
+                    ) {
+
+                        embedCandidates.push(
+                            raw
+                        );
+                    }
+                }
+            );
+
+
+        // Tìm thêm URL /embed-jw/ trong HTML
+        const embedRegex =
+            /https?:\/\/[^"'\\\s<>]+\/embed-jw\/[^"'\\\s<>]+/gi;
+
+
+        const htmlEmbedMatches =
+            html.match(
+                embedRegex
+            ) ||
+            [];
+
+
+        for (
+            const url
+            of htmlEmbedMatches
+        ) {
+
+            embedCandidates.push(
+                url
+            );
+        }
+
+
+        // Chuẩn hóa + unique
+        const uniqueEmbedCandidates =
+            [
+                ...new Set(
+                    embedCandidates
+                        .map(
+                            value => {
+
+                                try {
+
+                                    return new URL(
+                                        value,
+                                        episodeUrl
+                                    ).href;
+
+                                } catch (_) {
+
+                                    return null;
+                                }
+                            }
+                        )
+                        .filter(Boolean)
+                )
+            ];
+
+
+        console.log(
+            "[ANIMEHAY] EMBED-JW CANDIDATES:",
+            uniqueEmbedCandidates.length
+        );
+
+
+        const links =
+            [];
+
+
+        // =================================================
+        // RESOLVE EMBED
+        // =================================================
+
+        for (
+            const embedUrl
+            of uniqueEmbedCandidates
+        ) {
+
+            if (
+                !embedUrl.includes(
+                    "/embed-jw/"
+                )
+            ) {
+
+                continue;
+            }
+
+
+            console.log(
+                "[ANIMEHAY] EMBED-JW:",
+                embedUrl
+            );
+
+
+            try {
+
+                const embedResponse =
+                    await axios.get(
+                        embedUrl,
+                        {
+                            timeout:
+                                15000,
+
+                            headers: {
+
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                    "Chrome/156.0.0.0 Safari/537.36",
+
+                                "Referer":
+                                    referer ||
+                                    episodeUrl,
+
+                                "Origin":
+                                    (() => {
+
+                                        try {
+
+                                            return new URL(
+                                                embedUrl
+                                            ).origin;
+
+                                        } catch (_) {
+
+                                            return "";
+                                        }
+                                    })()
+                            }
+                        }
+                    );
+
+
+                const embedHtml =
+                    String(
+                        embedResponse?.data ||
+                        ""
+                    );
+
+
+                console.log(
+                    "[ANIMEHAY] EMBED HTML LENGTH:",
+                    embedHtml.length
+                );
+
+
+                // =============================================
+                // TÌM M3U8 TRỰC TIẾP
+                // =============================================
+
+                const directUrls =
+                    [];
+
+
+                const m3u8Regex =
+                    /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi;
+
+
+                const m3u8Matches =
+                    embedHtml.match(
+                        m3u8Regex
+                    ) ||
+                    [];
+
+
+                for (
+                    const url
+                    of m3u8Matches
+                ) {
+
+                    directUrls.push(
+                        url
+                    );
+                }
+
+
+                // =============================================
+                // TÌM URL SAU GIẢI MÃ JS VARIABLE
+                // =============================================
+
+                for (
+                    const [
+                        key,
+                        value
+                    ]
+                    of variableMap.entries()
+                ) {
+
+                    if (
+                        !value
+                    ) {
+
+                        continue;
+                    }
+
+
+                    if (
+                        value.includes(
+                            ".m3u8"
+                        )
+                    ) {
+
+                        directUrls.push(
+                            value
+                        );
+                    }
+                }
+
+
+                // =============================================
+                // TÌM JSON "file": "..."
+                // =============================================
+
+                const fileRegex =
+                    /["']file["']\s*:\s*["']([^"']+)["']/gi;
+
+
+                let fileMatch;
+
+
+                while (
+                    (fileMatch =
+                        fileRegex.exec(
+                            embedHtml
+                        ))
+                ) {
+
+                    directUrls.push(
+                        fileMatch[1]
+                    );
+                }
+
+
+                // =============================================
+                // TÌM "src": "..."
+                // =============================================
+
+                const srcRegex =
+                    /["'](?:src|source|videoUrl|video_url)["']\s*:\s*["']([^"']+)["']/gi;
+
+
+                let srcMatch;
+
+
+                while (
+                    (srcMatch =
+                        srcRegex.exec(
+                            embedHtml
+                        ))
+                ) {
+
+                    const value =
+                        srcMatch[1];
+
+
+                    if (
+                        value.includes(
+                            ".m3u8"
+                        )
+                    ) {
+
+                        directUrls.push(
+                            value
+                        );
+                    }
+                }
+
+
+                // =============================================
+                // NORMALIZE DIRECT URL
+                // =============================================
+
+                const uniqueDirectUrls =
+                    [
+                        ...new Set(
+                            directUrls
+                                .map(
+                                    raw => {
+
+                                        try {
+
+                                            return new URL(
+                                                raw,
+                                                embedUrl
+                                            ).href;
+
+                                        } catch (_) {
+
+                                            return null;
+                                        }
+                                    }
+                                )
+                                .filter(
+                                    url =>
+                                        url &&
+                                        url.includes(
+                                            ".m3u8"
+                                        )
+                                )
+                        )
+                    ];
+
+
+                console.log(
+                    "[ANIMEHAY] DIRECT URL COUNT:",
+                    uniqueDirectUrls.length
+                );
+
+
+                for (
+                    const directUrl
+                    of uniqueDirectUrls
+                ) {
+
+                    links.push({
+
+                        url:
+                            directUrl,
+
+                        referer:
+                            embedUrl,
+
+                        quality:
+                            0,
+
+                        isM3u8:
+                            true
+                    });
+                }
+
+
+            } catch (embedError) {
+
+                console.log(
+                    "[ANIMEHAY] EMBED ERROR:",
+                    embedError?.message ||
+                    embedError
+                );
+            }
+        }
+
+
+        // =================================================
+        // UNIQUE LINKS
+        // =================================================
+
+        const uniqueLinks =
+            [
+                ...new Map(
+                    links.map(
+                        link => [
+                            link.url,
+                            link
+                        ]
+                    )
+                ).values()
+            ];
+
+
+        console.log(
+            "[ANIMEHAY] RESOLVED LINK DEBUG:",
+            uniqueLinks.map(
+                link => ({
+                    url:
+                        link.url,
+
+                    referer:
+                        link.referer,
+
+                    quality:
+                        link.quality,
+
+                    isM3u8:
+                        link.isM3u8
+                })
+            )
+        );
+
+
+        console.log(
+            "[ANIMEHAY] VIDEO URLS:",
+            uniqueLinks.length
+        );
+
+
+        // =================================================
+        // NORMALIZED STREAMS
+        //
+        // QUAN TRỌNG:
+        // Không trả s4.vipah06.xyz trực tiếp cho Stremio.
+        //
+        // master.m3u8
+        //     ↓
+        // AnimeHay HLS Proxy
+        //     ↓
+        // segment proxy
+        // =================================================
+
+        const normalizedStreams =
+            [];
+
+
+        for (
+            const link
+            of uniqueLinks
+        ) {
+
+            if (
+                !link?.url
+            ) {
+
+                continue;
+            }
+
+
+            const originalUrl =
+                link.url;
+
+
+            const sourceReferer =
+                link.referer ||
+                referer ||
+                "https://main.vipah06.xyz/";
+
+
+            const playableUrl =
+                makeAnimeHayHlsProxyUrl(
+                    originalUrl,
+                    sourceReferer
+                );
+
+
+            try {
+
+                const stream =
+                    createNormalizedStream({
+
+                        provider:
+                            "animehay",
+
+                        providerName:
+                            "AnimeHay",
+
+                        source:
+                            "animehay",
+
+                        url:
+                            playableUrl,
+
+                        externalUrl:
+                            originalUrl,
+
+                        type:
+                            "hls",
+
+                        quality:
+                            link.quality ||
+                            0,
+
+                        title:
+                            "AnimeHay",
+
+                        name:
+                            "AnimeHay",
+
+                        serverName:
+                            "AnimeHay",
+
+                        referer:
+                            sourceReferer,
+
+                        headers: {
+
+                            "Referer":
+                                sourceReferer,
+
+                            "Origin":
+                                (() => {
+
+                                    try {
+
+                                        return new URL(
+                                            sourceReferer
+                                        ).origin;
+
+                                    } catch (_) {
+
+                                        return "https://main.vipah06.xyz";
+                                    }
+                                })(),
+
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                "Chrome/156.0.0.0 Safari/537.36"
+                        },
+
+                        resolver:
+                            "passthrough",
+
+                        resolverOptions:
+                            {},
+
+                        behaviorHints: {
+
+                            bingeGroup:
+                                "animehay",
+
+                            notWebReady:
+                                false
+                        }
+                    });
+
+
+                if (
+                    stream
+                ) {
+
+                    normalizedStreams.push(
+                        stream
+                    );
+                }
+
+
+            } catch (streamError) {
+
+                console.log(
+                    "[ANIMEHAY] NORMALIZE ERROR:",
+                    streamError?.message ||
+                    streamError
+                );
+            }
+        }
+
+
+        console.log(
+            "[ANIMEHAY] NORMALIZED STREAMS:",
+            normalizedStreams.length
+        );
+
+
+        return normalizedStreams;
+
+
+    } catch (e) {
+
+        console.log(
+            "[ANIMEHAY] LOAD LINKS ERROR:",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+
+        return [];
     }
-
-    console.log(
-      "[ANIMEHAY] NORMALIZED STREAMS:",
-      normalizedStreams.length
-    );
-
-    return normalizedStreams;
-  } catch (err) {
-    console.error(
-      "[ANIMEHAY] LOAD LINKS ERROR:",
-      err?.message || err
-    );
-
-    return [];
-  }
 }
 
 async function fetchAnimeHay(
@@ -29720,6 +30300,1429 @@ app.get(
                     .type("text/plain")
                     .send(
                         "VSmov segment proxy error"
+                    );
+            }
+
+
+            try {
+
+                res.destroy(
+                    e
+                );
+
+            } catch (_) {}
+        }
+    }
+);
+
+// =====================================================
+// 16.0.7. ANIMEHAY HLS + SEGMENT PROXY
+//
+// AnimeHay:
+//
+// master.m3u8
+//      ↓
+// /animehay-hls-proxy
+//      ↓
+// child playlist
+//      ↓
+// /animehay-hls-proxy
+//      ↓
+// segment
+//      ↓
+// /animehay-segment-proxy
+//      ↓
+// MPEG-TS / native media
+//
+// Referer:
+// https://main.vipah06.xyz/embed-jw/...
+//
+// Origin:
+// https://main.vipah06.xyz
+//
+// =====================================================
+
+
+// =====================================================
+// ANIMEHAY PROXY CONSTANTS
+// =====================================================
+
+const ANIMEHAY_PROXY_BASE =
+    "https://my-strem-addon.vercel.app";
+
+const ANIMEHAY_STREAM_HOST_REGEX =
+    /^[a-z0-9-]+\.vipah06\.xyz$/i;
+
+
+// =====================================================
+// ANIMEHAY VALIDATE STREAM URL
+// =====================================================
+
+function isValidAnimeHayStreamUrl(
+    targetUrl
+) {
+
+    try {
+
+        const parsed =
+            new URL(
+                String(
+                    targetUrl ||
+                    ""
+                ).trim()
+            );
+
+
+        return (
+            parsed.protocol ===
+                "https:" &&
+
+            ANIMEHAY_STREAM_HOST_REGEX.test(
+                parsed.hostname
+            )
+        );
+
+    } catch (_) {
+
+        return false;
+    }
+}
+
+
+// =====================================================
+// ANIMEHAY SOURCE HEADERS
+// =====================================================
+
+function getAnimeHayProxyHeaders(
+    referer
+) {
+
+    const safeReferer =
+        String(
+            referer ||
+            "https://main.vipah06.xyz/"
+        ).trim();
+
+
+    let origin =
+        "https://main.vipah06.xyz";
+
+
+    try {
+
+        origin =
+            new URL(
+                safeReferer
+            ).origin;
+
+    } catch (_) {}
+
+
+    return {
+
+        "Referer":
+            safeReferer,
+
+        "Origin":
+            origin,
+
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+
+        "Accept":
+            "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*"
+
+    };
+}
+
+
+// =====================================================
+// ANIMEHAY REWRITE HLS PLAYLIST
+//
+// - URL .m3u8      → animehay-hls-proxy
+// - segment URL    → animehay-segment-proxy
+// - EXT-X-KEY URI  → animehay-segment-proxy
+// - relative URL   → resolve theo playlist gốc
+// =====================================================
+
+function rewriteAnimeHayM3u8(
+    playlist,
+    playlistUrl,
+    referer
+) {
+
+    const lines =
+        String(
+            playlist ||
+            ""
+        ).split(/\r?\n/);
+
+
+    const output = [];
+
+
+    for (
+        const rawLine
+        of lines
+    ) {
+
+        const line =
+            String(
+                rawLine ||
+                ""
+            ).trim();
+
+
+        // -------------------------------------------------
+        // EMPTY
+        // -------------------------------------------------
+
+        if (!line) {
+
+            output.push(
+                ""
+            );
+
+            continue;
+        }
+
+
+        // -------------------------------------------------
+        // EXT-X-KEY / EXT-X-MAP / EXT-X-MEDIA
+        //
+        // Những tag này có thể chứa URI="..."
+        // -------------------------------------------------
+
+        if (
+            line.startsWith("#")
+        ) {
+
+            const rewrittenTag =
+                line.replace(
+                    /URI="([^"]+)"/gi,
+                    (
+                        full,
+                        uri
+                    ) => {
+
+                        try {
+
+                            const absoluteUrl =
+                                new URL(
+                                    uri,
+                                    playlistUrl
+                                ).href;
+
+
+                            const proxyUrl =
+                                isAnimeHayM3u8Url(
+                                    absoluteUrl
+                                )
+                                    ? makeAnimeHayHlsProxyUrl(
+                                        absoluteUrl,
+                                        referer
+                                    )
+                                    : makeAnimeHaySegmentProxyUrl(
+                                        absoluteUrl,
+                                        referer
+                                    );
+
+
+                            return (
+                                'URI="' +
+                                proxyUrl +
+                                '"'
+                            );
+
+                        } catch (_) {
+
+                            return full;
+                        }
+                    }
+                );
+
+
+            output.push(
+                rewrittenTag
+            );
+
+            continue;
+        }
+
+
+        // -------------------------------------------------
+        // PLAYLIST / SEGMENT URI
+        // -------------------------------------------------
+
+        try {
+
+            const absoluteUrl =
+                new URL(
+                    line,
+                    playlistUrl
+                ).href;
+
+
+            if (
+                isAnimeHayM3u8Url(
+                    absoluteUrl
+                )
+            ) {
+
+                output.push(
+                    makeAnimeHayHlsProxyUrl(
+                        absoluteUrl,
+                        referer
+                    )
+                );
+
+            } else {
+
+                output.push(
+                    makeAnimeHaySegmentProxyUrl(
+                        absoluteUrl,
+                        referer
+                    )
+                );
+            }
+
+        } catch (_) {
+
+            // Không phải URL hợp lệ → giữ nguyên
+            output.push(
+                line
+            );
+        }
+    }
+
+
+    return output.join(
+        "\n"
+    );
+}
+
+
+// =====================================================
+// ANIMEHAY M3U8 DETECTION
+// =====================================================
+
+function isAnimeHayM3u8Url(
+    url
+) {
+
+    try {
+
+        const parsed =
+            new URL(
+                url
+            );
+
+
+        const pathname =
+            String(
+                parsed.pathname ||
+                ""
+            ).toLowerCase();
+
+
+        return (
+            pathname.endsWith(
+                ".m3u8"
+            ) ||
+            pathname.includes(
+                ".m3u8/"
+            )
+        );
+
+    } catch (_) {
+
+        return false;
+    }
+}
+
+
+// =====================================================
+// ANIMEHAY HLS PROXY URL
+// =====================================================
+
+function makeAnimeHayHlsProxyUrl(
+    targetUrl,
+    referer
+) {
+
+    return (
+        ANIMEHAY_PROXY_BASE +
+        "/animehay-hls-proxy?url=" +
+        encodeURIComponent(
+            targetUrl
+        ) +
+        "&ref=" +
+        encodeURIComponent(
+            referer ||
+            ""
+        )
+    );
+}
+
+
+// =====================================================
+// ANIMEHAY SEGMENT PROXY URL
+// =====================================================
+
+function makeAnimeHaySegmentProxyUrl(
+    targetUrl,
+    referer
+) {
+
+    return (
+        ANIMEHAY_PROXY_BASE +
+        "/animehay-segment-proxy?url=" +
+        encodeURIComponent(
+            targetUrl
+        ) +
+        "&ref=" +
+        encodeURIComponent(
+            referer ||
+            ""
+        )
+    );
+}
+
+
+// =====================================================
+// 16.0.7A. ANIMEHAY HLS PROXY
+// =====================================================
+
+app.get(
+    "/animehay-hls-proxy",
+    async (
+        req,
+        res
+    ) => {
+
+        try {
+
+            const targetUrl =
+                String(
+                    req.query?.url ||
+                    ""
+                ).trim();
+
+
+            const referer =
+                String(
+                    req.query?.ref ||
+                    "https://main.vipah06.xyz/"
+                ).trim();
+
+
+            console.log(
+                "[ANIMEHAY HLS PROXY] URL:",
+                targetUrl
+            );
+
+
+            console.log(
+                "[ANIMEHAY HLS PROXY] REFERER:",
+                referer
+            );
+
+
+            // -------------------------------------------------
+            // VALIDATE
+            // -------------------------------------------------
+
+            if (
+                !targetUrl ||
+                !isValidAnimeHayStreamUrl(
+                    targetUrl
+                )
+            ) {
+
+                console.log(
+                    "[ANIMEHAY HLS PROXY] INVALID TARGET"
+                );
+
+
+                return res
+                    .status(400)
+                    .type("text/plain")
+                    .send(
+                        "Invalid AnimeHay HLS URL"
+                    );
+            }
+
+
+            // -------------------------------------------------
+            // GET PLAYLIST
+            // -------------------------------------------------
+
+            const response =
+                await axios.get(
+                    targetUrl,
+                    {
+                        timeout:
+                            15000,
+
+                        responseType:
+                            "text",
+
+                        headers:
+                            getAnimeHayProxyHeaders(
+                                referer
+                            ),
+
+                        validateStatus:
+                            status =>
+                                status >= 200 &&
+                                status < 300
+                    }
+                );
+
+
+            const playlist =
+                String(
+                    response?.data ||
+                    ""
+                ).trim();
+
+
+            console.log(
+                "[ANIMEHAY HLS PROXY] STATUS:",
+                response?.status
+            );
+
+
+            console.log(
+                "[ANIMEHAY HLS PROXY] CONTENT TYPE:",
+                response?.headers?.[
+                    "content-type"
+                ] || ""
+            );
+
+
+            console.log(
+                "[ANIMEHAY HLS PROXY] PLAYLIST LENGTH:",
+                playlist.length
+            );
+
+
+            // -------------------------------------------------
+            // VALIDATE HLS
+            // -------------------------------------------------
+
+            if (
+                !playlist ||
+                !playlist.startsWith(
+                    "#EXTM3U"
+                )
+            ) {
+
+                console.log(
+                    "[ANIMEHAY HLS PROXY] INVALID PLAYLIST:"
+                );
+
+
+                console.log(
+                    playlist.slice(
+                        0,
+                        1000
+                    )
+                );
+
+
+                return res
+                    .status(502)
+                    .type("text/plain")
+                    .send(
+                        "Invalid AnimeHay HLS playlist"
+                    );
+            }
+
+
+            // -------------------------------------------------
+            // REWRITE
+            // -------------------------------------------------
+
+            const rewritten =
+                rewriteAnimeHayM3u8(
+                    playlist,
+                    targetUrl,
+                    referer
+                );
+
+
+            const buffer =
+                Buffer.from(
+                    rewritten,
+                    "utf8"
+                );
+
+
+            console.log(
+                "[ANIMEHAY HLS PROXY] REWRITTEN:",
+                playlist.length,
+                "→",
+                buffer.length
+            );
+
+
+            console.log(
+                "[ANIMEHAY HLS PROXY] OUTPUT:",
+                rewritten
+                    .split("\n")
+                    .slice(
+                        0,
+                        14
+                    )
+                    .join("\n")
+            );
+
+
+            // -------------------------------------------------
+            // RESPONSE
+            // -------------------------------------------------
+
+            res.status(
+                200
+            );
+
+
+            res.set(
+                "Content-Type",
+                "application/vnd.apple.mpegurl"
+            );
+
+
+            res.set(
+                "Content-Length",
+                String(
+                    buffer.length
+                )
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Methods",
+                "GET, HEAD, OPTIONS"
+            );
+
+
+            res.set(
+                "Cache-Control",
+                "no-cache, no-store, must-revalidate"
+            );
+
+
+            res.set(
+                "Pragma",
+                "no-cache"
+            );
+
+
+            res.set(
+                "Expires",
+                "0"
+            );
+
+
+            res.set(
+                "Accept-Ranges",
+                "none"
+            );
+
+
+            res.set(
+                "X-Content-Type-Options",
+                "nosniff"
+            );
+
+
+            return res.send(
+                buffer
+            );
+
+        } catch (e) {
+
+            console.log(
+                "[ANIMEHAY HLS PROXY ERROR]:",
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+
+            if (
+                e?.response?.data
+            ) {
+
+                console.log(
+                    "[ANIMEHAY HLS PROXY ERROR BODY]:",
+                    String(
+                        e.response.data
+                    ).slice(
+                        0,
+                        500
+                    )
+                );
+            }
+
+
+            if (
+                !res.headersSent
+            ) {
+
+                return res
+                    .status(502)
+                    .type("text/plain")
+                    .send(
+                        "AnimeHay HLS proxy error"
+                    );
+            }
+        }
+    }
+);
+
+
+// =====================================================
+// 16.0.7B. ANIMEHAY SEGMENT PROXY
+//
+// Segment được stream trực tiếp.
+//
+// Nếu source bắt đầu bằng MPEG-TS:
+//
+//      47 xx xx...
+//
+// → giữ nguyên.
+//
+// Nếu AnimeHay/VIPAH thêm fake prefix trước MPEG-TS:
+//
+//      prefix
+//         ↓
+//      47 xx xx...
+//
+// → bỏ prefix.
+//
+// Không áp dụng logic PNG cứng của VSMov.
+// =====================================================
+
+class AnimeHayMpegTsTransform
+    extends Transform {
+
+    constructor(
+        options = {}
+    ) {
+
+        super(
+            options
+        );
+
+
+        this.pending =
+            Buffer.alloc(0);
+
+
+        this.resolved =
+            false;
+
+
+        this.maxProbeBytes =
+            128 * 1024;
+    }
+
+
+    _transform(
+        chunk,
+        encoding,
+        callback
+    ) {
+
+        try {
+
+            const incoming =
+                Buffer.isBuffer(
+                    chunk
+                )
+                    ? chunk
+                    : Buffer.from(
+                        chunk
+                    );
+
+
+            if (
+                !incoming.length
+            ) {
+
+                return callback();
+            }
+
+
+            if (
+                this.resolved
+            ) {
+
+                this.push(
+                    incoming
+                );
+
+                return callback();
+            }
+
+
+            this.pending =
+                this.pending.length
+                    ? Buffer.concat([
+                        this.pending,
+                        incoming
+                    ])
+                    : incoming;
+
+
+            // -------------------------------------------------
+            // MPEG-TS NGAY TỪ BYTE 0
+            // -------------------------------------------------
+
+            if (
+                this.pending.length >= 188 &&
+                this.pending[0] === 0x47
+            ) {
+
+                this.resolved =
+                    true;
+
+
+                console.log(
+                    "[ANIMEHAY SEGMENT] MPEG-TS PREFIX: 0"
+                );
+
+
+                this.push(
+                    this.pending
+                );
+
+
+                this.pending =
+                    Buffer.alloc(0);
+
+
+                return callback();
+            }
+
+
+            // -------------------------------------------------
+            // TÌM MPEG-TS SYNC BYTE
+            //
+            // MPEG-TS packet = 188 bytes.
+            //
+            // Chấp nhận sync byte 0x47 tại vị trí mà
+            // phía sau tiếp tục có 0x47 sau 188 bytes.
+            // -------------------------------------------------
+
+            let found =
+                -1;
+
+
+            const max =
+                Math.min(
+                    this.pending.length,
+                    this.maxProbeBytes
+                );
+
+
+            for (
+                let offset = 1;
+                offset < max;
+                offset++
+            ) {
+
+                if (
+                    this.pending[offset] !==
+                    0x47
+                ) {
+
+                    continue;
+                }
+
+
+                if (
+                    offset + 188 <
+                    this.pending.length &&
+                    this.pending[
+                        offset + 188
+                    ] === 0x47
+                ) {
+
+                    found =
+                        offset;
+
+                    break;
+                }
+            }
+
+
+            if (
+                found >= 0
+            ) {
+
+                this.resolved =
+                    true;
+
+
+                console.log(
+                    "[ANIMEHAY SEGMENT] FAKE PREFIX FOUND:",
+                    found
+                );
+
+
+                this.push(
+                    this.pending.slice(
+                        found
+                    )
+                );
+
+
+                this.pending =
+                    Buffer.alloc(0);
+
+
+                return callback();
+            }
+
+
+            // -------------------------------------------------
+            // CHƯA ĐỦ DATA
+            // -------------------------------------------------
+
+            if (
+                this.pending.length >
+                this.maxProbeBytes
+            ) {
+
+                return callback(
+                    new Error(
+                        "AnimeHay MPEG-TS payload not found"
+                    )
+                );
+            }
+
+
+            callback();
+
+        } catch (e) {
+
+            callback(
+                e
+            );
+        }
+    }
+
+
+    _flush(
+        callback
+    ) {
+
+        try {
+
+            if (
+                !this.resolved &&
+                this.pending.length
+            ) {
+
+                // Không tìm được MPEG-TS.
+                //
+                // Không tự ý phá dữ liệu.
+                // Nếu source là fMP4/native media,
+                // route sẽ không dùng transform này.
+                return callback(
+                    new Error(
+                        "AnimeHay MPEG-TS payload not found"
+                    )
+                );
+            }
+
+
+            callback();
+
+        } catch (e) {
+
+            callback(
+                e
+            );
+        }
+    }
+}
+
+
+// =====================================================
+// ANIMEHAY SEGMENT PROXY ROUTE
+// =====================================================
+
+app.get(
+    "/animehay-segment-proxy",
+    async (
+        req,
+        res
+    ) => {
+
+        const startedAt =
+            Date.now();
+
+
+        let sourceStream =
+            null;
+
+
+        try {
+
+            const targetUrl =
+                String(
+                    req.query?.url ||
+                    ""
+                ).trim();
+
+
+            const referer =
+                String(
+                    req.query?.ref ||
+                    "https://main.vipah06.xyz/"
+                ).trim();
+
+
+            console.log(
+                "[ANIMEHAY SEGMENT PROXY] URL:",
+                targetUrl
+            );
+
+
+            console.log(
+                "[ANIMEHAY SEGMENT PROXY] REFERER:",
+                referer
+            );
+
+
+            // -------------------------------------------------
+            // VALIDATE
+            // -------------------------------------------------
+
+            if (
+                !targetUrl ||
+                !isValidAnimeHayStreamUrl(
+                    targetUrl
+                )
+            ) {
+
+                return res
+                    .status(400)
+                    .type("text/plain")
+                    .send(
+                        "Invalid AnimeHay segment URL"
+                    );
+            }
+
+
+            // -------------------------------------------------
+            // NẾU URI THỰC RA LÀ M3U8
+            //
+            // Không để segment proxy xử lý playlist.
+            // -------------------------------------------------
+
+            if (
+                isAnimeHayM3u8Url(
+                    targetUrl
+                )
+            ) {
+
+                return res
+                    .redirect(
+                        302,
+                        makeAnimeHayHlsProxyUrl(
+                            targetUrl,
+                            referer
+                        )
+                    );
+            }
+
+
+            // -------------------------------------------------
+            // SOURCE STREAM
+            // -------------------------------------------------
+
+            const response =
+                await axios.get(
+                    targetUrl,
+                    {
+                        timeout:
+                            30000,
+
+                        responseType:
+                            "stream",
+
+                        headers:
+                            {
+                                ...getAnimeHayProxyHeaders(
+                                    referer
+                                ),
+
+                                "Accept":
+                                    "*/*"
+                            },
+
+                        validateStatus:
+                            status =>
+                                status >= 200 &&
+                                status < 300
+                    }
+                );
+
+
+            sourceStream =
+                response?.data;
+
+
+            if (
+                !sourceStream ||
+                typeof sourceStream.pipe !==
+                    "function"
+            ) {
+
+                throw new Error(
+                    "Invalid AnimeHay source stream"
+                );
+            }
+
+
+            const contentType =
+                String(
+                    response?.headers?.[
+                        "content-type"
+                    ] ||
+                    ""
+                ).toLowerCase();
+
+
+            console.log(
+                "[ANIMEHAY SEGMENT PROXY] SOURCE:",
+                {
+                    status:
+                        response?.status,
+
+                    contentType,
+
+                    contentLength:
+                        response?.headers?.[
+                            "content-length"
+                        ] ||
+                        ""
+                }
+            );
+
+
+            // -------------------------------------------------
+            // XÁC ĐỊNH CÓ PHẢI MPEG-TS KHÔNG
+            //
+            // Nếu content-type rõ ràng là MPEG-TS
+            // hoặc URL là .ts → dùng transform.
+            //
+            // Các media khác → stream nguyên bản.
+            // -------------------------------------------------
+
+            const pathname =
+                (() => {
+
+                    try {
+
+                        return new URL(
+                            targetUrl
+                        ).pathname.toLowerCase();
+
+                    } catch (_) {
+
+                        return "";
+                    }
+                })();
+
+
+            const looksLikeTs =
+                contentType.includes(
+                    "mpeg"
+                ) ||
+                pathname.endsWith(
+                    ".ts"
+                ) ||
+                pathname.includes(
+                    ".ts?"
+                );
+
+
+            // -------------------------------------------------
+            // NATIVE STREAM
+            // -------------------------------------------------
+
+            if (
+                !looksLikeTs
+            ) {
+
+                res.status(
+                    response.status
+                );
+
+
+                res.set(
+                    "Content-Type",
+                    contentType ||
+                    "application/octet-stream"
+                );
+
+
+                const sourceLength =
+                    response?.headers?.[
+                        "content-length"
+                    ];
+
+
+                if (
+                    sourceLength
+                ) {
+
+                    res.set(
+                        "Content-Length",
+                        String(
+                            sourceLength
+                        )
+                    );
+                }
+
+
+                res.set(
+                    "Accept-Ranges",
+                    "none"
+                );
+
+
+                res.set(
+                    "Access-Control-Allow-Origin",
+                    "*"
+                );
+
+
+                res.set(
+                    "Access-Control-Allow-Headers",
+                    "*"
+                );
+
+
+                res.set(
+                    "Cache-Control",
+                    "no-store, no-cache, must-revalidate"
+                );
+
+
+                console.log(
+                    "[ANIMEHAY SEGMENT PROXY] NATIVE STREAM"
+                );
+
+
+                sourceStream.pipe(
+                    res
+                );
+
+
+                return;
+            }
+
+
+            // -------------------------------------------------
+            // MPEG-TS TRANSFORM
+            // -------------------------------------------------
+
+            const transform =
+                new AnimeHayMpegTsTransform();
+
+
+            sourceStream.on(
+                "error",
+                error => {
+
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] SOURCE ERROR:",
+                        error?.message ||
+                        error
+                    );
+
+
+                    transform.destroy(
+                        error
+                    );
+                }
+            );
+
+
+            transform.on(
+                "error",
+                error => {
+
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] TRANSFORM ERROR:",
+                        error?.message ||
+                        error
+                    );
+
+
+                    if (
+                        !res.headersSent
+                    ) {
+
+                        res
+                            .status(502)
+                            .type("text/plain")
+                            .send(
+                                "AnimeHay MPEG-TS transform error"
+                            );
+
+                    } else {
+
+                        try {
+                            res.destroy(
+                                error
+                            );
+                        } catch (_) {}
+                    }
+                }
+            );
+
+
+            res.status(
+                response.status
+            );
+
+
+            res.set(
+                "Content-Type",
+                "video/mp2t"
+            );
+
+
+            res.set(
+                "Accept-Ranges",
+                "none"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+
+            res.set(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+
+            res.set(
+                "Cache-Control",
+                "no-store, no-cache, must-revalidate"
+            );
+
+
+            res.set(
+                "Pragma",
+                "no-cache"
+            );
+
+
+            res.set(
+                "Expires",
+                "0"
+            );
+
+
+            console.log(
+                "[ANIMEHAY SEGMENT PROXY] MPEG-TS STREAM"
+            );
+
+
+            sourceStream.pipe(
+                transform
+            );
+
+
+            transform.pipe(
+                res
+            );
+
+
+            res.once(
+                "finish",
+                () => {
+
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] FINISH:",
+                        {
+                            ms:
+                                Date.now() -
+                                startedAt,
+
+                            bytes:
+                                transform.readableLength ||
+                                0
+                        }
+                    );
+                }
+            );
+
+
+            return;
+
+        } catch (e) {
+
+            console.log(
+                "[ANIMEHAY SEGMENT PROXY ERROR]:",
+                e?.response?.status ||
+                e?.message ||
+                e
+            );
+
+
+            if (
+                e?.response?.data
+            ) {
+
+                console.log(
+                    "[ANIMEHAY SEGMENT PROXY ERROR BODY]:",
+                    String(
+                        e.response.data
+                    ).slice(
+                        0,
+                        500
+                    )
+                );
+            }
+
+
+            if (
+                !res.headersSent
+            ) {
+
+                return res
+                    .status(502)
+                    .type("text/plain")
+                    .send(
+                        "AnimeHay segment proxy error"
                     );
             }
 
