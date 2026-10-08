@@ -13129,26 +13129,19 @@ const addNormalizedStream = (
 
 
 // =====================================================
-// 16.0.B. VSMOV → STREMIO ADAPTER
+// 16.0.B. NORMALIZED → STREMIO ADAPTER
 // =====================================================
 //
-// Adapter này TẠM THỜI vẫn giữ riêng cho VSMov.
+// Adapter chung cho NormalizedStream.
 //
-// Lý do:
+// Giữ nguyên behavior đặc biệt của VSMov,
+// đồng thời cho phép AnimeHay truyền:
 //
-// VSMov có behavior đặc biệt:
-//
-//   - [VSMov]
-//   - [VSMov Direct]
-//   - [VSMov Player]
+//   - type
+//   - headers
+//   - behaviorHints
 //   - bingeGroup
-//   - widgetPlayer
-//   - widgetPlayerStates
-//
-// Step 2.3 chỉ loại bỏ
-// NormalizedStream contract riêng.
-//
-// Chưa loại bỏ VSMov Adapter.
+//   - notWebReady
 //
 // =====================================================
 
@@ -13180,14 +13173,24 @@ const toStremioStream = stream => {
         return null;
     }
 
+
     // -------------------------------------------------
-    // SOURCE TYPE
+    // STREAM LABEL
     // -------------------------------------------------
 
     let streamLabel =
         "[VSMov]";
 
+
     if (
+        stream.provider ===
+        "animehay"
+    ) {
+
+        streamLabel =
+            "[AnimeHay]";
+
+    } else if (
         stream.type ===
         "embed"
     ) {
@@ -13213,13 +13216,20 @@ const toStremioStream = stream => {
             "[VSMov]";
     }
 
+
+    // -------------------------------------------------
+    // RESULT
+    // -------------------------------------------------
+
     const result = {
 
         name:
             "▶️ " +
             streamLabel +
             (
-                stream.serverName
+                stream.serverName &&
+                stream.provider !==
+                    "animehay"
                     ? " " +
                       stream.serverName
                     : ""
@@ -13232,22 +13242,52 @@ const toStremioStream = stream => {
             ).trim()
     };
 
+
     // -------------------------------------------------
     // DIRECT URL
     // -------------------------------------------------
 
     if (url) {
-        result.url = url;
+
+        result.url =
+            url;
     }
+
 
     // -------------------------------------------------
     // EXTERNAL / PLAYER URL
     // -------------------------------------------------
 
     if (externalUrl) {
+
         result.externalUrl =
             externalUrl;
     }
+
+
+    // -------------------------------------------------
+    // BEHAVIOR HINTS
+    // -------------------------------------------------
+
+    const behaviorHints = {};
+
+
+    // -------------------------------------------------
+    // COPY NORMALIZED BEHAVIOR HINTS
+    // -------------------------------------------------
+
+    if (
+        stream.behaviorHints &&
+        typeof stream.behaviorHints ===
+            "object"
+    ) {
+
+        Object.assign(
+            behaviorHints,
+            stream.behaviorHints
+        );
+    }
+
 
     // -------------------------------------------------
     // HEADERS
@@ -13255,50 +13295,62 @@ const toStremioStream = stream => {
 
     if (
         stream.headers &&
-        typeof stream.headers === "object" &&
+        typeof stream.headers ===
+            "object" &&
         Object.keys(
             stream.headers
         ).length
     ) {
 
-        result.behaviorHints = {
+        behaviorHints.proxyHeaders = {
 
-            ...(result.behaviorHints || {}),
-
-            proxyHeaders: {
-                request:
-                    stream.headers
-            }
+            request:
+                stream.headers
         };
     }
 
+
     // -------------------------------------------------
-    // BINGE GROUP
+    // VSMOV BINGE GROUP
     // -------------------------------------------------
 
     if (
+        stream.provider ===
+        "animehay"
+    ) {
+
+        behaviorHints.bingeGroup =
+            "animehay";
+
+    } else if (
         stream.type ===
         "embed"
     ) {
 
-        result.behaviorHints = {
-
-            ...(result.behaviorHints || {}),
-
-            bingeGroup:
-                "vsmov"
-        };
+        behaviorHints.bingeGroup =
+            "vsmov";
 
     } else {
 
-        result.behaviorHints = {
-
-            ...(result.behaviorHints || {}),
-
-            bingeGroup:
-                "vsmov-hls"
-        };
+        behaviorHints.bingeGroup =
+            "vsmov-hls";
     }
+
+
+    // -------------------------------------------------
+    // APPLY BEHAVIOR HINTS
+    // -------------------------------------------------
+
+    if (
+        Object.keys(
+            behaviorHints
+        ).length
+    ) {
+
+        result.behaviorHints =
+            behaviorHints;
+    }
+
 
     // -------------------------------------------------
     // WIDGET PLAYER
@@ -13319,6 +13371,7 @@ const toStremioStream = stream => {
                 "replaceplayer"
             ];
     }
+
 
     return result;
 };
