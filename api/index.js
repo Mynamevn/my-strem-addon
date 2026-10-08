@@ -14581,1281 +14581,1634 @@ return streams;
 // BL-53. ANIMEHAY PROVIDER
 // ============================================================
 
-const ANIMEHAY_DIRECTORY = "https://animehay.tv";
+const ANIMEHAY_DIRECTORY =
+    "https://animehay.tv";
 
 const ANIMEHAY_BOOTSTRAP_DOMAINS = [
-  "https://animehay13.site",
-  "https://animehay14.site"
+    "https://animehay13.site",
+    "https://animehay14.site"
 ];
 
 let animeHayActiveDomain = "";
 
-function animeHayAbsoluteUrl(url, baseUrl) {
-  if (!url) return "";
+let animeHayDirectoryActiveDomain = "";
 
-  try {
-    return new URL(url, baseUrl).href;
-  } catch (_) {
-    return String(url);
-  }
-}
-
-function animeHayNormalizeText(text = "") {
-  return String(text)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[đĐ]/g, "d")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function animeHayDetectQuality(url = "", text = "") {
-  const s = `${url} ${text}`.toLowerCase();
-
-  if (/2160|4k/.test(s)) return 2160;
-  if (/1080|fullhd/.test(s)) return 1080;
-  if (/720|hd/.test(s)) return 720;
-  if (/480|sd/.test(s)) return 480;
-
-  return 0;
-}
-
-function animeHayExtractVideoUrls(
-  html = "",
-  baseUrl = ""
-) {
-  const urls = [];
-  const seen = new Set();
-
-  const add = value => {
-    if (!value) return;
-
-    let url = String(value)
-      .replace(/\\u0026/g, "&")
-      .replace(/\\\//g, "/")
-      .replace(/&amp;/g, "&")
-      .replace(/^["']|["']$/g, "")
-      .trim();
-
-    if (!url) return;
-
-    if (!/^https?:\/\//i.test(url)) {
-      url = animeHayAbsoluteUrl(
-        url,
-        baseUrl
-      );
-    }
-
-    if (!/^https?:\/\//i.test(url)) return;
-
-    if (
-      !/\.m3u8(?:[?#]|$)/i.test(url) &&
-      !/\.mp4(?:[?#]|$)/i.test(url)
-    ) {
-      return;
-    }
-
-    if (seen.has(url)) return;
-
-    seen.add(url);
-    urls.push(url);
-  };
-
-  const patterns = [
-    /M3U8_URL\s*[:=]\s*["']([^"']+)["']/gi,
-    /["']M3U8_URL["']\s*[:=]\s*["']([^"']+)["']/gi,
-    /["']file["']\s*:\s*["']([^"']+)["']/gi,
-    /\bfile\s*:\s*["']([^"']+)["']/gi,
-    /["']src["']\s*:\s*["']([^"']+)["']/gi
-  ];
-
-  for (const re of patterns) {
-    let match;
-
-    while ((match = re.exec(html)) !== null) {
-      add(match[1]);
-    }
-  }
-
-  const rawPatterns = [
-    /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi,
-    /https?:\/\/[^"'\\\s<>]+\.mp4(?:\?[^"'\\\s<>]*)?/gi
-  ];
-
-  for (const re of rawPatterns) {
-    let match;
-
-    while ((match = re.exec(html)) !== null) {
-      add(match[0]);
-    }
-  }
-
-  return urls;
-}
-
-// ------------------------------------------------------------
-// AnimeHay page detection
-//
-// IMPORTANT:
-// Không được chỉ tìm chữ "cloudflare".
-// AnimeHay page có thể chứa CloudflareKiller / Cloudflare
-// references nhưng vẫn là trang AnimeHay hợp lệ.
-// ------------------------------------------------------------
-
-function animeHayLooksLikeRealPage(html = "") {
-  try {
-    const $ = cheerio.load(html);
-
-    const indicators = {
-      moviesList:
-        $("div.movies-list > div.mc").length,
-
-      moviesListAny:
-        $(".movies-list").length,
-
-      hero:
-        $(".aim-hero__title").length,
-
-      episodes:
-        $(".aim-episodes").length,
-
-      episodeLinks:
-        $(".aim-episodes a[href]").length,
-
-      servers:
-        $(".list-server-items").length,
-
-      animeLinks:
-        $("a[href*='/thong-tin-phim/']").length,
-
-      watchLinks:
-        $("a[href^='/xem-phim/']").length
-    };
-
-    const score =
-      (indicators.moviesList > 0 ? 5 : 0) +
-      (indicators.moviesListAny > 0 ? 2 : 0) +
-      (indicators.hero > 0 ? 3 : 0) +
-      (indicators.episodes > 0 ? 3 : 0) +
-      (indicators.episodeLinks > 0 ? 3 : 0) +
-      (indicators.servers > 0 ? 3 : 0) +
-      (indicators.animeLinks > 0 ? 2 : 0) +
-      (indicators.watchLinks > 0 ? 2 : 0);
-
-    console.log(
-      "[ANIMEHAY] PAGE STRUCTURE:",
-      indicators,
-      "SCORE:",
-      score
-    );
-
-    return score >= 2;
-
-  } catch (error) {
-    console.log(
-      "[ANIMEHAY] PAGE DETECT ERROR:",
-      error.message
-    );
-
-    return false;
-  }
-}
-
-// ------------------------------------------------------------
-// Extract final domain from response redirect
-// ------------------------------------------------------------
-
-function animeHayGetFinalOrigin(response, fallback) {
-  try {
-    const finalUrl =
-      response?.request?.res?.responseUrl ||
-      response?.request?._redirectable?._currentUrl ||
-      "";
-
-    if (finalUrl) {
-      return new URL(finalUrl).origin;
-    }
-  } catch (_) {}
-
-  return fallback;
-}
-
-// ------------------------------------------------------------
-// Read AnimeHay.tv domain directory
-//
-// animehay.tv is NOT a content domain.
-// It only tells us which AnimeHay domain is currently active.
-// ------------------------------------------------------------
-
-async function animeHayDiscoverDirectoryDomains() {
-  const domains = [];
-
-  try {
-    console.log(
-      "[ANIMEHAY] DIRECTORY:",
-      ANIMEHAY_DIRECTORY
-    );
-
-    const response =
-      await axios.get(
-        ANIMEHAY_DIRECTORY,
-        {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-              "AppleWebKit/537.36 (KHTML, like Gecko) " +
-              "Chrome/131.0.0.0 Safari/537.36",
-
-            "Accept":
-              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-            "Accept-Language":
-              "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
-          },
-
-          timeout: 12000,
-          maxRedirects: 5,
-          validateStatus: () => true
-        }
-      );
-
-    const html =
-      String(response.data || "");
-
-    const $ =
-      cheerio.load(html);
-
-    $("a[href]").each((_, el) => {
-      const href =
-        $(el).attr("href");
-
-      if (!href) return;
-
-      try {
-        const absolute =
-          new URL(
-            href,
-            ANIMEHAY_DIRECTORY
-          ).href;
-
-        const origin =
-          new URL(absolute).origin;
-
-        if (
-          /animehay/i.test(origin) &&
-          !domains.includes(origin)
-        ) {
-          domains.push(origin);
-        }
-
-      } catch (_) {}
-    });
-
-    console.log(
-      "[ANIMEHAY] DIRECTORY DOMAINS:",
-      domains
-    );
-
-  } catch (error) {
-    console.log(
-      "[ANIMEHAY] DIRECTORY ERROR:",
-      error.message
-    );
-  }
-
-  return domains;
-}
-
-// ------------------------------------------------------------
-// Test one content domain
-//
-// Không coi HTTP 200 là đủ.
-// Phải theo redirect và kiểm tra HTML.
-// ------------------------------------------------------------
-
-async function animeHayTestDomain(
-  domain,
-  searchPath
-) {
-  const searchUrl =
-    `${domain}${searchPath}`;
-
-  console.log(
-    "[ANIMEHAY] TRY DOMAIN:",
-    domain
-  );
-
-  console.log(
-    "[ANIMEHAY] SEARCH:",
-    searchUrl
-  );
-
-  try {
-    const response =
-      await axios.get(
-        searchUrl,
-        {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-              "AppleWebKit/537.36 (KHTML, like Gecko) " +
-              "Chrome/131.0.0.0 Safari/537.36",
-
-            "Accept":
-              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-            "Accept-Language":
-              "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-            "Upgrade-Insecure-Requests":
-              "1"
-          },
-
-          timeout: 18000,
-          maxRedirects: 8,
-          validateStatus: () => true
-        }
-      );
-
-    const html =
-      String(response.data || "");
-
-    const finalOrigin =
-      animeHayGetFinalOrigin(
-        response,
-        domain
-      );
-
-    console.log(
-      "[ANIMEHAY] DOMAIN STATUS:",
-      domain,
-      response.status,
-      "FINAL:",
-      finalOrigin
-    );
-
-    console.log(
-      "[ANIMEHAY] HTML LENGTH:",
-      domain,
-      html.length
-    );
-
-    if (
-      response.status < 200 ||
-      response.status >= 400 ||
-      html.length < 500
-    ) {
-      return null;
-    }
-
-    const realPage =
-      animeHayLooksLikeRealPage(
-        html
-      );
-
-    console.log(
-      "[ANIMEHAY] REAL PAGE:",
-      finalOrigin,
-      realPage
-    );
-
-    // IMPORTANT:
-    // Không có challenge rejection ở đây nữa.
-    // Nếu HTML có cấu trúc AnimeHay thì dùng nó.
-    if (realPage) {
-      return {
-        origin: finalOrigin,
-        searchUrl:
-          response.request?.res?.responseUrl ||
-          searchUrl,
-        html,
-        response
-      };
-    }
-
-    // Nếu domain redirect sang domain khác,
-    // thử lại trực tiếp finalOrigin.
-    if (
-      finalOrigin &&
-      finalOrigin !== domain
-    ) {
-      const redirectedUrl =
-        `${finalOrigin}${searchPath}`;
-
-      console.log(
-        "[ANIMEHAY] RETRY REDIRECTED DOMAIN:",
-        redirectedUrl
-      );
-
-      try {
-        const retry =
-          await axios.get(
-            redirectedUrl,
-            {
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                  "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                  "Chrome/131.0.0.0 Safari/537.36",
-
-                "Accept":
-                  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-                "Accept-Language":
-                  "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
-              },
-
-              timeout: 18000,
-              maxRedirects: 8,
-              validateStatus: () => true
-            }
-          );
-
-        const retryHtml =
-          String(retry.data || "");
-
-        console.log(
-          "[ANIMEHAY] REDIRECT RETRY STATUS:",
-          retry.status,
-          "HTML:",
-          retryHtml.length
-        );
-
-        if (
-          retry.status >= 200 &&
-          retry.status < 400 &&
-          retryHtml.length > 500 &&
-          animeHayLooksLikeRealPage(
-            retryHtml
-          )
-        ) {
-          return {
-            origin: finalOrigin,
-            searchUrl: redirectedUrl,
-            html: retryHtml,
-            response: retry
-          };
-        }
-
-      } catch (retryError) {
-        console.log(
-          "[ANIMEHAY] REDIRECT RETRY ERROR:",
-          retryError.message
-        );
-      }
-    }
-
-  } catch (error) {
-    console.log(
-      "[ANIMEHAY] DOMAIN ERROR:",
-      domain,
-      error.message
-    );
-  }
-
-  return null;
-}
-
-// ------------------------------------------------------------
-// Resolve embed / iframe
-// ------------------------------------------------------------
-
-async function animeHayResolveEmbed(
-  embedUrl,
-  referer,
-  depth = 0
-) {
-  if (!embedUrl || depth > 3) {
-    return [];
-  }
-
-  console.log(
-    "[ANIMEHAY] EMBED:",
-    embedUrl
-  );
-
-  try {
-    const response =
-      await axios.get(
-        embedUrl,
-        {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-              "AppleWebKit/537.36 (KHTML, like Gecko) " +
-              "Chrome/131.0.0.0 Safari/537.36",
-
-            "Accept":
-              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-            "Referer":
-              referer || embedUrl
-          },
-
-          timeout: 15000,
-          maxRedirects: 8,
-          validateStatus: () => true
-        }
-      );
-
-    const html =
-      String(response.data || "");
-
-    console.log(
-      "[ANIMEHAY] EMBED STATUS:",
-      response.status,
-      "HTML:",
-      html.length
-    );
-
-    const direct =
-      animeHayExtractVideoUrls(
-        html,
-        embedUrl
-      );
-
-    if (direct.length > 0) {
-      console.log(
-        "[ANIMEHAY] EMBED DIRECT:",
-        direct.length
-      );
-
-      return direct.map(url => ({
-        url,
-        referer: embedUrl
-      }));
-    }
-
-    const nested = [];
-
-    const $ =
-      cheerio.load(html);
-
-    $("iframe[src], iframe[data-src]").each(
-      (_, el) => {
-        const src =
-          $(el).attr("src") ||
-          $(el).attr("data-src");
-
-        if (!src) return;
-
-        const absolute =
-          animeHayAbsoluteUrl(
-            src,
-            embedUrl
-          );
-
-        if (
-          absolute &&
-          !nested.includes(absolute)
-        ) {
-          nested.push(absolute);
-        }
-      }
-    );
-
-    const rawEmbed =
-      html.match(
-        /https?:\/\/[^"'\\\s<>]+\/embed-jw\/[^"'\\\s<>]*/gi
-      ) || [];
-
-    for (const url of rawEmbed) {
-      if (!nested.includes(url)) {
-        nested.push(url);
-      }
-    }
-
-    for (const url of nested) {
-      const result =
-        await animeHayResolveEmbed(
-          url,
-          embedUrl,
-          depth + 1
-        );
-
-      if (result.length > 0) {
-        return result;
-      }
-    }
-
-  } catch (error) {
-    console.log(
-      "[ANIMEHAY] EMBED ERROR:",
-      error.message
-    );
-  }
-
-  return [];
-}
 
 // ============================================================
-// MAIN ANIMEHAY FETCH
+// BL-53.1. ANIMEHAY HELPERS
+// ============================================================
+
+function animeHayNormalizeText(value) {
+
+    return String(value || "")
+        .normalize("NFD")
+        .replace(
+            /[\u0300-\u036f]/g,
+            ""
+        )
+        .toLowerCase()
+        .replace(
+            /[^a-z0-9]+/g,
+            " "
+        )
+        .replace(
+            /\s+/g,
+            " "
+        )
+        .trim();
+
+}
+
+
+function animeHayAbsoluteUrl(
+    url,
+    baseUrl
+) {
+
+    if (!url) {
+        return "";
+    }
+
+    try {
+
+        return new URL(
+            String(url),
+            baseUrl
+        ).href;
+
+    } catch {
+
+        return "";
+
+    }
+
+}
+
+
+function animeHayDetectQuality(
+    value
+) {
+
+    const text =
+        String(value || "");
+
+    const match =
+        text.match(
+            /(2160|1440|1080|720|480|360)p?/i
+        );
+
+    if (!match) {
+        return 0;
+    }
+
+    return Number(
+        match[1]
+    ) || 0;
+
+}
+
+
+function animeHayLooksLikeChallenge(
+    html
+) {
+
+    const text =
+        String(html || "");
+
+    if (!text) {
+        return true;
+    }
+
+    const lower =
+        text.toLowerCase();
+
+    /*
+     * AnimeHay thật phải có ít nhất
+     * một vài dấu hiệu HTML đặc trưng.
+     *
+     * Không coi HTTP 200 là page hợp lệ.
+     */
+
+    const strongAnimeHayMarkers = [
+
+        'class="movies-list"',
+        "movies-list",
+        "aim-hero",
+        "aim-episodes",
+        "list-server-items",
+        "/thong-tin-phim/",
+        "/xem-phim/",
+        "/embed-jw/"
+
+    ];
+
+    const markerCount =
+        strongAnimeHayMarkers.filter(
+            marker =>
+                lower.includes(
+                    marker.toLowerCase()
+                )
+        ).length;
+
+    if (markerCount >= 1) {
+
+        return false;
+
+    }
+
+    /*
+     * Những dấu hiệu thường gặp của
+     * Cloudflare / anti-bot interstitial.
+     */
+
+    const challengeMarkers = [
+
+        "just a moment",
+        "cf-chl-",
+        "challenge-platform",
+        "turnstile",
+        "checking your browser",
+        "verify you are human",
+        "enable javascript and cookies",
+        "/cdn-cgi/challenge-platform/",
+        "attention required"
+
+    ];
+
+    const challengeCount =
+        challengeMarkers.filter(
+            marker =>
+                lower.includes(
+                    marker
+                )
+        ).length;
+
+    /*
+     * Trang không có bất kỳ marker
+     * AnimeHay nào thì cũng không
+     * được coi là content page.
+     */
+
+    if (
+        markerCount === 0 &&
+        challengeCount > 0
+    ) {
+
+        return true;
+
+    }
+
+    if (
+        markerCount === 0 &&
+        text.length > 5000
+    ) {
+
+        return true;
+
+    }
+
+    return markerCount === 0;
+
+}
+
+
+function animeHayPageScore(
+    html
+) {
+
+    const text =
+        String(html || "")
+            .toLowerCase();
+
+    if (!text) {
+        return 0;
+    }
+
+    const markers = [
+
+        "movies-list",
+        "aim-hero",
+        "aim-episodes",
+        "list-server-items",
+        "/thong-tin-phim/",
+        "/xem-phim/",
+        "/embed-jw/",
+        "animehay"
+
+    ];
+
+    return markers.filter(
+        marker =>
+            text.includes(marker)
+    ).length;
+
+}
+
+
+// ============================================================
+// BL-53.2. DISCOVER DOMAIN TỪ ANIMEHAY.TV
+// ============================================================
+
+async function animeHayDiscoverDirectoryDomains() {
+
+    const domains = [];
+
+    try {
+
+        console.log(
+            "[ANIMEHAY] DIRECTORY:",
+            ANIMEHAY_DIRECTORY
+        );
+
+        const response =
+            await axios.get(
+                ANIMEHAY_DIRECTORY,
+                {
+                    timeout: 10000,
+                    maxRedirects: 5,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) " +
+                            "Chrome/140.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                        "Accept-Language":
+                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                        "Cache-Control":
+                            "no-cache",
+
+                        "Pragma":
+                            "no-cache"
+
+                    },
+
+                    validateStatus:
+                        status =>
+                            status >= 200 &&
+                            status < 400
+                }
+            );
+
+        const html =
+            String(
+                response.data || ""
+            );
+
+        const $ =
+            cheerio.load(
+                html
+            );
+
+        const discovered = [];
+
+        $("a[href]").each(
+            function () {
+
+                const href =
+                    $(this).attr(
+                        "href"
+                    );
+
+                if (!href) {
+                    return;
+                }
+
+                let absolute = "";
+
+                try {
+
+                    absolute =
+                        new URL(
+                            href,
+                            ANIMEHAY_DIRECTORY
+                        ).href;
+
+                } catch {
+
+                    return;
+
+                }
+
+                try {
+
+                    const parsed =
+                        new URL(
+                            absolute
+                        );
+
+                    const hostname =
+                        parsed.hostname
+                            .toLowerCase();
+
+                    /*
+                     * Chỉ lấy domain AnimeHay.
+                     *
+                     * Không lấy:
+                     * - ssplay
+                     * - Facebook
+                     * - Telegram
+                     * - quảng cáo
+                     * - domain ngoài hệ thống
+                     */
+
+                    if (
+                        !/^animehay/i.test(
+                            hostname
+                        )
+                    ) {
+
+                        return;
+
+                    }
+
+                    const origin =
+                        parsed.origin;
+
+                    if (
+                        !discovered.includes(
+                            origin
+                        )
+                    ) {
+
+                        discovered.push(
+                            origin
+                        );
+
+                    }
+
+                } catch {
+
+                    return;
+
+                }
+
+            }
+        );
+
+        /*
+         * Ưu tiên các domain được
+         * animehay.tv công bố.
+         */
+
+        for (
+            const domain
+            of discovered
+        ) {
+
+            if (
+                !domains.includes(
+                    domain
+                )
+            ) {
+
+                domains.push(
+                    domain
+                );
+
+            }
+
+        }
+
+        console.log(
+            "[ANIMEHAY] DIRECTORY DOMAINS:",
+            domains
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[ANIMEHAY DIRECTORY ERROR]:",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+    }
+
+    return domains;
+
+}
+
+
+// ============================================================
+// BL-53.3. TEST DOMAIN THỰC TẾ
+// ============================================================
+
+async function animeHayTestDomain(
+    domain,
+    movieName
+) {
+
+    const cleanDomain =
+        String(
+            domain || ""
+        )
+            .replace(
+                /\/+$/,
+                ""
+            );
+
+    if (!cleanDomain) {
+        return null;
+    }
+
+    const searchUrl =
+        cleanDomain +
+        "/tim-kiem/" +
+        encodeURIComponent(
+            movieName
+        ) +
+        ".html";
+
+    try {
+
+        console.log(
+            "[ANIMEHAY] TRY DOMAIN:",
+            cleanDomain
+        );
+
+        console.log(
+            "[ANIMEHAY] SEARCH:",
+            searchUrl
+        );
+
+        const response =
+            await axios.get(
+                searchUrl,
+                {
+                    timeout: 12000,
+                    maxRedirects: 5,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) " +
+                            "Chrome/140.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+
+                        "Accept-Language":
+                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                        "Upgrade-Insecure-Requests":
+                            "1",
+
+                        "Cache-Control":
+                            "no-cache",
+
+                        "Pragma":
+                            "no-cache"
+
+                    },
+
+                    validateStatus:
+                        status =>
+                            status >= 200 &&
+                            status < 400
+                }
+            );
+
+        const html =
+            String(
+                response.data || ""
+            );
+
+        const finalUrl =
+            response.request?.res
+                ?.responseUrl ||
+            response.request?._currentUrl ||
+            searchUrl;
+
+        let finalOrigin =
+            cleanDomain;
+
+        try {
+
+            finalOrigin =
+                new URL(
+                    finalUrl
+                ).origin;
+
+        } catch {
+
+            finalOrigin =
+                cleanDomain;
+
+        }
+
+        console.log(
+            "[ANIMEHAY] DOMAIN STATUS:",
+            cleanDomain,
+            response.status,
+            "FINAL:",
+            finalOrigin
+        );
+
+        console.log(
+            "[ANIMEHAY] HTML LENGTH:",
+            finalOrigin,
+            html.length
+        );
+
+        const score =
+            animeHayPageScore(
+                html
+            );
+
+        console.log(
+            "[ANIMEHAY] PAGE SCORE:",
+            finalOrigin,
+            score
+        );
+
+        const challenge =
+            animeHayLooksLikeChallenge(
+                html
+            );
+
+        console.log(
+            "[ANIMEHAY] CHALLENGE:",
+            finalOrigin,
+            challenge
+        );
+
+        /*
+         * Đây là điểm quan trọng:
+         *
+         * HTTP 200 nhưng challenge
+         * hoặc page không có AnimeHay
+         * => KHÔNG chọn domain này.
+         */
+
+        if (
+            challenge ||
+            score < 1
+        ) {
+
+            console.log(
+                "[ANIMEHAY] NOT CONTENT DOMAIN:",
+                finalOrigin
+            );
+
+            return {
+
+                ok:
+                    false,
+
+                domain:
+                    finalOrigin,
+
+                searchUrl:
+                    searchUrl,
+
+                html:
+                    html,
+
+                score:
+                    score
+
+            };
+
+        }
+
+        console.log(
+            "[ANIMEHAY] CONTENT DOMAIN OK:",
+            finalOrigin
+        );
+
+        return {
+
+            ok:
+                true,
+
+            domain:
+                finalOrigin,
+
+            searchUrl:
+                searchUrl,
+
+            html:
+                html,
+
+            score:
+                score
+
+        };
+
+    } catch (e) {
+
+        console.log(
+            "[ANIMEHAY] DOMAIN ERROR:",
+            cleanDomain,
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+        return null;
+
+    }
+
+}
+
+
+// ============================================================
+// BL-53.4. RESOLVE EMBED
+// ============================================================
+
+async function animeHayResolveEmbed(
+    embedUrl,
+    referer
+) {
+
+    if (!embedUrl) {
+        return [];
+    }
+
+    try {
+
+        const response =
+            await axios.get(
+                embedUrl,
+                {
+                    timeout: 12000,
+                    maxRedirects: 5,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) " +
+                            "Chrome/140.0.0.0 Safari/537.36",
+
+                        "Referer":
+                            referer ||
+                            embedUrl,
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+                    },
+
+                    validateStatus:
+                        status =>
+                            status >= 200 &&
+                            status < 400
+                }
+            );
+
+        const html =
+            String(
+                response.data || ""
+            );
+
+        const urls = [];
+
+        const patterns = [
+
+            /["'](https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*)["']/gi,
+
+            /["'](https?:\/\/[^"'\\\s]+\.mp4[^"'\\\s]*)["']/gi,
+
+            /["']file["']\s*:\s*["']([^"']+)["']/gi,
+
+            /M3U8_URL\s*[:=]\s*["']([^"']+)["']/gi
+
+        ];
+
+        for (
+            const pattern
+            of patterns
+        ) {
+
+            let match;
+
+            while (
+                (
+                    match =
+                        pattern.exec(
+                            html
+                        )
+                )
+            ) {
+
+                const url =
+                    animeHayAbsoluteUrl(
+                        match[1],
+                        embedUrl
+                    );
+
+                if (
+                    url &&
+                    !urls.includes(
+                        url
+                    )
+                ) {
+
+                    urls.push(
+                        url
+                    );
+
+                }
+
+            }
+
+        }
+
+        return urls.map(
+            url => ({
+
+                url:
+                    url,
+
+                referer:
+                    embedUrl,
+
+                quality:
+                    animeHayDetectQuality(
+                        url
+                    ),
+
+                type:
+                    /\.m3u8/i.test(
+                        url
+                    )
+                        ? "m3u8"
+                        : "mp4"
+
+            })
+        );
+
+    } catch (e) {
+
+        console.log(
+            "[ANIMEHAY] EMBED ERROR:",
+            e?.message ||
+            e
+        );
+
+        return [];
+
+    }
+
+}
+
+
+// ============================================================
+// BL-53.5. EXTRACT VIDEO URLS
+// ============================================================
+
+function animeHayExtractVideoUrls(
+    html,
+    pageUrl
+) {
+
+    const urls = [];
+
+    const text =
+        String(
+            html || ""
+        );
+
+    const patterns = [
+
+        /https?:\/\/[^"'\\\s<>]+\.m3u8[^"'\\\s<>]*/gi,
+
+        /https?:\/\/[^"'\\\s<>]+\.mp4[^"'\\\s<>]*/gi,
+
+        /["']file["']\s*:\s*["']([^"']+)["']/gi,
+
+        /M3U8_URL\s*[:=]\s*["']([^"']+)["']/gi,
+
+        /videoUrls\s*[:=]\s*\[([\s\S]*?)\]/gi
+
+    ];
+
+    for (
+        const pattern
+        of patterns
+    ) {
+
+        let match;
+
+        while (
+            (
+                match =
+                    pattern.exec(
+                        text
+                    )
+            )
+        ) {
+
+            if (
+                pattern.source.includes(
+                    "videoUrls"
+                )
+            ) {
+
+                const inner =
+                    String(
+                        match[1] ||
+                        ""
+                    );
+
+                const innerUrls =
+                    inner.match(
+                        /https?:\/\/[^"'\\\s]+/gi
+                    ) || [];
+
+                for (
+                    const value
+                    of innerUrls
+                ) {
+
+                    const url =
+                        animeHayAbsoluteUrl(
+                            value,
+                            pageUrl
+                        );
+
+                    if (
+                        url &&
+                        !urls.includes(
+                            url
+                        )
+                    ) {
+
+                        urls.push(
+                            url
+                        );
+
+                    }
+
+                }
+
+                continue;
+
+            }
+
+            const raw =
+                match[1] ||
+                match[0];
+
+            const url =
+                animeHayAbsoluteUrl(
+                    raw,
+                    pageUrl
+                );
+
+            if (
+                url &&
+                !urls.includes(
+                    url
+                )
+            ) {
+
+                urls.push(
+                    url
+                );
+
+            }
+
+        }
+
+    }
+
+    return urls;
+
+}
+
+
+// ============================================================
+// BL-53.6. MAIN ANIMEHAY PROVIDER
 // ============================================================
 
 async function fetchAnimeHay(
-  movieName,
-  movieYear = 0,
-  seasonNumber = 0,
-  episodeNumber = 0,
-  streamType = "movie"
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 0,
+    streamType = "movie"
 ) {
-  console.log(
-    "[ANIMEHAY] START:",
-    {
-      movieName,
-      movieYear,
-      seasonNumber,
-      episodeNumber,
-      streamType
-    }
-  );
 
-  const searchPath =
-    `/tim-kiem/${encodeURIComponent(movieName)}.html`;
-
-  // ----------------------------------------------------------
-  // 1. Get current domains from animehay.tv
-  // ----------------------------------------------------------
-
-  const discoveredDomains =
-    await animeHayDiscoverDirectoryDomains();
-
-  const domains = [];
-
-  for (const domain of [
-    ...discoveredDomains,
-    ...ANIMEHAY_BOOTSTRAP_DOMAINS
-  ]) {
-    if (!domain) continue;
-
-    if (!domains.includes(domain)) {
-      domains.push(domain);
-    }
-  }
-
-  console.log(
-    "[ANIMEHAY] DOMAIN CANDIDATES:",
-    domains
-  );
-
-  // ----------------------------------------------------------
-  // 2. Find a real working content domain
-  // ----------------------------------------------------------
-
-  let selected = null;
-
-  for (const domain of domains) {
-    selected =
-      await animeHayTestDomain(
-        domain,
-        searchPath
-      );
-
-    if (selected) {
-      break;
-    }
-  }
-
-  if (!selected) {
-    console.log(
-      "[ANIMEHAY] NO WORKING CONTENT DOMAIN"
-    );
-
-    return [];
-  }
-
-  animeHayActiveDomain =
-    selected.origin;
-
-  console.log(
-    "[ANIMEHAY] ACTIVE DOMAIN:",
-    animeHayActiveDomain
-  );
-
-  console.log(
-    "[ANIMEHAY] ACTIVE SEARCH URL:",
-    selected.searchUrl
-  );
-
-  // ----------------------------------------------------------
-  // 3. Search results
-  // ----------------------------------------------------------
-
-  const $search =
-    cheerio.load(
-      selected.html
-    );
-
-  const cards =
-    $search(
-      "div.movies-list > div.mc"
-    );
-
-  console.log(
-    "[ANIMEHAY] SEARCH RESULTS:",
-    cards.length
-  );
-
-  if (cards.length === 0) {
-    console.log(
-      "[ANIMEHAY] SEARCH ZERO STRUCTURE:",
-      {
-        moviesList:
-          $search(".movies-list").length,
-
-        mc:
-          $search(".mc").length,
-
-        animeLinks:
-          $search(
-            "a[href*='/thong-tin-phim/']"
-          ).length,
-
-        watchLinks:
-          $search(
-            "a[href^='/xem-phim/']"
-          ).length
-      }
-    );
-
-    return [];
-  }
-
-  // ----------------------------------------------------------
-  // 4. Match title
-  // ----------------------------------------------------------
-
-  const target =
-    animeHayNormalizeText(
-      movieName
-    );
-
-  let selectedCard = null;
-
-  cards.each((_, el) => {
-    if (selectedCard) return;
-
-    const card =
-      $search(el);
-
-    const title =
-      card.find(
-        "a[href*='/thong-tin-phim/']"
-      ).first().text().trim() ||
-
-      card.find(
-        "a[title]"
-      ).first().attr("title") ||
-
-      card.find("a").first().text().trim() ||
-      "";
-
-    const normalized =
-      animeHayNormalizeText(
-        title
-      );
-
-    if (
-      normalized === target ||
-      normalized.includes(target) ||
-      target.includes(normalized)
-    ) {
-      selectedCard = {
-        element: el,
-        title
-      };
-    }
-  });
-
-  if (!selectedCard) {
-    console.log(
-      "[ANIMEHAY] NO TITLE MATCH:",
-      movieName
-    );
-
-    return [];
-  }
-
-  console.log(
-    "[ANIMEHAY] MATCH:",
-    selectedCard.title
-  );
-
-  const card =
-    $search(
-      selectedCard.element
-    );
-
-  const detailHref =
-    card.find(
-      "a[href*='/thong-tin-phim/']"
-    ).first().attr("href") ||
-    card.find("a").first().attr("href");
-
-  if (!detailHref) {
-    console.log(
-      "[ANIMEHAY] NO DETAIL URL"
-    );
-
-    return [];
-  }
-
-  const detailUrl =
-    animeHayAbsoluteUrl(
-      detailHref,
-      animeHayActiveDomain
-    );
-
-  console.log(
-    "[ANIMEHAY] DETAIL URL:",
-    detailUrl
-  );
-
-  // ----------------------------------------------------------
-  // 5. Detail
-  // ----------------------------------------------------------
-
-  let detailHtml = "";
-
-  try {
-    const response =
-      await animeHayRequest(
-        detailUrl,
-        animeHayActiveDomain + "/"
-      );
-
-    detailHtml =
-      String(response.data || "");
+    const normalizedStreams = [];
 
     console.log(
-      "[ANIMEHAY] DETAIL STATUS:",
-      response.status,
-      "HTML:",
-      detailHtml.length
-    );
-
-  } catch (error) {
-    console.log(
-      "[ANIMEHAY] DETAIL ERROR:",
-      error.message
-    );
-
-    return [];
-  }
-
-  if (!detailHtml) {
-    return [];
-  }
-
-  const $detail =
-    cheerio.load(detailHtml);
-
-  // ----------------------------------------------------------
-  // 6. Episode
-  // ----------------------------------------------------------
-
-  const episodeLinks =
-    $detail(
-      ".aim-episodes a[href^='/xem-phim/']"
-    );
-
-  console.log(
-    "[ANIMEHAY] EPISODES:",
-    episodeLinks.length
-  );
-
-  let episodeUrl = "";
-
-  episodeLinks.each((_, el) => {
-    if (episodeUrl) return;
-
-    const text =
-      $detail(el)
-        .text()
-        .trim();
-
-    const href =
-      $detail(el)
-        .attr("href");
-
-    if (!href) return;
-
-    const numbers =
-      text.match(/\d+/g) || [];
-
-    if (
-      episodeNumber &&
-      numbers.some(
-        n =>
-          Number(n) ===
-          Number(episodeNumber)
-      )
-    ) {
-      episodeUrl =
-        animeHayAbsoluteUrl(
-          href,
-          detailUrl
-        );
-    }
-  });
-
-  if (
-    !episodeUrl &&
-    streamType === "movie"
-  ) {
-    episodeUrl = detailUrl;
-  }
-
-  if (!episodeUrl) {
-    console.log(
-      "[ANIMEHAY] NO EPISODE URL"
-    );
-
-    return [];
-  }
-
-  console.log(
-    "[ANIMEHAY] EPISODE URL:",
-    episodeUrl
-  );
-
-  // ----------------------------------------------------------
-  // 7. Episode page
-  // ----------------------------------------------------------
-
-  let episodeHtml = "";
-
-  try {
-    const response =
-      await animeHayRequest(
-        episodeUrl,
-        detailUrl
-      );
-
-    episodeHtml =
-      String(response.data || "");
-
-    console.log(
-      "[ANIMEHAY] EPISODE STATUS:",
-      response.status,
-      "HTML:",
-      episodeHtml.length
-    );
-
-  } catch (error) {
-    console.log(
-      "[ANIMEHAY] EPISODE ERROR:",
-      error.message
-    );
-
-    return [];
-  }
-
-  if (!episodeHtml) {
-    return [];
-  }
-
-  const $episode =
-    cheerio.load(
-      episodeHtml
-    );
-
-  // ----------------------------------------------------------
-  // 8. Server map
-  // ----------------------------------------------------------
-
-  const serverItems =
-    $episode(
-      ".list-server-items li"
-    );
-
-  console.log(
-    "[ANIMEHAY] SERVER MAP COUNT:",
-    serverItems.length
-  );
-
-  const candidates = [];
-
-  const addCandidate = (
-    url,
-    referer,
-    serverName = ""
-  ) => {
-    if (!url) return;
-
-    const absolute =
-      animeHayAbsoluteUrl(
-        url,
-        episodeUrl
-      );
-
-    if (!absolute) return;
-
-    if (
-      !candidates.some(
-        x => x.url === absolute
-      )
-    ) {
-      candidates.push({
-        url: absolute,
-        referer:
-          referer || episodeUrl,
-        serverName,
-        quality:
-          animeHayDetectQuality(
-            absolute,
-            serverName
-          )
-      });
-    }
-  };
-
-  serverItems.each((_, el) => {
-    const item =
-      $episode(el);
-
-    const serverName =
-      item.text().trim() ||
-      item.attr("data-server") ||
-      "";
-
-    item.find(
-      "a,button,[data-link],[data-url]," +
-      "[data-video],iframe"
-    ).each((__, child) => {
-      const node =
-        $episode(child);
-
-      const href =
-        node.attr("href") ||
-        node.attr("data-link") ||
-        node.attr("data-url") ||
-        node.attr("data-video") ||
-        node.attr("src") ||
-        node.attr("data-src");
-
-      if (!href) return;
-
-      addCandidate(
-        href,
-        episodeUrl,
-        serverName
-      );
-    });
-  });
-
-  // iframe trực tiếp
-  $episode(
-    "iframe[src],iframe[data-src]"
-  ).each((_, el) => {
-    const src =
-      $episode(el).attr("src") ||
-      $episode(el).attr("data-src");
-
-    addCandidate(
-      src,
-      episodeUrl,
-      "iframe"
-    );
-  });
-
-  // DEX-confirmed video extraction
-  const directUrls =
-    animeHayExtractVideoUrls(
-      episodeHtml,
-      episodeUrl
-    );
-
-  for (const url of directUrls) {
-    addCandidate(
-      url,
-      episodeUrl,
-      "direct"
-    );
-  }
-
-  // embed-jw
-  const embedMatches =
-    episodeHtml.match(
-      /https?:\/\/[^"'\\\s<>]+\/embed-jw\/[^"'\\\s<>]*/gi
-    ) || [];
-
-  for (const url of embedMatches) {
-    addCandidate(
-      url,
-      episodeUrl,
-      "embed-jw"
-    );
-  }
-
-  console.log(
-    "[ANIMEHAY] CANDIDATES:",
-    candidates.length
-  );
-
-  // ----------------------------------------------------------
-  // 9. Resolve
-  // ----------------------------------------------------------
-
-  const resolved = [];
-
-  for (const candidate of candidates) {
-    if (
-      /\.m3u8(?:[?#]|$)/i.test(
-        candidate.url
-      ) ||
-      /\.mp4(?:[?#]|$)/i.test(
-        candidate.url
-      )
-    ) {
-      resolved.push(candidate);
-      continue;
-    }
-
-    const embedResult =
-      await animeHayResolveEmbed(
-        candidate.url,
-        candidate.referer
-      );
-
-    for (const result of embedResult) {
-      resolved.push({
-        url: result.url,
-        referer:
-          result.referer ||
-          candidate.referer ||
-          episodeUrl,
-
-        serverName:
-          candidate.serverName,
-
-        quality:
-          candidate.quality ||
-          animeHayDetectQuality(
-            result.url
-          )
-      });
-    }
-  }
-
-  const uniqueResolved = [];
-  const resolvedSeen = new Set();
-
-  for (const item of resolved) {
-    if (!item.url) continue;
-
-    if (
-      resolvedSeen.has(item.url)
-    ) {
-      continue;
-    }
-
-    resolvedSeen.add(item.url);
-    uniqueResolved.push(item);
-  }
-
-  console.log(
-    "[ANIMEHAY] RESOLVED STREAMS:",
-    uniqueResolved.length
-  );
-
-  // ----------------------------------------------------------
-  // 10. Normalized
-  // ----------------------------------------------------------
-
-  const normalized = [];
-
-  for (const item of uniqueResolved) {
-    const isHls =
-      /\.m3u8(?:[?#]|$)/i.test(
-        item.url
-      );
-
-    const isMp4 =
-      /\.mp4(?:[?#]|$)/i.test(
-        item.url
-      );
-
-    normalized.push(
-      createNormalizedStream({
-        provider: "animehay",
-        providerName: "AnimeHay",
-        source: "animehay",
-
-        url: item.url,
-
-        type:
-          isHls
-            ? "hls"
-            : isMp4
-              ? "mp4"
-              : "unknown",
-
-        quality:
-          item.quality || 0,
-
-        title:
-          item.serverName
-            ? `[AnimeHay] ${item.serverName}`
-            : "[AnimeHay]",
-
-        name: "AnimeHay",
-
-        serverName:
-          item.serverName ||
-          "AnimeHay",
-
-        referer:
-          item.referer ||
-          episodeUrl,
-
-        headers: {
-          Referer:
-            item.referer ||
-            episodeUrl,
-
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/131.0.0.0 Safari/537.36"
-        },
-
-        episode:
-          episodeNumber,
-
-        season:
-          seasonNumber,
-
-        resolver:
-          "passthrough",
-
-        behaviorHints: {
-          bingeGroup:
-            "animehay"
+        "[ANIMEHAY] START:",
+        {
+            movieName,
+            movieYear,
+            seasonNumber,
+            episodeNumber,
+            streamType
         }
-      })
-    );
-  }
-
-  console.log(
-    "[ANIMEHAY] NORMALIZED STREAMS:",
-    normalized.length
-  );
-
-  const streams =
-    normalizedStreamsToStremio(
-      normalized
     );
 
-  console.log(
-    "[ANIMEHAY] FINAL STREAMS:",
-    streams.length
-  );
+    /*
+     * ---------------------------------------------------------
+     * 1. Lấy domain được AnimeHay công bố.
+     * ---------------------------------------------------------
+     */
 
-  return streams;
+    let directoryDomains =
+        await animeHayDiscoverDirectoryDomains();
+
+    /*
+     * Bootstrap chỉ là fallback khi
+     * animehay.tv không trả về link.
+     */
+
+    for (
+        const domain
+        of ANIMEHAY_BOOTSTRAP_DOMAINS
+    ) {
+
+        if (
+            !directoryDomains.includes(
+                domain
+            )
+        ) {
+
+            directoryDomains.push(
+                domain
+            );
+
+        }
+
+    }
+
+    console.log(
+        "[ANIMEHAY] DOMAIN CANDIDATES:",
+        directoryDomains
+    );
+
+    /*
+     * ---------------------------------------------------------
+     * 2. Test từng domain.
+     * ---------------------------------------------------------
+     */
+
+    let selected =
+        null;
+
+    for (
+        const domain
+        of directoryDomains
+    ) {
+
+        const result =
+            await animeHayTestDomain(
+                domain,
+                movieName
+            );
+
+        if (
+            result?.ok
+        ) {
+
+            selected =
+                result;
+
+            break;
+
+        }
+
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 3. Không có HTML thật.
+     *
+     * Đây chính là trường hợp hiện tại:
+     * animehay13 -> redirect animehay14
+     * nhưng Axios nhận challenge 90KB.
+     * ---------------------------------------------------------
+     */
+
+    if (!selected) {
+
+        console.log(
+            "[ANIMEHAY] NO WORKING CONTENT DOMAIN"
+        );
+
+        /*
+         * Tuy Provider chưa lấy được stream,
+         * vẫn giữ domain tốt nhất để fallback.
+         *
+         * Ưu tiên domain đầu tiên mà
+         * animehay.tv công bố.
+         */
+
+        if (
+            directoryDomains.length
+        ) {
+
+            animeHayDirectoryActiveDomain =
+                directoryDomains[0];
+
+            /*
+             * Nếu domain đầu tiên redirect
+             * sang domain khác thì thử xác định
+             * final origin riêng.
+             */
+
+            try {
+
+                const probe =
+                    await axios.get(
+                        animeHayDirectoryActiveDomain,
+                        {
+                            timeout: 8000,
+                            maxRedirects: 5,
+                            validateStatus:
+                                status =>
+                                    status >= 200 &&
+                                    status < 400
+                        }
+                    );
+
+                const finalUrl =
+                    probe.request?.res
+                        ?.responseUrl;
+
+                if (finalUrl) {
+
+                    const finalOrigin =
+                        new URL(
+                            finalUrl
+                        ).origin;
+
+                    if (
+                        finalOrigin &&
+                        finalOrigin !==
+                            animeHayDirectoryActiveDomain
+                    ) {
+
+                        animeHayDirectoryActiveDomain =
+                            finalOrigin;
+
+                    }
+
+                }
+
+            } catch {
+
+                // Giữ domain directory công bố.
+
+            }
+
+        }
+
+        animeHayActiveDomain =
+            animeHayDirectoryActiveDomain;
+
+        return [];
+
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 4. Ghi nhớ domain hoạt động.
+     * ---------------------------------------------------------
+     */
+
+    animeHayActiveDomain =
+        selected.domain;
+
+    animeHayDirectoryActiveDomain =
+        selected.domain;
+
+    console.log(
+        "[ANIMEHAY] ACTIVE DOMAIN:",
+        animeHayActiveDomain
+    );
+
+    /*
+     * ---------------------------------------------------------
+     * 5. Parse search.
+     * ---------------------------------------------------------
+     */
+
+    const $search =
+        cheerio.load(
+            selected.html
+        );
+
+    const candidates = [];
+
+    $search(
+        "div.movies-list > div.mc"
+    ).each(
+        function () {
+
+            const node =
+                $search(this);
+
+            const title =
+                node
+                    .find(
+                        ".movie-title, .name, h3, h4"
+                    )
+                    .first()
+                    .text()
+                    .trim();
+
+            const href =
+                node
+                    .find(
+                        "a[href]"
+                    )
+                    .first()
+                    .attr(
+                        "href"
+                    );
+
+            if (
+                href
+            ) {
+
+                candidates.push({
+
+                    title:
+                        title,
+
+                    href:
+                        animeHayAbsoluteUrl(
+                            href,
+                            selected.domain
+                        )
+
+                });
+
+            }
+
+        }
+    );
+
+    console.log(
+        "[ANIMEHAY] SEARCH CANDIDATES:",
+        candidates.length
+    );
+
+    if (
+        !candidates.length
+    ) {
+
+        return [];
+
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 6. Match title.
+     * ---------------------------------------------------------
+     */
+
+    const wanted =
+        animeHayNormalizeText(
+            movieName
+        );
+
+    let selectedMovie =
+        candidates.find(
+            item =>
+                animeHayNormalizeText(
+                    item.title
+                ) === wanted
+        );
+
+    if (
+        !selectedMovie
+    ) {
+
+        selectedMovie =
+            candidates.find(
+                item =>
+                    animeHayNormalizeText(
+                        item.title
+                    ).includes(
+                        wanted
+                    ) ||
+                    wanted.includes(
+                        animeHayNormalizeText(
+                            item.title
+                        )
+                    )
+            );
+
+    }
+
+    if (
+        !selectedMovie
+    ) {
+
+        console.log(
+            "[ANIMEHAY] MOVIE NOT FOUND:",
+            movieName
+        );
+
+        return [];
+
+    }
+
+    console.log(
+        "[ANIMEHAY] SELECTED:",
+        selectedMovie
+    );
+
+    /*
+     * ---------------------------------------------------------
+     * 7. Detail page.
+     * ---------------------------------------------------------
+     */
+
+    let detailHtml = "";
+
+    try {
+
+        const detailRes =
+            await axios.get(
+                selectedMovie.href,
+                {
+                    timeout: 12000,
+                    maxRedirects: 5,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) " +
+                            "Chrome/140.0.0.0 Safari/537.36",
+
+                        "Referer":
+                            selected.searchUrl
+
+                    }
+                }
+            );
+
+        detailHtml =
+            String(
+                detailRes.data || ""
+            );
+
+    } catch (e) {
+
+        console.log(
+            "[ANIMEHAY] DETAIL ERROR:",
+            e?.message ||
+            e
+        );
+
+        return [];
+
+    }
+
+    const $detail =
+        cheerio.load(
+            detailHtml
+        );
+
+    /*
+     * ---------------------------------------------------------
+     * 8. Episode.
+     * ---------------------------------------------------------
+     */
+
+    const episodes = [];
+
+    $detail(
+        ".aim-episodes a[href]"
+    ).each(
+        function () {
+
+            const node =
+                $detail(this);
+
+            const href =
+                node.attr(
+                    "href"
+                );
+
+            const text =
+                node.text()
+                    .trim();
+
+            if (
+                href
+            ) {
+
+                episodes.push({
+
+                    href:
+                        animeHayAbsoluteUrl(
+                            href,
+                            animeHayActiveDomain
+                        ),
+
+                    text:
+                        text
+
+                });
+
+            }
+
+        }
+    );
+
+    console.log(
+        "[ANIMEHAY] EPISODES:",
+        episodes.length
+    );
+
+    let selectedEpisode =
+        episodes[0];
+
+    if (
+        streamType === "series" &&
+        episodeNumber > 0
+    ) {
+
+        selectedEpisode =
+            episodes.find(
+                item => {
+
+                    const match =
+                        item.text.match(
+                            /(\d+)/
+                        );
+
+                    return (
+                        Number(
+                            match?.[1] || 0
+                        ) ===
+                        Number(
+                            episodeNumber
+                        )
+                    );
+
+                }
+            ) ||
+            selectedEpisode;
+
+    }
+
+    if (
+        !selectedEpisode
+    ) {
+
+        return [];
+
+    }
+
+    console.log(
+        "[ANIMEHAY] SELECT EPISODE:",
+        selectedEpisode
+    );
+
+    /*
+     * ---------------------------------------------------------
+     * 9. Episode page.
+     * ---------------------------------------------------------
+     */
+
+    let episodeHtml = "";
+
+    try {
+
+        const episodeRes =
+            await axios.get(
+                selectedEpisode.href,
+                {
+                    timeout: 12000,
+                    maxRedirects: 5,
+
+                    headers: {
+
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) " +
+                            "Chrome/140.0.0.0 Safari/537.36",
+
+                        "Referer":
+                            selectedMovie.href
+
+                    }
+                }
+            );
+
+        episodeHtml =
+            String(
+                episodeRes.data || ""
+            );
+
+    } catch (e) {
+
+        console.log(
+            "[ANIMEHAY] EPISODE ERROR:",
+            e?.message ||
+            e
+        );
+
+        return [];
+
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 10. Extract direct video.
+     * ---------------------------------------------------------
+     */
+
+    const directUrls =
+        animeHayExtractVideoUrls(
+            episodeHtml,
+            selectedEpisode.href
+        );
+
+    for (
+        const url
+        of directUrls
+    ) {
+
+        appendNormalizedStream(
+            normalizedStreams,
+            createNormalizedStream({
+                provider:
+                    "animehay",
+
+                providerName:
+                    "AnimeHay",
+
+                source:
+                    "AnimeHay",
+
+                url:
+                    url,
+
+                type:
+                    /\.m3u8/i.test(
+                        url
+                    )
+                        ? "m3u8"
+                        : "mp4",
+
+                title:
+                    `${movieName}${episodeNumber ? ` - Tập ${episodeNumber}` : ""}`,
+
+                name:
+                    "🎬 [AnimeHay]",
+
+                referer:
+                    selectedEpisode.href,
+
+                resolver:
+                    "passthrough"
+
+            })
+        );
+
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 11. IFRAME / EMBED.
+     * ---------------------------------------------------------
+     */
+
+    const $episode =
+        cheerio.load(
+            episodeHtml
+        );
+
+    const embedUrls = [];
+
+    $episode(
+        "iframe[src], embed[src], video[src]"
+    ).each(
+        function () {
+
+            const src =
+                $episode(this).attr(
+                    "src"
+                );
+
+            if (!src) {
+                return;
+            }
+
+            const absolute =
+                animeHayAbsoluteUrl(
+                    src,
+                    selectedEpisode.href
+                );
+
+            if (
+                absolute &&
+                !embedUrls.includes(
+                    absolute
+                )
+            ) {
+
+                embedUrls.push(
+                    absolute
+                );
+
+            }
+
+        }
+    );
+
+    for (
+        const embedUrl
+        of embedUrls
+    ) {
+
+        console.log(
+            "[ANIMEHAY] EMBED:",
+            embedUrl
+        );
+
+        const resolved =
+            await animeHayResolveEmbed(
+                embedUrl,
+                selectedEpisode.href
+            );
+
+        for (
+            const item
+            of resolved
+        ) {
+
+            appendNormalizedStream(
+                normalizedStreams,
+                createNormalizedStream({
+                    provider:
+                        "animehay",
+
+                    providerName:
+                        "AnimeHay",
+
+                    source:
+                        "AnimeHay",
+
+                    url:
+                        item.url,
+
+                    type:
+                        item.type,
+
+                    quality:
+                        item.quality,
+
+                    title:
+                        `${movieName}${episodeNumber ? ` - Tập ${episodeNumber}` : ""}`,
+
+                    name:
+                        "🎬 [AnimeHay]",
+
+                    referer:
+                        item.referer ||
+                        embedUrl,
+
+                    resolver:
+                        "passthrough"
+
+                })
+            );
+
+        }
+
+    }
+
+    console.log(
+        "[ANIMEHAY] STREAM COUNT:",
+        normalizedStreams.length
+    );
+
+    return normalizedStreamsToStremio(
+        normalizedStreams
+    );
+
 }
+
+
+// ============================================================
+// END BL-53. ANIMEHAY PROVIDER
+// ============================================================
 
 // ============================================================
 // BL-54. PHIMLONGTIENG PROVIDER
@@ -24089,32 +24442,33 @@ const externalStreams = [
     // -------------------------------------------------
     // FALLBACK 4 — ANIMEHAY
     //
-    // QUAN TRỌNG:
-    // Không hard-code animehay13.site.
+    // Ưu tiên:
+    // 1. animeHayActiveDomain
+    //    → domain đã dùng được cho AnimeHay content
     //
-    // fetchAnimeHay() sẽ cập nhật:
+    // 2. animeHayDirectoryActiveDomain
+    //    → domain được phát hiện từ animehay.tv
     //
-    // animeHayActiveDomain
-    //
-    // thành domain thực sự đang hoạt động:
-    //
-    // animehay13.site
-    // hoặc animehay14.site
-    // hoặc animehay.tv
+    // 3. bootstrap domain cuối cùng
+    //    → chỉ dùng khi chưa xác định được domain nào
     // -------------------------------------------------
 
     {
-  name: "🌐 [Fallback] AnimeHay",
-  title:
-    animeHayActiveDomain
-      ? `Mở AnimeHay - ${movieName}`
-      : `AnimeHay chưa xác định được domain - ${movieName}`,
+        name: "🌐 [Fallback] AnimeHay",
 
-  externalUrl:
-    animeHayActiveDomain
-      ? `${animeHayActiveDomain}/tim-kiem/${encodeURIComponent(movieName)}.html`
-      : "https://animehay.tv"
-}
+        title:
+            `Mở AnimeHay - ${movieName}`,
+
+        externalUrl:
+            (
+                animeHayActiveDomain ||
+                animeHayDirectoryActiveDomain ||
+                ANIMEHAY_BOOTSTRAP_DOMAINS[0]
+            ) +
+            "/tim-kiem/" +
+            encodeURIComponent(movieName) +
+            ".html"
+    }
 
 ];
 
