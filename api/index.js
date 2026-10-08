@@ -6129,11 +6129,17 @@ function createNormalizedStream(input = {}) {
         return null;
     }
 
+
+    // ----------------------------------------------------
+    // URL
+    // ----------------------------------------------------
+
     const url =
         String(
             input.url ||
             ""
         ).trim();
+
 
     const externalUrl =
         String(
@@ -6141,12 +6147,14 @@ function createNormalizedStream(input = {}) {
             ""
         ).trim();
 
+
     if (
         !url &&
         !externalUrl
     ) {
         return null;
     }
+
 
     const stream = {
 
@@ -6172,6 +6180,7 @@ function createNormalizedStream(input = {}) {
                 ""
             ).trim(),
 
+
         // ----------------------------------------------------
         // PLAYBACK
         // ----------------------------------------------------
@@ -6189,6 +6198,13 @@ function createNormalizedStream(input = {}) {
                 input.type ||
                 "unknown"
             ).trim(),
+
+        quality:
+            String(
+                input.quality ||
+                ""
+            ).trim(),
+
 
         // ----------------------------------------------------
         // DISPLAY
@@ -6212,6 +6228,7 @@ function createNormalizedStream(input = {}) {
                 ""
             ).trim(),
 
+
         // ----------------------------------------------------
         // HTTP / ACCESS
         // ----------------------------------------------------
@@ -6230,6 +6247,7 @@ function createNormalizedStream(input = {}) {
                 }
                 : {},
 
+
         // ----------------------------------------------------
         // EPISODE CONTEXT
         // ----------------------------------------------------
@@ -6244,6 +6262,7 @@ function createNormalizedStream(input = {}) {
                 input.season
             ) || 0,
 
+
         // ----------------------------------------------------
         // PLAYER
         // ----------------------------------------------------
@@ -6253,6 +6272,7 @@ function createNormalizedStream(input = {}) {
                 input.playerUrl ||
                 ""
             ).trim(),
+
 
         // ----------------------------------------------------
         // SUBTITLES
@@ -6264,6 +6284,7 @@ function createNormalizedStream(input = {}) {
             )
                 ? input.subtitles
                 : [],
+
 
         // ----------------------------------------------------
         // RESOLVER
@@ -6283,6 +6304,7 @@ function createNormalizedStream(input = {}) {
                 }
                 : {},
 
+
         // ----------------------------------------------------
         // STREMIO BEHAVIOR
         // ----------------------------------------------------
@@ -6294,7 +6316,9 @@ function createNormalizedStream(input = {}) {
                     ...input.behaviorHints
                 }
                 : {}
+
     };
+
 
     // --------------------------------------------------------
     // CLEAN EMPTY FIELDS
@@ -6332,6 +6356,10 @@ function createNormalizedStream(input = {}) {
         delete stream.serverName;
     }
 
+    if (!stream.quality) {
+        delete stream.quality;
+    }
+
     if (!stream.referer) {
         delete stream.referer;
     }
@@ -6343,6 +6371,7 @@ function createNormalizedStream(input = {}) {
     if (!stream.resolver) {
         delete stream.resolver;
     }
+
 
     return stream;
 }
