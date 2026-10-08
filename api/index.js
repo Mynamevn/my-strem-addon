@@ -26351,6 +26351,63 @@ console.log(
 );
 
 
+// =====================================================
+// DEBUG — STREAM THỰC TẾ SAU FETCH
+//
+// Đây là log quan trọng nhất lúc này.
+//
+// Không thay đổi stream.
+// Chỉ kiểm tra object thực tế mà
+// fetchAnimeHay() trả về cho pipeline.
+// =====================================================
+
+console.log(
+    "[ANIMEHAY] FINAL OBJECTS BEFORE MERGE:",
+    JSON.stringify(
+        Array.isArray(animehay)
+            ? animehay.map(
+                stream => ({
+                    name:
+                        stream?.name,
+
+                    title:
+                        stream?.title,
+
+                    url:
+                        stream?.url,
+
+                    externalUrl:
+                        stream?.externalUrl,
+
+                    type:
+                        stream?.type,
+
+                    quality:
+                        stream?.quality,
+
+                    referer:
+                        stream?.referer,
+
+                    headers:
+                        stream?.headers,
+
+                    resolver:
+                        stream?.resolver,
+
+                    resolverOptions:
+                        stream?.resolverOptions,
+
+                    behaviorHints:
+                        stream?.behaviorHints
+                })
+            )
+            : [],
+        null,
+        2
+    )
+);
+
+
 const directStreams = [
 
     ...nguonc,
@@ -26366,6 +26423,7 @@ const directStreams = [
     ...animehay,
 
     nguoncClientStream
+
 ];
 
 // =====================================================
