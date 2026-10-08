@@ -6099,66 +6099,250 @@ if (
 // ============================================================
 // 1. NORMALIZED STREAM CONTRACT
 // ============================================================
+//
+// Đây là contract chung cho TOÀN BỘ provider MOVINA.
+//
+// Provider chỉ tạo NormalizedStream.
+// Provider không cần biết Stremio cần object gì.
+//
+// Pipeline:
+//
+//   PROVIDER
+//      ↓
+//   NORMALIZED STREAM
+//      ↓
+//   RESOLVER
+//      ↓
+//   STREMIO ADAPTER
+//
+// Các field đặc thù của provider vẫn được giữ lại
+// để Resolver / Adapter có thể sử dụng.
+//
+// ============================================================
 
 function createNormalizedStream(input = {}) {
-    if (!input || typeof input !== "object") {
+
+    if (
+        !input ||
+        typeof input !== "object"
+    ) {
         return null;
     }
 
-    const url = String(input.url || "").trim();
-    const externalUrl = String(input.externalUrl || "").trim();
+    const url =
+        String(
+            input.url ||
+            ""
+        ).trim();
 
-    if (!url && !externalUrl) {
+    const externalUrl =
+        String(
+            input.externalUrl ||
+            ""
+        ).trim();
+
+    if (
+        !url &&
+        !externalUrl
+    ) {
         return null;
     }
 
     const stream = {
-        url: url || undefined,
-        externalUrl: externalUrl || undefined,
 
-        title: String(input.title || "").trim(),
-        name: String(input.name || "").trim(),
+        // ----------------------------------------------------
+        // IDENTITY
+        // ----------------------------------------------------
 
-        type: String(input.type || "unknown").trim(),
+        provider:
+            String(
+                input.provider ||
+                ""
+            ).trim(),
 
-        source: String(input.source || "").trim(),
-        provider: String(input.provider || "").trim(),
+        providerName:
+            String(
+                input.providerName ||
+                ""
+            ).trim(),
 
-        serverName: String(input.serverName || "").trim(),
+        source:
+            String(
+                input.source ||
+                ""
+            ).trim(),
+
+        // ----------------------------------------------------
+        // PLAYBACK
+        // ----------------------------------------------------
+
+        url:
+            url ||
+            undefined,
+
+        externalUrl:
+            externalUrl ||
+            undefined,
+
+        type:
+            String(
+                input.type ||
+                "unknown"
+            ).trim(),
+
+        // ----------------------------------------------------
+        // DISPLAY
+        // ----------------------------------------------------
+
+        title:
+            String(
+                input.title ||
+                ""
+            ).trim(),
+
+        name:
+            String(
+                input.name ||
+                ""
+            ).trim(),
+
+        serverName:
+            String(
+                input.serverName ||
+                ""
+            ).trim(),
+
+        // ----------------------------------------------------
+        // HTTP / ACCESS
+        // ----------------------------------------------------
+
+        referer:
+            String(
+                input.referer ||
+                ""
+            ).trim(),
 
         headers:
-            input.headers && typeof input.headers === "object"
-                ? { ...input.headers }
+            input.headers &&
+            typeof input.headers === "object"
+                ? {
+                    ...input.headers
+                }
                 : {},
 
+        // ----------------------------------------------------
+        // EPISODE CONTEXT
+        // ----------------------------------------------------
+
+        episode:
+            Number(
+                input.episode
+            ) || 0,
+
+        season:
+            Number(
+                input.season
+            ) || 0,
+
+        // ----------------------------------------------------
+        // PLAYER
+        // ----------------------------------------------------
+
+        playerUrl:
+            String(
+                input.playerUrl ||
+                ""
+            ).trim(),
+
+        // ----------------------------------------------------
+        // SUBTITLES
+        // ----------------------------------------------------
+
         subtitles:
-            Array.isArray(input.subtitles)
+            Array.isArray(
+                input.subtitles
+            )
                 ? input.subtitles
                 : [],
 
+        // ----------------------------------------------------
+        // RESOLVER
+        // ----------------------------------------------------
+
         resolver:
-            String(input.resolver || "").trim(),
+            String(
+                input.resolver ||
+                ""
+            ).trim(),
 
         resolverOptions:
             input.resolverOptions &&
             typeof input.resolverOptions === "object"
-                ? { ...input.resolverOptions }
+                ? {
+                    ...input.resolverOptions
+                }
                 : {},
+
+        // ----------------------------------------------------
+        // STREMIO BEHAVIOR
+        // ----------------------------------------------------
 
         behaviorHints:
             input.behaviorHints &&
             typeof input.behaviorHints === "object"
-                ? { ...input.behaviorHints }
+                ? {
+                    ...input.behaviorHints
+                }
                 : {}
     };
 
-    // Xóa field undefined để object sạch hơn.
-    if (!stream.url) delete stream.url;
-    if (!stream.externalUrl) delete stream.externalUrl;
-    if (!stream.title) delete stream.title;
-    if (!stream.name) delete stream.name;
-    if (!stream.serverName) delete stream.serverName;
-    if (!stream.resolver) delete stream.resolver;
+    // --------------------------------------------------------
+    // CLEAN EMPTY FIELDS
+    // --------------------------------------------------------
+
+    if (!stream.url) {
+        delete stream.url;
+    }
+
+    if (!stream.externalUrl) {
+        delete stream.externalUrl;
+    }
+
+    if (!stream.provider) {
+        delete stream.provider;
+    }
+
+    if (!stream.providerName) {
+        delete stream.providerName;
+    }
+
+    if (!stream.source) {
+        delete stream.source;
+    }
+
+    if (!stream.title) {
+        delete stream.title;
+    }
+
+    if (!stream.name) {
+        delete stream.name;
+    }
+
+    if (!stream.serverName) {
+        delete stream.serverName;
+    }
+
+    if (!stream.referer) {
+        delete stream.referer;
+    }
+
+    if (!stream.playerUrl) {
+        delete stream.playerUrl;
+    }
+
+    if (!stream.resolver) {
+        delete stream.resolver;
+    }
 
     return stream;
 }
@@ -6168,12 +6352,20 @@ function createNormalizedStream(input = {}) {
 // 2. NORMALIZE RAW STREAM
 // ============================================================
 
-function normalizeStream(input = {}, defaults = {}) {
-    if (!input || typeof input !== "object") {
+function normalizeStream(
+    input = {},
+    defaults = {}
+) {
+
+    if (
+        !input ||
+        typeof input !== "object"
+    ) {
         return null;
     }
 
     return createNormalizedStream({
+
         ...defaults,
         ...input,
 
@@ -6195,14 +6387,71 @@ function normalizeStream(input = {}, defaults = {}) {
 }
 
 
-function normalizeStreams(streams, defaults = {}) {
+function normalizeStreams(
+    streams,
+    defaults = {}
+) {
+
     if (!Array.isArray(streams)) {
         return [];
     }
 
     return streams
-        .map(stream => normalizeStream(stream, defaults))
+        .map(
+            stream =>
+                normalizeStream(
+                    stream,
+                    defaults
+                )
+        )
         .filter(Boolean);
+}
+
+
+// ============================================================
+// 2.1. APPEND NORMALIZED STREAM
+// ============================================================
+//
+// Helper dùng chung cho Provider.
+//
+// Provider chỉ cần:
+//
+//     appendNormalizedStream(
+//         normalizedStreams,
+//         stream,
+//         defaults
+//     );
+//
+// Không provider nào cần tự viết lại
+// createNormalizedStream().
+//
+// ============================================================
+
+function appendNormalizedStream(
+    collection,
+    input = {},
+    defaults = {}
+) {
+
+    if (!Array.isArray(collection)) {
+        return null;
+    }
+
+    const normalized =
+        normalizeStream(
+            input,
+            defaults
+        );
+
+    if (!normalized) {
+        return null;
+    }
+
+    collection.push(
+        normalized
+    );
+
+    return normalized;
 }
 
 
@@ -12265,114 +12514,108 @@ async function fetchVSMov(
     const providerName = "VSMov";
 
     // =====================================================
-    // 16.0.A. NORMALIZED STREAM HELPER
-    // =====================================================
-    //
-    // Đây là format trung gian mà Provider Manager
-    // sau này sẽ dùng chung cho mọi provider.
-    //
-    // Provider không cần biết Stremio cần object gì.
-    // Nó chỉ cần trả về normalized stream.
-    // =====================================================
+// 16.0.A. NORMALIZED STREAM PIPELINE
+// =====================================================
+//
+// VSMov sử dụng NormalizedStream Contract chung
+// của MOVINA.
+//
+// Không còn tự định nghĩa contract riêng.
+//
+// Provider chỉ:
+//   1. tạo dữ liệu stream
+//   2. append vào normalizedStreams
+//
+// Resolver / Stremio Adapter xử lý ở phía sau.
+//
+// =====================================================
 
-    const normalizedStreams = [];
+const normalizedStreams = [];
 
-    const addNormalizedStream = ({
-        title = "",
-        url = "",
-        type = "hls",
-        referer = "",
-        headers = {},
-        episode = 0,
-        season = 0,
-        externalUrl = "",
-        playerUrl = "",
-        serverName = ""
-    }) => {
+const addNormalizedStream = (
+    stream = {}
+) => {
 
-        const cleanUrl =
-            String(url || "").trim();
+    return appendNormalizedStream(
+        normalizedStreams,
+        stream,
+        {
+            provider:
+                providerId,
 
-        const cleanExternalUrl =
-            String(externalUrl || "").trim();
+            providerName:
+                providerName,
 
-        if (!cleanUrl && !cleanExternalUrl) {
-            return;
+            source:
+                providerId
         }
+    );
+};
 
-        normalizedStreams.push({
-            provider: providerId,
-            providerName,
 
-            title: String(title || "").trim(),
-
-            url: cleanUrl,
-            externalUrl: cleanExternalUrl,
-
-            type: String(type || "hls").trim(),
-
-            referer:
-                String(referer || "").trim(),
-
-            headers:
-                headers &&
-                typeof headers === "object"
-                    ? headers
-                    : {},
-
-            episode:
-                Number(episode) || 0,
-
-            season:
-                Number(season) || 0,
-
-            serverName:
-                String(serverName || "").trim(),
-
-            playerUrl:
-                String(playerUrl || "").trim()
-        });
-    };
-
-    // =====================================================
-// 16.0.B. NORMALIZED → STREMIO
+// =====================================================
+// 16.0.B. VSMOV → STREMIO ADAPTER
+// =====================================================
+//
+// Adapter này TẠM THỜI vẫn giữ riêng cho VSMov.
+//
+// Lý do:
+//
+// VSMov có behavior đặc biệt:
+//
+//   - [VSMov]
+//   - [VSMov Direct]
+//   - [VSMov Player]
+//   - bingeGroup
+//   - widgetPlayer
+//   - widgetPlayerStates
+//
+// Step 2.3 chỉ loại bỏ
+// NormalizedStream contract riêng.
+//
+// Chưa loại bỏ VSMov Adapter.
+//
 // =====================================================
 
 const toStremioStream = stream => {
 
-    if (!stream || typeof stream !== "object") {
+    if (
+        !stream ||
+        typeof stream !== "object"
+    ) {
         return null;
     }
 
     const url =
-        String(stream.url || "").trim();
+        String(
+            stream.url ||
+            ""
+        ).trim();
 
     const externalUrl =
-        String(stream.externalUrl || "").trim();
+        String(
+            stream.externalUrl ||
+            ""
+        ).trim();
 
-    if (!url && !externalUrl) {
+    if (
+        !url &&
+        !externalUrl
+    ) {
         return null;
     }
 
     // -------------------------------------------------
     // SOURCE TYPE
     // -------------------------------------------------
-    //
-    // Giữ rõ nguồn để Stremio hiển thị:
-    //
-    // vsmov-api
-    //      → link_m3u8 trực tiếp từ API
-    //
-    // vsmov-direct
-    //      → embed được resolve thành M3U8
-    //
-    // vsmov-player
-    //      → mở embed player
-    // -------------------------------------------------
 
-    let streamLabel = "[VSMov]";
+    let streamLabel =
+        "[VSMov]";
 
-    if (stream.type === "embed") {
+    if (
+        stream.type ===
+        "embed"
+    ) {
 
         streamLabel =
             "[VSMov Player]";
@@ -12380,7 +12623,8 @@ const toStremioStream = stream => {
     } else if (
         stream.type === "hls" &&
         stream.referer &&
-        stream.referer !== "https://vsmov.com/"
+        stream.referer !==
+            "https://vsmov.com/"
     ) {
 
         streamLabel =
@@ -12392,16 +12636,17 @@ const toStremioStream = stream => {
 
         streamLabel =
             "[VSMov]";
-
     }
 
     const result = {
+
         name:
             "▶️ " +
             streamLabel +
             (
                 stream.serverName
-                    ? " " + stream.serverName
+                    ? " " +
+                      stream.serverName
                     : ""
             ),
 
@@ -12425,7 +12670,8 @@ const toStremioStream = stream => {
     // -------------------------------------------------
 
     if (externalUrl) {
-        result.externalUrl = externalUrl;
+        result.externalUrl =
+            externalUrl;
     }
 
     // -------------------------------------------------
@@ -12435,10 +12681,13 @@ const toStremioStream = stream => {
     if (
         stream.headers &&
         typeof stream.headers === "object" &&
-        Object.keys(stream.headers).length
+        Object.keys(
+            stream.headers
+        ).length
     ) {
 
         result.behaviorHints = {
+
             ...(result.behaviorHints || {}),
 
             proxyHeaders: {
@@ -12453,10 +12702,12 @@ const toStremioStream = stream => {
     // -------------------------------------------------
 
     if (
-        stream.type === "embed"
+        stream.type ===
+        "embed"
     ) {
 
         result.behaviorHints = {
+
             ...(result.behaviorHints || {}),
 
             bingeGroup:
@@ -12466,6 +12717,7 @@ const toStremioStream = stream => {
     } else {
 
         result.behaviorHints = {
+
             ...(result.behaviorHints || {}),
 
             bingeGroup:
@@ -12477,7 +12729,9 @@ const toStremioStream = stream => {
     // WIDGET PLAYER
     // -------------------------------------------------
 
-    if (stream.playerUrl) {
+    if (
+        stream.playerUrl
+    ) {
 
         result.externalUrl =
             stream.playerUrl;
@@ -12486,7 +12740,9 @@ const toStremioStream = stream => {
             stream.playerUrl;
 
         result.widgetPlayerStates =
-            ["replaceplayer"];
+            [
+                "replaceplayer"
+            ];
     }
 
     return result;
