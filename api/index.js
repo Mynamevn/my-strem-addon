@@ -26595,6 +26595,29 @@ const directStreams = [
 
 ];
 
+console.log(
+    "[DEBUG] DIRECT STREAM DETAILS:",
+    JSON.stringify(
+        directStreams.map(
+            (stream, index) => ({
+                index,
+                name:
+                    stream?.name,
+                title:
+                    stream?.title,
+                url:
+                    stream?.url,
+                externalUrl:
+                    stream?.externalUrl,
+                behaviorHints:
+                    stream?.behaviorHints
+            })
+        ),
+        null,
+        2
+    )
+);
+
 // =====================================================
 // 12. FALLBACK CHUNG
 //
