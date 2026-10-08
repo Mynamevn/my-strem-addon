@@ -30711,7 +30711,7 @@ function makeAnimeHayHlsProxyUrl(
 
     return (
         ANIMEHAY_PROXY_BASE +
-        "/animehay-hls-proxy?url=" +
+        "/animehay-hls-proxy/master.m3u8?url=" +
         encodeURIComponent(
             targetUrl
         ) +
@@ -30753,7 +30753,10 @@ function makeAnimeHaySegmentProxyUrl(
 // =====================================================
 
 app.get(
-    "/animehay-hls-proxy",
+    [
+        "/animehay-hls-proxy",
+        "/animehay-hls-proxy/master.m3u8"
+    ],
     async (
         req,
         res
