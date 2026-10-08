@@ -14582,188 +14582,321 @@ return streams;
 // ============================================================
 
 const ANIMEHAY_DOMAINS = [
+  "https://animehay.tv",
   "https://animehay13.site",
-  "https://animehay14.site",
-  "https://animehay.tv"
+  "https://animehay14.site"
 ];
 
-// Domain AnimeHay đang hoạt động được chọn gần nhất.
-// Block 12 FALLBACK CHUNG sẽ dùng biến này để mở
-// đúng domain mà fetchAnimeHay() đã xác định.
-//
-// Mặc định dùng domain chính.
-// Nếu domain này lỗi nhưng domain khác hoạt động,
-// fetchAnimeHay() sẽ cập nhật lại biến này.
 let animeHayActiveDomain = ANIMEHAY_DOMAINS[0];
 
-
-function animeHayAbsoluteUrl(url, domain = "") {
+function animeHayAbsoluteUrl(url, baseUrl) {
   if (!url) return "";
-
-  const value = String(url).trim();
-
-  if (/^https?:\/\//i.test(value)) {
-    return value;
+  try {
+    return new URL(url, baseUrl).href;
+  } catch (_) {
+    return String(url);
   }
-
-  if (value.startsWith("//")) {
-    return `https:${value}`;
-  }
-
-  if (value.startsWith("/")) {
-    return `${domain}${value}`;
-  }
-
-  return domain ? `${domain}/${value}` : value;
 }
 
+function animeHayNormalizeText(text = "") {
+  return String(text)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "d")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-function animeHayDetectQuality(value) {
-  const text = String(value || "").toLowerCase();
+function animeHayDetectQuality(url = "", text = "") {
+  const s = `${url} ${text}`.toLowerCase();
 
-  if (text.includes("2160") || text.includes("4k")) return 2160;
-  if (text.includes("1440")) return 1440;
-  if (text.includes("1080") || text.includes("fhd")) return 1080;
-  if (text.includes("720") || text.includes("hd")) return 720;
-  if (text.includes("480")) return 480;
-  if (text.includes("360")) return 360;
+  if (/1080|fullhd/.test(s)) return 1080;
+  if (/720|hd/.test(s)) return 720;
+  if (/480|sd/.test(s)) return 480;
 
   return 0;
 }
 
+function animeHayExtractVideoUrls(html = "", baseUrl = "") {
+  const urls = [];
+  const seen = new Set();
 
-function animeHayExtractVideoUrls(html, domain) {
-  const results = [];
+  const add = (value) => {
+    if (!value) return;
 
-  if (!html) return results;
+    let url = String(value)
+      .replace(/\\u0026/g, "&")
+      .replace(/\\\//g, "/")
+      .replace(/&amp;/g, "&")
+      .replace(/^["']|["']$/g, "")
+      .trim();
 
-  const add = (url, quality = 0, referer = "") => {
-    const absolute = animeHayAbsoluteUrl(url, domain);
+    if (!url) return;
 
-    if (!absolute) return;
+    if (!/^https?:\/\//i.test(url)) {
+      url = animeHayAbsoluteUrl(url, baseUrl);
+    }
+
+    if (!/^https?:\/\//i.test(url)) return;
 
     if (
-      !/^https?:\/\//i.test(absolute) ||
-      results.some(x => x.url === absolute)
+      !/\.m3u8(?:[?#]|$)/i.test(url) &&
+      !/\.mp4(?:[?#]|$)/i.test(url)
     ) {
       return;
     }
 
-    results.push({
-      url: absolute,
-      quality: quality || animeHayDetectQuality(absolute),
-      referer: referer || domain
-    });
+    if (seen.has(url)) return;
+
+    seen.add(url);
+    urls.push(url);
   };
 
   // ----------------------------------------------------------
-  // M3U8_URL / file
+  // 1. M3U8_URL
   // ----------------------------------------------------------
 
   const m3u8Patterns = [
     /M3U8_URL\s*[:=]\s*["']([^"']+)["']/gi,
-    /["']M3U8_URL["']\s*[:=]\s*["']([^"']+)["']/gi,
-    /["']file["']\s*:\s*["']([^"']+\.m3u8[^"']*)["']/gi,
-    /file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/gi
+    /M3U8_URL\s*=\s*["']([^"']+)["']/gi,
+    /["']M3U8_URL["']\s*[:=]\s*["']([^"']+)["']/gi
   ];
 
-  for (const pattern of m3u8Patterns) {
-    let match;
+  for (const re of m3u8Patterns) {
+    let m;
 
-    while ((match = pattern.exec(html)) !== null) {
-      add(
-        match[1],
-        animeHayDetectQuality(match[1]),
-        domain
-      );
+    while ((m = re.exec(html)) !== null) {
+      add(m[1]);
     }
   }
 
   // ----------------------------------------------------------
-  // Direct m3u8 / mp4 URLs
+  // 2. JSON-like { "file": "..." }
   // ----------------------------------------------------------
 
-  const directPatterns = [
-    /["']([^"']+\.m3u8(?:\?[^"']*)?)["']/gi,
-    /["']([^"']+\.mp4(?:\?[^"']*)?)["']/gi
+  const filePatterns = [
+    /["']file["']\s*:\s*["']([^"']+)["']/gi,
+    /\bfile\s*:\s*["']([^"']+)["']/gi,
+    /["']src["']\s*:\s*["']([^"']+)["']/gi
   ];
 
-  for (const pattern of directPatterns) {
-    let match;
+  for (const re of filePatterns) {
+    let m;
 
-    while ((match = pattern.exec(html)) !== null) {
-      add(
-        match[1],
-        animeHayDetectQuality(match[1]),
-        domain
-      );
+    while ((m = re.exec(html)) !== null) {
+      add(m[1]);
     }
   }
 
-  return results;
+  // ----------------------------------------------------------
+  // 3. Raw URLs
+  // ----------------------------------------------------------
+
+  const rawPatterns = [
+    /https?:\/\/[^"'\\\s<>]+\.m3u8(?:\?[^"'\\\s<>]*)?/gi,
+    /https?:\/\/[^"'\\\s<>]+\.mp4(?:\?[^"'\\\s<>]*)?/gi
+  ];
+
+  for (const re of rawPatterns) {
+    let m;
+
+    while ((m = re.exec(html)) !== null) {
+      add(m[0]);
+    }
+  }
+
+  return urls;
 }
 
+async function animeHayRequest(url, referer = "", options = {}) {
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+      "AppleWebKit/537.36 (KHTML, like Gecko) " +
+      "Chrome/131.0.0.0 Safari/537.36",
 
-async function animeHayResolveEmbed(embedUrl, domain) {
+    "Accept":
+      "text/html,application/xhtml+xml,application/xml;q=0.9," +
+      "image/avif,image/webp,image/apng,*/*;q=0.8",
+
+    "Accept-Language":
+      "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+    "Cache-Control": "no-cache",
+
+    "Pragma": "no-cache",
+
+    "Upgrade-Insecure-Requests": "1",
+
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": referer ? "same-origin" : "none",
+    "Sec-Fetch-User": "?1",
+
+    ...(options.headers || {})
+  };
+
+  if (referer) {
+    headers.Referer = referer;
+  }
+
+  return axios.get(url, {
+    headers,
+    timeout: options.timeout || 15000,
+    maxRedirects: 5,
+    validateStatus: () => true
+  });
+}
+
+function animeHayExtractCanonical(html = "", baseUrl = "") {
   try {
-    if (!embedUrl) return [];
+    const $ = cheerio.load(html);
 
-    const absoluteEmbed =
-      animeHayAbsoluteUrl(
-        embedUrl,
-        domain
-      );
+    const canonical =
+      $('link[rel="canonical"]').attr("href") ||
+      $('meta[property="og:url"]').attr("content") ||
+      "";
 
-    console.log(
-      "[ANIMEHAY] EMBED:",
-      absoluteEmbed
-    );
+    if (!canonical) return "";
 
-    const response = await axios.get(
-      absoluteEmbed,
-      {
-        timeout: 15000,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-
-          "Referer":
-            domain
-        }
-      }
-    );
-
-    const html =
-      response.data || "";
-
-    const streams =
-      animeHayExtractVideoUrls(
-        typeof html === "string"
-          ? html
-          : JSON.stringify(html),
-        domain
-      );
-
-    console.log(
-      "[ANIMEHAY] EMBED STREAMS:",
-      streams.length
-    );
-
-    return streams;
-
-  } catch (e) {
-
-    console.log(
-      "[ANIMEHAY EMBED ERROR]:",
-      e?.response?.status ||
-      e?.message ||
-      e
-    );
-
-    return [];
+    return animeHayAbsoluteUrl(canonical, baseUrl);
+  } catch (_) {
+    return "";
   }
 }
 
+function animeHayLooksLikeChallenge(html = "") {
+  const s = String(html).toLowerCase();
+
+  const challengeWords = [
+    "just a moment",
+    "checking your browser",
+    "verify you are human",
+    "cf-chl",
+    "cloudflare",
+    "attention required",
+    "enable javascript and cookies"
+  ];
+
+  return challengeWords.some(x => s.includes(x));
+}
+
+function animeHayLooksLikeAnimeHayPage(html = "") {
+  const $ = cheerio.load(html);
+
+  return (
+    $('div.movies-list > div.mc').length > 0 ||
+    $('.aim-hero__title').length > 0 ||
+    $('.aim-episodes').length > 0 ||
+    $('.list-server-items').length > 0 ||
+    $('a[href*="/thong-tin-phim/"]').length > 0
+  );
+}
+
+async function animeHayResolveEmbed(embedUrl, referer, depth = 0) {
+  if (!embedUrl || depth > 2) return [];
+
+  console.log("[ANIMEHAY] EMBED:", embedUrl);
+
+  try {
+    const response = await animeHayRequest(embedUrl, referer, {
+      timeout: 15000
+    });
+
+    if (response.status < 200 || response.status >= 400) {
+      console.log(
+        "[ANIMEHAY] EMBED STATUS:",
+        embedUrl,
+        response.status
+      );
+
+      return [];
+    }
+
+    const html = String(response.data || "");
+
+    const directUrls = animeHayExtractVideoUrls(
+      html,
+      embedUrl
+    );
+
+    if (directUrls.length > 0) {
+      console.log(
+        "[ANIMEHAY] EMBED DIRECT URLS:",
+        directUrls.length
+      );
+
+      return directUrls.map(url => ({
+        url,
+        referer: embedUrl
+      }));
+    }
+
+    // --------------------------------------------------------
+    // AnimeHay DEX: /embed-jw/
+    // --------------------------------------------------------
+
+    const nestedFrames = [];
+
+    const $ = cheerio.load(html);
+
+    $("iframe[src], iframe[data-src]").each((_, el) => {
+      const src =
+        $(el).attr("src") ||
+        $(el).attr("data-src");
+
+      if (!src) return;
+
+      const absolute = animeHayAbsoluteUrl(
+        src,
+        embedUrl
+      );
+
+      if (
+        absolute &&
+        !nestedFrames.includes(absolute)
+      ) {
+        nestedFrames.push(absolute);
+      }
+    });
+
+    // Raw /embed-jw/ URLs
+    const rawEmbedMatches =
+      html.match(
+        /https?:\/\/[^"'\\\s<>]+\/embed-jw\/[^"'\\\s<>]*/gi
+      ) || [];
+
+    for (const url of rawEmbedMatches) {
+      if (!nestedFrames.includes(url)) {
+        nestedFrames.push(url);
+      }
+    }
+
+    for (const nested of nestedFrames) {
+      const nestedResult =
+        await animeHayResolveEmbed(
+          nested,
+          embedUrl,
+          depth + 1
+        );
+
+      if (nestedResult.length > 0) {
+        return nestedResult;
+      }
+    }
+
+  } catch (error) {
+    console.log(
+      "[ANIMEHAY] EMBED ERROR:",
+      embedUrl,
+      error.message
+    );
+  }
+
+  return [];
+}
 
 async function fetchAnimeHay(
   movieName,
@@ -14772,33 +14905,27 @@ async function fetchAnimeHay(
   episodeNumber = 0,
   streamType = "movie"
 ) {
+  console.log("[ANIMEHAY] START:", {
+    movieName,
+    movieYear,
+    seasonNumber,
+    episodeNumber,
+    streamType
+  });
 
-  console.log(
-    "[ANIMEHAY] START:",
-    {
-      movieName,
-      movieYear,
-      seasonNumber,
-      episodeNumber,
-      streamType
-    }
-  );
+  const searchPath =
+    `/tim-kiem/${encodeURIComponent(movieName)}.html`;
 
   let selectedDomain = "";
+  let searchResponse = null;
   let searchHtml = "";
-  let searchUrl = "";
 
   // ==========================================================
-  // 1. TRY CURRENT DOMAINS
+  // DOMAIN DISCOVERY
   // ==========================================================
 
-  for (
-    const domain of ANIMEHAY_DOMAINS
-  ) {
-
-    const url =
-      `${domain}/tim-kiem/` +
-      `${encodeURIComponent(movieName)}.html`;
+  for (const domain of ANIMEHAY_DOMAINS) {
+    const searchUrl = `${domain}${searchPath}`;
 
     console.log(
       "[ANIMEHAY] TRY DOMAIN:",
@@ -14807,687 +14934,736 @@ async function fetchAnimeHay(
 
     console.log(
       "[ANIMEHAY] SEARCH:",
-      url
+      searchUrl
     );
 
     try {
-
       const response =
-        await axios.get(
-          url,
-          {
-            timeout: 15000,
-
-            validateStatus:
-              () => true,
-
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-
-              "Accept":
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-              "Referer":
-                domain
-            }
-          }
-        );
-
-      const status =
-        response.status;
-
-      const html =
-        typeof response.data === "string"
-          ? response.data
-          : "";
+        await animeHayRequest(searchUrl, "");
 
       console.log(
         "[ANIMEHAY] DOMAIN STATUS:",
         domain,
-        status
+        response.status,
+        "FINAL:",
+        response.request?.res?.responseUrl || ""
+      );
+
+      const html = String(response.data || "");
+
+      console.log(
+        "[ANIMEHAY] HTML LENGTH:",
+        domain,
+        html.length
       );
 
       if (
-        status >= 200 &&
-        status < 400 &&
+        response.status >= 200 &&
+        response.status < 400 &&
         html.length > 500
       ) {
+        if (animeHayLooksLikeChallenge(html)) {
+          console.log(
+            "[ANIMEHAY] CHALLENGE PAGE:",
+            domain
+          );
 
-        selectedDomain =
-          domain;
+          continue;
+        }
 
-        searchHtml =
-          html;
+        const canonical =
+          animeHayExtractCanonical(
+            html,
+            domain
+          );
 
-        searchUrl =
-          url;
+        if (canonical) {
+          try {
+            const canonicalHost =
+              new URL(canonical).origin;
 
-        // ------------------------------------------------------
+            console.log(
+              "[ANIMEHAY] CANONICAL:",
+              canonicalHost
+            );
+          } catch (_) {}
+        }
+
+        const looksReal =
+          animeHayLooksLikeAnimeHayPage(html);
+
+        console.log(
+          "[ANIMEHAY] PAGE CHECK:",
+          domain,
+          looksReal
+        );
+
         // IMPORTANT:
-        // Ghi nhớ domain thực sự đang hoạt động.
-        // Block 12 sẽ dùng chính domain này cho fallback.
-        // ------------------------------------------------------
+        // Do not select a domain merely because HTTP=200.
+        if (looksReal) {
+          selectedDomain = domain;
+          searchResponse = response;
+          searchHtml = html;
 
-        animeHayActiveDomain =
-          selectedDomain;
+          break;
+        }
 
-        console.log(
-          "[ANIMEHAY] DOMAIN OK:",
-          selectedDomain
-        );
-
-        console.log(
-          "[ANIMEHAY] ACTIVE DOMAIN:",
-          animeHayActiveDomain
-        );
-
-        break;
+        // Keep the response temporarily.
+        // It may still contain a valid search structure
+        // that requires alternate parsing.
+        if (!searchResponse) {
+          searchResponse = response;
+          searchHtml = html;
+        }
       }
 
-      console.log(
-        "[ANIMEHAY] DOMAIN FAILED:",
-        domain,
-        status
-      );
-
-    } catch (e) {
-
+    } catch (error) {
       console.log(
         "[ANIMEHAY] DOMAIN ERROR:",
         domain,
-        e?.response?.status ||
-        e?.message ||
-        e
+        error.message
       );
     }
   }
 
   // ==========================================================
-  // Không domain nào hoạt động
+  // SEARCH PARSE
   // ==========================================================
 
-  if (
-    !selectedDomain ||
-    !searchHtml
-  ) {
-
+  if (!searchHtml) {
     console.log(
-      "[ANIMEHAY] ALL DOMAINS FAILED"
+      "[ANIMEHAY] NO SEARCH RESPONSE"
     );
 
     return [];
   }
 
-  // ==========================================================
-  // 2. SEARCH RESULT
-  // ==========================================================
+  const searchBase =
+    selectedDomain ||
+    animeHayActiveDomain;
 
-  const $search =
-    cheerio.load(searchHtml);
+  if (selectedDomain) {
+    animeHayActiveDomain = selectedDomain;
 
-  const searchItems = [];
+    console.log(
+      "[ANIMEHAY] ACTIVE DOMAIN:",
+      animeHayActiveDomain
+    );
+  } else {
+    console.log(
+      "[ANIMEHAY] NO CONFIRMED DOMAIN; USING RESPONSE DOMAIN:",
+      searchBase
+    );
+  }
 
-  $search(
-    "div.movies-list > div.mc"
-  ).each(
-    (index, el) => {
+  let $search;
 
-      const item =
-        $search(el);
+  try {
+    $search = cheerio.load(searchHtml);
+  } catch (error) {
+    console.log(
+      "[ANIMEHAY] SEARCH PARSE ERROR:",
+      error.message
+    );
 
-      const title =
-        item.find(".title")
-          .first()
-          .text()
-          .trim() ||
+    return [];
+  }
 
-        item.find("a")
-          .first()
-          .attr("title") ||
-
-        item.find("a")
-          .first()
-          .text()
-          .trim();
-
-      const href =
-        item.find("a")
-          .first()
-          .attr("href") ||
-        "";
-
-      if (
-        title &&
-        href
-      ) {
-
-        searchItems.push({
-          title,
-
-          href:
-            animeHayAbsoluteUrl(
-              href,
-              selectedDomain
-            )
-        });
-      }
-    }
-  );
+  // DEX-confirmed selector.
+  const cards =
+    $search("div.movies-list > div.mc");
 
   console.log(
     "[ANIMEHAY] SEARCH RESULTS:",
-    searchItems.length
+    cards.length
   );
 
-  if (
-    !searchItems.length
-  ) {
+  // Diagnostic only: if zero, print useful structure
+  // without dumping the whole HTML into Vercel logs.
+  if (cards.length === 0) {
+    console.log(
+      "[ANIMEHAY] SEARCH ZERO: title candidates:",
+      $search("a").slice(0, 20).map((_, el) =>
+        $search(el).text().trim()
+      ).get().filter(Boolean)
+    );
 
     console.log(
-      "[ANIMEHAY] NO SEARCH RESULTS:",
-      searchUrl
+      "[ANIMEHAY] SEARCH ZERO: movies-list count:",
+      $search(".movies-list").length
+    );
+
+    console.log(
+      "[ANIMEHAY] SEARCH ZERO: mc count:",
+      $search(".mc").length
+    );
+
+    console.log(
+      "[ANIMEHAY] SEARCH ZERO: canonical:",
+      animeHayExtractCanonical(
+        searchHtml,
+        searchBase
+      )
     );
 
     return [];
   }
 
-  // ==========================================================
-  // 3. MATCH TITLE
-  // ==========================================================
+  const normalizedTarget =
+    animeHayNormalizeText(movieName);
 
-  const normalizeTitle =
-    value =>
-      String(value || "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(
-          /[\u0300-\u036f]/g,
-          ""
-        )
-        .replace(
-          /[^a-z0-9]+/g,
-          " "
-        )
-        .replace(
-          /\s+/g,
-          " "
-        )
-        .trim();
+  let selectedCard = null;
 
-  const targetTitle =
-    normalizeTitle(
-      movieName
-    );
+  cards.each((_, el) => {
+    if (selectedCard) return;
 
-  let matched =
-    searchItems.find(
-      item =>
-        normalizeTitle(
-          item.title
-        ) === targetTitle
-    );
+    const card = $search(el);
 
-  if (!matched) {
+    const title =
+      card.find(
+        "a[href*='/thong-tin-phim/'], " +
+        "a[title]"
+      ).first().attr("title") ||
+      card.find(
+        "a[href*='/thong-tin-phim/']"
+      ).first().text() ||
+      card.find("a").first().text() ||
+      "";
 
-    matched =
-      searchItems.find(
-        item =>
-          normalizeTitle(
-            item.title
-          ).includes(
-            targetTitle
-          )
-      );
-  }
+    const normalizedTitle =
+      animeHayNormalizeText(title);
 
-  if (!matched) {
+    if (!normalizedTitle) return;
 
-    matched =
-      searchItems.find(
-        item =>
-          targetTitle.includes(
-            normalizeTitle(
-              item.title
-            )
-          )
-      );
-  }
+    if (
+      normalizedTitle === normalizedTarget ||
+      normalizedTitle.includes(normalizedTarget) ||
+      normalizedTarget.includes(normalizedTitle)
+    ) {
+      selectedCard = {
+        element: el,
+        title: title.trim()
+      };
+    }
+  });
 
-  if (!matched) {
+  // Fallback: choose first result only when
+  // exact/contains matching is impossible.
+  if (!selectedCard && cards.length === 1) {
+    const el = cards.first();
+
+    selectedCard = {
+      element: el,
+      title:
+        $search(el).find("a").first().text().trim()
+    };
 
     console.log(
-      "[ANIMEHAY] NO MATCH:",
+      "[ANIMEHAY] SINGLE SEARCH RESULT FALLBACK:",
+      selectedCard.title
+    );
+  }
+
+  if (!selectedCard) {
+    console.log(
+      "[ANIMEHAY] NO TITLE MATCH:",
       movieName
     );
 
     return [];
   }
+
+  const card =
+    $search(selectedCard.element);
+
+  const detailHref =
+    card.find(
+      "a[href*='/thong-tin-phim/']"
+    ).first().attr("href") ||
+    card.find("a").first().attr("href");
+
+  if (!detailHref) {
+    console.log(
+      "[ANIMEHAY] NO DETAIL URL:",
+      selectedCard.title
+    );
+
+    return [];
+  }
+
+  const detailUrl =
+    animeHayAbsoluteUrl(
+      detailHref,
+      searchBase
+    );
 
   console.log(
     "[ANIMEHAY] MATCH:",
-    matched
+    selectedCard.title
+  );
+
+  console.log(
+    "[ANIMEHAY] DETAIL URL:",
+    detailUrl
   );
 
   // ==========================================================
-  // 4. DETAIL PAGE
+  // DETAIL
   // ==========================================================
 
   let detailHtml = "";
 
   try {
-
-    const response =
-      await axios.get(
-        matched.href,
-        {
-          timeout: 15000,
-
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-
-            "Referer":
-              selectedDomain
-          }
-        }
+    const detailResponse =
+      await animeHayRequest(
+        detailUrl,
+        searchBase + "/"
       );
 
-    detailHtml =
-      typeof response.data === "string"
-        ? response.data
-        : "";
-
-  } catch (e) {
-
     console.log(
-      "[ANIMEHAY DETAIL ERROR]:",
-      e?.response?.status ||
-      e?.message ||
-      e
+      "[ANIMEHAY] DETAIL STATUS:",
+      detailResponse.status
+    );
+
+    detailHtml =
+      String(detailResponse.data || "");
+
+  } catch (error) {
+    console.log(
+      "[ANIMEHAY] DETAIL ERROR:",
+      error.message
     );
 
     return [];
   }
 
-  // ==========================================================
-  // 5. EPISODES
-  // ==========================================================
+  if (!detailHtml) {
+    return [];
+  }
 
   const $detail =
     cheerio.load(detailHtml);
 
-  const episodes = [];
+  // ==========================================================
+  // EPISODES
+  // ==========================================================
 
-  $detail(
-    ".aim-episodes a[href]"
-  ).each(
-    (index, el) => {
-
-      const item =
-        $detail(el);
-
-      const title =
-        item.text().trim();
-
-      const href =
-        item.attr("href");
-
-      if (href) {
-
-        episodes.push({
-          title,
-
-          href:
-            animeHayAbsoluteUrl(
-              href,
-              selectedDomain
-            )
-        });
-      }
-    }
-  );
+  const episodeLinks =
+    $detail(
+      ".aim-episodes a[href^='/xem-phim/']"
+    );
 
   console.log(
     "[ANIMEHAY] EPISODES:",
-    episodes.length
+    episodeLinks.length
   );
 
-  if (
-    !episodes.length
-  ) {
+  let episodeUrl = "";
+
+  if (episodeLinks.length > 0) {
+    episodeLinks.each((_, el) => {
+      if (episodeUrl) return;
+
+      const a = $detail(el);
+
+      const href = a.attr("href");
+      const text = a.text().trim();
+
+      if (!href) return;
+
+      const numbers =
+        text.match(/\d+/g) || [];
+
+      if (
+        episodeNumber &&
+        numbers.some(
+          n => Number(n) === Number(episodeNumber)
+        )
+      ) {
+        episodeUrl =
+          animeHayAbsoluteUrl(
+            href,
+            detailUrl
+          );
+      }
+    });
+
+    // If episode number was not found,
+    // use the first episode only as a controlled fallback.
+    if (!episodeUrl && !episodeNumber) {
+      const firstHref =
+        episodeLinks.first().attr("href");
+
+      if (firstHref) {
+        episodeUrl =
+          animeHayAbsoluteUrl(
+            firstHref,
+            detailUrl
+          );
+      }
+    }
+  }
+
+  // Movie pages may not have episode links.
+  if (!episodeUrl && streamType === "movie") {
+    episodeUrl = detailUrl;
+  }
+
+  if (!episodeUrl) {
+    console.log(
+      "[ANIMEHAY] NO EPISODE URL:",
+      {
+        episodeNumber,
+        episodeCount: episodeLinks.length
+      }
+    );
 
     return [];
   }
 
-  // ==========================================================
-  // 6. SELECT EPISODE
-  // ==========================================================
-
-  const wantedEpisode =
-    Number(
-      episodeNumber || 1
-    );
-
-  let selectedEpisode =
-    null;
-
-  for (
-    const ep of episodes
-  ) {
-
-    const text =
-      String(
-        ep.title || ""
-      ).toLowerCase();
-
-    const numbers =
-      text.match(/\d+/g) || [];
-
-    if (
-      numbers.some(
-        n =>
-          Number(n) ===
-          wantedEpisode
-      )
-    ) {
-
-      selectedEpisode =
-        ep;
-
-      break;
-    }
-  }
-
-  if (
-    !selectedEpisode
-  ) {
-
-    selectedEpisode =
-      episodes[
-        Math.max(
-          0,
-          wantedEpisode - 1
-        )
-      ] ||
-      episodes[0];
-  }
-
   console.log(
-    "[ANIMEHAY] SELECTED EPISODE:",
-    selectedEpisode
+    "[ANIMEHAY] EPISODE URL:",
+    episodeUrl
   );
 
   // ==========================================================
-  // 7. EPISODE PAGE
+  // EPISODE PAGE
   // ==========================================================
 
   let episodeHtml = "";
 
   try {
-
-    const response =
-      await axios.get(
-        selectedEpisode.href,
-        {
-          timeout: 15000,
-
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-
-            "Referer":
-              matched.href
-          }
-        }
+    const episodeResponse =
+      await animeHayRequest(
+        episodeUrl,
+        detailUrl
       );
-
-    episodeHtml =
-      typeof response.data === "string"
-        ? response.data
-        : "";
-
-  } catch (e) {
 
     console.log(
-      "[ANIMEHAY EPISODE ERROR]:",
-      e?.response?.status ||
-      e?.message ||
-      e
+      "[ANIMEHAY] EPISODE STATUS:",
+      episodeResponse.status
+    );
+
+    episodeHtml =
+      String(episodeResponse.data || "");
+
+  } catch (error) {
+    console.log(
+      "[ANIMEHAY] EPISODE ERROR:",
+      error.message
     );
 
     return [];
   }
 
-  // ==========================================================
-  // 8. DIRECT VIDEO / SERVER MAP
-  // ==========================================================
-
-  let videoUrls =
-    animeHayExtractVideoUrls(
-      episodeHtml,
-      selectedDomain
-    );
-
-  console.log(
-    "[ANIMEHAY] DIRECT VIDEO URLS:",
-    videoUrls.length
-  );
-
-  // ==========================================================
-  // 9. EMBED-JW
-  // ==========================================================
+  if (!episodeHtml) {
+    return [];
+  }
 
   const $episode =
-    cheerio.load(
-      episodeHtml
-    );
+    cheerio.load(episodeHtml);
 
-  const embeds = [];
+  // ==========================================================
+  // SERVER MAP
+  // ==========================================================
+
+  const serverItems =
+    $episode(".list-server-items li");
+
+  console.log(
+    "[ANIMEHAY] SERVER MAP COUNT:",
+    serverItems.length
+  );
+
+  const candidateUrls = [];
+
+  const addCandidate = (
+    url,
+    referer,
+    quality = 0,
+    serverName = ""
+  ) => {
+    if (!url) return;
+
+    const absolute =
+      animeHayAbsoluteUrl(
+        url,
+        episodeUrl
+      );
+
+    if (!absolute) return;
+
+    candidateUrls.push({
+      url: absolute,
+      referer: referer || episodeUrl,
+      quality,
+      serverName
+    });
+  };
+
+  // ----------------------------------------------------------
+  // Server/link map
+  // ----------------------------------------------------------
+
+  serverItems.each((_, el) => {
+    const item = $episode(el);
+
+    const serverName =
+      item.text().trim() ||
+      item.attr("data-server") ||
+      "";
+
+    item.find(
+      "a, button, [data-link], [data-url], " +
+      "[data-video], iframe"
+    ).each((__, child) => {
+      const node = $episode(child);
+
+      const href =
+        node.attr("href") ||
+        node.attr("data-link") ||
+        node.attr("data-url") ||
+        node.attr("data-video") ||
+        node.attr("src") ||
+        node.attr("data-src");
+
+      if (!href) return;
+
+      const quality =
+        animeHayDetectQuality(
+          href,
+          node.text()
+        );
+
+      addCandidate(
+        href,
+        episodeUrl,
+        quality,
+        serverName
+      );
+    });
+  });
+
+  // ----------------------------------------------------------
+  // iframe/embed directly on episode page
+  // ----------------------------------------------------------
 
   $episode(
-    'iframe[src], iframe[data-src], script'
-  ).each(
-    (index, el) => {
+    "iframe[src], iframe[data-src]"
+  ).each((_, el) => {
+    const node = $episode(el);
 
-      const item =
-        $episode(el);
+    const src =
+      node.attr("src") ||
+      node.attr("data-src");
 
-      const src =
-        item.attr("src") ||
-        item.attr("data-src") ||
-        "";
+    if (!src) return;
 
-      if (
-        src &&
-        (
-          src.includes(
-            "/embed-jw/"
-          ) ||
-          src.includes(
-            "ssplay"
-          ) ||
-          src.includes(
-            "embed"
-          )
-        )
-      ) {
+    addCandidate(
+      src,
+      episodeUrl,
+      animeHayDetectQuality(src),
+      "iframe"
+    );
+  });
 
-        embeds.push(
-          animeHayAbsoluteUrl(
-            src,
-            selectedDomain
-          )
-        );
-      }
-    }
+  // ----------------------------------------------------------
+  // DEX-confirmed JS extraction:
+  // M3U8_URL / file / videoUrls / embed-jw
+  // ----------------------------------------------------------
+
+  const directFromEpisode =
+    animeHayExtractVideoUrls(
+      episodeHtml,
+      episodeUrl
+    );
+
+  for (const url of directFromEpisode) {
+    addCandidate(
+      url,
+      episodeUrl,
+      animeHayDetectQuality(url),
+      "direct"
+    );
+  }
+
+  // Raw embed-jw URLs.
+  const embedMatches =
+    episodeHtml.match(
+      /https?:\/\/[^"'\\\s<>]+\/embed-jw\/[^"'\\\s<>]*/gi
+    ) || [];
+
+  for (const embed of embedMatches) {
+    addCandidate(
+      embed,
+      episodeUrl,
+      animeHayDetectQuality(embed),
+      "embed-jw"
+    );
+  }
+
+  // Deduplicate candidates.
+  const uniqueCandidates = [];
+  const candidateSeen = new Set();
+
+  for (const item of candidateUrls) {
+    const key =
+      `${item.url}|${item.referer}`;
+
+    if (candidateSeen.has(key)) continue;
+
+    candidateSeen.add(key);
+    uniqueCandidates.push(item);
+  }
+
+  console.log(
+    "[ANIMEHAY] CANDIDATES:",
+    uniqueCandidates.length
   );
 
-  // ----------------------------------------------------------
-  // Also inspect raw HTML for /embed-jw/
-  // ----------------------------------------------------------
+  // ==========================================================
+  // RESOLVE CANDIDATES
+  // ==========================================================
 
-  const embedRegex =
-    /["']([^"']*\/embed-jw\/[^"']+)["']/gi;
+  const resolved = [];
 
-  let embedMatch;
-
-  while (
-    (embedMatch =
-      embedRegex.exec(
-        episodeHtml
-      )) !== null
-  ) {
-
-    const url =
-      animeHayAbsoluteUrl(
-        embedMatch[1],
-        selectedDomain
-      );
+  for (const candidate of uniqueCandidates) {
+    const url = candidate.url;
 
     if (
-      url &&
-      !embeds.includes(url)
+      /\.m3u8(?:[?#]|$)/i.test(url) ||
+      /\.mp4(?:[?#]|$)/i.test(url)
     ) {
-
-      embeds.push(url);
+      resolved.push(candidate);
+      continue;
     }
-  }
 
-  console.log(
-    "[ANIMEHAY] EMBEDS:",
-    embeds.length
-  );
-
-  for (
-    const embed of embeds
-  ) {
-
-    const resolved =
+    // Embed / iframe.
+    const embedResult =
       await animeHayResolveEmbed(
-        embed,
-        selectedDomain
+        url,
+        candidate.referer || episodeUrl
       );
 
-    for (
-      const stream of resolved
-    ) {
-
-      if (
-        !videoUrls.some(
-          existing =>
-            existing.url ===
-            stream.url
-        )
-      ) {
-
-        videoUrls.push(
-          stream
-        );
-      }
+    for (const result of embedResult) {
+      resolved.push({
+        url: result.url,
+        referer:
+          result.referer ||
+          candidate.referer ||
+          episodeUrl,
+        quality:
+          candidate.quality ||
+          animeHayDetectQuality(
+            result.url
+          ),
+        serverName:
+          candidate.serverName
+      });
     }
   }
 
-  console.log(
-    "[ANIMEHAY] FINAL VIDEO URLS:",
-    videoUrls.length
-  );
+  // Deduplicate resolved URLs.
+  const finalResolved = [];
+  const finalSeen = new Set();
 
-  if (
-    !videoUrls.length
-  ) {
+  for (const item of resolved) {
+    if (!item.url) continue;
 
-    return [];
+    if (finalSeen.has(item.url)) continue;
+
+    finalSeen.add(item.url);
+    finalResolved.push(item);
   }
 
+  console.log(
+    "[ANIMEHAY] RESOLVED STREAMS:",
+    finalResolved.length
+  );
+
   // ==========================================================
-  // 10. NORMALIZED STREAMS
+  // NORMALIZED STREAMS
   // ==========================================================
 
-  const normalizedStreams =
-    videoUrls.map(
-      (video, index) =>
-        createNormalizedStream({
-          provider:
-            "animehay",
+  const normalized = [];
 
-          providerName:
-            "AnimeHay",
+  for (const item of finalResolved) {
+    const isHls =
+      /\.m3u8(?:[?#]|$)/i.test(item.url);
 
-          source:
-            "animehay",
+    const isMp4 =
+      /\.mp4(?:[?#]|$)/i.test(item.url);
 
-          url:
-            video.url,
+    normalized.push(
+      createNormalizedStream({
+        provider: "animehay",
+        providerName: "AnimeHay",
+        source: "animehay",
 
-          type:
-            /\.m3u8(?:\?|$)/i.test(
-              video.url
-            )
-              ? "hls"
-              : /\.mp4(?:\?|$)/i.test(
-                  video.url
-                )
-                ? "mp4"
-                : "unknown",
+        url: item.url,
 
-          quality:
-            video.quality || 0,
+        type:
+          isHls
+            ? "hls"
+            : isMp4
+              ? "mp4"
+              : "unknown",
 
-          title:
-            `[AnimeHay] ${video.quality || "Auto"}`,
+        quality: item.quality || 0,
 
-          name:
-            `[AnimeHay] ${video.quality || "Auto"}`,
+        title:
+          item.serverName
+            ? `[AnimeHay] ${item.serverName}`
+            : "[AnimeHay]",
 
-          serverName:
-            `AnimeHay #${index + 1}`,
+        name: "AnimeHay",
 
-          referer:
-            video.referer ||
-            selectedDomain,
+        serverName:
+          item.serverName || "AnimeHay",
 
-          headers: {
-            Referer:
-              video.referer ||
-              selectedDomain,
+        referer:
+          item.referer ||
+          episodeUrl,
 
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36"
-          },
+        headers: {
+          Referer:
+            item.referer ||
+            episodeUrl,
 
-          episode:
-            episodeNumber,
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/131.0.0.0 Safari/537.36"
+        },
 
-          season:
-            seasonNumber,
+        episode: episodeNumber,
+        season: seasonNumber,
 
-          resolver:
-            "passthrough",
+        resolver: "passthrough",
 
-          behaviorHints: {
-            bingeGroup:
-              "animehay"
-          }
-        })
+        behaviorHints: {
+          bingeGroup: "animehay"
+        }
+      })
     );
+  }
 
   console.log(
     "[ANIMEHAY] NORMALIZED STREAMS:",
-    normalizedStreams.length
+    normalized.length
   );
 
-  const finalStreams =
+  const streams =
     normalizedStreamsToStremio(
-      normalizedStreams
+      normalized
     );
 
   console.log(
     "[ANIMEHAY] FINAL STREAMS:",
-    finalStreams.length
+    streams.length
   );
 
-  return finalStreams;
+  return streams;
 }
 
 // ============================================================
