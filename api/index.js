@@ -18281,51 +18281,59 @@ async function fetchAnimeHay(
 
                         if (!matchedTitle) return;
 
-                        const card = anchor.closest(
-                            "div.mc, .mc, article, .item, " +
-                            ".movie-item, .film-item, li"
-                        );
-
-                        const possibleLinks = (
-                            card.length
-                                ? card.find("a[href]")
-                                : anchor
-                        ).toArray();
+                        
+                        // Tìm trang THÔNG TIN PHIM trong thẻ
+                        // chứa liên kết tên phim hoặc liên kết tập.
+                        // Không dùng URL /xem-phim/ làm trang detail.
 
                         let detailUrl = "";
+                        let current = anchor;
 
-                        for (const linkEl of possibleLinks) {
-                            const href = String(
-                                $directory(linkEl).attr("href") || ""
-                            ).trim();
+                        for (let depth = 0; depth < 8; depth++) {
+                            const infoLinks = current
+                                .find("a[href*='/thong-tin-phim/']")
+                                .addBack("a[href*='/thong-tin-phim/']");
 
-                            if (!href) continue;
+                            infoLinks.each((_, linkEl) => {
+                                if (detailUrl) return;
 
-                            let parsedUrl;
+                                const href = String(
+                                    $directory(linkEl).attr("href") || ""
+                                ).trim();
 
-                            try {
-                                parsedUrl = new URL(href, activeDomain);
-                            } catch (_) {
-                                continue;
-                            }
+                                if (!href) return;
 
-                            if (parsedUrl.origin !== new URL(activeDomain).origin) {
-                                continue;
-                            }
+                                try {
+                                    const parsed = new URL(href, activeDomain);
 
-                            const pathname = parsedUrl.pathname;
+                                    if (
+                                        parsed.origin ===
+                                            new URL(activeDomain).origin &&
+                                        parsed.pathname.includes(
+                                            "/thong-tin-phim/"
+                                        )
+                                    ) {
+                                        detailUrl = parsed.href;
+                                    }
+                                } catch (_) {}
+                            });
 
-                            const looksLikeDetail =
-                                pathname.includes("/thong-tin-phim/") ||
-                                /fx[- ]senshi[- ]kurumi/i.test(pathname);
+                            if (detailUrl) break;
 
-                            if (looksLikeDetail) {
-                                detailUrl = parsedUrl.href;
-                                break;
-                            }
+                            current = current.parent();
+
+                            if (!current.length) break;
                         }
 
-                        if (!detailUrl) return;
+                        // Nếu không tìm được trang thông tin phim,
+                        // bỏ qua ứng viên này; không chọn nhầm tập 2.
+                        if (!detailUrl) {
+                            console.log(
+                                "[ANIMEHAY] DETAIL URL NOT FOUND IN CARD:",
+                                anchorText
+                            );
+                            return;
+                        }
 
                         if (!candidateMap.has(detailUrl)) {
                             candidateMap.set(detailUrl, {
