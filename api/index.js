@@ -31909,22 +31909,19 @@ app.get(
                     }
                 })();
 
-
-            const looksLikeTs =
-contentType.includes(
-"mpeg"
-) ||
-pathname.endsWith(
-".ts"
-) ||
-pathname.includes(
-".ts?"
-) ||
-//hls/\d+/(?:sd|hd)/seg_\d+.png$/i.test(
-pathname
-);
-
-
+        const looksLikeTs =
+            contentType.includes(
+                "mpeg"
+            ) ||
+            pathname.endsWith(
+                ".ts"
+            ) ||
+            pathname.includes(
+                ".ts?"
+            ) ||
+            /\/hls\/\d+\/(?:sd|hd)\/seg_\d+\.png$/i.test(
+                pathname
+            );
 
             // -------------------------------------------------
             // NATIVE STREAM
