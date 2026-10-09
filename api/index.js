@@ -31794,6 +31794,22 @@ app.get(
                     ""
                 ).toLowerCase();
 
+            console.log(
+    "[ANIMEHAY SEGMENT PROXY] DIAGNOSTIC:",
+    {
+        status: response?.status,
+        contentType,
+        contentLength:
+            response?.headers?.["content-length"] || "",
+        targetPath: (() => {
+            try {
+                return new URL(targetUrl).pathname;
+            } catch (_) {
+                return "";
+            }
+        })()
+    }
+);
 
             console.log(
                 "[ANIMEHAY SEGMENT PROXY] SOURCE:",
