@@ -17940,6 +17940,16 @@ async function animeHayLoadLinks(
                     sourceReferer
                 );
 
+            console.log(
+    "[ANIMEHAY] STREAM URL CHECK:",
+    {
+        originalUrl,
+        playableUrl,
+        sourceReferer,
+        isOriginalM3u8: /\.m3u8(?:$|[?#])/i.test(originalUrl),
+        isProxyUrl: playableUrl.includes("/animehay-hls-proxy")
+    }
+);
 
             try {
 
