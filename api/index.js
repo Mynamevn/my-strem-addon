@@ -31584,46 +31584,36 @@ class AnimeHayMpegTsTransform extends Transform {
 
 app.get(
     "/animehay-segment-proxy",
-    async (
-        req,
-        res
-    ) => {
+    async (req, res) => {
 
-        const startedAt =
-            Date.now();
+        const startedAt = Date.now();
 
-
-        let sourceStream =
-            null;
-
+        let sourceStream = null;
+        let transform = null;
+        let outputBytes = 0;
+        let sourceBytes = 0;
+        let finished = false;
 
         try {
 
-            const targetUrl =
-                String(
-                    req.query?.url ||
-                    ""
-                ).trim();
+            const targetUrl = String(
+                req.query?.url || ""
+            ).trim();
 
-
-            const referer =
-                String(
-                    req.query?.ref ||
-                    "https://main.vipah06.xyz/"
-                ).trim();
-
+            const referer = String(
+                req.query?.ref ||
+                "https://main.vipah06.xyz/"
+            ).trim();
 
             console.log(
                 "[ANIMEHAY SEGMENT PROXY] URL:",
                 targetUrl
             );
 
-
             console.log(
                 "[ANIMEHAY SEGMENT PROXY] REFERER:",
                 referer
             );
-
 
             // -------------------------------------------------
             // VALIDATE
@@ -31631,167 +31621,164 @@ app.get(
 
             if (
                 !targetUrl ||
-                !isValidAnimeHayStreamUrl(
-                    targetUrl
-                )
+                !isValidAnimeHayStreamUrl(targetUrl)
             ) {
-
                 return res
                     .status(400)
                     .type("text/plain")
-                    .send(
-                        "Invalid AnimeHay segment URL"
-                    );
+                    .send("Invalid AnimeHay segment URL");
             }
-
 
             // -------------------------------------------------
             // NẾU URI THỰC RA LÀ M3U8
-            //
-            // Không để segment proxy xử lý playlist.
             // -------------------------------------------------
 
-            if (
-                isAnimeHayM3u8Url(
-                    targetUrl
-                )
-            ) {
-
-                return res
-                    .redirect(
-                        302,
-                        makeAnimeHayHlsProxyUrl(
-                            targetUrl,
-                            referer
-                        )
-                    );
+            if (isAnimeHayM3u8Url(targetUrl)) {
+                return res.redirect(
+                    302,
+                    makeAnimeHayHlsProxyUrl(
+                        targetUrl,
+                        referer
+                    )
+                );
             }
-
 
             // -------------------------------------------------
             // SOURCE STREAM
             // -------------------------------------------------
 
-            const response =
-                await axios.get(
-                    targetUrl,
-                    {
-                        timeout:
-                            30000,
+            const response = await axios.get(
+                targetUrl,
+                {
+                    timeout: 30000,
 
-                        responseType:
-                            "stream",
+                    responseType: "stream",
 
-                        headers:
-                            {
-                                ...getAnimeHayProxyHeaders(
-                                    referer
-                                ),
+                    headers: {
+                        ...getAnimeHayProxyHeaders(referer),
+                        "Accept": "*/*"
+                    },
 
-                                "Accept":
-                                    "*/*"
-                            },
+                    validateStatus: status =>
+                        status >= 200 && status < 300
+                }
+            );
 
-                        validateStatus:
-                            status =>
-                                status >= 200 &&
-                                status < 300
-                    }
-                );
-
-
-            sourceStream =
-                response?.data;
-
+            sourceStream = response?.data;
 
             if (
                 !sourceStream ||
-                typeof sourceStream.pipe !==
-                    "function"
+                typeof sourceStream.pipe !== "function"
             ) {
-
                 throw new Error(
                     "Invalid AnimeHay source stream"
                 );
             }
 
+            const contentType = String(
+                response?.headers?.["content-type"] || ""
+            ).toLowerCase();
 
-            const contentType =
-                String(
-                    response?.headers?.[
-                        "content-type"
-                    ] ||
-                    ""
-                ).toLowerCase();
-
+            const sourceLength = response?.headers?.[
+                "content-length"
+            ] || "";
 
             console.log(
                 "[ANIMEHAY SEGMENT PROXY] SOURCE:",
                 {
-                    status:
-                        response?.status,
-
+                    status: response?.status,
                     contentType,
-
-                    contentLength:
-                        response?.headers?.[
-                            "content-length"
-                        ] ||
-                        ""
+                    contentLength: sourceLength
                 }
             );
 
-
             // -------------------------------------------------
-            // XÁC ĐỊNH CÓ PHẢI MPEG-TS KHÔNG
-            //
-            // Nếu content-type rõ ràng là MPEG-TS
-            // hoặc URL là .ts → dùng transform.
-            //
-            // Các media khác → stream nguyên bản.
+            // XÁC ĐỊNH MPEG-TS / SEGMENT PNG
             // -------------------------------------------------
 
-            const pathname =
-                (() => {
+            let pathname = "";
 
-                    try {
+            try {
+                pathname = new URL(
+                    targetUrl
+                ).pathname.toLowerCase();
+            } catch (_) {}
 
-                        return new URL(
-                            targetUrl
-                        ).pathname.toLowerCase();
+            const isAnimeHayPngSegment =
+                /\/hls\/\d+\/(?:sd|hd)\/seg_\d+\.png$/i
+                    .test(pathname);
 
-                    } catch (_) {
+            const looksLikeTs =
+                contentType.includes("mpeg") ||
+                pathname.endsWith(".ts") ||
+                isAnimeHayPngSegment;
 
-                        return "";
+            // -------------------------------------------------
+            // THEO DÕI CLIENT NGẮT KẾT NỐI
+            // -------------------------------------------------
+
+            res.once("close", () => {
+
+                if (!res.writableFinished) {
+
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] CLIENT DISCONNECTED:",
+                        {
+                            sourceBytes,
+                            outputBytes,
+                            headersSent: res.headersSent
+                        }
+                    );
+
+                    if (
+                        sourceStream &&
+                        !sourceStream.destroyed
+                    ) {
+                        sourceStream.destroy();
                     }
-                })();
 
-        const looksLikeTs =
-            contentType.includes(
-                "mpeg"
-            ) ||
-            pathname.endsWith(
-                ".ts"
-            ) ||
-            pathname.includes(
-                ".ts?"
-            ) ||
-            /\/hls\/\d+\/(?:sd|hd)\/seg_\d+\.png$/i.test(
-                pathname
-            );
+                    if (
+                        transform &&
+                        !transform.destroyed
+                    ) {
+                        transform.destroy();
+                    }
+                }
+            });
+
+            // -------------------------------------------------
+            // SOURCE ERROR
+            // -------------------------------------------------
+
+            sourceStream.on("error", error => {
+
+                console.log(
+                    "[ANIMEHAY SEGMENT PROXY] SOURCE ERROR:",
+                    error?.message || error
+                );
+
+                if (
+                    transform &&
+                    !transform.destroyed
+                ) {
+                    transform.destroy(error);
+                }
+
+                if (!res.headersSent) {
+                    res.status(502).end();
+                } else if (!res.destroyed) {
+                    res.destroy(error);
+                }
+            });
 
             // -------------------------------------------------
             // NATIVE STREAM
+            // Không biến đổi dữ liệu.
             // -------------------------------------------------
 
-            if (
-                !looksLikeTs
-            ) {
+            if (!looksLikeTs) {
 
-                res.status(
-                    response.status
-                );
-
+                res.status(response.status);
 
                 res.set(
                     "Content-Type",
@@ -31799,205 +31786,129 @@ app.get(
                     "application/octet-stream"
                 );
 
-
-                const sourceLength =
-                    response?.headers?.[
-                        "content-length"
-                    ];
-
-
-                if (
-                    sourceLength
-                ) {
-
+                if (sourceLength) {
                     res.set(
                         "Content-Length",
-                        String(
-                            sourceLength
-                        )
+                        String(sourceLength)
                     );
                 }
 
-
-                res.set(
-                    "Accept-Ranges",
-                    "none"
-                );
-
-
-                res.set(
-                    "Access-Control-Allow-Origin",
-                    "*"
-                );
-
-
-                res.set(
-                    "Access-Control-Allow-Headers",
-                    "*"
-                );
-
+                res.set("Accept-Ranges", "none");
+                res.set("Access-Control-Allow-Origin", "*");
+                res.set("Access-Control-Allow-Headers", "*");
 
                 res.set(
                     "Cache-Control",
                     "no-store, no-cache, must-revalidate"
                 );
 
+                sourceStream.on("data", chunk => {
+                    sourceBytes += chunk.length;
+                });
+
+                res.once("finish", () => {
+
+                    finished = true;
+
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] NATIVE FINISH:",
+                        {
+                            ms: Date.now() - startedAt,
+                            sourceBytes,
+                            declaredBytes: sourceLength || null
+                        }
+                    );
+                });
 
                 console.log(
                     "[ANIMEHAY SEGMENT PROXY] NATIVE STREAM"
                 );
 
-
-                sourceStream.pipe(
-                    res
-                );
-
+                sourceStream.pipe(res);
 
                 return;
             }
-
 
             // -------------------------------------------------
             // MPEG-TS TRANSFORM
             // -------------------------------------------------
 
-            const transform =
-                new AnimeHayMpegTsTransform();
+            transform = new AnimeHayMpegTsTransform();
 
+            transform.on("data", chunk => {
+                outputBytes += chunk.length;
+            });
 
-            sourceStream.on(
-                "error",
-                error => {
+            transform.on("error", error => {
 
-                    console.log(
-                        "[ANIMEHAY SEGMENT PROXY] SOURCE ERROR:",
-                        error?.message ||
-                        error
-                    );
+                console.log(
+                    "[ANIMEHAY SEGMENT PROXY] TRANSFORM ERROR:",
+                    error?.message || error
+                );
 
-
-                    transform.destroy(
-                        error
-                    );
+                if (!res.headersSent) {
+                    res
+                        .status(502)
+                        .type("text/plain")
+                        .send(
+                            "AnimeHay MPEG-TS transform error"
+                        );
+                } else if (!res.destroyed) {
+                    res.destroy(error);
                 }
-            );
+            });
 
+            sourceStream.on("data", chunk => {
+                sourceBytes += chunk.length;
+            });
 
-            transform.on(
-                "error",
-                error => {
+            res.status(response.status);
 
-                    console.log(
-                        "[ANIMEHAY SEGMENT PROXY] TRANSFORM ERROR:",
-                        error?.message ||
-                        error
-                    );
+            res.set("Content-Type", "video/mp2t");
+            res.set("Accept-Ranges", "none");
 
-
-                    if (
-                        !res.headersSent
-                    ) {
-
-                        res
-                            .status(502)
-                            .type("text/plain")
-                            .send(
-                                "AnimeHay MPEG-TS transform error"
-                            );
-
-                    } else {
-
-                        try {
-                            res.destroy(
-                                error
-                            );
-                        } catch (_) {}
-                    }
-                }
-            );
-
-
-            res.status(
-                response.status
-            );
-
-
-            res.set(
-                "Content-Type",
-                "video/mp2t"
-            );
-
-
-            res.set(
-                "Accept-Ranges",
-                "none"
-            );
-
-
-            res.set(
-                "Access-Control-Allow-Origin",
-                "*"
-            );
-
-
-            res.set(
-                "Access-Control-Allow-Headers",
-                "*"
-            );
-
+            res.set("Access-Control-Allow-Origin", "*");
+            res.set("Access-Control-Allow-Headers", "*");
 
             res.set(
                 "Cache-Control",
                 "no-store, no-cache, must-revalidate"
             );
 
+            res.set("Pragma", "no-cache");
+            res.set("Expires", "0");
 
-            res.set(
-                "Pragma",
-                "no-cache"
-            );
+            res.once("finish", () => {
 
+                finished = true;
 
-            res.set(
-                "Expires",
-                "0"
-            );
-
+                console.log(
+                    "[ANIMEHAY SEGMENT PROXY] FINISH:",
+                    {
+                        ms: Date.now() - startedAt,
+                        sourceBytes,
+                        outputBytes,
+                        declaredBytes: sourceLength || null,
+                        status: res.statusCode,
+                        writableFinished: res.writableFinished
+                    }
+                );
+            });
 
             console.log(
-                "[ANIMEHAY SEGMENT PROXY] MPEG-TS STREAM"
-            );
-
-
-            sourceStream.pipe(
-                transform
-            );
-
-
-            transform.pipe(
-                res
-            );
-
-
-            res.once(
-                "finish",
-                () => {
-
-                    console.log(
-                        "[ANIMEHAY SEGMENT PROXY] FINISH:",
-                        {
-                            ms:
-                                Date.now() -
-                                startedAt,
-
-                            bytes:
-                                transform.readableLength ||
-                                0
-                        }
-                    );
+                "[ANIMEHAY SEGMENT PROXY] MPEG-TS STREAM:",
+                {
+                    isAnimeHayPngSegment,
+                    contentType
                 }
             );
 
+            // -------------------------------------------------
+            // PIPELINE
+            // -------------------------------------------------
+
+            sourceStream.pipe(transform);
+            transform.pipe(res);
 
             return;
 
@@ -32010,43 +31921,24 @@ app.get(
                 e
             );
 
-
-            if (
-                e?.response?.data
-            ) {
-
+            if (e?.response?.data) {
                 console.log(
                     "[ANIMEHAY SEGMENT PROXY ERROR BODY]:",
-                    String(
-                        e.response.data
-                    ).slice(
-                        0,
-                        500
-                    )
+                    String(e.response.data).slice(0, 500)
                 );
             }
 
-
-            if (
-                !res.headersSent
-            ) {
+            if (!res.headersSent) {
 
                 return res
                     .status(502)
                     .type("text/plain")
-                    .send(
-                        "AnimeHay segment proxy error"
-                    );
+                    .send("AnimeHay segment proxy error");
             }
 
-
-            try {
-
-                res.destroy(
-                    e
-                );
-
-            } catch (_) {}
+            if (!res.destroyed) {
+                res.destroy(e);
+            }
         }
     }
 );
