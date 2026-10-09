@@ -18213,169 +18213,225 @@ async function fetchAnimeHay(
         }
 
 
-        // ----------------------------------------------------
-        // 3B. FALLBACK — SEARCH ANIME DIRECTORY
-        //
-        // Nếu tìm kiếm theo tên không có kết quả,
-        // quét danh mục AnimeHay để tìm link phim trực tiếp.
-        // ----------------------------------------------------
+            // ----------------------------------------------------
+    // 3B. FALLBACK — SEARCH ANIME DIRECTORY
+    //
+    // Chỉ nhận URL /thong-tin-phim/ thuộc đúng card.
+    // Không leo lên các container lớn có nhiều phim.
+    // ----------------------------------------------------
 
-        if (candidateMap.size === 0) {
-            const directoryPaths = [
-                "/the-loai/anime-1.html",
-                "/"
-            ];
+    if (candidateMap.size === 0) {
 
-            const wantedTitles = titleVariants
-                .map(value => animeHayNormalizeText(value))
-                .filter(Boolean);
+        const directoryPaths = [
+            "/the-loai/anime-1.html",
+            "/"
+        ];
 
-            for (const path of directoryPaths) {
-                try {
-                    const directoryUrl = new URL(
-                        path,
-                        activeDomain
-                    ).href;
+        const wantedTitles = titleVariants
+            .map(value => ({
+                original: String(value || "").trim(),
+                normalized: animeHayNormalizeText(value)
+            }))
+            .filter(item => item.normalized);
 
-                    console.log(
-                        "[ANIMEHAY] DIRECTORY FALLBACK:",
-                        directoryUrl
-                    );
+        for (const path of directoryPaths) {
 
-                    const directoryResponse = await axios.get(
-                        directoryUrl,
-                        {
-                            timeout: 15000,
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                                    "Chrome/156.0.0.0 Safari/537.36",
-                                "Referer": activeDomain
-                            }
+            try {
+
+                const directoryUrl = new URL(
+                    path,
+                    activeDomain
+                ).href;
+
+                console.log(
+                    "[ANIMEHAY] DIRECTORY FALLBACK:",
+                    directoryUrl
+                );
+
+                const directoryResponse = await axios.get(
+                    directoryUrl,
+                    {
+                        timeout: 15000,
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                "Chrome/156.0.0.0 Safari/537.36",
+                            "Referer": activeDomain
                         }
+                    }
+                );
+
+                const directoryHtml = String(
+                    directoryResponse?.data || ""
+                );
+
+                const $directory = cheerio.load(
+                    directoryHtml
+                );
+
+                let matchesOnPage = 0;
+
+                // Duyệt URL detail trực tiếp, không bắt đầu
+                // từ link tập rồi tìm ngược lên container cha.
+                $directory(
+                    "a[href*='/thong-tin-phim/']"
+                ).each((_, detailEl) => {
+
+                    const detailAnchor = $directory(
+                        detailEl
                     );
 
-                    const directoryHtml = String(
-                        directoryResponse?.data || ""
-                    );
+                    const href = String(
+                        detailAnchor.attr("href") || ""
+                    ).trim();
 
-                    const $directory = cheerio.load(directoryHtml);
+                    if (!href) return;
 
-                    let matchesOnPage = 0;
+                    let parsedUrl;
 
-                    $directory("a[href]").each((_, el) => {
-                        const anchor = $directory(el);
-                        const anchorText = anchor.text().trim();
-                        const normalizedText =
-                            animeHayNormalizeText(anchorText);
-
-                        if (!normalizedText) return;
-
-                        const matchedTitle = wantedTitles.some(
-                            wanted =>
-                                normalizedText === wanted ||
-                                normalizedText.includes(wanted) ||
-                                wanted.includes(normalizedText)
+                    try {
+                        parsedUrl = new URL(
+                            href,
+                            activeDomain
                         );
+                    } catch (_) {
+                        return;
+                    }
 
-                        if (!matchedTitle) return;
+                    // Chỉ nhận URL detail trên domain đang dùng.
+                    if (
+                        parsedUrl.origin !==
+                            new URL(activeDomain).origin ||
+                        !parsedUrl.pathname.includes(
+                            "/thong-tin-phim/"
+                        )
+                    ) {
+                        return;
+                    }
 
-                        
-                        // Tìm trang THÔNG TIN PHIM trong thẻ
-                        // chứa liên kết tên phim hoặc liên kết tập.
-                        // Không dùng URL /xem-phim/ làm trang detail.
+                    let matchedTitle = null;
+                    let matchedCardText = "";
+                    let current = detailAnchor.parent();
 
-                        let detailUrl = "";
-                        let current = anchor;
+                    // Tìm container gần nhất có tên phim cần tìm.
+                    // Giới hạn độ sâu và độ dài để tránh bắt cả
+                    // vùng chứa nhiều card phim khác nhau.
+                    for (
+                        let depth = 0;
+                        depth < 6 && current.length;
+                        depth++
+                    ) {
 
-                        for (let depth = 0; depth < 8; depth++) {
-                            const infoLinks = current
-                                .find("a[href*='/thong-tin-phim/']")
-                                .addBack("a[href*='/thong-tin-phim/']");
+                        const cardText = String(
+                            current.text() || ""
+                        )
+                            .replace(/\s+/g, " ")
+                            .trim();
 
-                            infoLinks.each((_, linkEl) => {
-                                if (detailUrl) return;
+                        const normalizedCardText =
+                            animeHayNormalizeText(
+                                cardText
+                            );
 
-                                const href = String(
-                                    $directory(linkEl).attr("href") || ""
-                                ).trim();
+                        if (
+                            normalizedCardText &&
+                            cardText.length <= 700
+                        ) {
 
-                                if (!href) return;
+                            matchedTitle =
+                                wantedTitles.find(item => {
 
-                                try {
-                                    const parsed = new URL(href, activeDomain);
+                                    const wantedWords =
+                                        item.normalized
+                                            .split(/\s+/)
+                                            .filter(Boolean);
 
                                     if (
-                                        parsed.origin ===
-                                            new URL(activeDomain).origin &&
-                                        parsed.pathname.includes(
-                                            "/thong-tin-phim/"
+                                        normalizedCardText.includes(
+                                            item.normalized
                                         )
                                     ) {
-                                        detailUrl = parsed.href;
+                                        return true;
                                     }
-                                } catch (_) {}
-                            });
 
-                            if (detailUrl) break;
+                                    // Cho phép tên bị chèn dấu câu
+                                    // hoặc khoảng trắng trong card.
+                                    return (
+                                        wantedWords.length >= 3 &&
+                                        wantedWords.every(word =>
+                                            normalizedCardText.includes(
+                                                word
+                                            )
+                                        )
+                                    );
+                                }) || null;
 
-                            current = current.parent();
-
-                            if (!current.length) break;
+                            if (matchedTitle) {
+                                matchedCardText = cardText;
+                                break;
+                            }
                         }
 
-                        // Nếu không tìm được trang thông tin phim,
-                        // bỏ qua ứng viên này; không chọn nhầm tập 2.
-                        if (!detailUrl) {
-                            console.log(
-                                "[ANIMEHAY] DETAIL URL NOT FOUND IN CARD:",
-                                anchorText
-                            );
-                            return;
-                        }
-
-                        if (!candidateMap.has(detailUrl)) {
-                            candidateMap.set(detailUrl, {
-                                title: anchorText,
-                                url: detailUrl,
-                                year: 2026
-                            });
-
-                            matchesOnPage++;
-
-                            console.log(
-                                "[ANIMEHAY] DIRECTORY MATCH:",
-                                {
-                                    title: anchorText,
-                                    url: detailUrl
-                                }
-                            );
-                        }
-                    });
-
-                    console.log(
-                        "[ANIMEHAY] DIRECTORY MATCH COUNT:",
-                        {
-                            url: directoryUrl,
-                            count: matchesOnPage
-                        }
-                    );
-
-                    if (candidateMap.size > 0) {
-                        break;
+                        current = current.parent();
                     }
-                } catch (directoryError) {
-                    console.log(
-                        "[ANIMEHAY] DIRECTORY FALLBACK ERROR:",
-                        path,
-                        directoryError?.response?.status ||
-                        directoryError?.message ||
-                        directoryError
-                    );
+
+                    // Tên phim không xuất hiện trong card chứa
+                    // URL detail thì không nhận URL này.
+                    if (!matchedTitle) {
+                        return;
+                    }
+
+                    const detailUrl = parsedUrl.href;
+
+                    if (!candidateMap.has(detailUrl)) {
+
+                        candidateMap.set(detailUrl, {
+                            title: matchedTitle.original,
+                            url: detailUrl,
+                            year: movieYear || 0
+                        });
+
+                        matchesOnPage++;
+
+                        console.log(
+                            "[ANIMEHAY] DIRECTORY MATCH:",
+                            {
+                                title: matchedTitle.original,
+                                url: detailUrl,
+                                cardText: matchedCardText.slice(
+                                    0,
+                                    220
+                                )
+                            }
+                        );
+                    }
+                });
+
+                console.log(
+                    "[ANIMEHAY] DIRECTORY MATCH COUNT:",
+                    {
+                        url: directoryUrl,
+                        count: matchesOnPage
+                    }
+                );
+
+                if (candidateMap.size > 0) {
+                    break;
                 }
+
+            } catch (directoryError) {
+
+                console.log(
+                    "[ANIMEHAY] DIRECTORY FALLBACK ERROR:",
+                    path,
+                    directoryError?.response?.status ||
+                    directoryError?.message ||
+                    directoryError
+                );
             }
         }
+    }
 
         const searchCandidates = [...candidateMap.values()];
 
