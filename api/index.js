@@ -17940,16 +17940,6 @@ async function animeHayLoadLinks(
                     sourceReferer
                 );
 
-            console.log(
-    "[ANIMEHAY] STREAM URL CHECK:",
-    {
-        originalUrl,
-        playableUrl,
-        sourceReferer,
-        isOriginalM3u8: /\.m3u8(?:$|[?#])/i.test(originalUrl),
-        isProxyUrl: playableUrl.includes("/animehay-hls-proxy")
-    }
-);
 
             try {
 
@@ -26735,271 +26725,142 @@ const externalStreams = [
 ];
 
     // =====================================================
-// 13. LỌC DIRECT STREAM
-// =====================================================
+    // 13. LỌC DIRECT STREAM
+    // =====================================================
 
-const validDirectStreams =
-    directStreams.filter(
-        stream => {
+    const validDirectStreams =
+        directStreams.filter(
+            stream => {
 
-            if (
-                !stream ||
-                typeof stream !== "object"
-            ) {
-                return false;
-            }
+                if (
+                    !stream ||
+                    typeof stream !== "object"
+                ) {
+                    return false;
+                }
 
-            return Boolean(
-                stream.url ||
-                stream.externalUrl
-            );
-        }
-    );
-
-
-// =====================================================
-// 14. LỌC FALLBACK
-// =====================================================
-
-const validExternalStreams =
-    externalStreams.filter(
-        stream => {
-
-            if (
-                !stream ||
-                typeof stream !== "object"
-            ) {
-                return false;
-            }
-
-            return Boolean(
-                stream.externalUrl
-            );
-        }
-    );
-
-
-// =====================================================
-// 15. GỘP TẤT CẢ
-// =====================================================
-
-const allStreams = [
-
-    ...validDirectStreams,
-
-    ...validExternalStreams
-
-];
-
-
-// =====================================================
-// 16. LOẠI URL TRÙNG
-// =====================================================
-
-const seen =
-    new Set();
-
-const uniqueStreams =
-    allStreams.filter(
-        stream => {
-
-            const key =
-                String(
+                return Boolean(
                     stream.url ||
-                    stream.externalUrl ||
-                    ""
-                ).trim();
+                    stream.externalUrl
+                );
 
-            if (!key) {
-                return false;
             }
+        );
 
-            if (
-                seen.has(key)
-            ) {
-                return false;
+    // =====================================================
+    // 14. LỌC FALLBACK
+    // =====================================================
+
+    const validExternalStreams =
+        externalStreams.filter(
+            stream => {
+
+                if (
+                    !stream ||
+                    typeof stream !== "object"
+                ) {
+                    return false;
+                }
+
+                return Boolean(
+                    stream.externalUrl
+                );
+
             }
+        );
 
-            seen.add(key);
+    // =====================================================
+    // 15. GỘP TẤT CẢ
+    // =====================================================
 
-            return true;
-        }
-    );
+    const allStreams = [
 
+        ...validDirectStreams,
 
-// =====================================================
-// 16.1 ANIMEHAY FINAL OBJECT
-// =====================================================
-//
-// AnimeHay được ép thành một Stream Object
-// tối giản trước khi trả về Stremio.
-//
-// Không thêm type.
-// Không thêm resolver.
-// Không thêm externalUrl.
-// Không thêm headers ngoài proxyHeaders.
-// =====================================================
+        ...validExternalStreams
 
-const finalStreams =
-    uniqueStreams.map(
-        stream => {
+    ];
 
-            if (
-                !stream ||
-                typeof stream !== "object"
-            ) {
-                return null;
-            }
+    // =====================================================
+    // 16. LOẠI URL TRÙNG
+    // =====================================================
 
-            const url =
-                String(
+    const seen =
+        new Set();
+
+    const uniqueStreams =
+        allStreams.filter(
+            stream => {
+
+                const key =
                     stream.url ||
-                    ""
-                ).trim();
+                    stream.externalUrl;
 
-            const externalUrl =
-                String(
-                    stream.externalUrl ||
-                    ""
-                ).trim();
+                if (!key) {
+                    return false;
+                }
 
-            const result = {
+                if (
+                    seen.has(key)
+                ) {
+                    return false;
+                }
 
-                name:
-                    String(
-                        stream.name ||
-                        "MOVINA"
-                    ),
+                seen.add(key);
 
-                title:
-                    String(
-                        stream.title ||
-                        "Full"
-                    )
-            };
+                return true;
 
-            // ---------------------------------------------
-            // DIRECT URL
-            // ---------------------------------------------
-
-            if (url) {
-
-                result.url =
-                    url;
             }
-
-            // ---------------------------------------------
-            // EXTERNAL URL
-            // ---------------------------------------------
-
-            if (
-                externalUrl
-            ) {
-
-                result.externalUrl =
-                    externalUrl;
-            }
-
-            // ---------------------------------------------
-            // BEHAVIOR HINTS
-            // ---------------------------------------------
-
-            if (
-                stream.behaviorHints &&
-                typeof stream.behaviorHints === "object"
-            ) {
-
-                result.behaviorHints = {
-                    ...stream.behaviorHints
-                };
-            }
-
-            // ---------------------------------------------
-            // SUBTITLES
-            // ---------------------------------------------
-
-            if (
-                Array.isArray(
-                    stream.subtitles
-                ) &&
-                stream.subtitles.length
-            ) {
-
-                result.subtitles =
-                    stream.subtitles;
-            }
-
-            return result;
-        }
-    ).filter(Boolean);
-
-
-// =====================================================
-// 16.2 DEBUG ANIMEHAY FINAL
-// =====================================================
-
+        );
 console.log(
-    "[DEBUG] ANIMEHAY FINAL RESPONSE OBJECT:",
+    "[DEBUG] PhimLongTieng FINAL:",
     JSON.stringify(
-        finalStreams.filter(
+        uniqueStreams.filter(
             stream =>
-                stream?.name ===
-                "[AnimeHay]"
+                stream?.name?.includes("[PhimLongTieng]")
         ),
         null,
         2
     )
 );
+    // =====================================================
+    // 17. LOG CUỐI
+    // =====================================================
 
+    console.log(
+        "[STREAM] Direct:",
+        validDirectStreams.length
+    );
 
-// =====================================================
-// 17. LOG CUỐI
-// =====================================================
+    console.log(
+        "[STREAM] Fallback:",
+        validExternalStreams.length
+    );
 
-console.log(
-    "[STREAM] Direct:",
-    validDirectStreams.length
-);
+    console.log(
+        "[STREAM] Total:",
+        uniqueStreams.length
+    );
 
-console.log(
-    "[STREAM] Fallback:",
-    validExternalStreams.length
-);
+    console.log(
+        "[STREAM] Fallback URLs:",
+        JSON.stringify(
+            validExternalStreams
+        )
+    );
 
-console.log(
-    "[STREAM] Total:",
-    finalStreams.length
-);
+    console.log(
+        "========== STREAM END =========="
+    );
 
-console.log(
-    "[STREAM] FINAL ALL:",
-    JSON.stringify(
-        finalStreams,
-        null,
-        2
-    )
-);
+    // =====================================================
+    // 18. TRẢ VỀ STREMIO
+    // =====================================================
 
-console.log(
-    "[STREAM] Fallback URLs:",
-    JSON.stringify(
-        validExternalStreams
-    )
-);
-
-console.log(
-    "========== STREAM END =========="
-);
-
-
-// =====================================================
-// 18. TRẢ VỀ STREMIO
-// =====================================================
-
-return {
-    streams:
-        finalStreams
-};
+    return {
+        streams:
+            uniqueStreams
+    };
 
 });
 
@@ -31673,9 +31534,8 @@ app.get(
             Date.now();
 
 
-                let sourceStream = null;
-        let sourceBytes = 0;
-        let transformedBytes = 0;
+        let sourceStream =
+            null;
 
 
         try {
@@ -31781,18 +31641,8 @@ app.get(
                 );
 
 
-                        sourceStream = response?.data;
-
-            sourceStream.on("data", chunk => {
-                sourceBytes += chunk.length;
-
-                if (sourceBytes === chunk.length) {
-                    console.log(
-                        "[ANIMEHAY SEGMENT] SOURCE FIRST BYTES:",
-                        chunk.subarray(0, 32).toString("hex")
-                    );
-                }
-            });
+            sourceStream =
+                response?.data;
 
 
             if (
@@ -31815,22 +31665,6 @@ app.get(
                     ""
                 ).toLowerCase();
 
-            console.log(
-    "[ANIMEHAY SEGMENT PROXY] DIAGNOSTIC:",
-    {
-        status: response?.status,
-        contentType,
-        contentLength:
-            response?.headers?.["content-length"] || "",
-        targetPath: (() => {
-            try {
-                return new URL(targetUrl).pathname;
-            } catch (_) {
-                return "";
-            }
-        })()
-    }
-);
 
             console.log(
                 "[ANIMEHAY SEGMENT PROXY] SOURCE:",
@@ -31875,18 +31709,15 @@ app.get(
 
 
             const looksLikeTs =
-            contentType.includes("mpeg") ||
-            pathname.endsWith(".ts") ||
-            pathname.endsWith(".png");
-
-        console.log(
-            "[ANIMEHAY SEGMENT PROXY] FORMAT DETECTED:",
-            {
-                pathname,
-                contentType,
-                useMpegTsTransform: looksLikeTs
-            }
-        );
+                contentType.includes(
+                    "mpeg"
+                ) ||
+                pathname.endsWith(
+                    ".ts"
+                ) ||
+                pathname.includes(
+                    ".ts?"
+                );
 
 
             // -------------------------------------------------
@@ -31967,88 +31798,146 @@ app.get(
 
 
             // -------------------------------------------------
-            // MPEG-TS DIRECT PASSTHROUGH
-            //
-            // Segment AnimeHay .png đã được xác nhận bắt đầu
-            // bằng MPEG-TS sync byte 0x47.
-            // Tạm bỏ transform để kiểm tra khả năng transform
-            // gây lỗi phát trong Stremio.
+            // MPEG-TS TRANSFORM
             // -------------------------------------------------
+
+            const transform =
+                new AnimeHayMpegTsTransform();
+
+
+            sourceStream.on(
+                "error",
+                error => {
+
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] SOURCE ERROR:",
+                        error?.message ||
+                        error
+                    );
+
+
+                    transform.destroy(
+                        error
+                    );
+                }
+            );
+
+
+            transform.on(
+                "error",
+                error => {
+
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] TRANSFORM ERROR:",
+                        error?.message ||
+                        error
+                    );
+
+
+                    if (
+                        !res.headersSent
+                    ) {
+
+                        res
+                            .status(502)
+                            .type("text/plain")
+                            .send(
+                                "AnimeHay MPEG-TS transform error"
+                            );
+
+                    } else {
+
+                        try {
+                            res.destroy(
+                                error
+                            );
+                        } catch (_) {}
+                    }
+                }
+            );
+
 
             res.status(
                 response.status
             );
+
 
             res.set(
                 "Content-Type",
                 "video/mp2t"
             );
 
+
             res.set(
                 "Accept-Ranges",
                 "none"
             );
+
 
             res.set(
                 "Access-Control-Allow-Origin",
                 "*"
             );
 
+
             res.set(
                 "Access-Control-Allow-Headers",
                 "*"
             );
+
 
             res.set(
                 "Cache-Control",
                 "no-store, no-cache, must-revalidate"
             );
 
+
             res.set(
                 "Pragma",
                 "no-cache"
             );
+
 
             res.set(
                 "Expires",
                 "0"
             );
 
+
             console.log(
-                "[ANIMEHAY SEGMENT PROXY] MPEG-TS DIRECT PASSTHROUGH"
+                "[ANIMEHAY SEGMENT PROXY] MPEG-TS STREAM"
             );
 
-            sourceStream.on(
-                "error",
-                error => {
-                    console.log(
-                        "[ANIMEHAY SEGMENT PROXY] SOURCE ERROR:",
-                        error?.message || error
-                    );
 
-                    if (!res.headersSent) {
-                        res.status(502).end();
-                    } else {
-                        res.destroy(error);
-                    }
-                }
+            sourceStream.pipe(
+                transform
             );
+
+
+            transform.pipe(
+                res
+            );
+
 
             res.once(
                 "finish",
                 () => {
+
                     console.log(
                         "[ANIMEHAY SEGMENT PROXY] FINISH:",
                         {
-                            ms: Date.now() - startedAt,
-                            sourceBytes,
-                            transformedBytes: 0
+                            ms:
+                                Date.now() -
+                                startedAt,
+
+                            bytes:
+                                transform.readableLength ||
+                                0
                         }
                     );
                 }
             );
 
-            sourceStream.pipe(res);
 
             return;
 
