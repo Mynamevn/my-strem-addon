@@ -31856,8 +31856,7 @@ app.get(
             const looksLikeTs =
             contentType.includes("mpeg") ||
             pathname.endsWith(".ts") ||
-            pathname.endsWith(".png") ||
-            pathname.includes(".ts?");
+            pathname.endsWith(".png");
 
         console.log(
             "[ANIMEHAY SEGMENT PROXY] FORMAT DETECTED:",
