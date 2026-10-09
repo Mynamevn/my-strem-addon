@@ -18212,6 +18212,163 @@ async function fetchAnimeHay(
             }
         }
 
+
+        // ----------------------------------------------------
+        // 3B. FALLBACK — SEARCH ANIME DIRECTORY
+        //
+        // Nếu tìm kiếm theo tên không có kết quả,
+        // quét danh mục AnimeHay để tìm link phim trực tiếp.
+        // ----------------------------------------------------
+
+        if (candidateMap.size === 0) {
+            const directoryPaths = [
+                "/the-loai/anime-1.html",
+                "/"
+            ];
+
+            const wantedTitles = titleVariants
+                .map(value => animeHayNormalizeText(value))
+                .filter(Boolean);
+
+            for (const path of directoryPaths) {
+                try {
+                    const directoryUrl = new URL(
+                        path,
+                        activeDomain
+                    ).href;
+
+                    console.log(
+                        "[ANIMEHAY] DIRECTORY FALLBACK:",
+                        directoryUrl
+                    );
+
+                    const directoryResponse = await axios.get(
+                        directoryUrl,
+                        {
+                            timeout: 15000,
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                    "Chrome/156.0.0.0 Safari/537.36",
+                                "Referer": activeDomain
+                            }
+                        }
+                    );
+
+                    const directoryHtml = String(
+                        directoryResponse?.data || ""
+                    );
+
+                    const $directory = cheerio.load(directoryHtml);
+
+                    let matchesOnPage = 0;
+
+                    $directory("a[href]").each((_, el) => {
+                        const anchor = $directory(el);
+                        const anchorText = anchor.text().trim();
+                        const normalizedText =
+                            animeHayNormalizeText(anchorText);
+
+                        if (!normalizedText) return;
+
+                        const matchedTitle = wantedTitles.some(
+                            wanted =>
+                                normalizedText === wanted ||
+                                normalizedText.includes(wanted) ||
+                                wanted.includes(normalizedText)
+                        );
+
+                        if (!matchedTitle) return;
+
+                        const card = anchor.closest(
+                            "div.mc, .mc, article, .item, " +
+                            ".movie-item, .film-item, li"
+                        );
+
+                        const possibleLinks = (
+                            card.length
+                                ? card.find("a[href]")
+                                : anchor
+                        ).toArray();
+
+                        let detailUrl = "";
+
+                        for (const linkEl of possibleLinks) {
+                            const href = String(
+                                $directory(linkEl).attr("href") || ""
+                            ).trim();
+
+                            if (!href) continue;
+
+                            let parsedUrl;
+
+                            try {
+                                parsedUrl = new URL(href, activeDomain);
+                            } catch (_) {
+                                continue;
+                            }
+
+                            if (parsedUrl.origin !== new URL(activeDomain).origin) {
+                                continue;
+                            }
+
+                            const pathname = parsedUrl.pathname;
+
+                            const looksLikeDetail =
+                                pathname.includes("/thong-tin-phim/") ||
+                                /fx[- ]senshi[- ]kurumi/i.test(pathname);
+
+                            if (looksLikeDetail) {
+                                detailUrl = parsedUrl.href;
+                                break;
+                            }
+                        }
+
+                        if (!detailUrl) return;
+
+                        if (!candidateMap.has(detailUrl)) {
+                            candidateMap.set(detailUrl, {
+                                title: anchorText,
+                                url: detailUrl,
+                                year: 2026
+                            });
+
+                            matchesOnPage++;
+
+                            console.log(
+                                "[ANIMEHAY] DIRECTORY MATCH:",
+                                {
+                                    title: anchorText,
+                                    url: detailUrl
+                                }
+                            );
+                        }
+                    });
+
+                    console.log(
+                        "[ANIMEHAY] DIRECTORY MATCH COUNT:",
+                        {
+                            url: directoryUrl,
+                            count: matchesOnPage
+                        }
+                    );
+
+                    if (candidateMap.size > 0) {
+                        break;
+                    }
+                } catch (directoryError) {
+                    console.log(
+                        "[ANIMEHAY] DIRECTORY FALLBACK ERROR:",
+                        path,
+                        directoryError?.response?.status ||
+                        directoryError?.message ||
+                        directoryError
+                    );
+                }
+            }
+        }
+
         const searchCandidates = [...candidateMap.values()];
 
         console.log(
