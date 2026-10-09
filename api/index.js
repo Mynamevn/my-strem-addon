@@ -31498,6 +31498,39 @@ class AnimeHayMpegTsTransform extends Transform {
                 this.chunks,
                 this.totalBytes
             );
+    
+            const syncPositions = [];
+
+for (let i = 0; i < Math.min(data.length, 4096); i++) {
+    if (
+        data[i] === 0x47 &&
+        i + 188 < data.length &&
+        data[i + 188] === 0x47 &&
+        i + 376 < data.length &&
+        data[i + 376] === 0x47
+    ) {
+        syncPositions.push(i);
+
+        if (syncPositions.length >= 5) {
+            break;
+        }
+    }
+}
+
+console.log("[ANIMEHAY SEGMENT] BYTE DIAGNOSTIC:", {
+    length: data.length,
+    lengthModulo188: data.length % 188,
+    first32Hex: data.subarray(0, 32).toString("hex"),
+    syncPositions,
+    startsWithPngSignature:
+        data.length >= 8 &&
+        data.subarray(0, 8).equals(
+            Buffer.from([
+                0x89, 0x50, 0x4e, 0x47,
+                0x0d, 0x0a, 0x1a, 0x0a
+            ])
+        )
+});
 
             this.chunks = [];
             this.totalBytes = 0;
