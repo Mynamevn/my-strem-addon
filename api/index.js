@@ -31453,273 +31453,123 @@ app.get(
 
 
 // =====================================================
-// 16.0.7B. ANIMEHAY SEGMENT PROXY
+// 16.0.7B. ANIMEHAY MPEG-TS TRANSFORM
 //
-// Segment được stream trực tiếp.
+// Đối chiếu AnimeHay CloudStream:
+// InterceptorUtilKt.skipByteError()
 //
-// Nếu source bắt đầu bằng MPEG-TS:
+// MPEG-TS packet size = 188 bytes
+// MPEG-TS sync byte   = 0x47
 //
-//      47 xx xx...
-//
-// → giữ nguyên.
-//
-// Nếu AnimeHay/VIPAH thêm fake prefix trước MPEG-TS:
-//
-//      prefix
-//         ↓
-//      47 xx xx...
-//
-// → bỏ prefix.
-//
-// Không áp dụng logic PNG cứng của VSMov.
+// Tìm hai sync byte cách nhau 188 bytes.
+// Nếu tìm thấy offset > 0 → bỏ fake prefix.
+// Nếu offset = 0 hoặc không tìm thấy → giữ nguyên.
 // =====================================================
 
-class AnimeHayMpegTsTransform
-    extends Transform {
+class AnimeHayMpegTsTransform extends Transform {
 
-    constructor(
-        options = {}
-    ) {
+    constructor(options = {}) {
+        super(options);
 
-        super(
-            options
-        );
-
-
-        this.pending =
-            Buffer.alloc(0);
-
-
-        this.resolved =
-            false;
-
-
-        this.maxProbeBytes =
-            128 * 1024;
+        this.chunks = [];
+        this.totalBytes = 0;
     }
 
-
-    _transform(
-        chunk,
-        encoding,
-        callback
-    ) {
-
+    _transform(chunk, encoding, callback) {
         try {
+            const incoming = Buffer.isBuffer(chunk)
+                ? chunk
+                : Buffer.from(chunk, encoding);
 
-            const incoming =
-                Buffer.isBuffer(
-                    chunk
-                )
-                    ? chunk
-                    : Buffer.from(
-                        chunk
-                    );
-
-
-            if (
-                !incoming.length
-            ) {
-
-                return callback();
+            if (incoming.length > 0) {
+                this.chunks.push(incoming);
+                this.totalBytes += incoming.length;
             }
 
+            callback();
 
-            if (
-                this.resolved
-            ) {
+        } catch (error) {
+            callback(error);
+        }
+    }
 
-                this.push(
-                    incoming
-                );
+    _flush(callback) {
+        try {
+            const data = Buffer.concat(
+                this.chunks,
+                this.totalBytes
+            );
 
-                return callback();
-            }
+            this.chunks = [];
+            this.totalBytes = 0;
 
+            const TS_PACKET_SIZE = 188;
+            const TS_SYNC_BYTE = 0x47;
 
-            this.pending =
-                this.pending.length
-                    ? Buffer.concat([
-                        this.pending,
-                        incoming
-                    ])
-                    : incoming;
-
-
-            // -------------------------------------------------
-            // MPEG-TS NGAY TỪ BYTE 0
-            // -------------------------------------------------
-
-            if (
-                this.pending.length >= 188 &&
-                this.pending[0] === 0x47
-            ) {
-
-                this.resolved =
-                    true;
-
-
-                console.log(
-                    "[ANIMEHAY SEGMENT] MPEG-TS PREFIX: 0"
-                );
-
-
-                this.push(
-                    this.pending
-                );
-
-
-                this.pending =
-                    Buffer.alloc(0);
-
-
-                return callback();
-            }
-
+            let skipIndex = 0;
 
             // -------------------------------------------------
-            // TÌM MPEG-TS SYNC BYTE
+            // TÌM VỊ TRÍ MPEG-TS
             //
-            // MPEG-TS packet = 188 bytes.
-            //
-            // Chấp nhận sync byte 0x47 tại vị trí mà
-            // phía sau tiếp tục có 0x47 sau 188 bytes.
+            // Giống skipByteError():
+            // byte[i] === 0x47
+            // byte[i + 188] === 0x47
             // -------------------------------------------------
-
-            let found =
-                -1;
-
-
-            const max =
-                Math.min(
-                    this.pending.length,
-                    this.maxProbeBytes
-                );
-
 
             for (
-                let offset = 1;
-                offset < max;
-                offset++
+                let i = 0;
+                i + TS_PACKET_SIZE < data.length;
+                i++
             ) {
-
                 if (
-                    this.pending[offset] !==
-                    0x47
+                    data[i] === TS_SYNC_BYTE &&
+                    data[i + TS_PACKET_SIZE] === TS_SYNC_BYTE
                 ) {
-
-                    continue;
-                }
-
-
-                if (
-                    offset + 188 <
-                    this.pending.length &&
-                    this.pending[
-                        offset + 188
-                    ] === 0x47
-                ) {
-
-                    found =
-                        offset;
-
+                    skipIndex = i;
                     break;
                 }
             }
 
-
-            if (
-                found >= 0
-            ) {
-
-                this.resolved =
-                    true;
-
-
+            if (skipIndex > 0) {
                 console.log(
-                    "[ANIMEHAY SEGMENT] FAKE PREFIX FOUND:",
-                    found
+                    "[ANIMEHAY SEGMENT] FAKE PREFIX REMOVED:",
+                    skipIndex,
+                    "bytes; total:",
+                    data.length
                 );
-
 
                 this.push(
-                    this.pending.slice(
-                        found
-                    )
+                    data.subarray(skipIndex)
                 );
 
-
-                this.pending =
-                    Buffer.alloc(0);
-
-
-                return callback();
-            }
-
-
-            // -------------------------------------------------
-            // CHƯA ĐỦ DATA
-            // -------------------------------------------------
-
-            if (
-                this.pending.length >
-                this.maxProbeBytes
-            ) {
-
-                return callback(
-                    new Error(
-                        "AnimeHay MPEG-TS payload not found"
-                    )
+            } else if (skipIndex === 0 && data.length > 0) {
+                console.log(
+                    "[ANIMEHAY SEGMENT] MPEG-TS STARTS AT BYTE 0:",
+                    data.length,
+                    "bytes"
                 );
-            }
 
+                this.push(data);
+
+            } else {
+                // Giống CloudStream: không tìm thấy sync
+                // thì trả lại nguyên dữ liệu, không tự cắt.
+                console.log(
+                    "[ANIMEHAY SEGMENT] TS SYNC NOT FOUND; KEEP ORIGINAL:",
+                    data.length,
+                    "bytes"
+                );
+
+                this.push(data);
+            }
 
             callback();
 
-        } catch (e) {
-
-            callback(
-                e
-            );
-        }
-    }
-
-
-    _flush(
-        callback
-    ) {
-
-        try {
-
-            if (
-                !this.resolved &&
-                this.pending.length
-            ) {
-
-                // Không tìm được MPEG-TS.
-                //
-                // Không tự ý phá dữ liệu.
-                // Nếu source là fMP4/native media,
-                // route sẽ không dùng transform này.
-                return callback(
-                    new Error(
-                        "AnimeHay MPEG-TS payload not found"
-                    )
-                );
-            }
-
-
-            callback();
-
-        } catch (e) {
-
-            callback(
-                e
-            );
+        } catch (error) {
+            callback(error);
         }
     }
 }
-
 
 // =====================================================
 // ANIMEHAY SEGMENT PROXY ROUTE
