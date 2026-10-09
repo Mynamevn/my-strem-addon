@@ -31466,8 +31466,8 @@ app.get(
 // Nếu offset = 0 hoặc không tìm thấy → giữ nguyên.
 // =====================================================
 
-class AnimeHayMpegTsTransform extends Transform {
 
+class AnimeHayMpegTsTransform extends Transform {
     constructor(options = {}) {
         super(options);
 
@@ -31487,7 +31487,6 @@ class AnimeHayMpegTsTransform extends Transform {
             }
 
             callback();
-
         } catch (error) {
             callback(error);
         }
@@ -31506,16 +31505,11 @@ class AnimeHayMpegTsTransform extends Transform {
             const TS_PACKET_SIZE = 188;
             const TS_SYNC_BYTE = 0x47;
 
-            let skipIndex = 0;
+            let skipIndex = -1;
 
-            // -------------------------------------------------
-            // TÌM VỊ TRÍ MPEG-TS
-            //
-            // Giống skipByteError():
-            // byte[i] === 0x47
-            // byte[i + 188] === 0x47
-            // -------------------------------------------------
-
+            // Đối chiếu CloudStream:
+            // tìm byte 0x47 và byte 0x47 tiếp theo
+            // cách đúng 188 byte.
             for (
                 let i = 0;
                 i + TS_PACKET_SIZE < data.length;
@@ -31530,41 +31524,54 @@ class AnimeHayMpegTsTransform extends Transform {
                 }
             }
 
+            let output;
+
             if (skipIndex > 0) {
+                output = data.subarray(skipIndex);
+
                 console.log(
                     "[ANIMEHAY SEGMENT] FAKE PREFIX REMOVED:",
                     skipIndex,
-                    "bytes; total:",
-                    data.length
-                );
-
-                this.push(
-                    data.subarray(skipIndex)
-                );
-
-            } else if (skipIndex === 0 && data.length > 0) {
-                console.log(
-                    "[ANIMEHAY SEGMENT] MPEG-TS STARTS AT BYTE 0:",
+                    "inputBytes:",
                     data.length,
-                    "bytes"
+                    "outputBytes:",
+                    output.length
                 );
+            } else if (skipIndex === 0) {
+                output = data;
 
-                this.push(data);
-
+                console.log(
+                    "[ANIMEHAY SEGMENT] TS SYNC AT BYTE 0:",
+                    "inputBytes:",
+                    data.length,
+                    "outputBytes:",
+                    output.length
+                );
             } else {
                 // Giống CloudStream: không tìm thấy sync
-                // thì trả lại nguyên dữ liệu, không tự cắt.
+                // thì giữ nguyên response, không cắt tùy tiện.
+                output = data;
+
                 console.log(
                     "[ANIMEHAY SEGMENT] TS SYNC NOT FOUND; KEEP ORIGINAL:",
-                    data.length,
-                    "bytes"
+                    data.length
                 );
-
-                this.push(data);
             }
 
-            callback();
+            if (output.length > 0) {
+                this.push(output);
+            }
 
+            console.log(
+                "[ANIMEHAY SEGMENT] TRANSFORM COMPLETE:",
+                {
+                    inputBytes: data.length,
+                    outputBytes: output.length,
+                    skipIndex
+                }
+            );
+
+            callback();
         } catch (error) {
             callback(error);
         }
