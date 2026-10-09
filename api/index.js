@@ -15778,41 +15778,51 @@ async function animeHayFindEpisode(
         }
 
 
-        // Không chọn tập theo vị trí khi không xác định
-    // được số tập từ text hoặc URL.
-    // Tránh trường hợp yêu cầu tập 1 nhưng trả tập 2.
+        // ----------------------------------------------------
+        // Fallback theo vị trí
+        // ----------------------------------------------------
 
-    if (!selected) {
-        console.log(
-            "[ANIMEHAY] EPISODE NUMBER NOT FOUND:",
-            {
-                wanted,
-                available: episodes.slice(0, 10).map(ep => ({
-                    text: ep.text,
-                    url: ep.url
-                }))
+        if (
+            !selected
+        ) {
+
+            const index =
+                wanted - 1;
+
+
+            if (
+                index >= 0 &&
+                index < episodes.length
+            ) {
+
+                selected =
+                    episodes[index];
             }
+        }
+
+
+        if (
+            selected
+        ) {
+
+            console.log(
+                "[ANIMEHAY] EPISODE URL:",
+                selected.url
+            );
+        }
+
+
+        return selected;
+
+    } catch (e) {
+
+        console.log(
+            "[ANIMEHAY] DETAIL/EPISODE ERROR:",
+            e?.message || e
         );
 
         return null;
     }
-
-    console.log(
-        "[ANIMEHAY] EPISODE URL:",
-        selected.url
-    );
-
-    return selected;
-
-} catch (e) {
-    console.log(
-        "[ANIMEHAY] DETAIL/EPISODE ERROR:",
-        e?.message || e
-    );
-
-    return null;
-}
-
 }
 
 
@@ -18321,53 +18331,6 @@ async function fetchAnimeHay(
                             console.log(
                                 "[ANIMEHAY] DETAIL URL NOT FOUND IN CARD:",
                                 anchorText
-                            );
-                            return;
-                        }
-
-                        // Xác minh slug URL phải khớp với một
-                        // biến thể tên phim đang tìm kiếm.
-                        const detailPath = (() => {
-                            try {
-                                return new URL(
-                                    detailUrl
-                                ).pathname
-                                    .toLowerCase()
-                                    .normalize("NFD")
-                                    .replace(/[\u0300-\u036f]/g, "")
-                                    .replace(/\.html?$/, "")
-                                    .replace(/[^a-z0-9]+/g, "-")
-                                    .replace(/^-|-$/g, "");
-                            } catch (_) {
-                                return "";
-                            }
-                        })();
-
-                        const validDetailSlug = wantedTitles.some(
-                            wanted => {
-                                const wantedSlug = wanted
-                                    .toLowerCase()
-                                    .normalize("NFD")
-                                    .replace(/[\u0300-\u036f]/g, "")
-                                    .replace(/[^a-z0-9]+/g, "-")
-                                    .replace(/^-|-$/g, "");
-
-                                return (
-                                    wantedSlug.length > 0 &&
-                                    detailPath.includes(wantedSlug)
-                                );
-                            }
-                        );
-
-                        if (!validDetailSlug) {
-                            console.log(
-                                "[ANIMEHAY] REJECT UNRELATED DETAIL URL:",
-                                {
-                                    anchorText,
-                                    detailUrl,
-                                    detailPath,
-                                    wantedTitles
-                                }
                             );
                             return;
                         }
@@ -26941,48 +26904,26 @@ const externalStreams = [
 
 
    // -------------------------------------------------
-// FALLBACK 4 — ANIMEHAY
-// -------------------------------------------------
+    // FALLBACK 4 — ANIMEHAY
+    // -------------------------------------------------
 
-{
-    name: "🌐 [Fallback] AnimeHay",
+    {
+        name: "🌐 [Fallback] AnimeHay",
 
-    title: (() => {
-        const variants =
-            typeof animeHayBuildTitleVariants === "function"
-                ? animeHayBuildTitleVariants(movieName)
-                : [];
+        title:
+            `Mở AnimeHay - ${movieName}`,
 
-        const fallbackTitle =
-            variants.find(value =>
-                animeHayNormalizeText(value).includes("senshi")
-            ) || movieName;
-
-        return `Mở AnimeHay - ${fallbackTitle}`;
-    })(),
-
-    externalUrl: (() => {
-        const variants =
-            typeof animeHayBuildTitleVariants === "function"
-                ? animeHayBuildTitleVariants(movieName)
-                : [];
-
-        const fallbackTitle =
-            variants.find(value =>
-                animeHayNormalizeText(value).includes("senshi")
-            ) || movieName;
-
-        return (
-            animeHayActiveDomain ||
-            animeHayDirectoryActiveDomain ||
-            ANIMEHAY_DIRECTORY
-        ) +
-        "/tim-kiem/" +
-        encodeURIComponent(
-            animeHaySlug(fallbackTitle)
-        );
-    })()
-}
+        externalUrl:
+            (
+                animeHayActiveDomain ||
+                animeHayDirectoryActiveDomain ||
+                ANIMEHAY_DIRECTORY
+            ) +
+            "/tim-kiem/" +
+            encodeURIComponent(
+                animeHaySlug(movieName)
+            )
+    }
 
 ];
 
