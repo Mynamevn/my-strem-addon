@@ -15260,6 +15260,40 @@ async function animeHaySearch(
         const $ =
             cheerio.load(html);
 
+        
+        console.log("[ANIMEHAY DEBUG] PAGE TITLE:",
+            $("title").text().trim());
+
+        console.log("[ANIMEHAY DEBUG] SEARCH INPUT:",
+            title);
+
+        console.log("[ANIMEHAY DEBUG] TITLE MATCHES:",
+            $("a").filter((_, el) =>
+                /FX Senshi Kurumi-chan/i.test($(el).text())
+            ).map((_, el) => ({
+                text: $(el).text().trim(),
+                href: $(el).attr("href"),
+                parentClass: $(el).parent().attr("class"),
+                grandparentClass: $(el).parent().parent().attr("class")
+            })).get().slice(0, 10));
+
+        console.log("[ANIMEHAY DEBUG] INFO LINKS:",
+            $("a[href*='thong-tin-phim']")
+                .map((_, el) => ({
+                    text: $(el).text().trim(),
+                    href: $(el).attr("href")
+                }))
+                .get()
+                .slice(0, 20));
+
+        console.log("[ANIMEHAY DEBUG] SAMPLE LINKS:",
+            $("a[href]")
+                .map((_, el) => ({
+                    text: $(el).text().trim().slice(0, 80),
+                    href: $(el).attr("href")
+                }))
+                .get()
+                .slice(0, 30));
 
         const results = [];
 
