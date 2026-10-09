@@ -26725,142 +26725,271 @@ const externalStreams = [
 ];
 
     // =====================================================
-    // 13. LỌC DIRECT STREAM
-    // =====================================================
+// 13. LỌC DIRECT STREAM
+// =====================================================
 
-    const validDirectStreams =
-        directStreams.filter(
-            stream => {
+const validDirectStreams =
+    directStreams.filter(
+        stream => {
 
-                if (
-                    !stream ||
-                    typeof stream !== "object"
-                ) {
-                    return false;
-                }
+            if (
+                !stream ||
+                typeof stream !== "object"
+            ) {
+                return false;
+            }
 
-                return Boolean(
+            return Boolean(
+                stream.url ||
+                stream.externalUrl
+            );
+        }
+    );
+
+
+// =====================================================
+// 14. LỌC FALLBACK
+// =====================================================
+
+const validExternalStreams =
+    externalStreams.filter(
+        stream => {
+
+            if (
+                !stream ||
+                typeof stream !== "object"
+            ) {
+                return false;
+            }
+
+            return Boolean(
+                stream.externalUrl
+            );
+        }
+    );
+
+
+// =====================================================
+// 15. GỘP TẤT CẢ
+// =====================================================
+
+const allStreams = [
+
+    ...validDirectStreams,
+
+    ...validExternalStreams
+
+];
+
+
+// =====================================================
+// 16. LOẠI URL TRÙNG
+// =====================================================
+
+const seen =
+    new Set();
+
+const uniqueStreams =
+    allStreams.filter(
+        stream => {
+
+            const key =
+                String(
                     stream.url ||
-                    stream.externalUrl
-                );
+                    stream.externalUrl ||
+                    ""
+                ).trim();
 
+            if (!key) {
+                return false;
             }
-        );
 
-    // =====================================================
-    // 14. LỌC FALLBACK
-    // =====================================================
-
-    const validExternalStreams =
-        externalStreams.filter(
-            stream => {
-
-                if (
-                    !stream ||
-                    typeof stream !== "object"
-                ) {
-                    return false;
-                }
-
-                return Boolean(
-                    stream.externalUrl
-                );
-
+            if (
+                seen.has(key)
+            ) {
+                return false;
             }
-        );
 
-    // =====================================================
-    // 15. GỘP TẤT CẢ
-    // =====================================================
+            seen.add(key);
 
-    const allStreams = [
+            return true;
+        }
+    );
 
-        ...validDirectStreams,
 
-        ...validExternalStreams
+// =====================================================
+// 16.1 ANIMEHAY FINAL OBJECT
+// =====================================================
+//
+// AnimeHay được ép thành một Stream Object
+// tối giản trước khi trả về Stremio.
+//
+// Không thêm type.
+// Không thêm resolver.
+// Không thêm externalUrl.
+// Không thêm headers ngoài proxyHeaders.
+// =====================================================
 
-    ];
+const finalStreams =
+    uniqueStreams.map(
+        stream => {
 
-    // =====================================================
-    // 16. LOẠI URL TRÙNG
-    // =====================================================
+            if (
+                !stream ||
+                typeof stream !== "object"
+            ) {
+                return null;
+            }
 
-    const seen =
-        new Set();
-
-    const uniqueStreams =
-        allStreams.filter(
-            stream => {
-
-                const key =
+            const url =
+                String(
                     stream.url ||
-                    stream.externalUrl;
+                    ""
+                ).trim();
 
-                if (!key) {
-                    return false;
-                }
+            const externalUrl =
+                String(
+                    stream.externalUrl ||
+                    ""
+                ).trim();
 
-                if (
-                    seen.has(key)
-                ) {
-                    return false;
-                }
+            const result = {
 
-                seen.add(key);
+                name:
+                    String(
+                        stream.name ||
+                        "MOVINA"
+                    ),
 
-                return true;
+                title:
+                    String(
+                        stream.title ||
+                        "Full"
+                    )
+            };
 
+            // ---------------------------------------------
+            // DIRECT URL
+            // ---------------------------------------------
+
+            if (url) {
+
+                result.url =
+                    url;
             }
-        );
+
+            // ---------------------------------------------
+            // EXTERNAL URL
+            // ---------------------------------------------
+
+            if (
+                externalUrl
+            ) {
+
+                result.externalUrl =
+                    externalUrl;
+            }
+
+            // ---------------------------------------------
+            // BEHAVIOR HINTS
+            // ---------------------------------------------
+
+            if (
+                stream.behaviorHints &&
+                typeof stream.behaviorHints === "object"
+            ) {
+
+                result.behaviorHints = {
+                    ...stream.behaviorHints
+                };
+            }
+
+            // ---------------------------------------------
+            // SUBTITLES
+            // ---------------------------------------------
+
+            if (
+                Array.isArray(
+                    stream.subtitles
+                ) &&
+                stream.subtitles.length
+            ) {
+
+                result.subtitles =
+                    stream.subtitles;
+            }
+
+            return result;
+        }
+    ).filter(Boolean);
+
+
+// =====================================================
+// 16.2 DEBUG ANIMEHAY FINAL
+// =====================================================
+
 console.log(
-    "[DEBUG] PhimLongTieng FINAL:",
+    "[DEBUG] ANIMEHAY FINAL RESPONSE OBJECT:",
     JSON.stringify(
-        uniqueStreams.filter(
+        finalStreams.filter(
             stream =>
-                stream?.name?.includes("[PhimLongTieng]")
+                stream?.name ===
+                "[AnimeHay]"
         ),
         null,
         2
     )
 );
-    // =====================================================
-    // 17. LOG CUỐI
-    // =====================================================
 
-    console.log(
-        "[STREAM] Direct:",
-        validDirectStreams.length
-    );
 
-    console.log(
-        "[STREAM] Fallback:",
-        validExternalStreams.length
-    );
+// =====================================================
+// 17. LOG CUỐI
+// =====================================================
 
-    console.log(
-        "[STREAM] Total:",
-        uniqueStreams.length
-    );
+console.log(
+    "[STREAM] Direct:",
+    validDirectStreams.length
+);
 
-    console.log(
-        "[STREAM] Fallback URLs:",
-        JSON.stringify(
-            validExternalStreams
-        )
-    );
+console.log(
+    "[STREAM] Fallback:",
+    validExternalStreams.length
+);
 
-    console.log(
-        "========== STREAM END =========="
-    );
+console.log(
+    "[STREAM] Total:",
+    finalStreams.length
+);
 
-    // =====================================================
-    // 18. TRẢ VỀ STREMIO
-    // =====================================================
+console.log(
+    "[STREAM] FINAL ALL:",
+    JSON.stringify(
+        finalStreams,
+        null,
+        2
+    )
+);
 
-    return {
-        streams:
-            uniqueStreams
-    };
+console.log(
+    "[STREAM] Fallback URLs:",
+    JSON.stringify(
+        validExternalStreams
+    )
+);
+
+console.log(
+    "========== STREAM END =========="
+);
+
+
+// =====================================================
+// 18. TRẢ VỀ STREMIO
+// =====================================================
+
+return {
+    streams:
+        finalStreams
+};
 
 });
 
