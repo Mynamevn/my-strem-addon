@@ -31854,15 +31854,19 @@ app.get(
 
 
             const looksLikeTs =
-                contentType.includes(
-                    "mpeg"
-                ) ||
-                pathname.endsWith(
-                    ".ts"
-                ) ||
-                pathname.includes(
-                    ".ts?"
-                );
+            contentType.includes("mpeg") ||
+            pathname.endsWith(".ts") ||
+            pathname.endsWith(".png") ||
+            pathname.includes(".ts?");
+
+        console.log(
+            "[ANIMEHAY SEGMENT PROXY] FORMAT DETECTED:",
+            {
+                pathname,
+                contentType,
+                useMpegTsTransform: looksLikeTs
+            }
+        );
 
 
             // -------------------------------------------------
