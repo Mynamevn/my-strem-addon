@@ -15779,42 +15779,40 @@ async function animeHayFindEpisode(
 
 
         // Không chọn tập theo vị trí khi không xác định
-        // được số tập từ text hoặc URL.
-        // Tránh trường hợp yêu cầu tập 1 nhưng trả tập 2.
+    // được số tập từ text hoặc URL.
+    // Tránh trường hợp yêu cầu tập 1 nhưng trả tập 2.
 
-        if (!selected) {
-            console.log(
-                "[ANIMEHAY] EPISODE NUMBER NOT FOUND:",
-                {
-                    wanted,
-                    available: episodes.slice(0, 10).map(ep => ({
-                        text: ep.text,
-                        url: ep.url
-                    }))
-                }
-            );
-
-            return null;
-        }
-
+    if (!selected) {
         console.log(
-            "[ANIMEHAY] EPISODE URL:",
-            selected.url
-        );
-        }
-
-
-        return selected;
-
-    } catch (e) {
-
-        console.log(
-            "[ANIMEHAY] DETAIL/EPISODE ERROR:",
-            e?.message || e
+            "[ANIMEHAY] EPISODE NUMBER NOT FOUND:",
+            {
+                wanted,
+                available: episodes.slice(0, 10).map(ep => ({
+                    text: ep.text,
+                    url: ep.url
+                }))
+            }
         );
 
         return null;
     }
+
+    console.log(
+        "[ANIMEHAY] EPISODE URL:",
+        selected.url
+    );
+
+    return selected;
+
+} catch (e) {
+    console.log(
+        "[ANIMEHAY] DETAIL/EPISODE ERROR:",
+        e?.message || e
+    );
+
+    return null;
+}
+
 }
 
 
