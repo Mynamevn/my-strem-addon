@@ -18507,135 +18507,78 @@ async function fetchAnimeHay(
 
 
         // ----------------------------------------------------
-        // 6. LOAD LINKS
-        // ----------------------------------------------------
+    // 6. LOAD LINKS
+    // ----------------------------------------------------
 
-        const videoUrls =
-            await animeHayLoadLinks(
-                targetUrl,
-                activeDomain
-            );
-
-
-        if (
-            videoUrls.length === 0
-        ) {
-
-            console.log(
-                "[ANIMEHAY] NO VIDEO URLS"
-            );
-
-            return [];
-        }
+    const normalizedStreams =
+        await animeHayLoadLinks(
+            targetUrl,
+            activeDomain
+        );
 
 
-        // ----------------------------------------------------
-        // 7. NORMALIZED STREAM
-        // ----------------------------------------------------
+    if (
+        !Array.isArray(normalizedStreams) ||
+        normalizedStreams.length === 0
+    ) {
 
-        const normalizedStreams =
-            [];
+        console.log(
+            "[ANIMEHAY] NO NORMALIZED STREAMS:",
+            targetUrl
+        );
 
-
-        for (
-            const item of
-            videoUrls
-        ) {
-
-            const isM3u8 =
-                /\.m3u8(?:$|\?)/i.test(
-                    item.url
-                );
+        return [];
+    }
 
 
-            const quality =
-    /(?:^|[^0-9])(2160|1440|1080|720|480|360)(?:p)?(?:[^0-9]|$)/i.test(
-        item.url
-    )
-        ? Number(
-            (
-                item.url.match(
-                    /(?:^|[^0-9])(2160|1440|1080|720|480|360)(?:p)?(?:[^0-9]|$)/i
-                ) || []
-            )[1]
-        ) || 0
-        : 0;
+    // ----------------------------------------------------
+    // 7. NORMALIZED STREAM
+    // ----------------------------------------------------
+    // animeHayLoadLinks() da tao NormalizedStream
+    // va da xu ly URL proxy.
+    // Khong tao NormalizedStream lan nua.
 
-
-            const normalized =
-                createNormalizedStream({
-
+    console.log(
+        "[ANIMEHAY] NORMALIZED STREAMS FROM LOADLINKS:",
+        JSON.stringify(
+            normalizedStreams.map(
+                (stream, index) => ({
+                    index,
                     provider:
-                        "animehay",
-
+                        stream?.provider,
                     providerName:
-                        "AnimeHay",
-
-                    source:
-                        "AnimeHay",
-
-                    url:
-                        item.url,
-
-                    type:
-                        isM3u8
-                            ? "m3u8"
-                            : "mp4",
-
-                    quality,
-
+                        stream?.providerName,
                     title:
-                        `${movieName}${episodeNumber ? ` - E${episodeNumber}` : ""}`,
-
-                    name:
-                        `[AnimeHay]${quality ? ` ${quality}p` : ""}`,
-
-                    episode:
-                        episodeNumber || 0,
-
-                    season:
-                        seasonNumber || 0,
-
-                    referer:
-                        item.referer ||
-                        targetUrl,
-
-                    headers: {
-                        Referer:
-                            item.referer ||
-                            targetUrl
-                    },
-
+                        stream?.title,
+                    url:
+                        stream?.url,
+                    type:
+                        stream?.type,
                     resolver:
-                        "passthrough"
-                });
+                        stream?.resolver,
+                    headers:
+                        stream?.headers
+                })
+            ),
+            null,
+            2
+        )
+    );
 
 
-            normalizedStreams.push(
-                normalized
-            );
-        }
-
-
-        console.log(
-            "[ANIMEHAY] NORMALIZED STREAMS:",
-            normalizedStreams.length
+    const finalStreams =
+        normalizedStreamsToStremio(
+            normalizedStreams
         );
 
 
-        const finalStreams =
-            normalizedStreamsToStremio(
-                normalizedStreams
-            );
+    console.log(
+        "[ANIMEHAY] FINAL STREAMS:",
+        finalStreams.length
+    );
 
 
-        console.log(
-            "[ANIMEHAY] FINAL STREAMS:",
-            finalStreams.length
-        );
-
-
-        return finalStreams;
+    return finalStreams;
 
     } catch (e) {
 
