@@ -31663,8 +31663,9 @@ app.get(
             Date.now();
 
 
-        let sourceStream =
-            null;
+                let sourceStream = null;
+        let sourceBytes = 0;
+        let transformedBytes = 0;
 
 
         try {
@@ -31770,8 +31771,18 @@ app.get(
                 );
 
 
-            sourceStream =
-                response?.data;
+                        sourceStream = response?.data;
+
+            sourceStream.on("data", chunk => {
+                sourceBytes += chunk.length;
+
+                if (sourceBytes === chunk.length) {
+                    console.log(
+                        "[ANIMEHAY SEGMENT] SOURCE FIRST BYTES:",
+                        chunk.subarray(0, 32).toString("hex")
+                    );
+                }
+            });
 
 
             if (
@@ -31949,8 +31960,12 @@ app.get(
             // MPEG-TS TRANSFORM
             // -------------------------------------------------
 
-            const transform =
+                        const transform =
                 new AnimeHayMpegTsTransform();
+
+            transform.on("data", chunk => {
+                transformedBytes += chunk.length;
+            });
 
 
             sourceStream.on(
@@ -32078,9 +32093,8 @@ app.get(
                                 Date.now() -
                                 startedAt,
 
-                            bytes:
-                                transform.readableLength ||
-                                0
+                                                        sourceBytes,
+                            transformedBytes
                         }
                     );
                 }
