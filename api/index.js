@@ -6752,54 +6752,54 @@ function normalizedStreamToStremio(stream) {
         return null;
     }
 
+    // -------------------------------------------------
+    // ANIMEHAY: MOVINA-OWNED PROXY DETECTION
+    // -------------------------------------------------
+
+    const isAnimeHayMovinaProxy =
+        String(
+            stream.provider || ""
+        ).trim().toLowerCase() === "animehay" &&
+        /\/animehay-(?:hls|segment)-proxy(?:\/|[?#])/i.test(url);
+
     const result = {};
 
     // -------------------------------------------------
     // NAME
     // -------------------------------------------------
 
-    if (
-        stream.name
-    ) {
-
-        result.name =
-            stream.name;
+    if (stream.name) {
+        result.name = stream.name;
     }
 
     // -------------------------------------------------
     // TITLE
     // -------------------------------------------------
 
-    if (
-        stream.title
-    ) {
-
-        result.title =
-            stream.title;
+    if (stream.title) {
+        result.title = stream.title;
     }
 
     // -------------------------------------------------
     // URL
     // -------------------------------------------------
 
-    if (
-        url
-    ) {
-
-        result.url =
-            url;
+    if (url) {
+        result.url = url;
     }
 
     // -------------------------------------------------
     // EXTERNAL URL
+    //
+    // AnimeHay proxy phải phát qua URL của MOVINA.
+    // Không đưa URL máy chủ gốc vào externalUrl.
     // -------------------------------------------------
 
     if (
-        externalUrl
+        externalUrl &&
+        !isAnimeHayMovinaProxy
     ) {
-
-        result.externalUrl =
-            externalUrl;
+        result.externalUrl = externalUrl;
     }
 
     // -------------------------------------------------
@@ -6810,42 +6810,46 @@ function normalizedStreamToStremio(stream) {
         stream.behaviorHints &&
         typeof stream.behaviorHints === "object"
     ) {
-
         result.behaviorHints = {
             ...stream.behaviorHints
         };
     }
 
+    if (isAnimeHayMovinaProxy) {
+
+        // Thử cho Stremio Web phát qua proxy MOVINA.
+        // Proxy tự xử lý header khi gọi máy chủ AnimeHay.
+
+        if (!result.behaviorHints) {
+            result.behaviorHints = {};
+        }
+
+        delete result.behaviorHints.notWebReady;
+        delete result.behaviorHints.proxyHeaders;
+    }
+
     // -------------------------------------------------
     // HEADERS
     //
-    // Khi dùng proxyHeaders:
-    //
-    // Stremio yêu cầu:
-    //
-    //     notWebReady: true
-    //
+    // Các nguồn khác giữ nguyên cơ chế cũ.
+    // AnimeHay proxy không cần Stremio gửi header
+    // tới máy chủ nguồn vì MOVINA tự thực hiện việc đó.
     // -------------------------------------------------
 
     if (
+        !isAnimeHayMovinaProxy &&
         stream.headers &&
         typeof stream.headers === "object" &&
-        Object.keys(
-            stream.headers
-        ).length
+        Object.keys(stream.headers).length
     ) {
-
         result.behaviorHints = {
 
             ...(result.behaviorHints || {}),
 
-            notWebReady:
-                true,
+            notWebReady: true,
 
             proxyHeaders: {
-
-                request:
-                    stream.headers
+                request: stream.headers
             }
         };
     }
@@ -6855,14 +6859,10 @@ function normalizedStreamToStremio(stream) {
     // -------------------------------------------------
 
     if (
-        Array.isArray(
-            stream.subtitles
-        ) &&
+        Array.isArray(stream.subtitles) &&
         stream.subtitles.length
     ) {
-
-        result.subtitles =
-            stream.subtitles;
+        result.subtitles = stream.subtitles;
     }
 
     // -------------------------------------------------
@@ -6873,20 +6873,13 @@ function normalizedStreamToStremio(stream) {
         "[STREAM ADAPTER] OUT:",
         JSON.stringify(
             {
-                provider:
-                    stream.provider,
-
-                type:
-                    stream.type,
-
-                resolver:
-                    stream.resolver,
-
-                url:
-                    result.url,
-
-                behaviorHints:
-                    result.behaviorHints
+                provider: stream.provider,
+                type: stream.type,
+                resolver: stream.resolver,
+                isAnimeHayMovinaProxy,
+                url: result.url,
+                externalUrl: result.externalUrl,
+                behaviorHints: result.behaviorHints
             },
             null,
             2
