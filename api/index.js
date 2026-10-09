@@ -31957,149 +31957,88 @@ app.get(
 
 
             // -------------------------------------------------
-            // MPEG-TS TRANSFORM
+            // MPEG-TS DIRECT PASSTHROUGH
+            //
+            // Segment AnimeHay .png đã được xác nhận bắt đầu
+            // bằng MPEG-TS sync byte 0x47.
+            // Tạm bỏ transform để kiểm tra khả năng transform
+            // gây lỗi phát trong Stremio.
             // -------------------------------------------------
-
-                        const transform =
-                new AnimeHayMpegTsTransform();
-
-            transform.on("data", chunk => {
-                transformedBytes += chunk.length;
-            });
-
-
-            sourceStream.on(
-                "error",
-                error => {
-
-                    console.log(
-                        "[ANIMEHAY SEGMENT PROXY] SOURCE ERROR:",
-                        error?.message ||
-                        error
-                    );
-
-
-                    transform.destroy(
-                        error
-                    );
-                }
-            );
-
-
-            transform.on(
-                "error",
-                error => {
-
-                    console.log(
-                        "[ANIMEHAY SEGMENT PROXY] TRANSFORM ERROR:",
-                        error?.message ||
-                        error
-                    );
-
-
-                    if (
-                        !res.headersSent
-                    ) {
-
-                        res
-                            .status(502)
-                            .type("text/plain")
-                            .send(
-                                "AnimeHay MPEG-TS transform error"
-                            );
-
-                    } else {
-
-                        try {
-                            res.destroy(
-                                error
-                            );
-                        } catch (_) {}
-                    }
-                }
-            );
-
 
             res.status(
                 response.status
             );
-
 
             res.set(
                 "Content-Type",
                 "video/mp2t"
             );
 
-
             res.set(
                 "Accept-Ranges",
                 "none"
             );
-
 
             res.set(
                 "Access-Control-Allow-Origin",
                 "*"
             );
 
-
             res.set(
                 "Access-Control-Allow-Headers",
                 "*"
             );
-
 
             res.set(
                 "Cache-Control",
                 "no-store, no-cache, must-revalidate"
             );
 
-
             res.set(
                 "Pragma",
                 "no-cache"
             );
-
 
             res.set(
                 "Expires",
                 "0"
             );
 
-
             console.log(
-                "[ANIMEHAY SEGMENT PROXY] MPEG-TS STREAM"
+                "[ANIMEHAY SEGMENT PROXY] MPEG-TS DIRECT PASSTHROUGH"
             );
 
+            sourceStream.on(
+                "error",
+                error => {
+                    console.log(
+                        "[ANIMEHAY SEGMENT PROXY] SOURCE ERROR:",
+                        error?.message || error
+                    );
 
-            sourceStream.pipe(
-                transform
+                    if (!res.headersSent) {
+                        res.status(502).end();
+                    } else {
+                        res.destroy(error);
+                    }
+                }
             );
-
-
-            transform.pipe(
-                res
-            );
-
 
             res.once(
                 "finish",
                 () => {
-
                     console.log(
                         "[ANIMEHAY SEGMENT PROXY] FINISH:",
                         {
-                            ms:
-                                Date.now() -
-                                startedAt,
-
-                                                        sourceBytes,
-                            transformedBytes
+                            ms: Date.now() - startedAt,
+                            sourceBytes,
+                            transformedBytes: 0
                         }
                     );
                 }
             );
 
+            sourceStream.pipe(res);
 
             return;
 
