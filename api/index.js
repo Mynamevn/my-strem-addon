@@ -18318,6 +18318,39 @@ async function animeHayGetMetadataTitleVariants(movieName) {
     return result;
 }
 
+// ============================================================
+// BL-53B. ANIMEHAY — KNOWN TITLE ALIASES FALLBACK
+// ============================================================
+
+function animeHayGetKnownTitleAliases(movieName) {
+    const normalized = animeHayNormalizeText(movieName);
+
+    const knownAliases = [
+        {
+            matches: [
+                "high school prodigies have it easy even in another world",
+                "choujin koukousei tachi wa isekai demo yoyuu de ikinuku you desu",
+                "choyoyu",
+            ],
+            aliases: [
+                "Choujin Koukousei-tachi wa Isekai demo Yoyuu de Ikinuku you desu!",
+                "超人高校生たちは異世界でも余裕で生き抜くようです！",
+                "CHOYOYU!",
+                "Super Human High Schoolers Are in Another World, But Seem to be Living in Comfort!",
+                "High School Prodigies Have Arrived in Another World",
+            ],
+        },
+    ];
+
+    const matched = knownAliases.find((entry) =>
+        entry.matches.some(
+            (title) => animeHayNormalizeText(title) === normalized
+        )
+    );
+
+    return matched ? matched.aliases : [];
+}
+
 async function fetchAnimeHay(
     movieName,
     movieYear = 0,
@@ -18404,13 +18437,10 @@ async function fetchAnimeHay(
         const titleVariantMap = new Map();
 
         for (const value of [
-            ...(Array.isArray(baseTitleVariants)
-                ? baseTitleVariants
-                : []),
-            ...(Array.isArray(metadataTitleVariants)
-                ? metadataTitleVariants
-                : [])
-        ]) {
+    ...baseTitleVariants,
+    ...metadataTitleVariants,
+    ...animeHayGetKnownTitleAliases(movieName),
+]) {
             const title = String(value || "").trim();
             const normalized = animeHayNormalizeText(title);
 
@@ -27235,14 +27265,11 @@ console.log(
     ];
 
     try {
-        const baseTitles = animeHayBuildTitleVariants(
-            movieName
-        );
-
-        const metadataTitles =
-            await animeHayGetMetadataTitleVariants(
-                movieName
-            );
+        const animeHayFallbackTitleSources = [
+    ...animeHayBuildTitleVariants(movieName),
+    ...await animeHayGetMetadataTitleVariants(movieName),
+    ...animeHayGetKnownTitleAliases(movieName),
+];
 
         const uniqueTitles = new Map();
 
