@@ -15190,10 +15190,11 @@ async function animeHayResolveActiveDomain(
 // ============================================================
 // ANIMEHAY — SEARCH
 //
-// URL:
-// /tim-kiem/{slug}
-//
-// KHÔNG CÓ .html
+// Hỗ trợ:
+// - Link chi tiết dạng /thong-tin-phim/...
+// - Link chi tiết dạng *.html
+// - Phát hiện cấu trúc HTML mới qua các thẻ a và card
+// - Loại bỏ link thể loại / điều hướng
 // ============================================================
 
 async function animeHaySearch(domain, title) {
@@ -15201,6 +15202,7 @@ async function animeHaySearch(domain, title) {
     const searchUrl = `${domain}/tim-kiem/${slug}`;
 
     console.log("[ANIMEHAY] SEARCH:", searchUrl);
+    console.log("[ANIMEHAY] SEARCH TITLE:", title);
 
     try {
         const response = await axios.get(searchUrl, {
@@ -15220,19 +15222,49 @@ async function animeHaySearch(domain, title) {
         const html = String(response.data || "");
         const $ = cheerio.load(html);
 
+        const finalUrl =
+            response.request?.res?.responseUrl ||
+            response.config?.url ||
+            searchUrl;
+
         console.log("[ANIMEHAY] SEARCH RESPONSE:", {
             status: response.status,
             requestedUrl: searchUrl,
-            finalUrl:
-                response.request?.res?.responseUrl ||
-                response.config?.url ||
-                searchUrl,
+            finalUrl,
             htmlLength: html.length,
             pageTitle: $("title").text().trim(),
             searchTitle: title
         });
 
-        // Ghi lại form tìm kiếm để xác định route thực tế.
+        // ----------------------------------------------------
+        // 1. Thống kê cấu trúc HTML thực tế
+        // ----------------------------------------------------
+
+        console.log("[ANIMEHAY DEBUG] DOM STRUCTURE:", {
+            movieCards: $(
+                ".movies-list .mc, .movie-item, .film-item, " +
+                ".item, .movie, .film, .movies-item"
+            ).length,
+
+            images: $("img").length,
+
+            links: $("a[href]").length,
+
+            scripts: $("script").length,
+
+            jsonLdScripts: $(
+                'script[type="application/ld+json"]'
+            ).length,
+
+            forms: $("form").length,
+
+            bodyText: $("body")
+                .text()
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, 1200)
+        });
+
         console.log("[ANIMEHAY DEBUG] SEARCH FORMS:",
             $("form").map((_, el) => ({
                 action: $(el).attr("action") || "",
@@ -15246,112 +15278,291 @@ async function animeHaySearch(domain, title) {
             })).get().slice(0, 10)
         );
 
-        // Thống kê các kiểu đường dẫn có thể xuất hiện trong HTML.
-        const hrefs = $("a[href]").map((_, el) => ({
-            text: $(el).text().replace(/\s+/g, " ").trim().slice(0, 100),
-            href: $(el).attr("href") || ""
-        })).get();
+        // ----------------------------------------------------
+        // 2. Bộ lọc link điều hướng / thể loại
+        // ----------------------------------------------------
+
+        function isAnimeHayNavigationUrl(href) {
+            const value = String(href || "").trim();
+
+            if (!value) return true;
+
+            if (
+                /^(?:#|javascript:|mailto:|tel:)/i.test(value)
+            ) {
+                return true;
+            }
+
+            let pathname = "";
+
+            try {
+                pathname = new URL(value, domain).pathname;
+            } catch {
+                return true;
+            }
+
+            if (
+                /\/(?:the-loai|quoc-gia|nam|tim-kiem|danh-sach|dien-vien|dao-dien|tag|tin-tuc|trang-chu)(?:\/|$)/i
+                    .test(pathname)
+            ) {
+                return true;
+            }
+
+            if (
+                /\.(?:jpg|jpeg|png|webp|gif|svg|css|js|ico|woff2?)(?:$|[?#])/i
+                    .test(pathname)
+            ) {
+                return true;
+            }
+
+            return false;
+        }
+
+        // ----------------------------------------------------
+        // 3. Thu thập link ứng viên từ toàn bộ HTML
+        // ----------------------------------------------------
+
+        const allLinks = $("a[href]").map((_, el) => {
+            const anchor = $(el);
+
+            const href = String(
+                anchor.attr("href") || ""
+            ).trim();
+
+            const text = anchor
+                .text()
+                .replace(/\s+/g, " ")
+                .trim();
+
+            const titleAttr = String(
+                anchor.attr("title") ||
+                anchor.attr("aria-label") ||
+                ""
+            ).trim();
+
+            const imageAlt = String(
+                anchor.find("img").first().attr("alt") || ""
+            ).trim();
+
+            const imageTitle = String(
+                anchor.find("img").first().attr("title") || ""
+            ).trim();
+
+            const parentText = anchor
+                .closest(
+                    ".mc, .movie-item, .film-item, .item, " +
+                    ".movie, .film, .movies-item, article"
+                )
+                .find("h2, h3, h4, .title, .name")
+                .first()
+                .text()
+                .replace(/\s+/g, " ")
+                .trim();
+
+            let absoluteUrl = "";
+
+            try {
+                absoluteUrl = new URL(href, domain).href;
+            } catch {
+                // Bỏ qua URL không hợp lệ.
+            }
+
+            return {
+                text,
+                title: titleAttr || imageAlt || imageTitle || parentText,
+                href,
+                url: absoluteUrl
+            };
+        }).get();
 
         console.log("[ANIMEHAY DEBUG] HREF SUMMARY:", {
-            total: hrefs.length,
-            infoLinks: hrefs.filter(x =>
-                /thong-tin-phim/i.test(x.href)
+            total: allLinks.length,
+
+            infoLinks: allLinks.filter(item =>
+                /thong-tin-phim/i.test(item.href)
             ).length,
-            episodeLinks: hrefs.filter(x =>
-                /xem-phim|aim-ep-btn/i.test(x.href)
+
+            htmlLinks: allLinks.filter(item =>
+                /\.html(?:[?#]|$)/i.test(item.href)
             ).length,
-            htmlDetailLinks: hrefs.filter(x =>
-                /\.html(?:[?#]|$)/i.test(x.href)
-            ).length,
-            relativeLinks: hrefs.filter(x =>
-                x.href.startsWith("/")
+
+            navigationLinks: allLinks.filter(item =>
+                isAnimeHayNavigationUrl(item.href)
             ).length
         });
 
+        // ----------------------------------------------------
+        // 4. Lấy các link có khả năng là trang chi tiết phim
+        // ----------------------------------------------------
+
+        const possibleLinks = allLinks.filter(item => {
+            const href = item.href;
+            const url = item.url;
+
+            if (!url || isAnimeHayNavigationUrl(href)) {
+                return false;
+            }
+
+            // Ưu tiên dạng URL thông tin phim đã biết.
+            if (/\/thong-tin-phim\//i.test(href)) {
+                return true;
+            }
+
+            // Dạng URL phim có đuôi .html.
+            if (/\.html(?:[?#]|$)/i.test(href)) {
+                return true;
+            }
+
+            // Một số phiên bản website có route /phim/ hoặc /anime/.
+            if (/\/(?:phim|anime|detail)\//i.test(href)) {
+                return true;
+            }
+
+            return false;
+        });
+
         console.log("[ANIMEHAY DEBUG] POSSIBLE RESULT LINKS:",
-            hrefs.filter(x =>
-                /thong-tin-phim|\/phim\/|\/anime\/|\/detail\/|\.html(?:[?#]|$)/i.test(x.href)
-            ).slice(0, 40)
+            possibleLinks.slice(0, 60).map(item => ({
+                title: item.title || item.text,
+                href: item.href,
+                url: item.url
+            }))
         );
 
-        // Tìm các vị trí chứa từ khóa trong HTML gốc.
-        const normalizedHtml = html.toLowerCase();
-        const normalizedTitle = String(title || "")
-            .trim()
-            .toLowerCase();
-
-        const titlePosition = normalizedTitle
-            ? normalizedHtml.indexOf(normalizedTitle)
-            : -1;
-
-        console.log("[ANIMEHAY DEBUG] HTML TITLE CONTEXT:",
-            titlePosition >= 0
-                ? html.slice(
-                    Math.max(0, titlePosition - 500),
-                    Math.min(html.length, titlePosition + normalizedTitle.length + 1000)
-                )
-                : "Không thấy nguyên văn từ khóa trong HTML"
-        );
+        // ----------------------------------------------------
+        // 5. Tạo danh sách ứng viên không trùng URL
+        // ----------------------------------------------------
 
         const results = [];
         const seen = new Set();
 
-        // Giữ selector cũ để kiểm tra xem cấu trúc cũ còn hoạt động không.
-        $("div.movies-list div.mc").each((_, el) => {
-            const node = $(el);
-            const anchor = node.find("a[href*='/thong-tin-phim/']").first();
-
-            if (!anchor.length) return;
-
+        for (const item of possibleLinks) {
             const url = animeHayAbsoluteUrl(
-                anchor.attr("href"),
+                item.url || item.href,
                 domain
             );
 
-            if (!url || seen.has(url)) return;
+            if (!url || seen.has(url)) continue;
 
-            const resultTitle = (
-                node.find(".title, .name, h3, h4").first().text() ||
-                anchor.attr("title") ||
-                anchor.text() ||
+            // Không đưa chính trang tìm kiếm vào danh sách phim.
+            if (
+                url.replace(/\/+$/, "") ===
+                finalUrl.replace(/\/+$/, "")
+            ) {
+                continue;
+            }
+
+            const resultTitle = String(
+                item.title ||
+                item.text ||
                 ""
-            ).trim();
+            )
+                .replace(/\s+/g, " ")
+                .trim();
+
+            // Link phải có tiêu đề để tránh nhận nhầm link ảnh/nút.
+            if (!resultTitle) continue;
 
             seen.add(url);
+
             results.push({
                 title: resultTitle,
                 url
             });
-        });
+        }
 
-        // Fallback parser: lấy trực tiếp các link trang thông tin phim.
-        $("a[href*='/thong-tin-phim/']").each((_, el) => {
-            const anchor = $(el);
-            const url = animeHayAbsoluteUrl(
-                anchor.attr("href"),
-                domain
-            );
+        // ----------------------------------------------------
+        // 6. Kiểm tra JSON-LD nếu website nhúng metadata
+        // ----------------------------------------------------
 
-            if (!url || seen.has(url)) return;
+        $('script[type="application/ld+json"]').each((_, el) => {
+            const raw = $(el).html();
 
-            seen.add(url);
-            results.push({
-                title: (
-                    anchor.attr("title") ||
-                    anchor.text() ||
-                    ""
-                ).trim(),
-                url
-            });
+            if (!raw) return;
+
+            try {
+                const parsed = JSON.parse(raw);
+
+                const entries = Array.isArray(parsed)
+                    ? parsed
+                    : [parsed];
+
+                for (const entry of entries) {
+                    const graph = Array.isArray(entry?.["@graph"])
+                        ? entry["@graph"]
+                        : [entry];
+
+                    for (const item of graph) {
+                        const itemType = item?.["@type"];
+
+                        const types = Array.isArray(itemType)
+                            ? itemType
+                            : [itemType];
+
+                        const isVideo =
+                            types.some(type =>
+                                /movie|tvseries|creativework|videoobject/i
+                                    .test(String(type || ""))
+                            );
+
+                        if (!isVideo) continue;
+
+                        const itemUrl =
+                            typeof item.url === "string"
+                                ? item.url
+                                : typeof item["@id"] === "string"
+                                    ? item["@id"]
+                                    : "";
+
+                        const itemName = String(
+                            item.name || item.headline || ""
+                        ).trim();
+
+                        if (!itemUrl || !itemName) continue;
+
+                        const url = animeHayAbsoluteUrl(
+                            itemUrl,
+                            domain
+                        );
+
+                        if (!url || seen.has(url)) continue;
+
+                        seen.add(url);
+
+                        results.push({
+                            title: itemName,
+                            url
+                        });
+                    }
+                }
+            } catch {
+                // JSON-LD lỗi không làm hỏng kết quả HTML.
+            }
         });
 
         console.log("[ANIMEHAY] SEARCH CANDIDATES:", results.length);
 
         console.log("[ANIMEHAY] SEARCH ITEMS:",
-            results.slice(0, 20)
+            results.slice(0, 30)
         );
 
+        if (results.length === 0) {
+            console.log(
+                "[ANIMEHAY DEBUG] NO DETAIL LINKS FOUND:",
+                {
+                    pageTitle: $("title").text().trim(),
+                    finalUrl,
+                    bodyText: $("body")
+                        .text()
+                        .replace(/\s+/g, " ")
+                        .trim()
+                        .slice(0, 1800)
+                }
+            );
+        }
+
         return results;
+
     } catch (error) {
         console.log("[ANIMEHAY] SEARCH ERROR:", {
             status: error.response?.status || 0,
