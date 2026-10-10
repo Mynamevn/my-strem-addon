@@ -14810,424 +14810,184 @@ function animeHayAbsoluteUrl(
 
 
 // ============================================================
-// ANIMEHAY — TITLE VARIANTS
-//
-// Giống hướng xử lý của KKPhim/VSMov:
-// không phụ thuộc duy nhất vào một chuỗi title.
-// ============================================================
+ // ANIMEHAY — TITLE VARIANTS
+ // ============================================================
 
-function animeHayBuildTitleVariants(movieName = "") {
+const ANIMEHAY_METADATA_CACHE = new Map();
 
+function animeHayMetadataNormalizeTitle(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .replace(/\s+/g, " ");
+}
+
+function animeHayBuildTitleVariants(movieName) {
     const original = String(movieName || "").trim();
+    if (!original) return [];
 
-    const variants = [];
-    const seen = new Set();
+    const variants = new Set();
 
-    const add = value => {
-        const text = String(value || "").trim();
-        if (!text) return;
+    function add(value) {
+        const text = String(value || "").trim().replace(/\s+/g, " ");
+        if (text && text.length >= 2 && variants.size < 16) {
+            variants.add(text);
+        }
+    }
 
-        const key = animeHayNormalizeText(text);
-        if (!key || seen.has(key)) return;
-
-        seen.add(key);
-        variants.push(text);
-    };
-
-    // 1. Giữ các biến thể tên đầy đủ hiện có.
-    const normalized = animeHayNormalizeText(original);
-
+    // Giữ nguyên tên gốc và bản chuẩn hóa dấu câu.
     add(original);
-    add(normalized);
-    add(normalized.replace(/\s+/g, "-"));
-    add(original.replace(/[:\-–—]+/g, " "));
+    add(original.replace(/[：:：]/g, " ").replace(/[!?.,()[\]{}]/g, " ").replace(/[-_]+/g, " "));
+    add(animeHayMetadataNormalizeTitle(original));
 
-    // 2. Tạo bí danh từ vựng đã biết.
-    const aliases = {
-        fighter: ["senshi"],
-        senshi: ["fighter"]
-    };
-
-    const aliasSources = [
-        original,
-        normalized
+    // Chuyển đổi các nguyên âm dài thường gặp trong phiên âm tiếng Nhật.
+    // Đây là biến thể truy vấn, không phải khẳng định các cách viết tương đương tuyệt đối.
+    const longVowelPatterns = [
+        [/ō/gi, ["ou", "oo", "o"]],
+        [/ū/gi, ["uu", "u"]],
+        [/ā/gi, ["aa", "a"]],
+        [/ē/gi, ["ee", "e"]],
+        [/ī/gi, ["ii", "i"]],
+        [/ou/gi, ["ō", "oo", "o"]],
+        [/oo/gi, ["ō", "ou", "o"]],
+        [/uu/gi, ["ū", "u"]],
+        [/aa/gi, ["ā", "a"]],
+        [/ee/gi, ["ē", "e"]],
+        [/ii/gi, ["ī", "i"]]
     ];
 
-    for (const source of aliasSources) {
-        const words = animeHayNormalizeText(source);
-        if (!words) continue;
+    let expanded = [original];
 
-        for (const [from, replacements] of Object.entries(aliases)) {
-            const escapedFrom = from.replace(
-                /[.*+?^${}()|[\]\\]/g,
-                "\\$&"
-            );
+    for (const [pattern, replacements] of longVowelPatterns) {
+        const next = [];
 
-            const pattern = new RegExp(
-                `(^|[^a-z0-9])${escapedFrom}(?=$|[^a-z0-9])`,
-                "i"
-            );
+        for (const value of expanded) {
+            next.push(value);
 
-            if (!pattern.test(words)) continue;
+            if (pattern.test(value)) {
+                pattern.lastIndex = 0;
 
-            for (const replacement of replacements) {
-                const aliased = words.replace(
-                    pattern,
-                    (_match, prefix) => `${prefix}${replacement}`
-                );
-
-                add(aliased);
-                add(aliased.replace(/\s+/g, "-"));
+                for (const replacement of replacements) {
+                    pattern.lastIndex = 0;
+                    next.push(value.replace(pattern, replacement));
+                }
             }
+
+            pattern.lastIndex = 0;
         }
+
+        expanded = [...new Set(next)].slice(0, 12);
     }
 
-    // 3. Ưu tiên từ đơn đặc trưng trước các cụm từ phụ.
-    const longTitleVariants = [...variants];
-    const allWords = new Set();
-
-    for (const variant of longTitleVariants) {
-
-        // Giữ cả các từ ghép có dấu gạch nối như Kurumi-chan.
-        const hyphenatedWords =
-            String(variant).match(/\b[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)+\b/g) || [];
-
-        for (const word of hyphenatedWords) {
-            allWords.add(word);
-        }
-
-        for (
-            const word of animeHayNormalizeText(variant).split(/\s+/)
-        ) {
-            if (word) allWords.add(word);
-        }
+    for (const value of expanded) {
+        add(value);
+        add(animeHayMetadataNormalizeTitle(value));
     }
 
-    for (const word of allWords) {
-        if (
-            word.length >= 4 ||
-            word === "fx" ||
-            word.includes("-")
-        ) {
-            add(word);
-        }
-    }
-
-    // 4. Bổ sung cụm 2 từ và 3 từ liền nhau.
-    for (const variant of longTitleVariants) {
-
-        const words = animeHayNormalizeText(variant)
-            .split(/\s+/)
-            .filter(Boolean);
-
-        for (const size of [2, 3]) {
-            for (let i = 0; i <= words.length - size; i++) {
-                add(words.slice(i, i + size).join(" "));
-            }
-        }
-    }
-
-    // Giữ tên đầy đủ, từ đặc trưng và cụm từ ngắn ở đầu.
-    const limited = variants.slice(0, 24);
-
-    console.log("[ANIMEHAY] TITLE VARIANTS:", limited);
-
-    return limited;
+    return [...variants].slice(0, 16);
 }
 
+async function animeHayGetMetadataTitleVariants(movieName) {
+    const query = String(movieName || "").trim();
+    if (query.length < 3) return [];
 
-// ============================================================
-// ANIMEHAY — DOMAIN DISCOVERY
-// ============================================================
+    const cacheKey = animeHayMetadataNormalizeTitle(query);
+    if (!cacheKey) return [];
 
-async function animeHayDiscoverDirectoryDomains() {
-
-    const found = [];
-
+    if (ANIMEHAY_METADATA_CACHE.has(cacheKey)) {
+        return [...ANIMEHAY_METADATA_CACHE.get(cacheKey)];
+    }
 
     try {
+        console.log("[ANIMEHAY META] SEARCH MAL TITLES:", query);
 
-        const response =
-            await axios.get(
-                ANIMEHAY_DIRECTORY,
-                {
-                    timeout: 15000,
-                    maxRedirects: 5,
+        const response = await axios.get("https://api.jikan.moe/v4/anime", {
+            params: {
+                q: query,
+                limit: 10,
+                sfw: true
+            },
+            timeout: 7000,
+            headers: {
+                Accept: "application/json",
+                "User-Agent": "MOVINA-Stremio-Addon/1.0"
+            }
+        });
 
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+        const entries = Array.isArray(response.data?.data)
+            ? response.data.data
+            : [];
 
-                        "Accept":
-                            "text/html,application/xhtml+xml"
-                    }
-                }
+        const queryWords = cacheKey.split(" ").filter(word => word.length >= 3);
+        const relevantEntries = [];
+
+        for (const entry of entries) {
+            const names = [
+                entry?.title,
+                entry?.title_english,
+                entry?.title_japanese,
+                ...(Array.isArray(entry?.title_synonyms) ? entry.title_synonyms : []),
+                ...(Array.isArray(entry?.titles)
+                    ? entry.titles.map(item => item?.title)
+                    : [])
+            ].filter(Boolean);
+
+            const normalizedNames = names.map(animeHayMetadataNormalizeTitle);
+
+            const exactMatch = normalizedNames.some(name =>
+                name === cacheKey || name.includes(cacheKey) || cacheKey.includes(name)
             );
 
+            const bestOverlap = normalizedNames.reduce((best, name) => {
+                const words = new Set(name.split(" ").filter(Boolean));
+                const matched = queryWords.filter(word => words.has(word)).length;
+                return Math.max(best, queryWords.length ? matched / queryWords.length : 0);
+            }, 0);
 
-        const html =
-            response.data || "";
-
-        const $ =
-            cheerio.load(html);
-
-
-        $("a[href]").each(
-            (_, el) => {
-
-                const href =
-                    $(el).attr("href");
-
-                if (!href) return;
-
-
-                try {
-
-                    const absolute =
-                        new URL(
-                            href,
-                            ANIMEHAY_DIRECTORY
-                        );
-
-                    const hostname =
-                        absolute.hostname
-                            .toLowerCase();
-
-
-                    if (
-                        hostname ===
-                        "animehay.tv"
-                    ) {
-
-                        return;
-                    }
-
-
-                    if (
-                        hostname.startsWith(
-                            "animehay"
-                        )
-                    ) {
-
-                        const domain =
-                            `${absolute.protocol}//${absolute.hostname}`;
-
-
-                        if (
-                            !found.includes(
-                                domain
-                            )
-                        ) {
-
-                            found.push(
-                                domain
-                            );
-                        }
-                    }
-
-                } catch (_) {}
+            // Tránh lấy alias của một anime không liên quan chỉ vì API trả kết quả gần giống.
+            if (exactMatch || bestOverlap >= 0.5) {
+                relevantEntries.push({ entry, names, exactMatch, bestOverlap });
             }
+        }
+
+        relevantEntries.sort((a, b) =>
+            Number(b.exactMatch) - Number(a.exactMatch) ||
+            b.bestOverlap - a.bestOverlap
         );
 
-    } catch (e) {
+        const aliases = new Set();
 
-        console.log(
-            "[ANIMEHAY] DIRECTORY ERROR:",
-            e?.message || e
-        );
-    }
-
-
-    // Bootstrap chỉ là backup discovery.
-    // Không dùng nó để override domain đã tìm thấy.
-
-    for (
-        const domain of
-        ANIMEHAY_BOOTSTRAP_DOMAINS
-    ) {
-
-        if (
-            !found.includes(domain)
-        ) {
-
-            found.push(domain);
-        }
-    }
-
-
-    console.log(
-        "[ANIMEHAY] DIRECTORY DOMAINS:",
-        found
-    );
-
-
-    return found;
-}
-
-
-// ============================================================
-// ANIMEHAY — RESOLVE ACTIVE DOMAIN
-//
-// QUAN TRỌNG:
-// Cloudflare challenge KHÔNG có nghĩa domain chết.
-//
-// Nếu:
-// animehay13 → 302/redirect → animehay14
-//
-// thì animehay14 vẫn là ACTIVE DOMAIN.
-//
-// Challenge sẽ xử lý ở tầng request nội dung.
-// ============================================================
-
-async function animeHayResolveActiveDomain(
-    candidates = []
-) {
-
-    for (
-        const candidate of candidates
-    ) {
-
-        try {
-
-            console.log(
-                "[ANIMEHAY] TEST DOMAIN:",
-                candidate
-            );
-
-
-            const response =
-                await axios.get(
-                    candidate,
-                    {
-                        timeout: 12000,
-                        maxRedirects: 5,
-
-                        validateStatus:
-                            () => true,
-
-                        headers: {
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-
-                            "Accept":
-                                "text/html,application/xhtml+xml"
-                        }
-                    }
-                );
-
-
-            let finalUrl =
-                candidate;
-
-
-            try {
-
-                if (
-                    response?.request?.res?.responseUrl
-                ) {
-
-                    finalUrl =
-                        response.request.res.responseUrl;
-                }
-
-            } catch (_) {}
-
-
-            let finalOrigin =
-                candidate;
-
-
-            try {
-
-                finalOrigin =
-                    new URL(
-                        finalUrl
-                    ).origin;
-
-            } catch (_) {}
-
-
-            const html =
-                response.data || "";
-
-
-            const challenge =
-                typeof html === "string" &&
-                (
-                    html.includes(
-                        "challenge-platform"
-                    ) ||
-                    html.includes(
-                        "cf-chl-"
-                    ) ||
-                    html.toLowerCase().includes(
-                        "just a moment"
-                    ) ||
-                    html.toLowerCase().includes(
-                        "checking your browser"
-                    )
-                );
-
-
-            console.log(
-                "[ANIMEHAY] DOMAIN STATUS:",
-                candidate,
-                response.status,
-                "FINAL:",
-                finalOrigin
-            );
-
-
-            console.log(
-                "[ANIMEHAY] DOMAIN CHALLENGE:",
-                finalOrigin,
-                challenge
-            );
-
-
-            // ------------------------------------------------
-            // HTTP 2xx/3xx + final AnimeHay hostname
-            // = domain usable.
-            //
-            // KHÔNG reject vì challenge.
-            // ------------------------------------------------
-
-            if (
-                response.status >= 200 &&
-                response.status < 400 &&
-                /animehay/i.test(
-                    finalOrigin
-                )
-            ) {
-
-                animeHayDirectoryActiveDomain =
-                    finalOrigin;
-
-                animeHayActiveDomain =
-                    finalOrigin;
-
-
-                console.log(
-                    "[ANIMEHAY] ACTIVE DOMAIN:",
-                    finalOrigin
-                );
-
-
-                return finalOrigin;
+        for (const { names } of relevantEntries.slice(0, 3)) {
+            for (const name of names) {
+                if (name && name.trim()) aliases.add(name.trim());
             }
-
-        } catch (e) {
-
-            console.log(
-                "[ANIMEHAY] DOMAIN ERROR:",
-                candidate,
-                e?.message || e
-            );
         }
+
+        const result = [...aliases].slice(0, 20);
+        ANIMEHAY_METADATA_CACHE.set(cacheKey, result);
+
+        console.log("[ANIMEHAY META] ALIASES:", {
+            query,
+            matchedAnime: relevantEntries.length,
+            aliases: result
+        });
+
+        return result;
+    } catch (error) {
+        // Metadata lỗi hoặc bị giới hạn truy cập thì AnimeHay vẫn tiếp tục tìm bằng tên gốc.
+        console.log("[ANIMEHAY META] LOOKUP FAILED:", {
+            query,
+            status: error?.response?.status || 0,
+            message: error?.message || String(error)
+        });
+
+        ANIMEHAY_METADATA_CACHE.set(cacheKey, []);
+        return [];
     }
-
-
-    return null;
 }
 
 
@@ -18021,11 +17781,41 @@ async function fetchAnimeHay(
 
 
         // ----------------------------------------------------
-        // 2. TITLE VARIANTS + SMART QUERY PLAN
+        // 2. TITLE VARIANTS + MAL ALIASES + SMART QUERY PLAN
         // ----------------------------------------------------
 
         const titleVariants =
             animeHayBuildTitleVariants(movieName);
+
+        // Bổ sung tên chính, tên tiếng Anh, tên Nhật và synonym từ MAL.
+        // Nếu API lỗi, vẫn tiếp tục tìm bằng các biến thể tên gốc.
+        const metadataTitleVariants =
+            await animeHayGetMetadataTitleVariants(movieName);
+
+        for (const alias of metadataTitleVariants) {
+            for (const variant of animeHayBuildTitleVariants(alias)) {
+                const normalizedVariant =
+                    animeHayMetadataNormalizeTitle(variant);
+
+                if (
+                    variant &&
+                    normalizedVariant &&
+                    !titleVariants.some(
+                        existing =>
+                            animeHayMetadataNormalizeTitle(existing) ===
+                            normalizedVariant
+                    ) &&
+                    titleVariants.length < 30
+                ) {
+                    titleVariants.push(variant);
+                }
+            }
+        }
+
+        console.log(
+            "[ANIMEHAY] TITLE VARIANTS + MAL ALIASES:",
+            titleVariants
+        );
 
         const targetNormalized =
             animeHayNormalizeText(movieName);
@@ -18059,13 +17849,13 @@ async function fetchAnimeHay(
             queryPlan.push(query);
         }
 
-        // Ưu tiên tìm nguyên tên và các biến thể trước.
-        // Giới hạn số biến thể để tránh gọi search quá nhiều lần.
-        for (const variant of titleVariants.slice(0, 5)) {
+        // Ưu tiên tên gốc, sau đó các alias từ metadata.
+        // Dành nhiều lượt hơn cho tên đầy đủ trước khi tìm cụm từ.
+        for (const variant of titleVariants.slice(0, 12)) {
             addSearchQuery(variant);
         }
 
-        // Lấy các từ có khả năng phân biệt tên phim.
+        // Lấy từ đặc trưng từ tên đầu vào và tên thay thế.
         const targetTokens = targetNormalized
             .split(/\s+/)
             .filter(Boolean);
@@ -18077,9 +17867,9 @@ async function fetchAnimeHay(
                 !/^\d{4}$/.test(token)
         );
 
-        // Tìm các cụm từ liên tiếp có ít nhất hai từ quan trọng.
-        // Ví dụ: "tetsuryo meet" hoặc "tetsudou musume".
-        for (const variant of titleVariants.slice(0, 3)) {
+        // Tạo cụm từ liên tiếp từ các tên gốc và alias.
+        // Bỏ qua cụm có quá ít từ đặc trưng.
+        for (const variant of titleVariants.slice(0, 8)) {
             const tokens = animeHayNormalizeText(variant)
                 .split(/\s+/)
                 .filter(Boolean);
@@ -18102,23 +17892,31 @@ async function fetchAnimeHay(
                         ).length;
 
                     if (importantCount >= 2) {
-                        addSearchQuery(
-                            phraseTokens.join(" ")
-                        );
+                        addSearchQuery(phraseTokens.join(" "));
                     }
                 }
             }
         }
 
-        // Tìm thêm một số từ đặc trưng riêng lẻ để cứu trường hợp
-        // tên phim trên AnimeHay viết khác với tên đầu vào.
-        // Không tìm riêng các từ như "with", "the", "and".
-        for (const token of informativeTokens) {
-            addSearchQuery(token);
+        // Bổ sung từ đặc trưng từ các alias.
+        for (const variant of titleVariants.slice(0, 12)) {
+            const tokens = animeHayNormalizeText(variant)
+                .split(/\s+/)
+                .filter(Boolean);
+
+            for (const token of tokens) {
+                if (
+                    token.length >= 3 &&
+                    !stopWords.has(token) &&
+                    !/^\d{4}$/.test(token)
+                ) {
+                    addSearchQuery(token);
+                }
+            }
         }
 
-        // Giới hạn tổng số truy vấn, tránh bắn hàng loạt từ đơn.
-        const MAX_SEARCH_QUERIES = 10;
+        // Giới hạn số truy vấn để tránh gọi AnimeHay quá nhiều lần.
+        const MAX_SEARCH_QUERIES = 20;
         const finalQueryPlan =
             queryPlan.slice(0, MAX_SEARCH_QUERIES);
 
