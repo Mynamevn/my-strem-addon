@@ -15260,15 +15260,23 @@ async function animeHaySearch(
         console.log("[ANIMEHAY DEBUG] SEARCH INPUT:",
             title);
 
-        console.log("[ANIMEHAY DEBUG] TITLE MATCHES:",
-            $("a").filter((_, el) =>
-                /FX Senshi Kurumi-chan/i.test($(el).text())
-            ).map((_, el) => ({
-                text: $(el).text().trim(),
-                href: $(el).attr("href"),
-                parentClass: $(el).parent().attr("class"),
-                grandparentClass: $(el).parent().parent().attr("class")
-            })).get().slice(0, 10));
+        console.log(
+            "[ANIMEHAY DEBUG] TITLE MATCHES:",
+            $("a[href]")
+                .filter((_, el) => {
+                    const href = $(el).attr("href") || "";
+                    return /thong-tin-phim|\/anime\//i.test(href);
+                })
+                .map((_, el) => ({
+                    text: $(el).text().trim(),
+                    title: $(el).attr("title") || "",
+                    href: $(el).attr("href"),
+                    parentClass: $(el).parent().attr("class"),
+                    grandparentClass: $(el).parent().parent().attr("class")
+                }))
+                .get()
+                .slice(0, 30)
+        );
 
         console.log("[ANIMEHAY DEBUG] INFO LINKS:",
             $("a[href*='thong-tin-phim']")
@@ -27257,44 +27265,47 @@ console.log(
 // =====================================================
 
 // -------------------------------------------------
-    // ANIMEHAY FALLBACK — ORIGINAL + MAL/JIKAN ALIASES
+    // ANIMEHAY FALLBACK — ORIGINAL + TITLE ALIASES
     // -------------------------------------------------
 
     let animeHayFallbackTitles = [
         movieName
     ];
 
+    // Luôn có tên gốc và alias dự phòng, kể cả khi Jikan timeout.
+    const animeHayFallbackTitleSources = [
+        ...animeHayBuildTitleVariants(movieName),
+        ...animeHayGetKnownTitleAliases(movieName),
+    ];
+
     try {
-        const animeHayFallbackTitleSources = [
-    ...animeHayBuildTitleVariants(movieName),
-    ...await animeHayGetMetadataTitleVariants(movieName),
-    ...animeHayGetKnownTitleAliases(movieName),
-];
+        const metadataTitles =
+            await animeHayGetMetadataTitleVariants(movieName);
 
-        const uniqueTitles = new Map();
-
-        for (const title of [
-            ...(Array.isArray(baseTitles) ? baseTitles : []),
-            ...(Array.isArray(metadataTitles) ? metadataTitles : [])
-        ]) {
-            const value = String(title || "").trim();
-            const key = animeHayNormalizeText(value);
-
-            if (value && key && !uniqueTitles.has(key)) {
-                uniqueTitles.set(key, value);
-            }
-        }
-
-        animeHayFallbackTitles = [
-            ...uniqueTitles.values()
-        ].slice(0, 6);
-
+        animeHayFallbackTitleSources.push(
+            ...metadataTitles
+        );
     } catch (error) {
         console.log(
-            "[ANIMEHAY] FALLBACK TITLE ERROR:",
+            "[ANIMEHAY] FALLBACK METADATA ERROR:",
             error?.message || error
         );
     }
+
+    const uniqueTitles = new Map();
+
+    for (const title of animeHayFallbackTitleSources) {
+        const value = String(title || "").trim();
+        const key = animeHayNormalizeText(value);
+
+        if (value && key && !uniqueTitles.has(key)) {
+            uniqueTitles.set(key, value);
+        }
+    }
+
+    animeHayFallbackTitles = [
+        ...uniqueTitles.values()
+    ].slice(0, 10);
 
     console.log(
         "[ANIMEHAY] FALLBACK TITLE VARIANTS:",
