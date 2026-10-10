@@ -18493,8 +18493,6 @@ async function fetchAnimeHay(
         }
     }
 
-        const searchCandidates = [...candidateMap.values()];
-
         console.log(
             "[ANIMEHAY] UNIQUE SEARCH CANDIDATES:",
             searchCandidates.length
