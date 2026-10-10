@@ -27335,184 +27335,129 @@ console.log(
 // =====================================================
 
 // -------------------------------------------------
-    // ANIMEHAY FALLBACK — ORIGINAL + TITLE ALIASES
+    // FALLBACK — CHỈ MỘT MỤC ANIMEHAY
+    //
+    // Tên thay thế chỉ dùng bên trong quá trình tìm kiếm.
+    // Không tạo một fallback riêng cho từng alias.
+    //
+    // Chỉ thêm AnimeHay khi không có stream URL thực.
     // -------------------------------------------------
 
-    let animeHayFallbackTitles = [
-        movieName
-    ];
-
-    // Luôn có tên gốc và alias dự phòng, kể cả khi Jikan timeout.
-    const animeHayFallbackTitleSources = [
-        ...animeHayBuildTitleVariants(movieName),
-        ...animeHayGetKnownTitleAliases(movieName),
-    ];
-
-    try {
-        const metadataTitles =
-            await animeHayGetMetadataTitleVariants(movieName);
-
-        animeHayFallbackTitleSources.push(
-            ...metadataTitles
-        );
-    } catch (error) {
-        console.log(
-            "[ANIMEHAY] FALLBACK METADATA ERROR:",
-            error?.message || error
-        );
-    }
-
-    const uniqueTitles = new Map();
-
-    for (const title of animeHayFallbackTitleSources) {
-        const value = String(title || "").trim();
-        const key = animeHayNormalizeText(value);
-
-        if (value && key && !uniqueTitles.has(key)) {
-            uniqueTitles.set(key, value);
-        }
-    }
-
-    animeHayFallbackTitles = [
-        ...uniqueTitles.values()
-    ].slice(0, 10);
-
-    console.log(
-        "[ANIMEHAY] FALLBACK TITLE VARIANTS:",
-        animeHayFallbackTitles
+    const hasRealDirectStream = directStreams.some(
+        stream =>
+            stream &&
+            typeof stream.url === "string" &&
+            stream.url.trim().length > 0
     );
 
-const externalStreams = [
+    const externalStreams = [
 
-    // -------------------------------------------------
-    // FALLBACK 1 — PHIMLONGTIENG
-    // -------------------------------------------------
+        // -------------------------------------------------
+        // FALLBACK 1 — PHIMLONGTIENG
+        // -------------------------------------------------
 
-    {
-        name:
-            "🌐 [Fallback] PhimLongTieng",
+        {
+            name: "🌐 [Fallback] PhimLongTieng",
 
-        title:
-            "Mở trang tìm kiếm PhimLongTieng - " +
-            movieName,
+            title:
+                "Mở trang tìm kiếm PhimLongTieng - " +
+                movieName,
 
-        externalUrl:
-            "https://phimlongtieng.link/search/" +
-            toSlug(movieName) +
-            "/"
-    },
+            externalUrl:
+                "https://phimlongtieng.link/search/" +
+                toSlug(movieName) +
+                "/"
+        },
 
+        // -------------------------------------------------
+        // FALLBACK 2 — NGUONC
+        // -------------------------------------------------
 
-    // -------------------------------------------------
-    // FALLBACK 2 — NGUONC
-    // -------------------------------------------------
+        {
+            name: "🌐 [Fallback] NguonC",
 
-    {
-        name:
-            "🌐 [Fallback] NguonC",
+            title:
+                "Mở trang tìm kiếm NguonC - " +
+                nguonCFallbackName,
 
-        title:
-            "Mở trang tìm kiếm NguonC - " +
-            nguonCFallbackName,
+            externalUrl:
+                "https://nguonc.com/tim-kiem?keyword=" +
+                encodeURIComponent(nguonCFallbackName)
+        },
 
-        externalUrl:
-            "https://nguonc.com/tim-kiem?keyword=" +
-            encodeURIComponent(
-                nguonCFallbackName
-            )
-    },
+        // -------------------------------------------------
+        // FALLBACK 3 — KKPHIM2
+        // -------------------------------------------------
 
+        {
+            name: "🌐 [Fallback] KKPhim2",
 
-    // -------------------------------------------------
-    // FALLBACK 3 — KKPHIM2
-    // -------------------------------------------------
+            title:
+                "Mở trang tìm kiếm KKPhim2 - " +
+                movieName,
 
-    {
-        name:
-            "🌐 [Fallback] KKPhim2",
+            externalUrl:
+                "https://www.kkphim2.com/tim-kiem?keyword=" +
+                encodeURIComponent(movieName)
+        },
 
-        title:
-            "Mở trang tìm kiếm KKPhim2 - " +
-            movieName,
+        // -------------------------------------------------
+        // FALLBACK 4 — ANIMEHAY
+        //
+        // Một mục duy nhất, chỉ khi không có stream URL.
+        // -------------------------------------------------
 
-        externalUrl:
-            "https://www.kkphim2.com/tim-kiem?keyword=" +
-            encodeURIComponent(
-                movieName
-            )
-    },
+        ...(
+            hasRealDirectStream
+                ? []
+                : [{
+                    name: "🌐 [Fallback] AnimeHay",
 
+                    title:
+                        "Tìm AnimeHay - " +
+                        movieName,
 
-   // -------------------------------------------------
-    // FALLBACK 4 — ANIMEHAY
-    // -------------------------------------------------
-
-    ...animeHayFallbackTitles.map((title, index) => ({
-        name:
-            index === 0
-                ? "🌐 [Fallback] AnimeHay"
-                : `🌐 [AnimeHay Alias ${index}]`,
-
-        title:
-            `Tìm AnimeHay - ${title}`,
-
-        externalUrl:
-            (
-                animeHayActiveDomain ||
-                animeHayDirectoryActiveDomain ||
-                ANIMEHAY_DIRECTORY
-            ) +
-            "/tim-kiem/" +
-            encodeURIComponent(
-                animeHaySlug(title)
-            )
-    }))
-];
+                    externalUrl:
+                        (
+                            animeHayActiveDomain ||
+                            animeHayDirectoryActiveDomain ||
+                            ANIMEHAY_DIRECTORY
+                        ) +
+                        "/tim-kiem/" +
+                        animeHaySlug(movieName)
+                }]
+        )
+    ];
 
     // =====================================================
     // 13. LỌC DIRECT STREAM
+    // Chỉ stream có URL phát mới được tính là direct.
     // =====================================================
 
-    const validDirectStreams =
-        directStreams.filter(
-            stream => {
-
-                if (
-                    !stream ||
-                    typeof stream !== "object"
-                ) {
-                    return false;
-                }
-
-                return Boolean(
-                    stream.url ||
-                    stream.externalUrl
-                );
-
-            }
-        );
+    const validDirectStreams = directStreams.filter(
+        stream =>
+            stream &&
+            typeof stream === "object" &&
+            typeof stream.url === "string" &&
+            stream.url.trim().length > 0
+    );
 
     // =====================================================
     // 14. LỌC FALLBACK
+    // Thu nhận externalUrl kể cả khi một provider cũ
+    // vô tình đưa mục fallback vào directStreams.
     // =====================================================
 
-    const validExternalStreams =
-        externalStreams.filter(
-            stream => {
-
-                if (
-                    !stream ||
-                    typeof stream !== "object"
-                ) {
-                    return false;
-                }
-
-                return Boolean(
-                    stream.externalUrl
-                );
-
-            }
-        );
+    const validExternalStreams = [
+        ...directStreams,
+        ...externalStreams
+    ].filter(
+        stream =>
+            stream &&
+            typeof stream === "object" &&
+            typeof stream.externalUrl === "string" &&
+            stream.externalUrl.trim().length > 0
+    );
 
     // =====================================================
     // 15. GỘP TẤT CẢ
