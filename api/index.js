@@ -18110,220 +18110,254 @@ async function animeHayLoadLinks(
 const ANIMEHAY_JIKAN_TITLE_CACHE = new Map();
 
 async function animeHayGetMetadataTitleVariants(movieName) {
-    const originalTitle = String(movieName || "").trim();
+    const results = [];
+    const seen = new Set();
 
-    if (!originalTitle) {
-        return [];
-    }
+    const addTitle = (value) => {
+        const title = String(value || "")
+            .replace(/&amp;/gi, "&")
+            .replace(/&#39;|&apos;/gi, "'")
+            .replace(/&quot;/gi, '"')
+            .replace(/&#x([0-9a-f]+);/gi, (_, hex) =>
+                String.fromCodePoint(parseInt(hex, 16))
+            )
+            .replace(/&#(\d+);/g, (_, num) =>
+                String.fromCodePoint(Number(num))
+            )
+            .replace(/<[^>]*>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
 
-    const cacheKey = animeHayNormalizeText(originalTitle);
+        const key = title
+            .normalize("NFKC")
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}]+/gu, "");
 
-    if (ANIMEHAY_JIKAN_TITLE_CACHE.has(cacheKey)) {
-        return [
-            ...ANIMEHAY_JIKAN_TITLE_CACHE.get(cacheKey)
-        ];
-    }
-
-    const uniqueTitles = new Map();
-
-    const addTitle = value => {
-        const title = String(value || "").trim();
-        const normalized = animeHayNormalizeText(title);
-
-        if (!title || !normalized) return;
-
-        if (!uniqueTitles.has(normalized)) {
-            uniqueTitles.set(normalized, title);
+        if (
+            title.length >= 2 &&
+            key &&
+            !seen.has(key)
+        ) {
+            seen.add(key);
+            results.push(title);
         }
     };
 
-    const originalWords = originalTitle
-        .replace(/[^\p{L}\p{N}\s]/gu, " ")
-        .split(/\s+/)
-        .filter(Boolean);
+    const normalize = (value) =>
+        String(value || "")
+            .normalize("NFKC")
+            .toLowerCase()
+            .replace(/[’‘]/g, "'")
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .trim();
 
-    // Thử tên đầy đủ trước; nếu cần, thử thêm phần đầu tên phim.
-    const queries = [
-        originalTitle,
-        originalWords.length > 5
-            ? originalWords.slice(0, 5).join(" ")
-            : ""
-    ].filter(Boolean);
+    try {
+        const query = String(movieName || "").trim();
 
-    const animeResults = new Map();
-
-    for (const query of [...new Set(queries)]) {
-        try {
-            const response = await axios.get(
-                "https://api.jikan.moe/v4/anime",
-                {
-                    params: {
-                        q: query,
-                        limit: 10,
-                        sfw: true
-                    },
-                    timeout: 12000,
-                    headers: {
-                        "Accept": "application/json",
-                        "User-Agent": "MOVINA-Stremio-Addon/1.0"
-                    }
-                }
-            );
-
-            const items = Array.isArray(response?.data?.data)
-                ? response.data.data
-                : [];
-
-            for (const anime of items) {
-                if (!anime?.mal_id) continue;
-
-                const candidateTitles = [
-                    anime.title,
-                    anime.title_english,
-                    anime.title_japanese,
-                    ...(Array.isArray(anime.title_synonyms)
-                        ? anime.title_synonyms
-                        : []),
-                    ...(Array.isArray(anime.titles)
-                        ? anime.titles.map(item => item?.title)
-                        : [])
-                ].filter(Boolean);
-
-                const normalizedQuery =
-                    animeHayNormalizeText(originalTitle);
-
-                let bestSimilarity = 0;
-
-                for (const value of candidateTitles) {
-                    const normalizedCandidate =
-                        animeHayNormalizeText(value);
-
-                    if (!normalizedCandidate) continue;
-
-                    if (normalizedCandidate === normalizedQuery) {
-                        bestSimilarity = Math.max(
-                            bestSimilarity,
-                            1
-                        );
-                        continue;
-                    }
-
-                    if (
-                        normalizedCandidate.includes(normalizedQuery) ||
-                        normalizedQuery.includes(normalizedCandidate)
-                    ) {
-                        bestSimilarity = Math.max(
-                            bestSimilarity,
-                            0.8
-                        );
-                        continue;
-                    }
-
-                    const queryWords = new Set(
-                        normalizedQuery.split(/\s+/).filter(Boolean)
-                    );
-
-                    const candidateWords = new Set(
-                        normalizedCandidate.split(/\s+/).filter(Boolean)
-                    );
-
-                    const overlap = [...queryWords].filter(
-                        word => candidateWords.has(word)
-                    ).length;
-
-                    const similarity = queryWords.size
-                        ? overlap / queryWords.size
-                        : 0;
-
-                    bestSimilarity = Math.max(
-                        bestSimilarity,
-                        similarity
-                    );
-                }
-
-                const previous = animeResults.get(anime.mal_id);
-
-                if (
-                    !previous ||
-                    bestSimilarity > previous.score
-                ) {
-                    animeResults.set(anime.mal_id, {
-                        anime,
-                        score: bestSimilarity
-                    });
-                }
-            }
-        } catch (error) {
-            console.log(
-                "[ANIMEHAY] JIKAN QUERY ERROR:",
-                {
-                    query,
-                    status: error?.response?.status || 0,
-                    error: error?.message || String(error)
-                }
-            );
+        if (!query) {
+            return [];
         }
-    }
 
-    const rankedAnime = [...animeResults.values()]
-        .sort((a, b) => b.score - a.score);
-
-    if (rankedAnime.length > 0) {
-        const bestScore = rankedAnime[0].score;
-
-        // Chỉ lấy các kết quả gần với kết quả phù hợp nhất,
-        // tránh trộn tên của những anime không liên quan.
-        const selectedAnime = rankedAnime
-            .filter((item, index) =>
-                index < 3 &&
-                item.score >= Math.max(0.35, bestScore - 0.15)
-            );
-
-        for (const item of selectedAnime) {
-            const anime = item.anime;
-
-            addTitle(anime.title);
-            addTitle(anime.title_english);
-            addTitle(anime.title_japanese);
-
-            for (const synonym of anime.title_synonyms || []) {
-                addTitle(synonym);
-            }
-
-            for (const title of anime.titles || []) {
-                addTitle(title?.title);
-            }
-
-            console.log(
-                "[ANIMEHAY] JIKAN MATCH:",
-                {
-                    malId: anime.mal_id,
-                    score: item.score,
-                    title: anime.title,
-                    english: anime.title_english,
-                    japanese: anime.title_japanese,
-                    synonyms: anime.title_synonyms || []
-                }
-            );
-        }
-    }
-
-    const result = [...uniqueTitles.values()]
-        .filter(title =>
-            animeHayNormalizeText(title) !== cacheKey
+        console.log(
+            "[ANIMEHAY MAL] SEARCH:",
+            query
         );
 
-    ANIMEHAY_JIKAN_TITLE_CACHE.set(
-        cacheKey,
-        result
-    );
+        // Tìm anime trên MAL; không gọi Jikan.
+        const searchResponse = await axios.get(
+            "https://myanimelist.net/anime.php",
+            {
+                params: {
+                    q: query,
+                    cat: "anime"
+                },
+                timeout: 5000,
+                maxRedirects: 5,
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+            }
+        );
 
-    console.log(
-        "[ANIMEHAY] JIKAN TITLE VARIANTS:",
-        result
-    );
+        const $ = cheerio.load(searchResponse.data);
+        const wanted = normalize(query);
+        const wantedTokens = new Set(
+            wanted.split(/\s+/).filter(
+                token => token.length > 1
+            )
+        );
 
-    return result;
+        const candidates = [];
+        const candidateUrls = new Set();
+
+        $("a[href*='/anime/']").each((_, element) => {
+            const href = String(
+                $(element).attr("href") || ""
+            ).trim();
+
+            const title = String(
+                $(element).text() || ""
+            ).replace(/\s+/g, " ").trim();
+
+            if (
+                !title ||
+                !/myanimelist\.net\/anime\/\d+/i.test(href) ||
+                title.length < 2
+            ) {
+                return;
+            }
+
+            let url;
+
+            try {
+                url = new URL(
+                    href,
+                    "https://myanimelist.net"
+                ).href;
+            } catch {
+                return;
+            }
+
+            // Chỉ chấp nhận trang anime MAL, không nhận URL ngoài.
+            if (
+                !/^https:\/\/myanimelist\.net\/anime\/\d+(?:\/|$)/i.test(url)
+            ) {
+                return;
+            }
+
+            const canonicalUrl = url.split("?")[0];
+
+            if (candidateUrls.has(canonicalUrl)) {
+                return;
+            }
+
+            candidateUrls.add(canonicalUrl);
+
+            const normalizedTitle = normalize(title);
+            const tokens = normalizedTitle
+                .split(/\s+/)
+                .filter(token => token.length > 1);
+
+            let overlap = 0;
+
+            for (const token of new Set(tokens)) {
+                if (wantedTokens.has(token)) {
+                    overlap++;
+                }
+            }
+
+            let score = overlap;
+
+            if (normalizedTitle === wanted) {
+                score += 100;
+            } else if (
+                normalizedTitle.includes(wanted) ||
+                wanted.includes(normalizedTitle)
+            ) {
+                score += 20;
+            }
+
+            candidates.push({
+                title,
+                url: canonicalUrl,
+                score
+            });
+        });
+
+        candidates.sort(
+            (a, b) => b.score - a.score
+        );
+
+        console.log(
+            "[ANIMEHAY MAL] CANDIDATES:",
+            candidates.slice(0, 3).map(item => ({
+                title: item.title,
+                score: item.score,
+                url: item.url
+            }))
+        );
+
+        // Chỉ lấy trang có mức khớp tên tối thiểu.
+        const best = candidates[0];
+
+        if (!best || best.score < 1) {
+            console.log(
+                "[ANIMEHAY MAL] NO SUITABLE MATCH"
+            );
+            return [];
+        }
+
+        addTitle(best.title);
+
+        // Đọc tên tiếng Anh, tiếng Nhật và các tên thay thế.
+        const detailResponse = await axios.get(
+            best.url,
+            {
+                timeout: 5000,
+                maxRedirects: 5,
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+            }
+        );
+
+        const detail = cheerio.load(
+            detailResponse.data
+        );
+
+        addTitle(
+            detail("h1.title-name strong").first().text() ||
+            detail("h1.title-name").first().text()
+        );
+
+        detail(".spaceit_pad").each((_, element) => {
+            const row = detail(element);
+            const label = String(
+                row.find(".dark_text").first().text() || ""
+            ).replace(/:\s*$/, "").trim().toLowerCase();
+
+            if (
+                label === "english" ||
+                label === "japanese" ||
+                label === "synonyms"
+            ) {
+                const value = row
+                    .clone()
+                    .find(".dark_text")
+                    .remove()
+                    .end()
+                    .text()
+                    .replace(/^\s*:\s*/, "")
+                    .trim();
+
+                if (label === "synonyms") {
+                    value.split(/\s*;\s*/).forEach(addTitle);
+                } else {
+                    addTitle(value);
+                }
+            }
+        });
+
+        console.log(
+            "[ANIMEHAY MAL] TITLE VARIANTS:",
+            JSON.stringify(results)
+        );
+
+    } catch (error) {
+        console.log(
+            "[ANIMEHAY MAL] LOOKUP ERROR:",
+            error?.response?.status ||
+            error?.code ||
+            error?.message ||
+            error
+        );
+    }
+
+    return results;
 }
 
 // ============================================================
