@@ -14776,11 +14776,15 @@ function animeHayNormalizeText(value = "") {
 // ANIMEHAY — SLUG
 // ============================================================
 
-function animeHaySlug(value = "") {
-
-    return animeHayNormalizeText(value)
-        .replace(/\s+/g, "-")
-        .replace(/^-+|-+$/g, "");
+function animeHaySlug(value) {
+    return String(value || "")
+        .normalize("NFKC")
+        .trim()
+        // Dấu gạch dưới trong slug MAL phải thành dấu cách
+        .replace(/_/g, " ")
+        // Chuẩn hóa các khoảng trắng nhưng giữ nguyên dấu gạch nối
+        .replace(/\s+/g, " ")
+        .trim();
 }
 
 
@@ -18115,6 +18119,7 @@ async function animeHayGetMetadataTitleVariants(movieName) {
 
     const addTitle = (value) => {
         const title = String(value || "")
+            .replace(/<[^>]*>/g, " ")
             .replace(/&amp;/gi, "&")
             .replace(/&#39;|&apos;/gi, "'")
             .replace(/&quot;/gi, '"')
@@ -18124,7 +18129,6 @@ async function animeHayGetMetadataTitleVariants(movieName) {
             .replace(/&#(\d+);/g, (_, num) =>
                 String.fromCodePoint(Number(num))
             )
-            .replace(/<[^>]*>/g, " ")
             .replace(/\s+/g, " ")
             .trim();
 
@@ -18133,11 +18137,7 @@ async function animeHayGetMetadataTitleVariants(movieName) {
             .toLowerCase()
             .replace(/[^\p{L}\p{N}]+/gu, "");
 
-        if (
-            title.length >= 2 &&
-            key &&
-            !seen.has(key)
-        ) {
+        if (title.length >= 2 && key && !seen.has(key)) {
             seen.add(key);
             results.push(title);
         }
@@ -18151,19 +18151,61 @@ async function animeHayGetMetadataTitleVariants(movieName) {
             .replace(/[^\p{L}\p{N}]+/gu, " ")
             .trim();
 
+    const headers = {
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    };
+
+    // Đọc tên từ trang chi tiết MAL.
+    const readMalDetail = ($) => {
+        addTitle($("h1.title-name strong").first().text());
+        addTitle($("h1.title-name").first().text());
+
+        // Đọc English, Japanese và Synonyms.
+        $(".spaceit_pad").each((_, element) => {
+            const row = $(element);
+
+            const label = String(
+                row.find(".dark_text").first().text() || ""
+            )
+                .replace(/:\s*$/, "")
+                .trim()
+                .toLowerCase();
+
+            if (
+                label !== "english" &&
+                label !== "japanese" &&
+                label !== "synonyms"
+            ) {
+                return;
+            }
+
+            const value = row
+                .clone()
+                .find(".dark_text")
+                .remove()
+                .end()
+                .text()
+                .replace(/^\s*:\s*/, "")
+                .replace(/\s+/g, " ")
+                .trim();
+
+            if (label === "synonyms") {
+                value.split(/\s*;\s*/).forEach(addTitle);
+            } else {
+                addTitle(value);
+            }
+        });
+    };
+
     try {
         const query = String(movieName || "").trim();
 
-        if (!query) {
-            return [];
-        }
+        if (!query) return [];
 
-        console.log(
-            "[ANIMEHAY MAL] SEARCH:",
-            query
-        );
+        console.log("[ANIMEHAY MAL] SEARCH:", query);
 
-        // Tìm anime trên MAL; không gọi Jikan.
         const searchResponse = await axios.get(
             "https://myanimelist.net/anime.php",
             {
@@ -18171,43 +18213,80 @@ async function animeHayGetMetadataTitleVariants(movieName) {
                     q: query,
                     cat: "anime"
                 },
-                timeout: 5000,
+                timeout: 10000,
                 maxRedirects: 5,
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9"
-                }
+                headers
             }
         );
 
-        const $ = cheerio.load(searchResponse.data);
+        const searchPage = cheerio.load(searchResponse.data);
+
+        // MAL có thể chuyển thẳng từ trang tìm kiếm
+        // sang trang chi tiết anime.
+        const responseUrl =
+            searchResponse.request?.res?.responseUrl || "";
+
+        const canonicalUrl =
+            searchPage('link[rel="canonical"]').attr("href") ||
+            searchPage('meta[property="og:url"]').attr("content") ||
+            "";
+
+        const isAnimeDetailUrl = (value) =>
+            /^https?:\/\/myanimelist\.net\/anime\/\d+(?:\/|$)/i.test(
+                String(value || "").split("#")[0]
+            );
+
+        let detailUrl = "";
+
+        if (isAnimeDetailUrl(responseUrl)) {
+            detailUrl = responseUrl.split("#")[0];
+        } else if (isAnimeDetailUrl(canonicalUrl)) {
+            detailUrl = canonicalUrl.split("#")[0];
+        }
+
+        // Chỉ xem là trang chi tiết khi có cấu trúc tiêu đề
+        // của trang anime, tránh nhận nhầm trang tìm kiếm.
+        const isDetailPage =
+            Boolean(detailUrl) &&
+            (
+                searchPage("h1.title-name").length > 0 ||
+                searchPage(".detail-characters-list").length > 0
+            );
+
+        if (isDetailPage) {
+            console.log(
+                "[ANIMEHAY MAL] DIRECT DETAIL PAGE:",
+                detailUrl
+            );
+
+            readMalDetail(searchPage);
+
+            console.log(
+                "[ANIMEHAY MAL] TITLE VARIANTS:",
+                JSON.stringify(results)
+            );
+
+            return results;
+        }
+
+        // Nếu chưa chuyển thẳng đến trang chi tiết,
+        // tìm anime phù hợp trong kết quả tìm kiếm.
         const wanted = normalize(query);
         const wantedTokens = new Set(
-            wanted.split(/\s+/).filter(
-                token => token.length > 1
-            )
+            wanted.split(/\s+/).filter(token => token.length > 1)
         );
 
         const candidates = [];
         const candidateUrls = new Set();
 
-        $("a[href*='/anime/']").each((_, element) => {
-            const href = String(
-                $(element).attr("href") || ""
-            ).trim();
+        searchPage("a[href*='/anime/']").each((_, element) => {
+            const anchor = searchPage(element);
+            const href = String(anchor.attr("href") || "").trim();
+            const title = String(anchor.text() || "")
+                .replace(/\s+/g, " ")
+                .trim();
 
-            const title = String(
-                $(element).text() || ""
-            ).replace(/\s+/g, " ").trim();
-
-            if (
-                !title ||
-                !/myanimelist\.net\/anime\/\d+/i.test(href) ||
-                title.length < 2
-            ) {
-                return;
-            }
+            if (!title || title.length < 2) return;
 
             let url;
 
@@ -18220,22 +18299,32 @@ async function animeHayGetMetadataTitleVariants(movieName) {
                 return;
             }
 
-            // Chỉ chấp nhận trang anime MAL, không nhận URL ngoài.
+            if (!isAnimeDetailUrl(url)) return;
+
+            // Loại bỏ link đến các mục phụ như characters,
+            // reviews, episodes hoặc related entries.
             if (
-                !/^https:\/\/myanimelist\.net\/anime\/\d+(?:\/|$)/i.test(url)
+                /\/(?:characters|reviews|episodes|staff|stats|news|forum|videos|pictures|related)(?:\/|$)/i
+                    .test(new URL(url).pathname)
             ) {
                 return;
             }
 
-            const canonicalUrl = url.split("?")[0];
+            const canonical = url.split("#")[0].split("?")[0];
 
-            if (candidateUrls.has(canonicalUrl)) {
+            if (candidateUrls.has(canonical)) return;
+            candidateUrls.add(canonical);
+
+            const normalizedTitle = normalize(title);
+
+            // Bỏ qua tên điều hướng không phải tên anime.
+            if (
+                /^(details|characters staff|light novel|reviews|episodes|related entries|more info)$/
+                    .test(normalizedTitle)
+            ) {
                 return;
             }
 
-            candidateUrls.add(canonicalUrl);
-
-            const normalizedTitle = normalize(title);
             const tokens = normalizedTitle
                 .split(/\s+/)
                 .filter(token => token.length > 1);
@@ -18243,9 +18332,7 @@ async function animeHayGetMetadataTitleVariants(movieName) {
             let overlap = 0;
 
             for (const token of new Set(tokens)) {
-                if (wantedTokens.has(token)) {
-                    overlap++;
-                }
+                if (wantedTokens.has(token)) overlap++;
             }
 
             let score = overlap;
@@ -18261,92 +18348,41 @@ async function animeHayGetMetadataTitleVariants(movieName) {
 
             candidates.push({
                 title,
-                url: canonicalUrl,
+                url: canonical,
                 score
             });
         });
 
-        candidates.sort(
-            (a, b) => b.score - a.score
-        );
+        candidates.sort((a, b) => b.score - a.score);
 
         console.log(
             "[ANIMEHAY MAL] CANDIDATES:",
-            candidates.slice(0, 3).map(item => ({
-                title: item.title,
-                score: item.score,
-                url: item.url
-            }))
+            JSON.stringify(candidates.slice(0, 5))
         );
 
-        // Chỉ lấy trang có mức khớp tên tối thiểu.
         const best = candidates[0];
 
         if (!best || best.score < 1) {
-            console.log(
-                "[ANIMEHAY MAL] NO SUITABLE MATCH"
-            );
+            console.log("[ANIMEHAY MAL] NO SUITABLE MATCH");
             return [];
         }
 
-        addTitle(best.title);
+        detailUrl = best.url;
 
-        // Đọc tên tiếng Anh, tiếng Nhật và các tên thay thế.
-        const detailResponse = await axios.get(
-            best.url,
-            {
-                timeout: 5000,
-                maxRedirects: 5,
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9"
-                }
-            }
-        );
-
-        const detail = cheerio.load(
-            detailResponse.data
-        );
-
-        addTitle(
-            detail("h1.title-name strong").first().text() ||
-            detail("h1.title-name").first().text()
-        );
-
-        detail(".spaceit_pad").each((_, element) => {
-            const row = detail(element);
-            const label = String(
-                row.find(".dark_text").first().text() || ""
-            ).replace(/:\s*$/, "").trim().toLowerCase();
-
-            if (
-                label === "english" ||
-                label === "japanese" ||
-                label === "synonyms"
-            ) {
-                const value = row
-                    .clone()
-                    .find(".dark_text")
-                    .remove()
-                    .end()
-                    .text()
-                    .replace(/^\s*:\s*/, "")
-                    .trim();
-
-                if (label === "synonyms") {
-                    value.split(/\s*;\s*/).forEach(addTitle);
-                } else {
-                    addTitle(value);
-                }
-            }
+        const detailResponse = await axios.get(detailUrl, {
+            timeout: 10000,
+            maxRedirects: 5,
+            headers
         });
+
+        const detailPage = cheerio.load(detailResponse.data);
+
+        readMalDetail(detailPage);
 
         console.log(
             "[ANIMEHAY MAL] TITLE VARIANTS:",
             JSON.stringify(results)
         );
-
     } catch (error) {
         console.log(
             "[ANIMEHAY MAL] LOOKUP ERROR:",
