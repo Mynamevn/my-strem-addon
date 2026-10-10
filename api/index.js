@@ -14817,62 +14817,58 @@ function animeHayAbsoluteUrl(
 // ============================================================
 
 function animeHayBuildTitleVariants(movieName = "") {
+
     const original = String(movieName || "").trim();
-    const normalized = animeHayNormalizeText(original);
 
     const variants = [];
+    const seen = new Set();
 
     const add = value => {
-        const v = String(value || "").trim();
+        const text = String(value || "").trim();
+        if (!text) return;
 
-        if (!v) return;
+        const key = animeHayNormalizeText(text);
+        if (!key || seen.has(key)) return;
 
-        const key = animeHayNormalizeText(v);
-
-        if (!key) return;
-
-        if (!variants.some(x => animeHayNormalizeText(x) === key)) {
-            variants.push(v);
-        }
+        seen.add(key);
+        variants.push(text);
     };
 
-    // 1. Tên gốc và các dạng chuẩn hóa hiện có
+    // 1. Giữ các biến thể tên đầy đủ hiện có.
+    const normalized = animeHayNormalizeText(original);
+
     add(original);
     add(normalized);
     add(normalized.replace(/\s+/g, "-"));
     add(original.replace(/[:\-–—]+/g, " "));
 
-    // 2. Bí danh tên anime.
-    // Có thể bổ sung các cặp từ đã xác minh vào đây.
+    // 2. Tạo bí danh từ vựng đã biết.
     const aliases = {
         fighter: ["senshi"],
         senshi: ["fighter"]
     };
 
-    // 3. Tạo biến thể bằng cách thay từ, không thay chuỗi con
-    // nằm bên trong một từ khác.
-    const aliasSource = [
+    const aliasSources = [
         original,
-        normalized.replace(/-/g, " ")
+        normalized
     ];
 
-    for (const source of aliasSource) {
+    for (const source of aliasSources) {
         const words = animeHayNormalizeText(source);
-
         if (!words) continue;
 
         for (const [from, replacements] of Object.entries(aliases)) {
-            const escapedFrom = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const escapedFrom = from.replace(
+                /[.*+?^${}()|[\]\\]/g,
+                "\\$&"
+            );
 
             const pattern = new RegExp(
                 `(^|[^a-z0-9])${escapedFrom}(?=$|[^a-z0-9])`,
-                "gi"
+                "i"
             );
 
             if (!pattern.test(words)) continue;
-
-            // RegExp có trạng thái lastIndex khi dùng cờ g.
-            pattern.lastIndex = 0;
 
             for (const replacement of replacements) {
                 const aliased = words.replace(
@@ -14886,9 +14882,57 @@ function animeHayBuildTitleVariants(movieName = "") {
         }
     }
 
-    console.log("[ANIMEHAY] TITLE VARIANTS:", variants);
+    // 3. Ưu tiên từ đơn đặc trưng trước các cụm từ phụ.
+    const longTitleVariants = [...variants];
+    const allWords = new Set();
 
-    return variants;
+    for (const variant of longTitleVariants) {
+
+        // Giữ cả các từ ghép có dấu gạch nối như Kurumi-chan.
+        const hyphenatedWords =
+            String(variant).match(/\b[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)+\b/g) || [];
+
+        for (const word of hyphenatedWords) {
+            allWords.add(word);
+        }
+
+        for (
+            const word of animeHayNormalizeText(variant).split(/\s+/)
+        ) {
+            if (word) allWords.add(word);
+        }
+    }
+
+    for (const word of allWords) {
+        if (
+            word.length >= 4 ||
+            word === "fx" ||
+            word.includes("-")
+        ) {
+            add(word);
+        }
+    }
+
+    // 4. Bổ sung cụm 2 từ và 3 từ liền nhau.
+    for (const variant of longTitleVariants) {
+
+        const words = animeHayNormalizeText(variant)
+            .split(/\s+/)
+            .filter(Boolean);
+
+        for (const size of [2, 3]) {
+            for (let i = 0; i <= words.length - size; i++) {
+                add(words.slice(i, i + size).join(" "));
+            }
+        }
+    }
+
+    // Giữ tên đầy đủ, từ đặc trưng và cụm từ ngắn ở đầu.
+    const limited = variants.slice(0, 24);
+
+    console.log("[ANIMEHAY] TITLE VARIANTS:", limited);
+
+    return limited;
 }
 
 
@@ -15488,9 +15532,19 @@ function animeHayFindBestSearchResult(
 
     const wanted = animeHayNormalizeText(movieName);
 
-    const wantedWords = new Set(
-        wanted.split(/\s+/).filter(word => word.length > 1)
-    );
+    const ignoredWords = new Set([
+        "the", "and", "for", "with", "from",
+        "season", "episode", "part", "movie",
+        "anime", "phim", "bo", "le", "moi"
+    ]);
+
+    const wantedWords = [
+        ...new Set(
+            wanted.split(/\s+/).filter(word =>
+                word.length > 1 && !ignoredWords.has(word)
+            )
+        )
+    ];
 
     const targetYear = Number(movieYear) || 0;
 
@@ -15498,6 +15552,7 @@ function animeHayFindBestSearchResult(
     let bestScore = -Infinity;
 
     for (const item of candidates) {
+
         const candidateTitle = String(
             item?.title ||
             item?.name ||
@@ -15509,11 +15564,18 @@ function animeHayFindBestSearchResult(
         if (!candidateTitle || !item?.url) continue;
 
         const title = animeHayNormalizeText(candidateTitle);
+        const candidateWords = new Set(title.split(/\s+/).filter(Boolean));
 
         let titleScore = 0;
-        let matchedWords = 0;
 
+        // Chỉ dùng tên đầy đủ/cụm nhiều từ để chấm điểm
+        // khớp chuỗi. Từ đơn như "FX" chỉ là tín hiệu phụ.
         for (const variant of variants) {
+
+            const variantWords = variant.split(/\s+/).filter(Boolean);
+
+            if (variantWords.length < 2) continue;
+
             if (title === variant) {
                 titleScore = Math.max(titleScore, 1000);
             } else if (
@@ -15522,34 +15584,53 @@ function animeHayFindBestSearchResult(
             ) {
                 titleScore = Math.max(titleScore, 500);
             }
-
-            const variantWords = new Set(
-                variant.split(/\s+/).filter(word => word.length > 1)
-            );
-
-            const overlap = [...variantWords].filter(
-                word => title.split(/\s+/).includes(word)
-            ).length;
-
-            matchedWords = Math.max(matchedWords, overlap);
         }
 
-        // Nếu không có tên nào khớp, bỏ qua ứng viên.
-        if (titleScore === 0 && matchedWords === 0) {
+        // Tính mức độ khớp theo các từ đặc trưng.
+        let matchedWeight = 0;
+        let totalWeight = 0;
+        let matchedWords = 0;
+
+        for (const word of wantedWords) {
+
+            const weight =
+                word.length >= 7 ? 3 :
+                word.length >= 4 ? 2 :
+                1;
+
+            totalWeight += weight;
+
+            if (candidateWords.has(word)) {
+                matchedWeight += weight;
+                matchedWords++;
+            }
+        }
+
+        // Không chọn một kết quả chỉ vì nó xuất hiện trong
+        // truy vấn từ đơn phổ biến nhưng tên không liên quan.
+        if (titleScore === 0 && matchedWeight === 0) {
             continue;
         }
 
-        const candidateWords = new Set(
-            title.split(/\s+/).filter(word => word.length > 1)
-        );
+        let score =
+            titleScore +
+            matchedWeight * 18 +
+            matchedWords * 4;
 
-        const wordOverlap = [...wantedWords].filter(
-            word => candidateWords.has(word)
-        ).length;
+        // Đồng thuận từ nhiều truy vấn giúp phân biệt kết quả.
+        // Giới hạn điểm cộng để không lấn át tên khớp chính xác.
+        const queryHits = item.queryHits instanceof Set
+            ? item.queryHits.size
+            : Array.isArray(item.queryHits)
+                ? new Set(item.queryHits).size
+                : 0;
 
-        let score = titleScore + matchedWords * 20 + wordOverlap * 5;
+        const consensusBonus = Math.min(queryHits, 5) * 18;
 
-        // Chỉ điều chỉnh theo năm khi cả hai phía có dữ liệu.
+        score += consensusBonus;
+
+        // Chỉ chấm điểm năm nếu ứng viên có năm thực tế.
+        // Không dùng năm tự gán từ đầu vào làm bằng chứng.
         const rawYear =
             item?.year ??
             item?.releaseYear ??
@@ -15558,16 +15639,25 @@ function animeHayFindBestSearchResult(
             item?.release_date ??
             0;
 
-        const yearMatch = String(rawYear).match(/\b(19\d{2}|20\d{2})\b/);
-        const candidateYear = yearMatch ? Number(yearMatch[1]) : 0;
+        const yearMatch = String(rawYear).match(
+            /\b(19\d{2}|20\d{2})\b/
+        );
+
+        const candidateYear = yearMatch
+            ? Number(yearMatch[1])
+            : 0;
 
         if (targetYear && candidateYear) {
             if (candidateYear === targetYear) {
-                score += 150;
+                score += 80;
             } else {
-                score -= 120;
+                score -= 70;
             }
         }
+
+        const coverage = totalWeight
+            ? Math.round(matchedWeight / totalWeight * 100)
+            : 0;
 
         console.log("[ANIMEHAY] MATCH SCORE:", {
             title: candidateTitle,
@@ -15575,16 +15665,22 @@ function animeHayFindBestSearchResult(
             targetYear,
             titleScore,
             matchedWords,
+            coverage,
+            queryHits,
+            consensusBonus,
             score
         });
 
         if (score > bestScore) {
             bestScore = score;
-            best = item;
+            best = {
+                ...item,
+                _animeHayMatchScore: score,
+                _animeHayQueryCount: queryHits
+            };
         }
     }
 
-    // Không chấp nhận kết quả không có bất kỳ điểm khớp tên nào.
     if (!best) {
         console.log("[ANIMEHAY] NO TITLE MATCH");
         return null;
@@ -15593,7 +15689,8 @@ function animeHayFindBestSearchResult(
     console.log("[ANIMEHAY] SELECTED MATCH:", {
         title: best.title || best.name || "",
         url: best.url,
-        score: bestScore
+        score: best._animeHayMatchScore,
+        queryCount: best._animeHayQueryCount
     });
 
     return best;
@@ -18164,34 +18261,48 @@ async function fetchAnimeHay(
 
 
         // ----------------------------------------------------
-        // 3. SEARCH ALL VARIANTS
+        // 3. SEARCH ALL VARIANTS + QUERY CONSENSUS
         //
-        // Không dừng ngay khi một truy vấn có kết quả.
-        // Gộp ứng viên của các biến thể để tăng khả năng tìm đúng.
+        // Mỗi ứng viên lưu lại các truy vấn độc lập đã tìm thấy nó.
+        // Không chỉ gộp URL rồi bỏ mất thông tin truy vấn.
         // ----------------------------------------------------
 
         const candidateMap = new Map();
 
         for (const title of titleVariants) {
-            console.log("[ANIMEHAY] SEARCH TITLE:", title);
+
+            const queryKey = animeHayNormalizeText(title);
+
+            if (!queryKey) continue;
+
+            console.log(
+                "[ANIMEHAY] SEARCH TITLE:",
+                title
+            );
 
             const found = await animeHaySearch(
                 activeDomain,
                 title
             );
 
-            console.log("[ANIMEHAY] SEARCH RESULT COUNT:", {
-                title,
-                count: found.length
-            });
+            console.log(
+                "[ANIMEHAY] SEARCH RESULT COUNT:",
+                {
+                    title,
+                    count: found.length
+                }
+            );
 
             for (const item of found) {
+
                 if (!item?.url) continue;
 
                 let key;
 
                 try {
-                    key = new URL(item.url, activeDomain).href;
+                    const parsed = new URL(item.url, activeDomain);
+                    parsed.hash = "";
+                    key = parsed.href;
                 } catch (_) {
                     key = String(item.url);
                 }
@@ -18199,11 +18310,65 @@ async function fetchAnimeHay(
                 if (!candidateMap.has(key)) {
                     candidateMap.set(key, {
                         ...item,
-                        url: key
+                        url: key,
+                        queryHits: new Set()
                     });
+                }
+
+                const candidate = candidateMap.get(key);
+
+                // Mỗi truy vấn chỉ được tính một lần cho một phim.
+                if (!(candidate.queryHits instanceof Set)) {
+                    candidate.queryHits = new Set(
+                        Array.isArray(candidate.queryHits)
+                            ? candidate.queryHits
+                            : []
+                    );
+                }
+
+                candidate.queryHits.add(queryKey);
+
+                // Giữ lại tiêu đề có nội dung nếu lần tìm sau
+                // cung cấp tên tốt hơn.
+                if (
+                    (!candidate.title ||
+                        String(candidate.title).trim().length === 0) &&
+                    item.title
+                ) {
+                    candidate.title = item.title;
+                }
+
+                // Chỉ nhận năm thực tế từ kết quả nguồn,
+                // không tự gán năm đang tìm vào ứng viên.
+                const actualYear =
+                    item.year ??
+                    item.releaseYear ??
+                    item.release_year ??
+                    item.releaseDate ??
+                    item.release_date;
+
+                if (
+                    actualYear &&
+                    !candidate.year
+                ) {
+                    candidate.year = actualYear;
                 }
             }
         }
+
+        console.log(
+            "[ANIMEHAY] QUERY CONSENSUS:",
+            [...candidateMap.values()].map(item => ({
+                title: item.title,
+                url: item.url,
+                queryCount: item.queryHits instanceof Set
+                    ? item.queryHits.size
+                    : 0,
+                queries: item.queryHits instanceof Set
+                    ? [...item.queryHits]
+                    : []
+            }))
+        );
 
 
             // ----------------------------------------------------
@@ -18380,10 +18545,10 @@ async function fetchAnimeHay(
                     if (!candidateMap.has(detailUrl)) {
 
                         candidateMap.set(detailUrl, {
-                            title: matchedTitle.original,
-                            url: detailUrl,
-                            year: movieYear || 0
-                        });
+    title: matchedTitle.original,
+    url: detailUrl,
+    queryHits: new Set()
+});
 
                         matchesOnPage++;
 
