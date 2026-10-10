@@ -15240,275 +15240,108 @@ async function animeHayResolveActiveDomain(
 // KHÔNG CÓ .html
 // ============================================================
 
-async function animeHaySearch(
-    domain,
-    title
-) {
+async function animeHaySearch(domain, title) {
+    const results = [];
+    const seen = new Set();
 
-    const slug =
-        animeHaySlug(
-            title
-        );
-
+    const query = String(title || "").trim();
+    if (!domain || !query) return results;
 
     const searchUrl =
-        `${domain}/tim-kiem/${slug}`;
-
-
-    console.log(
-        "[ANIMEHAY] SEARCH:",
-        searchUrl
-    );
-
+        `${domain.replace(/\/+$/, "")}/tim-kiem/${animeHaySlug(query)}`;
 
     try {
+        const response = await axios.get(searchUrl, {
+            timeout: 15000,
+            headers: {
+                "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                "Referer": `${domain}/`
+            }
+        });
 
-        const response =
-            await axios.get(
-                searchUrl,
-                {
-                    timeout: 15000,
-                    maxRedirects: 5,
+        const $ = cheerio.load(response.data);
 
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+        function addCandidate(titleText, href, cardText = "") {
+            const candidateTitle = String(titleText || "")
+                .replace(/\s+/g, " ")
+                .trim();
 
-                        "Referer":
-                            `${domain}/`,
+            if (!candidateTitle || !href) return;
 
-                        "Accept":
-                            "text/html,application/xhtml+xml"
-                    }
-                }
+            let url;
+            try {
+                url = new URL(href, domain).href;
+            } catch {
+                return;
+            }
+
+            if (!url.includes("/thong-tin-phim/")) return;
+            if (seen.has(url)) return;
+            seen.add(url);
+
+            // Chỉ ghi nhận năm tìm thấy trong nội dung thật của thẻ phim.
+            // Không tự gán movieYear cho ứng viên chưa xác định được năm.
+            const text = String(cardText || "");
+            const yearMatch = text.match(
+                /(?:^|\D)((?:19|20)\d{2})(?=\D|$)/
             );
 
+            results.push({
+                title: candidateTitle,
+                url,
+                year: yearMatch ? Number(yearMatch[1]) : null
+            });
+        }
 
-        const html =
-            response.data || "";
+        // Cấu trúc thẻ phim thường dùng trên trang AnimeHay.
+        $("div.movies-list div.mc").each((_, el) => {
+            const node = $(el);
+            const anchor = node.find("a[href]").first();
 
-
-        console.log(
-            "[ANIMEHAY] SEARCH HTML LENGTH:",
-            String(html).length
-        );
-
-
-        const $ =
-            cheerio.load(html);
-
-        
-        console.log("[ANIMEHAY DEBUG] PAGE TITLE:",
-            $("title").text().trim());
-
-        console.log("[ANIMEHAY DEBUG] SEARCH INPUT:",
-            title);
-
-        console.log("[ANIMEHAY DEBUG] TITLE MATCHES:",
-            $("a").filter((_, el) =>
-                /FX Senshi Kurumi-chan/i.test($(el).text())
-            ).map((_, el) => ({
-                text: $(el).text().trim(),
-                href: $(el).attr("href"),
-                parentClass: $(el).parent().attr("class"),
-                grandparentClass: $(el).parent().parent().attr("class")
-            })).get().slice(0, 10));
-
-        console.log("[ANIMEHAY DEBUG] INFO LINKS:",
-            $("a[href*='thong-tin-phim']")
-                .map((_, el) => ({
-                    text: $(el).text().trim(),
-                    href: $(el).attr("href")
-                }))
-                .get()
-                .slice(0, 20));
-
-        console.log("[ANIMEHAY DEBUG] SAMPLE LINKS:",
-            $("a[href]")
-                .map((_, el) => ({
-                    text: $(el).text().trim().slice(0, 80),
-                    href: $(el).attr("href")
-                }))
-                .get()
-                .slice(0, 30));
-
-        const results = [];
-
-
-        // ----------------------------------------------------
-        // PRIMARY — AnimeHay parser structure
-        // ----------------------------------------------------
-
-        $("div.movies-list div.mc").each(
-            (_, el) => {
-
-                const node =
-                    $(el);
-
-
-                const href =
-                    node.find(
-                        "a[href]"
-                    )
+            const href =
+                anchor.attr("href") ||
+                node.find("a[href*='/thong-tin-phim/']")
                     .first()
                     .attr("href");
 
+            const titleText =
+                node.find(".title, .name, h3, h4").first().text().trim() ||
+                anchor.attr("title") ||
+                anchor.text().trim();
 
-                if (!href) return;
+            addCandidate(titleText, href, node.text());
+        });
 
-
-                const url =
-                    animeHayAbsoluteUrl(
-                        href,
-                        domain
-                    );
-
-
-                if (!url) return;
-
-
-                if (
-                    !url.includes(
-                        "/thong-tin-phim/"
-                    )
-                ) {
-
-                    return;
-                }
-
-
+        // Dự phòng nếu AnimeHay thay đổi cấu trúc thẻ kết quả.
+        if (results.length === 0) {
+            $("a[href*='/thong-tin-phim/']").each((_, el) => {
+                const anchor = $(el);
+                const href = anchor.attr("href");
                 const titleText =
-                    (
-                        node.find(
-                            ".title, .name, h3, h4"
-                        )
-                        .first()
-                        .text() ||
+                    anchor.attr("title") ||
+                    anchor.text().trim();
 
-                        node.find(
-                            "a[href]"
-                        )
-                        .first()
-                        .attr(
-                            "title"
-                        ) ||
-
-                        node.find(
-                            "a[href]"
-                        )
-                        .first()
-                        .text() ||
-
-                        ""
-                    )
-                    .trim();
-
-
-                results.push({
-                    title:
-                        titleText,
-
-                    url
-                });
-            }
-        );
-
-
-        // ----------------------------------------------------
-        // SECONDARY — detail links
-        // ----------------------------------------------------
-
-        if (
-            results.length === 0
-        ) {
-
-            $("a[href*='/thong-tin-phim/']")
-                .each(
-                    (_, el) => {
-
-                        const node =
-                            $(el);
-
-
-                        const href =
-                            node.attr(
-                                "href"
-                            );
-
-
-                        const url =
-                            animeHayAbsoluteUrl(
-                                href,
-                                domain
-                            );
-
-
-                        if (!url) return;
-
-
-                        const titleText =
-                            (
-                                node.attr(
-                                    "title"
-                                ) ||
-
-                                node.text() ||
-
-                                ""
-                            )
-                            .trim();
-
-
-                        if (
-                            !results.some(
-                                item =>
-                                    item.url ===
-                                    url
-                            )
-                        ) {
-
-                            results.push({
-                                title:
-                                    titleText,
-
-                                url
-                            });
-                        }
-                    }
+                addCandidate(
+                    titleText,
+                    href,
+                    anchor.closest("div.mc, article, li").text() ||
+                    anchor.parent().text()
                 );
+            });
         }
 
-
         console.log(
-            "[ANIMEHAY] SEARCH CANDIDATES:",
-            results.length
+            `[ANIMEHAY SEARCH] query="${query}" results=${results.length}`
         );
-
-
-        for (
-            const item of
-            results
-        ) {
-
-            console.log(
-                "[ANIMEHAY] SEARCH ITEM:",
-                item.title,
-                item.url
-            );
-        }
-
-
-        return results;
-
-    } catch (e) {
-
+    } catch (error) {
         console.log(
-            "[ANIMEHAY] SEARCH ERROR:",
-            e?.message || e
+            `[ANIMEHAY SEARCH ERROR] query="${query}":`,
+            error.message
         );
-
-        return [];
     }
+
+    return results;
 }
 
 
@@ -15522,29 +15355,25 @@ function animeHayFindBestSearchResult(
     movieYear = 0
 ) {
     if (!Array.isArray(candidates) || candidates.length === 0) {
-        console.log("[ANIMEHAY] NO SEARCH CANDIDATES");
         return null;
     }
 
-    const variants = animeHayBuildTitleVariants(movieName)
-        .map(value => animeHayNormalizeText(value))
-        .filter(Boolean);
+    function normalize(value) {
+        return String(value || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim()
+            .replace(/\s+/g, " ");
+    }
 
-    const wanted = animeHayNormalizeText(movieName);
+    const target = normalize(movieName);
+    if (!target) return null;
 
-    const ignoredWords = new Set([
-        "the", "and", "for", "with", "from",
-        "season", "episode", "part", "movie",
-        "anime", "phim", "bo", "le", "moi"
-    ]);
-
-    const wantedWords = [
-        ...new Set(
-            wanted.split(/\s+/).filter(word =>
-                word.length > 1 && !ignoredWords.has(word)
-            )
-        )
-    ];
+    const targetTokens = target
+        .split(" ")
+        .filter(token => token.length >= 2);
 
     const targetYear = Number(movieYear) || 0;
 
@@ -15552,146 +15381,85 @@ function animeHayFindBestSearchResult(
     let bestScore = -Infinity;
 
     for (const item of candidates) {
+        if (!item || !item.title || !item.url) continue;
 
-        const candidateTitle = String(
-            item?.title ||
-            item?.name ||
-            item?.originalTitle ||
-            item?.original_title ||
-            ""
-        ).trim();
+        const candidateTitle = normalize(item.title);
+        if (!candidateTitle) continue;
 
-        if (!candidateTitle || !item?.url) continue;
+        const candidateTokens = new Set(candidateTitle.split(" "));
 
-        const title = animeHayNormalizeText(candidateTitle);
-        const candidateWords = new Set(title.split(/\s+/).filter(Boolean));
-
-        let titleScore = 0;
-
-        // Chỉ dùng tên đầy đủ/cụm nhiều từ để chấm điểm
-        // khớp chuỗi. Từ đơn như "FX" chỉ là tín hiệu phụ.
-        for (const variant of variants) {
-
-            const variantWords = variant.split(/\s+/).filter(Boolean);
-
-            if (variantWords.length < 2) continue;
-
-            if (title === variant) {
-                titleScore = Math.max(titleScore, 1000);
-            } else if (
-                title.includes(variant) ||
-                variant.includes(title)
-            ) {
-                titleScore = Math.max(titleScore, 500);
-            }
-        }
-
-        // Tính mức độ khớp theo các từ đặc trưng.
-        let matchedWeight = 0;
-        let totalWeight = 0;
-        let matchedWords = 0;
-
-        for (const word of wantedWords) {
-
-            const weight =
-                word.length >= 7 ? 3 :
-                word.length >= 4 ? 2 :
-                1;
-
-            totalWeight += weight;
-
-            if (candidateWords.has(word)) {
-                matchedWeight += weight;
-                matchedWords++;
-            }
-        }
-
-        // Không chọn một kết quả chỉ vì nó xuất hiện trong
-        // truy vấn từ đơn phổ biến nhưng tên không liên quan.
-        if (titleScore === 0 && matchedWeight === 0) {
-            continue;
-        }
-
-        let score =
-            titleScore +
-            matchedWeight * 18 +
-            matchedWords * 4;
-
-        // Đồng thuận từ nhiều truy vấn giúp phân biệt kết quả.
-        // Giới hạn điểm cộng để không lấn át tên khớp chính xác.
-        const queryHits = item.queryHits instanceof Set
-            ? item.queryHits.size
-            : Array.isArray(item.queryHits)
-                ? new Set(item.queryHits).size
-                : 0;
-
-        const consensusBonus = Math.min(queryHits, 5) * 18;
-
-        score += consensusBonus;
-
-        // Chỉ chấm điểm năm nếu ứng viên có năm thực tế.
-        // Không dùng năm tự gán từ đầu vào làm bằng chứng.
-        const rawYear =
-            item?.year ??
-            item?.releaseYear ??
-            item?.release_year ??
-            item?.releaseDate ??
-            item?.release_date ??
-            0;
-
-        const yearMatch = String(rawYear).match(
-            /\b(19\d{2}|20\d{2})\b/
+        const matchedTokens = targetTokens.filter(
+            token => candidateTokens.has(token)
         );
 
-        const candidateYear = yearMatch
-            ? Number(yearMatch[1])
+        const overlap = targetTokens.length
+            ? matchedTokens.length / targetTokens.length
             : 0;
+
+        let score = overlap * 100;
+
+        // Ưu tiên tên phim khớp đầy đủ.
+        if (candidateTitle === target) {
+            score += 1000;
+        } else if (
+            candidateTitle.includes(target) ||
+            target.includes(candidateTitle)
+        ) {
+            score += 250;
+        }
+
+        // Những từ quan trọng xuất hiện đúng thứ tự sẽ tăng điểm.
+        const compactTarget = target.replace(/\s+/g, "");
+        const compactCandidate = candidateTitle.replace(/\s+/g, "");
+
+        if (compactCandidate === compactTarget) {
+            score += 400;
+        }
+
+        // Chỉ dùng năm nếu ứng viên thực sự có năm từ trang tìm kiếm.
+        // Không loại cứng kết quả khi AnimeHay không cung cấp năm.
+        const candidateYear =
+            Number(item.year) ||
+            Number(item.releaseYear) ||
+            Number(item.release_year) ||
+            0;
 
         if (targetYear && candidateYear) {
             if (candidateYear === targetYear) {
-                score += 80;
+                score += 150;
             } else {
-                score -= 70;
+                score -= 120;
             }
         }
 
-        const coverage = totalWeight
-            ? Math.round(matchedWeight / totalWeight * 100)
-            : 0;
+        // Tên quá ít từ trùng với truy vấn thì giảm mạnh điểm.
+        if (overlap < 0.4) {
+            score -= 100;
+        }
 
-        console.log("[ANIMEHAY] MATCH SCORE:", {
-            title: candidateTitle,
-            candidateYear,
-            targetYear,
-            titleScore,
-            matchedWords,
-            coverage,
-            queryHits,
-            consensusBonus,
-            score
-        });
+        // Tránh chọn kết quả chỉ trùng một từ phổ biến.
+        if (matchedTokens.length <= 1 && targetTokens.length >= 3) {
+            score -= 80;
+        }
 
         if (score > bestScore) {
             bestScore = score;
-            best = {
-                ...item,
-                _animeHayMatchScore: score,
-                _animeHayQueryCount: queryHits
-            };
+            best = item;
         }
     }
 
-    if (!best) {
-        console.log("[ANIMEHAY] NO TITLE MATCH");
+    // Không chọn đại một phim khi độ tương đồng quá thấp.
+    if (!best || bestScore < 25) {
         return null;
     }
 
-    console.log("[ANIMEHAY] SELECTED MATCH:", {
-        title: best.title || best.name || "",
-        url: best.url,
-        score: best._animeHayMatchScore,
-        queryCount: best._animeHayQueryCount
-    });
+    console.log(
+        `[ANIMEHAY MATCH] target="${movieName}"` +
+        ` year=${targetYear || "unknown"}` +
+        ` selected="${best.title}"` +
+        ` candidateYear=${best.year || "unknown"}` +
+        ` score=${bestScore}`
+    );
 
     return best;
 }
@@ -18253,25 +18021,122 @@ async function fetchAnimeHay(
 
 
         // ----------------------------------------------------
-        // 2. TITLE VARIANTS
+        // 2. TITLE VARIANTS + SMART QUERY PLAN
         // ----------------------------------------------------
 
         const titleVariants =
             animeHayBuildTitleVariants(movieName);
 
+        const targetNormalized =
+            animeHayNormalizeText(movieName);
+
+        const targetYear = Number(movieYear) || 0;
+
+        // Các từ nối thường không giúp phân biệt tên anime.
+        const stopWords = new Set([
+            "a", "an", "and", "are", "as", "at",
+            "by", "for", "from", "in", "into",
+            "is", "of", "on", "or", "the", "to",
+            "with", "no", "wa", "wo", "ni", "de"
+        ]);
+
+        const queryPlan = [];
+        const seenQueries = new Set();
+
+        function addSearchQuery(value) {
+            const query = String(value || "")
+                .replace(/\s+/g, " ")
+                .trim();
+
+            const normalized =
+                animeHayNormalizeText(query);
+
+            if (!normalized || seenQueries.has(normalized)) {
+                return;
+            }
+
+            seenQueries.add(normalized);
+            queryPlan.push(query);
+        }
+
+        // Ưu tiên tìm nguyên tên và các biến thể trước.
+        // Giới hạn số biến thể để tránh gọi search quá nhiều lần.
+        for (const variant of titleVariants.slice(0, 5)) {
+            addSearchQuery(variant);
+        }
+
+        // Lấy các từ có khả năng phân biệt tên phim.
+        const targetTokens = targetNormalized
+            .split(/\s+/)
+            .filter(Boolean);
+
+        const informativeTokens = targetTokens.filter(
+            token =>
+                token.length >= 3 &&
+                !stopWords.has(token) &&
+                !/^\d{4}$/.test(token)
+        );
+
+        // Tìm các cụm từ liên tiếp có ít nhất hai từ quan trọng.
+        // Ví dụ: "tetsuryo meet" hoặc "tetsudou musume".
+        for (const variant of titleVariants.slice(0, 3)) {
+            const tokens = animeHayNormalizeText(variant)
+                .split(/\s+/)
+                .filter(Boolean);
+
+            for (const windowSize of [3, 2]) {
+                for (
+                    let i = 0;
+                    i <= tokens.length - windowSize;
+                    i++
+                ) {
+                    const phraseTokens =
+                        tokens.slice(i, i + windowSize);
+
+                    const importantCount =
+                        phraseTokens.filter(
+                            token =>
+                                token.length >= 3 &&
+                                !stopWords.has(token) &&
+                                !/^\d{4}$/.test(token)
+                        ).length;
+
+                    if (importantCount >= 2) {
+                        addSearchQuery(
+                            phraseTokens.join(" ")
+                        );
+                    }
+                }
+            }
+        }
+
+        // Tìm thêm một số từ đặc trưng riêng lẻ để cứu trường hợp
+        // tên phim trên AnimeHay viết khác với tên đầu vào.
+        // Không tìm riêng các từ như "with", "the", "and".
+        for (const token of informativeTokens) {
+            addSearchQuery(token);
+        }
+
+        // Giới hạn tổng số truy vấn, tránh bắn hàng loạt từ đơn.
+        const MAX_SEARCH_QUERIES = 10;
+        const finalQueryPlan =
+            queryPlan.slice(0, MAX_SEARCH_QUERIES);
+
+        console.log(
+            "[ANIMEHAY] SMART QUERY PLAN:",
+            finalQueryPlan
+        );
+
 
         // ----------------------------------------------------
-        // 3. SEARCH ALL VARIANTS + QUERY CONSENSUS
-        //
-        // Mỗi ứng viên lưu lại các truy vấn độc lập đã tìm thấy nó.
-        // Không chỉ gộp URL rồi bỏ mất thông tin truy vấn.
+        // 3. SEARCH + MERGE CANDIDATES
         // ----------------------------------------------------
 
         const candidateMap = new Map();
 
-        for (const title of titleVariants) {
-
-            const queryKey = animeHayNormalizeText(title);
+        for (const title of finalQueryPlan) {
+            const queryKey =
+                animeHayNormalizeText(title);
 
             if (!queryKey) continue;
 
@@ -18289,18 +18154,25 @@ async function fetchAnimeHay(
                 "[ANIMEHAY] SEARCH RESULT COUNT:",
                 {
                     title,
-                    count: found.length
+                    count: Array.isArray(found)
+                        ? found.length
+                        : 0
                 }
             );
 
-            for (const item of found) {
+            if (!Array.isArray(found)) continue;
 
+            for (const item of found) {
                 if (!item?.url) continue;
 
                 let key;
 
                 try {
-                    const parsed = new URL(item.url, activeDomain);
+                    const parsed = new URL(
+                        item.url,
+                        activeDomain
+                    );
+
                     parsed.hash = "";
                     key = parsed.href;
                 } catch (_) {
@@ -18317,7 +18189,6 @@ async function fetchAnimeHay(
 
                 const candidate = candidateMap.get(key);
 
-                // Mỗi truy vấn chỉ được tính một lần cho một phim.
                 if (!(candidate.queryHits instanceof Set)) {
                     candidate.queryHits = new Set(
                         Array.isArray(candidate.queryHits)
@@ -18328,18 +18199,15 @@ async function fetchAnimeHay(
 
                 candidate.queryHits.add(queryKey);
 
-                // Giữ lại tiêu đề có nội dung nếu lần tìm sau
-                // cung cấp tên tốt hơn.
                 if (
                     (!candidate.title ||
-                        String(candidate.title).trim().length === 0) &&
+                        !String(candidate.title).trim()) &&
                     item.title
                 ) {
                     candidate.title = item.title;
                 }
 
-                // Chỉ nhận năm thực tế từ kết quả nguồn,
-                // không tự gán năm đang tìm vào ứng viên.
+                // Chỉ lưu năm thực tế được lấy từ kết quả.
                 const actualYear =
                     item.year ??
                     item.releaseYear ??
@@ -18347,251 +18215,377 @@ async function fetchAnimeHay(
                     item.releaseDate ??
                     item.release_date;
 
+                const parsedYear = Number(
+                    String(actualYear || "").match(
+                        /(?:19|20)\d{2}/
+                    )?.[0]
+                );
+
                 if (
-                    actualYear &&
+                    parsedYear &&
                     !candidate.year
                 ) {
-                    candidate.year = actualYear;
+                    candidate.year = parsedYear;
                 }
             }
         }
 
+
+        // ----------------------------------------------------
+        // 3A. DETECT STRONG MATCH
+        //
+        // Có kết quả không đồng nghĩa đã tìm đúng phim.
+        // Dùng độ khớp tên để quyết định có cần Directory Fallback.
+        // ----------------------------------------------------
+
+        function animeHayHasStrongMatch(candidates) {
+            const target = animeHayNormalizeText(movieName);
+
+            if (!target) return false;
+
+            const targetWords = target
+                .split(/\s+/)
+                .filter(Boolean);
+
+            const importantTargetWords = targetWords.filter(
+                word =>
+                    word.length >= 3 &&
+                    !stopWords.has(word) &&
+                    !/^\d{4}$/.test(word)
+            );
+
+            for (const item of candidates) {
+                const candidateTitle =
+                    animeHayNormalizeText(item?.title);
+
+                if (!candidateTitle) continue;
+
+                if (candidateTitle === target) {
+                    return true;
+                }
+
+                // Tên gần như trùng toàn bộ.
+                if (
+                    candidateTitle.includes(target) ||
+                    target.includes(candidateTitle)
+                ) {
+                    return true;
+                }
+
+                const candidateWords = new Set(
+                    candidateTitle.split(/\s+/)
+                );
+
+                const importantMatched =
+                    importantTargetWords.filter(
+                        word => candidateWords.has(word)
+                    );
+
+                const allMatched = targetWords.filter(
+                    word => candidateWords.has(word)
+                );
+
+                // Với tên dài, cần nhiều từ đặc trưng trùng nhau.
+                if (
+                    importantTargetWords.length >= 3 &&
+                    importantMatched.length >= 3 &&
+                    importantMatched.length /
+                        importantTargetWords.length >= 0.7
+                ) {
+                    return true;
+                }
+
+                // Tên ngắn có thể chỉ có một hoặc hai từ đặc trưng.
+                if (
+                    importantTargetWords.length > 0 &&
+                    importantTargetWords.length <= 2 &&
+                    importantMatched.length ===
+                        importantTargetWords.length
+                ) {
+                    return true;
+                }
+
+                // Cho phép sai khác nhỏ, nhưng không chấp nhận
+                // chỉ trùng các từ nối phổ biến.
+                if (
+                    targetWords.length >= 3 &&
+                    allMatched.length / targetWords.length >= 0.85 &&
+                    importantMatched.length >= 2
+                ) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
+        // ----------------------------------------------------
+        // 3B. DIRECTORY FALLBACK
+        //
+        // Chạy nếu không có ứng viên đủ mạnh, kể cả khi search
+        // đã trả về vài kết quả không liên quan.
+        // ----------------------------------------------------
+
+        if (
+            !animeHayHasStrongMatch(
+                [...candidateMap.values()]
+            )
+        ) {
+            const directoryPaths = [
+                "/the-loai/anime-1.html",
+                "/"
+            ];
+
+            const wantedTitles = titleVariants
+                .map(value => ({
+                    original: String(value || "").trim(),
+                    normalized: animeHayNormalizeText(value)
+                }))
+                .filter(item => item.normalized);
+
+            for (const path of directoryPaths) {
+                try {
+                    const directoryUrl = new URL(
+                        path,
+                        activeDomain
+                    ).href;
+
+                    console.log(
+                        "[ANIMEHAY] DIRECTORY FALLBACK:",
+                        directoryUrl
+                    );
+
+                    const directoryResponse = await axios.get(
+                        directoryUrl,
+                        {
+                            timeout: 15000,
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                    "Chrome/156.0.0.0 Safari/537.36",
+                                "Referer": activeDomain
+                            }
+                        }
+                    );
+
+                    const $directory = cheerio.load(
+                        String(directoryResponse?.data || "")
+                    );
+
+                    let matchesOnPage = 0;
+
+                    $directory(
+                        "a[href*='/thong-tin-phim/']"
+                    ).each((_, detailEl) => {
+                        const detailAnchor = $directory(detailEl);
+                        const href = String(
+                            detailAnchor.attr("href") || ""
+                        ).trim();
+
+                        if (!href) return;
+
+                        let parsedUrl;
+
+                        try {
+                            parsedUrl = new URL(
+                                href,
+                                activeDomain
+                            );
+                        } catch (_) {
+                            return;
+                        }
+
+                        if (
+                            parsedUrl.origin !==
+                                new URL(activeDomain).origin ||
+                            !parsedUrl.pathname.includes(
+                                "/thong-tin-phim/"
+                            )
+                        ) {
+                            return;
+                        }
+
+                        let matchedTitle = null;
+                        let matchedCardText = "";
+                        let current = detailAnchor.parent();
+
+                        // Chỉ dò các container gần link phim.
+                        for (
+                            let depth = 0;
+                            depth < 6 && current.length;
+                            depth++
+                        ) {
+                            const cardText = String(
+                                current.text() || ""
+                            )
+                                .replace(/\s+/g, " ")
+                                .trim();
+
+                            const normalizedCardText =
+                                animeHayNormalizeText(cardText);
+
+                            if (
+                                normalizedCardText &&
+                                cardText.length <= 700
+                            ) {
+                                matchedTitle =
+                                    wantedTitles.find(item => {
+                                        const wantedWords =
+                                            item.normalized
+                                                .split(/\s+/)
+                                                .filter(Boolean);
+
+                                        // Khớp nguyên tên trước.
+                                        if (
+                                            normalizedCardText.includes(
+                                                item.normalized
+                                            )
+                                        ) {
+                                            return true;
+                                        }
+
+                                        // Tên có thể sai dấu câu hoặc
+                                        // khác một từ; yêu cầu tối thiểu
+                                        // ba từ đặc trưng cùng xuất hiện.
+                                        const importantWords =
+                                            wantedWords.filter(
+                                                word =>
+                                                    word.length >= 3 &&
+                                                    !stopWords.has(word)
+                                            );
+
+                                        if (
+                                            importantWords.length >= 3
+                                        ) {
+                                            const matchedCount =
+                                                importantWords.filter(
+                                                    word =>
+                                                        normalizedCardText
+                                                            .includes(word)
+                                                ).length;
+
+                                            return (
+                                                matchedCount >= 3 &&
+                                                matchedCount /
+                                                    importantWords.length >= 0.7
+                                            );
+                                        }
+
+                                        return (
+                                            wantedWords.length >= 2 &&
+                                            wantedWords.every(word =>
+                                                normalizedCardText.includes(
+                                                    word
+                                                )
+                                            )
+                                        );
+                                    }) || null;
+
+                                if (matchedTitle) {
+                                    matchedCardText = cardText;
+                                    break;
+                                }
+                            }
+
+                            current = current.parent();
+                        }
+
+                        if (!matchedTitle) return;
+
+                        const detailUrl = parsedUrl.href;
+
+                        if (!candidateMap.has(detailUrl)) {
+                            const yearMatch =
+                                matchedCardText.match(
+                                    /(?:^|\D)((?:19|20)\d{2})(?=\D|$)/
+                                );
+
+                            candidateMap.set(detailUrl, {
+                                title: matchedTitle.original,
+                                url: detailUrl,
+                                year: yearMatch
+                                    ? Number(yearMatch[1])
+                                    : null,
+                                queryHits: new Set()
+                            });
+
+                            matchesOnPage++;
+
+                            console.log(
+                                "[ANIMEHAY] DIRECTORY MATCH:",
+                                {
+                                    title: matchedTitle.original,
+                                    url: detailUrl,
+                                    year: yearMatch
+                                        ? Number(yearMatch[1])
+                                        : "unknown",
+                                    cardText: matchedCardText.slice(0, 220)
+                                }
+                            );
+                        }
+                    });
+
+                    console.log(
+                        "[ANIMEHAY] DIRECTORY MATCH COUNT:",
+                        {
+                            url: directoryUrl,
+                            count: matchesOnPage
+                        }
+                    );
+
+                    if (
+                        animeHayHasStrongMatch(
+                            [...candidateMap.values()]
+                        )
+                    ) {
+                        break;
+                    }
+                } catch (directoryError) {
+                    console.log(
+                        "[ANIMEHAY] DIRECTORY FALLBACK ERROR:",
+                        path,
+                        directoryError?.response?.status ||
+                        directoryError?.message ||
+                        directoryError
+                    );
+                }
+            }
+        }
+
+
+        // ----------------------------------------------------
+        // 3C. UNIQUE CANDIDATES + QUERY CONSENSUS
+        // ----------------------------------------------------
+
+        const searchCandidates = [
+            ...candidateMap.values()
+        ].map(item => ({
+            ...item,
+            queryCount: item.queryHits instanceof Set
+                ? item.queryHits.size
+                : 0
+        }));
+
+        // Ưu tiên ứng viên được nhiều truy vấn độc lập tìm thấy.
+        // Việc chấm điểm tên/năm vẫn được thực hiện ở bước kế tiếp.
+        searchCandidates.sort(
+            (a, b) => b.queryCount - a.queryCount
+        );
+
         console.log(
             "[ANIMEHAY] QUERY CONSENSUS:",
-            [...candidateMap.values()].map(item => ({
+            searchCandidates.map(item => ({
                 title: item.title,
                 url: item.url,
-                queryCount: item.queryHits instanceof Set
-                    ? item.queryHits.size
-                    : 0,
+                year: item.year || "unknown",
+                queryCount: item.queryCount,
                 queries: item.queryHits instanceof Set
                     ? [...item.queryHits]
                     : []
             }))
         );
-
-
-            // ----------------------------------------------------
-    // 3B. FALLBACK — SEARCH ANIME DIRECTORY
-    //
-    // Chỉ nhận URL /thong-tin-phim/ thuộc đúng card.
-    // Không leo lên các container lớn có nhiều phim.
-    // ----------------------------------------------------
-
-    if (candidateMap.size === 0) {
-
-        const directoryPaths = [
-            "/the-loai/anime-1.html",
-            "/"
-        ];
-
-        const wantedTitles = titleVariants
-            .map(value => ({
-                original: String(value || "").trim(),
-                normalized: animeHayNormalizeText(value)
-            }))
-            .filter(item => item.normalized);
-
-        for (const path of directoryPaths) {
-
-            try {
-
-                const directoryUrl = new URL(
-                    path,
-                    activeDomain
-                ).href;
-
-                console.log(
-                    "[ANIMEHAY] DIRECTORY FALLBACK:",
-                    directoryUrl
-                );
-
-                const directoryResponse = await axios.get(
-                    directoryUrl,
-                    {
-                        timeout: 15000,
-                        headers: {
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                                "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                                "Chrome/156.0.0.0 Safari/537.36",
-                            "Referer": activeDomain
-                        }
-                    }
-                );
-
-                const directoryHtml = String(
-                    directoryResponse?.data || ""
-                );
-
-                const $directory = cheerio.load(
-                    directoryHtml
-                );
-
-                let matchesOnPage = 0;
-
-                // Duyệt URL detail trực tiếp, không bắt đầu
-                // từ link tập rồi tìm ngược lên container cha.
-                $directory(
-                    "a[href*='/thong-tin-phim/']"
-                ).each((_, detailEl) => {
-
-                    const detailAnchor = $directory(
-                        detailEl
-                    );
-
-                    const href = String(
-                        detailAnchor.attr("href") || ""
-                    ).trim();
-
-                    if (!href) return;
-
-                    let parsedUrl;
-
-                    try {
-                        parsedUrl = new URL(
-                            href,
-                            activeDomain
-                        );
-                    } catch (_) {
-                        return;
-                    }
-
-                    // Chỉ nhận URL detail trên domain đang dùng.
-                    if (
-                        parsedUrl.origin !==
-                            new URL(activeDomain).origin ||
-                        !parsedUrl.pathname.includes(
-                            "/thong-tin-phim/"
-                        )
-                    ) {
-                        return;
-                    }
-
-                    let matchedTitle = null;
-                    let matchedCardText = "";
-                    let current = detailAnchor.parent();
-
-                    // Tìm container gần nhất có tên phim cần tìm.
-                    // Giới hạn độ sâu và độ dài để tránh bắt cả
-                    // vùng chứa nhiều card phim khác nhau.
-                    for (
-                        let depth = 0;
-                        depth < 6 && current.length;
-                        depth++
-                    ) {
-
-                        const cardText = String(
-                            current.text() || ""
-                        )
-                            .replace(/\s+/g, " ")
-                            .trim();
-
-                        const normalizedCardText =
-                            animeHayNormalizeText(
-                                cardText
-                            );
-
-                        if (
-                            normalizedCardText &&
-                            cardText.length <= 700
-                        ) {
-
-                            matchedTitle =
-                                wantedTitles.find(item => {
-
-                                    const wantedWords =
-                                        item.normalized
-                                            .split(/\s+/)
-                                            .filter(Boolean);
-
-                                    if (
-                                        normalizedCardText.includes(
-                                            item.normalized
-                                        )
-                                    ) {
-                                        return true;
-                                    }
-
-                                    // Cho phép tên bị chèn dấu câu
-                                    // hoặc khoảng trắng trong card.
-                                    return (
-                                        wantedWords.length >= 3 &&
-                                        wantedWords.every(word =>
-                                            normalizedCardText.includes(
-                                                word
-                                            )
-                                        )
-                                    );
-                                }) || null;
-
-                            if (matchedTitle) {
-                                matchedCardText = cardText;
-                                break;
-                            }
-                        }
-
-                        current = current.parent();
-                    }
-
-                    // Tên phim không xuất hiện trong card chứa
-                    // URL detail thì không nhận URL này.
-                    if (!matchedTitle) {
-                        return;
-                    }
-
-                    const detailUrl = parsedUrl.href;
-
-                    if (!candidateMap.has(detailUrl)) {
-
-                        candidateMap.set(detailUrl, {
-    title: matchedTitle.original,
-    url: detailUrl,
-    queryHits: new Set()
-});
-
-                        matchesOnPage++;
-
-                        console.log(
-                            "[ANIMEHAY] DIRECTORY MATCH:",
-                            {
-                                title: matchedTitle.original,
-                                url: detailUrl,
-                                cardText: matchedCardText.slice(
-                                    0,
-                                    220
-                                )
-                            }
-                        );
-                    }
-                });
-
-                console.log(
-                    "[ANIMEHAY] DIRECTORY MATCH COUNT:",
-                    {
-                        url: directoryUrl,
-                        count: matchesOnPage
-                    }
-                );
-
-                if (candidateMap.size > 0) {
-                    break;
-                }
-
-            } catch (directoryError) {
-
-                console.log(
-                    "[ANIMEHAY] DIRECTORY FALLBACK ERROR:",
-                    path,
-                    directoryError?.response?.status ||
-                    directoryError?.message ||
-                    directoryError
-                );
-            }
-        }
-    }
-
-        const searchCandidates = [...candidateMap.values()];
 
         console.log(
             "[ANIMEHAY] UNIQUE SEARCH CANDIDATES:",
