@@ -18201,10 +18201,12 @@ async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
     }
 
     const variants = [];
-    const addVariant = (value, source = "unknown") => {
+    const seen = new Set();
+
+    const addVariant = (value, source = "imdb-api") => {
         if (typeof value !== "string") return;
 
-        let title = value
+        const title = value
             .replace(/<[^>]*>/g, " ")
             .replace(/&amp;/gi, "&")
             .replace(/&#39;|&apos;/gi, "'")
@@ -18213,128 +18215,131 @@ async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
             .replace(/\s+/g, " ")
             .trim();
 
-        // IMDb thường nối loại tác phẩm, năm và "- IMDb" vào tiêu đề.
-        title = title
-            .replace(/\s*[-|]\s*IMDb\s*$/i, "")
-            .replace(/\s*\((?:TV Series|TV Mini Series|TV Movie|TV Special|Short|Video Game|Podcast Series|Podcast Episode|TV Episode|Feature Film|202\d.*?)[^)]*\)\s*$/i, "")
-            .trim();
-
         if (!title || title.length > 200) return;
 
         const key = animeHayNormalizeText(title);
         if (!key || key === animeHayNormalizeText(original)) return;
+        if (seen.has(key)) return;
 
-        if (!variants.some(v => animeHayNormalizeText(v) === key)) {
-            variants.push(title);
-            console.log("[ANIMEHAY IMDb] TITLE FOUND:", {
-                id,
-                source,
-                title
-            });
+        seen.add(key);
+        variants.push(title);
+
+        console.log("[ANIMEHAY IMDb] TITLE FOUND:", {
+            id,
+            source,
+            title
+        });
+    };
+
+    // Đọc linh hoạt cấu trúc JSON của endpoint AKAs.
+    const collectTitles = (node, source = "akas", depth = 0) => {
+        if (!node || depth > 8) return;
+
+        if (Array.isArray(node)) {
+            for (const item of node) {
+                collectTitles(item, source, depth + 1);
+            }
+            return;
+        }
+
+        if (typeof node !== "object") return;
+
+        // Chỉ lấy các trường tiêu đề đã biết, không lấy
+        // description, tên diễn viên hoặc dữ liệu không liên quan.
+        for (const key of [
+            "title",
+            "titleText",
+            "originalTitle",
+            "primaryTitle",
+            "alternateName",
+            "name"
+        ]) {
+            const value = node[key];
+
+            if (typeof value === "string") {
+                addVariant(value, `${source}.${key}`);
+            } else if (
+                value &&
+                typeof value === "object" &&
+                typeof value.text === "string"
+            ) {
+                addVariant(value.text, `${source}.${key}.text`);
+            }
+        }
+
+        // Các khóa thường dùng để chứa danh sách kết quả.
+        for (const key of [
+            "akas",
+            "titles",
+            "items",
+            "results",
+            "data",
+            "edges",
+            "nodes"
+        ]) {
+            if (node[key] != null) {
+                collectTitles(node[key], `${source}.${key}`, depth + 1);
+            }
+        }
+
+        // Một số API trả dữ liệu theo kiểu GraphQL edges/node.
+        if (node.node) {
+            collectTitles(node.node, `${source}.node`, depth + 1);
         }
     };
 
     try {
-        const response = await axios.get(
-            `https://www.imdb.com/title/${id}/`,
-            {
-                timeout: 3500,
-                maxRedirects: 3,
-                headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.9"
-                }
+        const url =
+            `https://api.imdbapi.dev/titles/${encodeURIComponent(id)}/akas`;
+
+        const response = await axios.get(url, {
+            timeout: 2500,
+            maxRedirects: 2,
+            headers: {
+                "Accept": "application/json",
+                "User-Agent": "MOVINA/1.0"
             }
-        );
+        });
 
-        const html = String(response.data || "");
-        const $ = cheerio.load(html);
-
-        console.log("[ANIMEHAY IMDb] HTTP:", {
+        console.log("[ANIMEHAY IMDb] AKA API RESPONSE:", {
             id,
             status: response.status,
-            finalUrl: response.request?.res?.responseUrl || response.config?.url,
-            htmlLength: html.length
+            contentType: response.headers?.["content-type"] || "",
+            responseKeys:
+                response.data && typeof response.data === "object"
+                    ? Object.keys(response.data)
+                    : [],
+            itemCount: Array.isArray(response.data)
+                ? response.data.length
+                : null
         });
 
-        // 1. JSON-LD: đọc cả object, array và @graph.
-        const collectJsonLd = node => {
-            if (!node) return;
+        collectTitles(response.data);
 
-            if (Array.isArray(node)) {
-                node.forEach(collectJsonLd);
-                return;
-            }
+        // Không cache kết quả rỗng để cho phép thử lại ở request sau.
+        if (variants.length) {
+            ANIMEHAY_IMDB_TITLE_CACHE.set(id, variants);
 
-            if (typeof node !== "object") return;
-
-            const type = node["@type"];
-            const typeText = Array.isArray(type)
-                ? type.join(" ")
-                : String(type || "");
-
-            if (
-                !type ||
-                /Movie|TVSeries|TVEpisode|CreativeWork/i.test(typeText)
-            ) {
-                addVariant(node.name, "json-ld.name");
-                addVariant(node.alternateName, "json-ld.alternateName");
-            }
-
-            if (node["@graph"]) collectJsonLd(node["@graph"]);
-            if (node.mainEntity) collectJsonLd(node.mainEntity);
-            if (node.subjectOf) collectJsonLd(node.subjectOf);
-        };
-
-        $('script[type="application/ld+json"]').each((_, element) => {
-            try {
-                collectJsonLd(JSON.parse($(element).text()));
-            } catch (_) {
-                // Bỏ qua JSON-LD lỗi định dạng.
-            }
-        });
-
-        // 2. Metadata của trang.
-        addVariant($('meta[property="og:title"]').attr("content"), "og:title");
-        addVariant($('meta[name="title"]').attr("content"), "meta.title");
-        addVariant($('meta[property="twitter:title"]').attr("content"), "twitter:title");
-
-        // 3. Dự phòng: đọc các trường name / alternateName trong HTML thô.
-        // Hữu ích khi cấu trúc JSON-LD không được Cheerio nhận diện.
-        for (const pattern of [
-            /"alternateName"\s*:\s*"((?:\\.|[^"\\])*)"/g,
-            /"name"\s*:\s*"((?:\\.|[^"\\])*)"/g
-        ]) {
-            let match;
-            while ((match = pattern.exec(html)) !== null) {
-                try {
-                    addVariant(JSON.parse(`"${match[1]}"`), "html-json");
-                } catch (_) {
-                    // Bỏ qua chuỗi JSON không hợp lệ.
-                }
-            }
+            console.log("[ANIMEHAY IMDb] TITLE VARIANTS:", {
+                id,
+                originalTitle: original,
+                count: variants.length,
+                variants
+            });
+        } else {
+            console.log("[ANIMEHAY IMDb] NO ALTERNATE TITLES:", {
+                id,
+                originalTitle: original
+            });
         }
 
-        const result = variants.filter(
-            title => animeHayNormalizeText(title) !==
-                animeHayNormalizeText(original)
-        );
-
-        ANIMEHAY_IMDB_TITLE_CACHE.set(id, result);
-
-        console.log("[ANIMEHAY IMDb] TITLE VARIANTS:", {
-            id,
-            originalTitle: original,
-            variants: result
-        });
-
-        return [...result];
+        return [...variants];
     } catch (error) {
-        console.log("[ANIMEHAY IMDb] LOOKUP ERROR:", {
+        console.log("[ANIMEHAY IMDb] AKA API ERROR:", {
             id,
             message: error?.message || String(error),
-            status: error?.response?.status || null
+            status: error?.response?.status || null,
+            code: error?.code || null
         });
 
         // Không cache lỗi mạng để lần sau có thể thử lại.
