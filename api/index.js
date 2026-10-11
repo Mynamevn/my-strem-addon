@@ -18201,13 +18201,22 @@ async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
     }
 
     const variants = [];
-    const addVariant = value => {
+    const addVariant = (value, source = "unknown") => {
         if (typeof value !== "string") return;
 
-        const title = value
+        let title = value
             .replace(/<[^>]*>/g, " ")
+            .replace(/&amp;/gi, "&")
+            .replace(/&#39;|&apos;/gi, "'")
+            .replace(/&quot;/gi, '"')
+            .replace(/&nbsp;/gi, " ")
             .replace(/\s+/g, " ")
-            .replace(/\s*-\s*IMDb\s*$/i, "")
+            .trim();
+
+        // IMDb thường nối loại tác phẩm, năm và "- IMDb" vào tiêu đề.
+        title = title
+            .replace(/\s*[-|]\s*IMDb\s*$/i, "")
+            .replace(/\s*\((?:TV Series|TV Mini Series|TV Movie|TV Special|Short|Video Game|Podcast Series|Podcast Episode|TV Episode|Feature Film|202\d.*?)[^)]*\)\s*$/i, "")
             .trim();
 
         if (!title || title.length > 200) return;
@@ -18217,6 +18226,11 @@ async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
 
         if (!variants.some(v => animeHayNormalizeText(v) === key)) {
             variants.push(title);
+            console.log("[ANIMEHAY IMDb] TITLE FOUND:", {
+                id,
+                source,
+                title
+            });
         }
     };
 
@@ -18224,17 +18238,27 @@ async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
         const response = await axios.get(
             `https://www.imdb.com/title/${id}/`,
             {
-                timeout: 3000,
+                timeout: 3500,
                 maxRedirects: 3,
                 headers: {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.9"
                 }
             }
         );
 
-        const $ = cheerio.load(response.data || "");
+        const html = String(response.data || "");
+        const $ = cheerio.load(html);
 
+        console.log("[ANIMEHAY IMDb] HTTP:", {
+            id,
+            status: response.status,
+            finalUrl: response.request?.res?.responseUrl || response.config?.url,
+            htmlLength: html.length
+        });
+
+        // 1. JSON-LD: đọc cả object, array và @graph.
         const collectJsonLd = node => {
             if (!node) return;
 
@@ -18246,32 +18270,52 @@ async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
             if (typeof node !== "object") return;
 
             const type = node["@type"];
-            const isRelevant = !type ||
-                (Array.isArray(type)
-                    ? type.some(t => /Movie|TVSeries|TVEpisode|CreativeWork/i.test(String(t)))
-                    : /Movie|TVSeries|TVEpisode|CreativeWork/i.test(String(type)));
+            const typeText = Array.isArray(type)
+                ? type.join(" ")
+                : String(type || "");
 
-            if (isRelevant) {
-                addVariant(node.name);
-                addVariant(node.alternateName);
+            if (
+                !type ||
+                /Movie|TVSeries|TVEpisode|CreativeWork/i.test(typeText)
+            ) {
+                addVariant(node.name, "json-ld.name");
+                addVariant(node.alternateName, "json-ld.alternateName");
             }
 
             if (node["@graph"]) collectJsonLd(node["@graph"]);
             if (node.mainEntity) collectJsonLd(node.mainEntity);
+            if (node.subjectOf) collectJsonLd(node.subjectOf);
         };
 
         $('script[type="application/ld+json"]').each((_, element) => {
             try {
-                collectJsonLd(JSON.parse($(element).contents().text()));
+                collectJsonLd(JSON.parse($(element).text()));
             } catch (_) {
-                // IMDb có thể trả về JSON-LD không hợp lệ.
+                // Bỏ qua JSON-LD lỗi định dạng.
             }
         });
 
-        addVariant($('meta[property="og:title"]').attr("content"));
-        addVariant($('meta[name="title"]').attr("content"));
+        // 2. Metadata của trang.
+        addVariant($('meta[property="og:title"]').attr("content"), "og:title");
+        addVariant($('meta[name="title"]').attr("content"), "meta.title");
+        addVariant($('meta[property="twitter:title"]').attr("content"), "twitter:title");
 
-        // Không coi tên phim chính là tên thay thế.
+        // 3. Dự phòng: đọc các trường name / alternateName trong HTML thô.
+        // Hữu ích khi cấu trúc JSON-LD không được Cheerio nhận diện.
+        for (const pattern of [
+            /"alternateName"\s*:\s*"((?:\\.|[^"\\])*)"/g,
+            /"name"\s*:\s*"((?:\\.|[^"\\])*)"/g
+        ]) {
+            let match;
+            while ((match = pattern.exec(html)) !== null) {
+                try {
+                    addVariant(JSON.parse(`"${match[1]}"`), "html-json");
+                } catch (_) {
+                    // Bỏ qua chuỗi JSON không hợp lệ.
+                }
+            }
+        }
+
         const result = variants.filter(
             title => animeHayNormalizeText(title) !==
                 animeHayNormalizeText(original)
@@ -18289,10 +18333,11 @@ async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
     } catch (error) {
         console.log("[ANIMEHAY IMDb] LOOKUP ERROR:", {
             id,
-            message: error?.message || String(error)
+            message: error?.message || String(error),
+            status: error?.response?.status || null
         });
 
-        // Không cache lỗi mạng để có thể thử lại ở lần sau.
+        // Không cache lỗi mạng để lần sau có thể thử lại.
         return [];
     }
 }
@@ -18431,7 +18476,7 @@ async function fetchAnimeHay(
 
             // Nếu kết quả tìm kiếm không có ứng viên phù hợp,
             // thử duyệt danh mục AnimeHay.
-            if (!validCandidates.length) {
+            if (!validCandidates.length && source !== "cinemeta") {
                 for (const path of ["/the-loai/anime-1.html", "/"]) {
                     try {
                         const page = await axios.get(domain + path, {
