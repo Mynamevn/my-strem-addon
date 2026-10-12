@@ -19110,13 +19110,26 @@ async function scrapePhimLongTieng(
         // =================================================
 
         const is1PhimHost =
-            /^(?:www\.)?1phim\d+\.com$/i.test(streamHost);
+    /^(?:www\.)?1phim\d+\.com$/i.test(streamHost);
 
-        const isCbPlayHost =
-            /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(streamHost);
+const is8PhimHost =
+    /^www\.8phim1\.com$/i.test(streamHost);
 
-        const allowedHost =
-            is1PhimHost || isCbPlayHost;
+const isRophimHost =
+    /^player\.rophim12\.com$/i.test(streamHost);
+
+const isCloudbetaHost =
+    /^api\.cloudbeta\.win$/i.test(streamHost);
+
+const isCbPlayHost =
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(streamHost);
+
+const allowedHost =
+    is1PhimHost ||
+    is8PhimHost ||
+    isRophimHost ||
+    isCloudbetaHost ||
+    isCbPlayHost;
 
         if (!allowedHost) {
 
@@ -19140,12 +19153,14 @@ async function scrapePhimLongTieng(
             streamReferer =
                 "https://play.cbplay.live/";
 
-        } else if (is1PhimHost) {
-
-            streamReferer =
-                streamUrl.origin + "/";
-
-        }
+        } else if (
+    is1PhimHost ||
+    is8PhimHost ||
+    isRophimHost ||
+    isCloudbetaHost
+) {
+    streamReferer = streamUrl.origin + "/";
+}
 
         // =================================================
         // TẠO URL PROXY VERCEL
@@ -19195,11 +19210,10 @@ async function scrapePhimLongTieng(
         const streamObject = {
 
             name:
-                `⚡ [PhimLongTieng] ${sourceLabel}`,
+    `⚡ [PhimLongTieng] ${sourceLabel} · ${streamHost}`,
 
-            title:
-                title ||
-                `${sourceLabel} - Direct`,
+title:
+    `${title || `${sourceLabel} - Direct`} · ${streamHost}`,
 
             url:
                 proxyUrl,
@@ -22511,7 +22525,6 @@ for (
         streamPrefix
     );
 
-
     // ======================================================
     // 20.9. PLAYER URL ĐÃ LÀ M3U8
     // ======================================================
@@ -22635,18 +22648,17 @@ for (
 ) {
 
     if (
-        !stream ||
-        !stream.url
-    ) {
+    !stream ||
+    (!stream.url && !stream.externalUrl)
+) {
+    continue;
+}
 
-        continue;
-
-    }
-
-    const key =
-        String(
-            stream.url
-        ).trim();
+const key = String(
+    stream.url ||
+    stream.externalUrl ||
+    ""
+).trim();
 
     if (
         !key ||
@@ -22688,7 +22700,10 @@ console.log(
                 s.title,
 
             url:
-                s.url
+    s.url,
+
+externalUrl:
+    s.externalUrl
         })
     )
 );
@@ -26823,19 +26838,14 @@ console.log(
 
 
 // =====================================================
-// 6. CHẠY KKPHIM TRƯỚC
-// =====================================================
-// KKPhim ưu tiên tra trực tiếp bằng IMDb ID.
-// Nếu IMDb lookup không có kết quả thì fetchKKPhim()
-// mới fallback sang search theo tên + năm.
+// 6. KHỞI CHẠY KKPHIM SONG SONG VỚI CÁC NGUỒN KHÁC
 // =====================================================
 
 let kkphim = [];
 
-try {
-
-    kkphim =
-        await fetchKKPhim(
+const kkphimPromise = (async () => {
+    try {
+        return await fetchKKPhim(
             movieName,
             movieYear,
             seasonNumber,
@@ -26845,18 +26855,15 @@ try {
                 ? rawId.split(":")[0]
                 : ""
         );
+    } catch (e) {
+        console.log(
+            "[KKPHIM PRELOAD ERROR]:",
+            e?.message || e
+        );
 
-} catch (e) {
-
-    console.log(
-        "[KKPHIM PRELOAD ERROR]:",
-        e?.message ||
-        e
-    );
-
-    kkphim = [];
-
-}
+        return [];
+    }
+})();
 
 
 // =====================================================
@@ -26917,6 +26924,8 @@ try {
          e.message
      );
  }
+
+kkphim = await kkphimPromise;
 
 // -----------------------------------------------------
 // 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
@@ -34141,13 +34150,26 @@ app.get(
             // =================================================
 
             const is1PhimHost =
-                /^(?:www\.)?1phim\d+\.com$/i.test(hostname);
+    /^(?:www\.)?1phim\d+\.com$/i.test(hostname);
 
-            const isCbPlayHost =
-                /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(hostname);
+const is8PhimHost =
+    /^www\.8phim1\.com$/i.test(hostname);
 
-            const allowedHost =
-                is1PhimHost || isCbPlayHost;
+const isRophimHost =
+    /^player\.rophim12\.com$/i.test(hostname);
+
+const isCloudbetaHost =
+    /^api\.cloudbeta\.win$/i.test(hostname);
+
+const isCbPlayHost =
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(hostname);
+
+const allowedHost =
+    is1PhimHost ||
+    is8PhimHost ||
+    isRophimHost ||
+    isCloudbetaHost ||
+    isCbPlayHost;
 
             if (!allowedHost) {
 
@@ -34403,8 +34425,11 @@ if (isM3U8) {
                                 .toLowerCase();
 
                         const childAllowed =
-                            /^(?:www\.)?1phim\d+\.com$/i.test(childHost) ||
-                            /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost);
+    /^(?:www\.)?1phim\d+\.com$/i.test(childHost) ||
+    /^www\.8phim1\.com$/i.test(childHost) ||
+    /^player\.rophim12\.com$/i.test(childHost) ||
+    /^api\.cloudbeta\.win$/i.test(childHost) ||
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost);
 
                         if (
                             !childAllowed
