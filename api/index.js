@@ -26754,41 +26754,38 @@ let results = [];
 
 try {
 
-    // -------------------------------------------------
-    // 8.1. Chạy các nguồn độc lập trước
-    // -------------------------------------------------
+    // =====================
+    // 8.1. CHẠY CÁC NGUỒN ĐỘC LẬP SONG SONG
+    // =====================
 
-    results =
-        await Promise.allSettled([
-            fetchNguonC(nguonCFallbackName),
+    // Khởi chạy AnimeHay sớm, không chờ PhimLongTieng.
+    // Bắt lỗi ngay trong promise để tránh unhandled rejection.
+const animehayPromise = (async () => {
+    try {
+        return await fetchAnimeHay(
+            movieName,
+            movieYear,
+            seasonNumber,
+            episodeNumber,
+            streamType,
+            rawId.startsWith("tt") ? rawId.split(":")[0] : ""
+        );
+    } catch (e) {
+        console.error("[ANIMEHAY] FETCH ERROR:", e.message);
+        return [];
+    }
+})();
 
-            fetchVSMov(
-                movieName,
-                movieYear,
-                seasonNumber,
-                episodeNumber,
-                streamType
-            ),
-
-            scrapePhimHDCS(
-                movieName,
-                movieYear,
-                seasonNumber,
-                episodeNumber,
-                streamType
-            )
-        ]);
-
+let results = [];
+try {
+    results = await Promise.allSettled([
+        fetchNguonC(nguonCFallbackName),
+        fetchVSMov(movieName, movieYear, seasonNumber, episodeNumber, streamType),
+        scrapePhimHDCS(movieName, movieYear, seasonNumber, episodeNumber, streamType)
+    ]);
 } catch (e) {
-
-    console.log(
-        "[STREAM SOURCES ERROR]:",
-        e?.message ||
-        e
-    );
-
+    console.error("[STREAM] Lỗi chạy các nguồn độc lập:", e.message);
 }
-
 
 // -----------------------------------------------------
 // 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
@@ -27059,16 +27056,8 @@ console.log(
 
 
 let animehay = [];
-
 try {
-    animehay = await fetchAnimeHay(
-        movieName,
-        movieYear,
-        seasonNumber,
-        episodeNumber,
-        streamType,
-        rawId.startsWith("tt") ? rawId.split(":")[0] : ""
-    );
+    animehay = await animehayPromise;
 } catch (e) {
     console.error("[ANIMEHAY] FETCH ERROR:", e.message);
 }
