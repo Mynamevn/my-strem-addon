@@ -20892,7 +20892,6 @@ async function scrapePhimLongTieng(
                 )
         );
 
-        // -----------------------------------------------------
         // 14.1. LỌC CANDIDATE — HỖ TRỢ TÊN PHIM KHÁC NGÔN NGỮ
         // Không loại hết kết quả khi tên tiếng Anh khác tiếng Việt.
         // Ưu tiên tên gần khớp, năm phát hành và tên series gốc.
