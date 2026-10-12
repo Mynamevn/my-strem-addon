@@ -27036,19 +27036,7 @@ console.log(
 // 4. AnimeHay
 // =====================================================
 
-    // -------------------------------------------------
-    // ANIMEHAY FALLBACK — CINEMETA TITLE ONLY
-    // -------------------------------------------------
-
-    const animeHayFallbackTitle = String(
-        movieName || ""
-    ).trim();
-
-    console.log(
-        "[ANIMEHAY] FALLBACK TITLE:",
-        animeHayFallbackTitle
-    );
-    
+     
     // -------------------------------------------------
 // ANIMEHAY FALLBACK — ƯU TIÊN TÊN THAY THẾ TỪ ANILIST
 // -------------------------------------------------
