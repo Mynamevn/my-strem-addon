@@ -15197,288 +15197,82 @@ async function animeHayResolveActiveDomain(
 // ============================================================
 
 async function animeHaySearch(domain, title) {
-    const baseDomain = String(
-        domain ||
-        animeHayActiveDomain ||
-        animeHayDirectoryActiveDomain ||
-        ANIMEHAY_DIRECTORY ||
-        ""
-    ).replace(/\/+$/, "");
+    const searchUrl =
+        `${domain}/tim-kiem/` +
+        `${encodeURIComponent(title)}.html`;
 
-    const searchTitle = String(title || "").trim();
+    try {
+        console.log("[ANIMEHAY] SEARCH:", searchUrl);
 
-    if (!baseDomain || !searchTitle) {
-        console.log("[ANIMEHAY] SEARCH SKIP:", {
-            domain: baseDomain,
-            title: searchTitle
+        const response = await axios.get(searchUrl, {
+            timeout: 15000,
+            validateStatus: () => true,
+            headers: {
+                "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+                "Accept":
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Referer": domain
+            }
         });
-        return [];
-    }
 
-    const slug = typeof animeHaySlug === "function"
-        ? animeHaySlug(searchTitle)
-        : searchTitle
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "");
+        const html =
+            typeof response.data === "string"
+                ? response.data
+                : "";
 
-    const headers = {
-        "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept":
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language":
-            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": baseDomain + "/"
-    };
-
-    const searchUrls = [
-        {
-            label: "slug-search",
-            url: baseDomain + "/tim-kiem/" + encodeURIComponent(slug)
-        },
-        {
-            label: "keyword-search",
-            url: baseDomain + "/tim-kiem?keyword=" +
-                encodeURIComponent(searchTitle)
-        }
-    ];
-
-    const seen = new Set();
-    const results = [];
-
-    function addCandidate($, anchor, sourceUrl) {
-        const href = $(anchor).attr("href");
-        if (!href) return;
-
-        let absoluteUrl;
-
-        try {
-            absoluteUrl = animeHayAbsoluteUrl(href, sourceUrl);
-
-            const parsed = new URL(absoluteUrl);
-
-            if (!/^https?:$/.test(parsed.protocol)) return;
-
-            if (!/animehay/i.test(parsed.hostname)) return;
-
-            if (!/\/thong-tin-phim\//i.test(parsed.pathname)) {
-                return;
-            }
-        } catch (_) {
-            return;
-        }
-
-        const normalizedUrl = absoluteUrl
-            .split("#")[0]
-            .split("?")[0];
-
-        if (seen.has(normalizedUrl)) return;
-
-        const $anchor = $(anchor);
-
-        const titleFromAttributes =
-            $anchor.attr("title") ||
-            $anchor.attr("data-title") ||
-            $anchor.find("img").attr("alt") ||
-            $anchor.find("img").attr("title") ||
-            "";
-
-        let card = $anchor;
-        let cardText = "";
-
-        for (let depth = 0; depth < 5 && card.length; depth++) {
-            const text = card.text()
-                .replace(/\s+/g, " ")
-                .trim();
-
-            if (text && text.length <= 500) {
-                cardText = text;
-            }
-
-            if (
-                card.is(".mc") ||
-                card.is("article") ||
-                card.is(".movie-item") ||
-                card.is(".item")
-            ) {
-                break;
-            }
-
-            card = card.parent();
-        }
-
-        let titleFromUrl = "";
-
-        try {
-            const path = new URL(normalizedUrl).pathname;
-            const match = path.match(
-                /\/thong-tin-phim\/(.+?)(?:-\d+)?\.html$/i
+        if (
+            response.status < 200 ||
+            response.status >= 400 ||
+            html.length <= 500
+        ) {
+            console.log(
+                "[ANIMEHAY] SEARCH FAILED:",
+                response.status,
+                searchUrl
             );
-
-            if (match) {
-                titleFromUrl = decodeURIComponent(match[1])
-                    .replace(/[-_]+/g, " ")
-                    .trim();
-            }
-        } catch (_) {}
-
-        const candidateTitle = String(
-            titleFromAttributes ||
-            titleFromUrl ||
-            ""
-        ).trim();
-
-        if (!candidateTitle) {
-            console.log("[ANIMEHAY] SEARCH LINK WITHOUT TITLE:", {
-                href: normalizedUrl,
-                source: sourceUrl
-            });
-            return;
+            return [];
         }
 
-        seen.add(normalizedUrl);
+        const $search = cheerio.load(html);
+        const searchItems = [];
 
-        results.push({
-            title: candidateTitle,
-            name: candidateTitle,
-            url: normalizedUrl,
-            cardText,
-            source: sourceUrl
-        });
-    }
+        $search("div.movies-list > div.mc").each(
+            (index, el) => {
+                const item = $search(el);
 
-    async function parsePage(url, label) {
-        try {
-            console.log("[ANIMEHAY] SEARCH PAGE:", {
-                label,
-                url,
-                title: searchTitle
-            });
-
-            const response = await axios.get(url, {
-                timeout: 10000,
-                maxRedirects: 5,
-                headers
-            });
-
-            const finalUrl =
-                response.request?.res?.responseUrl || url;
-
-            const html = String(response.data || "");
-            const $ = cheerio.load(html);
-            const before = results.length;
-
-            console.log("[ANIMEHAY] SEARCH PAGE RESULT:", {
-                label,
-                status: response.status,
-                finalUrl,
-                htmlLength: html.length,
-                pageTitle: $("title").text().trim(),
-                detailLinksInHtml:
-                    $('a[href*="/thong-tin-phim/"]').length,
-                scriptCount: $("script").length
-            });
-
-            // Đọc link chi tiết trong HTML đã được server trả về.
-            $('a[href*="/thong-tin-phim/"]').each((_, anchor) => {
-                addCandidate($, anchor, finalUrl);
-            });
-
-            // Một số phiên bản website có thể dùng URL tương đối
-            // hoặc URL được lưu trong thuộc tính data-href.
-            $("[data-href], [data-url]").each((_, element) => {
-                const $element = $(element);
+                const title =
+                    item.find(".title").first().text().trim() ||
+                    item.find("a").first().attr("title") ||
+                    item.find("a").first().text().trim();
 
                 const href =
-                    $element.attr("data-href") ||
-                    $element.attr("data-url");
+                    item.find("a").first().attr("href") || "";
 
-                if (
-                    href &&
-                    /\/thong-tin-phim\//i.test(href)
-                ) {
-                    addCandidate(
-                        $,
-                        $("<a>").attr("href", href)[0],
-                        finalUrl
-                    );
+                if (title && href) {
+                    searchItems.push({
+                        title,
+                        url: animeHayAbsoluteUrl(href, domain),
+                        cardText: item.text().trim()
+                    });
                 }
-            });
-
-            // Chẩn đoán JavaScript tìm kiếm khi HTML không có kết quả.
-            if (results.length === before) {
-                const scripts = $("script")
-                    .map((_, element) => $(element).html() || "")
-                    .get();
-
-                const relevantScripts = scripts
-                    .filter(script =>
-                        /smart.search|form-search|keyword|ajax|fetch\(|XMLHttpRequest|\/tim-kiem/i
-                            .test(script)
-                    )
-                    .map(script =>
-                        script
-                            .replace(/\s+/g, " ")
-                            .slice(0, 1200)
-                    )
-                    .slice(0, 5);
-
-                console.log(
-                    "[ANIMEHAY] SEARCH JS DIAGNOSTIC:",
-                    JSON.stringify({
-                        label,
-                        relevantScripts
-                    })
-                );
             }
+        );
 
-            console.log("[ANIMEHAY] SEARCH PAGE PARSED:", {
-                label,
-                newCandidates: results.length - before,
-                totalCandidates: results.length
-            });
+        console.log(
+            "[ANIMEHAY] SEARCH RESULTS:",
+            searchItems.length
+        );
 
-            return true;
-        } catch (error) {
-            console.log("[ANIMEHAY] SEARCH PAGE ERROR:", {
-                label,
-                url,
-                message: error?.message || String(error)
-            });
+        return searchItems;
+    } catch (e) {
+        console.log(
+            "[ANIMEHAY SEARCH ERROR]:",
+            e?.response?.status || e?.message || e
+        );
 
-            return false;
-        }
+        return [];
     }
-
-    console.log("[ANIMEHAY] SEARCH TITLE:", searchTitle);
-
-    for (const item of searchUrls) {
-        await parsePage(item.url, item.label);
-
-        if (results.length > 0) {
-            break;
-        }
-    }
-
-    console.log("[ANIMEHAY] SEARCH CANDIDATES:", results.length);
-
-    console.log(
-        "[ANIMEHAY] SEARCH ITEMS:",
-        JSON.stringify(
-            results.slice(0, 20).map(item => ({
-                title: item.title,
-                url: item.url,
-                source: item.source
-            })),
-            null,
-            2
-        )
-    );
-
-    return results;
 }
 
 
