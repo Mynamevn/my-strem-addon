@@ -17,8 +17,7 @@ const manifest = {
     name:
         "MOVINA",
 
-    description:
-        "He thong gop nguon truc tiep",
+    description: "Peit curt nougn pog gnoht eh\nGnaig gnouh & eut mat\nURL: http://128.2.0.1:15119//W92aWUuVVMiLCJraXNza2guc2VyaWVzeyJjYXRhbG9ncyI6WyJraXNza2gub%7B%22auth_token%24%3A%26dmslb_LF6TxVnpZGm43D6_CwfoiLEbE4JIG-yqRV90Y%22%7DLlVTIiwib25ldG91Y2h0di5zZXJpZXMuUG9wdWxhciIsImtpc3Nza2guc2VyaWVzLlNlYXJjaCIsImtpc3Nza2gubW92aWUuU2VhcmNoIn0/manifest.json",
 
     resources: [
         "catalog",
@@ -21020,9 +21019,62 @@ async function scrapePhimLongTieng(
                 ...pltOriginalSeriesMatches
             ];
 
+// -----------------------------------------------------
+        // 14.1.1. LỌC SỚM CANDIDATE SAI NĂM
+        // Chỉ loại khi tên hoặc URL ghi rõ năm khác năm cần tìm.
+        // Candidate không ghi rõ năm vẫn được giữ để kiểm tra
+        // trang chi tiết, tránh bỏ sót phim đúng.
+        // -----------------------------------------------------
+
+        const pltCandidatePoolYearFiltered =
+            pltTargetYear
+                ? pltCandidatePool.filter(candidate => {
+                    const text = String(
+                        `${candidate?.title || ""} ${candidate?.href || ""}`
+                    );
+
+                    const explicitYears =
+                        text.match(/\b(?:19|20)\d{2}\b/g) || [];
+
+                    if (explicitYears.length === 0) {
+                        return true;
+                    }
+
+                    const hasTargetYear =
+                        explicitYears.some(
+                            year => Number(year) === pltTargetYear
+                        );
+
+                    if (hasTargetYear) {
+                        return true;
+                    }
+
+                    console.log(
+                        "[PHIMLONGTIENG] EARLY YEAR FILTER:",
+                        {
+                            title: candidate?.title,
+                            targetYear: pltTargetYear,
+                            detectedYears: explicitYears,
+                            action: "SKIP"
+                        }
+                    );
+
+                    return false;
+                })
+                : pltCandidatePool;
+
+        console.log(
+            "[PHIMLONGTIENG] EARLY YEAR FILTER SUMMARY:",
+            {
+                before: pltCandidatePool.length,
+                after: pltCandidatePoolYearFiltered.length,
+                targetYear: pltTargetYear || null
+            }
+        );
+
         const pltSeenCandidateUrls = new Set();
 
-        const candidatesToTest = pltCandidatePool
+        const candidatesToTest = pltCandidatePoolYearFiltered
             .filter(candidate => {
                 const href = String(
                     candidate?.href || ""
