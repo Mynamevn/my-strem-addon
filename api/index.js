@@ -27156,13 +27156,13 @@ const externalStreams = [
                 animeHayFallbackTitle,
 
             externalUrl:
-                (animeHayActiveDomain ||
-                    animeHayDirectoryActiveDomain ||
-                    ANIMEHAY_DIRECTORY) +
-                "/tim-kiem/" +
-                encodeURIComponent(
-                    animeHaySlug(animeHayFallbackTitle)
-                )
+            (animeHayActiveDomain ||
+                animeHayDirectoryActiveDomain ||
+                ANIMEHAY_DIRECTORY) +
+            "/tim-kiem?keyword=" +
+            encodeURIComponent(
+                animeHayFallbackTitle
+            )
         }
 ];
 
