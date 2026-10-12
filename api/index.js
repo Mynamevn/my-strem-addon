@@ -11102,68 +11102,151 @@ if (
 
 }
 
-// -------------------------------------------------
-// C. FALLBACK 2: SEARCH THEO TÊN
-// -------------------------------------------------
+    // -------------------------------------------------
+    // B. FALLBACK 2: SEARCH THEO TÊN
+    // -------------------------------------------------
 
-if (
-    !movie
-) {
+    const searchTerms = [
+        String(movieName || "").trim()
+    ].filter(Boolean);
 
-    const searchUrl =
-        "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-        encodeURIComponent(movieName) +
-        "&limit=64";
+    /*
+     * Trường hợp Cinemeta dùng tên tiếng Anh
+     * nhưng dữ liệu PhimAPI lưu tên tiếng Việt.
+     *
+     * Chỉ bật alias cho Journey to the West (1996),
+     * không thay đổi cách tìm của phim khác.
+     */
+    if (
+        streamType === "series" &&
+        Number(movieYear) === 1996 &&
+        /journey\s+to\s+the\s+west/i.test(
+            String(movieName || "")
+        )
+    ) {
+        searchTerms.push("Tây Du Ký");
+    }
+
+    const uniqueSearchTerms = [
+        ...new Set(searchTerms)
+    ];
 
     console.log(
-        "[KKPHIM] Search URL:",
-        searchUrl
+        "[KKPHIM] Search terms:",
+        uniqueSearchTerms
     );
 
-    const res =
-        await axios.get(
-            searchUrl,
-            {
-                timeout: 10000,
+    const searchGroups = await Promise.all(
+        uniqueSearchTerms.map(
+            async keyword => {
+                const searchUrl =
+                    "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                    encodeURIComponent(keyword) +
+                    "&limit=64";
 
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0",
+                console.log(
+                    "[KKPHIM] Search URL:",
+                    searchUrl
+                );
 
-                    "Accept":
-                        "application/json"
+                try {
+                    const res = await axios.get(
+                        searchUrl,
+                        {
+                            timeout: 10000,
+                            headers: {
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
+                            }
+                        }
+                    );
+
+                    const results =
+                        res.data?.data?.items ||
+                        res.data?.items ||
+                        [];
+
+                    console.log(
+                        "[KKPHIM] Search results:",
+                        {
+                            keyword,
+                            status: res.status,
+                            count: Array.isArray(results)
+                                ? results.length
+                                : 0
+                        }
+                    );
+
+                    return Array.isArray(results)
+                        ? results
+                        : [];
+
+                } catch (e) {
+                    console.log(
+                        "[KKPHIM] Search error:",
+                        {
+                            keyword,
+                            status: e?.response?.status || 0,
+                            message: e?.message || String(e)
+                        }
+                    );
+
+                    return [];
                 }
             }
-        );
-
-    console.log(
-        "[KKPHIM] Search HTTP:",
-        res.status
+        )
     );
 
-    const items =
-        res.data?.data?.items ||
-        res.data?.items ||
-        [];
+    /*
+     * Gộp kết quả từ các từ khóa và loại trùng.
+     * Ưu tiên slug/id; nếu thiếu cả hai thì dùng
+     * tên + năm làm khóa dự phòng.
+     */
+    const seenSearchItems = new Set();
+
+    const items = searchGroups
+        .flat()
+        .filter(item => {
+            const key = String(
+                item?.slug ||
+                item?._id ||
+                item?.id ||
+                (
+                    String(item?.name || "") +
+                    "|" +
+                    String(item?.year || "")
+                )
+            ).trim();
+
+            if (!key || seenSearchItems.has(key)) {
+                return false;
+            }
+
+            seenSearchItems.add(key);
+            return true;
+        });
 
     console.log(
-        "[KKPHIM] Search results:",
-        Array.isArray(items)
-            ? items.length
-            : "NOT ARRAY"
+        "[KKPHIM] MERGED SEARCH RESULTS:",
+        {
+            terms: uniqueSearchTerms,
+            count: items.length,
+            candidates: items.slice(0, 20).map(item => ({
+                name: item?.name || "",
+                origin_name: item?.origin_name || "",
+                year: item?.year || 0,
+                type: item?.type || "",
+                slug: item?.slug || ""
+            }))
+        }
     );
 
-    if (
-        !Array.isArray(items) ||
-        !items.length
-    ) {
-
+    if (!items.length) {
         console.log(
-            "[KKPHIM] NO SEARCH RESULT"
+            "[KKPHIM] NO SEARCH RESULT FROM ANY TERM"
         );
 
         return streams;
-
     }
 
     // =================================================
