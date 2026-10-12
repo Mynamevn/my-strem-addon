@@ -17,7 +17,8 @@ const manifest = {
     name:
         "MOVINA",
 
-    description: "Peit curt nougn pog gnoht eh\nGnaig gnouh & eut mat\nURL: http://128.2.0.1:15119//W92aWUuVVMiLCJraXNza2guc2VyaWVzeyJjYXRhbG9ncyI6WyJraXNza2gub%7B%22auth_token%24%3A%26dmslb_LF6TxVnpZGm43D6_CwfoiLEbE4JIG-yqRV90Y%22%7DLlVTIiwib25ldG91Y2h0di5zZXJpZXMuUG9wdWxhciIsImtpc3Nza2guc2VyaWVzLlNlYXJjaCIsImtpc3Nza2gubW92aWUuU2VhcmNoIn0/manifest.json",
+    description:
+        "He thong gop nguon truc tiep",
 
     resources: [
         "catalog",
@@ -21019,62 +21020,9 @@ async function scrapePhimLongTieng(
                 ...pltOriginalSeriesMatches
             ];
 
-// -----------------------------------------------------
-        // 14.1.1. LỌC SỚM CANDIDATE SAI NĂM
-        // Chỉ loại khi tên hoặc URL ghi rõ năm khác năm cần tìm.
-        // Candidate không ghi rõ năm vẫn được giữ để kiểm tra
-        // trang chi tiết, tránh bỏ sót phim đúng.
-        // -----------------------------------------------------
-
-        const pltCandidatePoolYearFiltered =
-            pltTargetYear
-                ? pltCandidatePool.filter(candidate => {
-                    const text = String(
-                        `${candidate?.title || ""} ${candidate?.href || ""}`
-                    );
-
-                    const explicitYears =
-                        text.match(/\b(?:19|20)\d{2}\b/g) || [];
-
-                    if (explicitYears.length === 0) {
-                        return true;
-                    }
-
-                    const hasTargetYear =
-                        explicitYears.some(
-                            year => Number(year) === pltTargetYear
-                        );
-
-                    if (hasTargetYear) {
-                        return true;
-                    }
-
-                    console.log(
-                        "[PHIMLONGTIENG] EARLY YEAR FILTER:",
-                        {
-                            title: candidate?.title,
-                            targetYear: pltTargetYear,
-                            detectedYears: explicitYears,
-                            action: "SKIP"
-                        }
-                    );
-
-                    return false;
-                })
-                : pltCandidatePool;
-
-        console.log(
-            "[PHIMLONGTIENG] EARLY YEAR FILTER SUMMARY:",
-            {
-                before: pltCandidatePool.length,
-                after: pltCandidatePoolYearFiltered.length,
-                targetYear: pltTargetYear || null
-            }
-        );
-
         const pltSeenCandidateUrls = new Set();
 
-        const candidatesToTest = pltCandidatePoolYearFiltered
+        const candidatesToTest = pltCandidatePool
             .filter(candidate => {
                 const href = String(
                     candidate?.href || ""
@@ -21119,54 +21067,6 @@ async function scrapePhimLongTieng(
             return streams;
         }
 
-        // ============================================================
-        // 14.1.2. PREFETCH DETAIL — TỐI ĐA 3 ỨNG VIÊN SONG SONG
-        // Giữ nguyên thứ tự xử lý và logic chấm điểm phía dưới.
-        // ============================================================
-
-        const candidateDetailResponses = new Map();
-
-        for (
-            let batchStart = 0;
-            batchStart < candidatesToTest.length;
-            batchStart += 3
-        ) {
-            const batch = candidatesToTest.slice(
-                batchStart,
-                batchStart + 3
-            );
-
-            const batchResults = await Promise.allSettled(
-                batch.map(selected =>
-                    get(
-                        selected.href,
-                        {
-                            Referer: `${directUrl}/`
-                        }
-                    )
-                )
-            );
-
-            batch.forEach((selected, index) => {
-                candidateDetailResponses.set(
-                    selected.href,
-                    batchResults[index]
-                );
-            });
-        }
-
-        console.log(
-            "[PHIMLONGTIENG] DETAIL PREFETCH COMPLETE:",
-            {
-                requested: candidatesToTest.length,
-                completed: [...candidateDetailResponses.values()]
-                    .filter(result =>
-                        result.status === "fulfilled"
-                    ).length,
-                concurrency: 3
-            }
-        );
-
         const candidateResults = [];
 
         for (
@@ -21203,27 +21103,14 @@ async function scrapePhimLongTieng(
                 // 14.1. DETAIL
                 // ==================================================
 
-                const movieFetchResult =
-                    candidateDetailResponses.get(
-                        selected.href
-                    );
-
-                if (
-                    !movieFetchResult ||
-                    movieFetchResult.status !== "fulfilled"
-                ) {
-                    console.log(
-                        "[PHIMLONGTIENG] DETAIL FETCH FAILED:",
-                        selected.title,
-                        movieFetchResult?.reason?.message ||
-                        "No response"
-                    );
-
-                    continue;
-                }
-
                 const movieRes =
-                    movieFetchResult.value;
+                    await get(
+                        selected.href,
+                        {
+                            Referer:
+                                `${directUrl}/`
+                        }
+                    );
 
                 console.log(
                     "[PHIMLONGTIENG] MOVIE status:",
@@ -26860,63 +26747,48 @@ try {
 
 
 // =====================================================
- // 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
- // =====================================================
+// 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
+// =====================================================
 
- let results = [];
+let results = [];
 
- // =====================
- // 8.1. CHẠY CÁC NGUỒN ĐỘC LẬP SONG SONG
- // =====================
+try {
 
- // Khởi chạy AnimeHay sớm, không chờ PhimLongTieng.
- // Bắt lỗi ngay trong promise để tránh unhandled rejection.
+    // -------------------------------------------------
+    // 8.1. Chạy các nguồn độc lập trước
+    // -------------------------------------------------
 
- const animehayPromise = (async () => {
-     try {
-         return await fetchAnimeHay(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType,
-             rawId.startsWith("tt")
-                 ? rawId.split(":")[0]
-                 : ""
-         );
-     } catch (e) {
-         console.error(
-             "[ANIMEHAY] FETCH ERROR:",
-             e.message
-         );
-         return [];
-     }
- })();
+    results =
+        await Promise.allSettled([
+            fetchNguonC(nguonCFallbackName),
 
- try {
-     results = await Promise.allSettled([
-         fetchNguonC(nguonCFallbackName),
-         fetchVSMov(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType
-         ),
-         scrapePhimHDCS(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType
-         )
-     ]);
- } catch (e) {
-     console.error(
-         "[STREAM] Lỗi chạy các nguồn độc lập:",
-         e.message
-     );
- }
+            fetchVSMov(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
+            ),
+
+            scrapePhimHDCS(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
+            )
+        ]);
+
+} catch (e) {
+
+    console.log(
+        "[STREAM SOURCES ERROR]:",
+        e?.message ||
+        e
+    );
+
+}
+
 
 // -----------------------------------------------------
 // 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
@@ -27187,8 +27059,16 @@ console.log(
 
 
 let animehay = [];
+
 try {
-    animehay = await animehayPromise;
+    animehay = await fetchAnimeHay(
+        movieName,
+        movieYear,
+        seasonNumber,
+        episodeNumber,
+        streamType,
+        rawId.startsWith("tt") ? rawId.split(":")[0] : ""
+    );
 } catch (e) {
     console.error("[ANIMEHAY] FETCH ERROR:", e.message);
 }
