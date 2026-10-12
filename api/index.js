@@ -19110,13 +19110,26 @@ async function scrapePhimLongTieng(
         // =================================================
 
         const is1PhimHost =
-            /^(?:www\.)?1phim\d+\.com$/i.test(streamHost);
+    /^(?:www\.)?1phim\d+\.com$/i.test(streamHost);
 
-        const isCbPlayHost =
-            /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(streamHost);
+const is8PhimHost =
+    /^www\.8phim1\.com$/i.test(streamHost);
 
-        const allowedHost =
-            is1PhimHost || isCbPlayHost;
+const isRophimHost =
+    /^player\.rophim12\.com$/i.test(streamHost);
+
+const isCloudbetaHost =
+    /^api\.cloudbeta\.win$/i.test(streamHost);
+
+const isCbPlayHost =
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(streamHost);
+
+const allowedHost =
+    is1PhimHost ||
+    is8PhimHost ||
+    isRophimHost ||
+    isCloudbetaHost ||
+    isCbPlayHost;
 
         if (!allowedHost) {
 
@@ -19140,12 +19153,14 @@ async function scrapePhimLongTieng(
             streamReferer =
                 "https://play.cbplay.live/";
 
-        } else if (is1PhimHost) {
-
-            streamReferer =
-                streamUrl.origin + "/";
-
-        }
+        } else if (
+    is1PhimHost ||
+    is8PhimHost ||
+    isRophimHost ||
+    isCloudbetaHost
+) {
+    streamReferer = streamUrl.origin + "/";
+}
 
         // =================================================
         // TẠO URL PROXY VERCEL
@@ -19195,11 +19210,10 @@ async function scrapePhimLongTieng(
         const streamObject = {
 
             name:
-                `⚡ [PhimLongTieng] ${sourceLabel}`,
+    `⚡ [PhimLongTieng] ${sourceLabel} · ${streamHost}`,
 
-            title:
-                title ||
-                `${sourceLabel} - Direct`,
+title:
+    `${title || `${sourceLabel} - Direct`} · ${streamHost}`,
 
             url:
                 proxyUrl,
@@ -22511,6 +22525,7 @@ for (
         streamPrefix
     );
 
+    extractPlayerEmbeds(playerHtml);
 
     // ======================================================
     // 20.9. PLAYER URL ĐÃ LÀ M3U8
@@ -22607,6 +22622,60 @@ for (
 
 }
 
+// ========================================================
+// PLAYER / EMBED FALLBACK
+// Chỉ giữ URL player-cdn.com đã tìm thấy trong HTML.
+// Không đưa URL embed vào HLS proxy.
+// ========================================================
+
+function extractPlayerEmbeds(html) {
+    const found = new Set();
+
+    const regex =
+        /https?:\/\/player-cdn\.com\/\?[^"'<>\\\s]+/gi;
+
+    let match;
+
+    while ((match = regex.exec(html)) !== null) {
+        const url = decodeHtml(match[0])
+            .replace(/[)"';,]+$/g, "");
+
+        try {
+            const parsed = new URL(url);
+
+            if (
+                parsed.protocol !== "https:" &&
+                parsed.protocol !== "http:"
+            ) {
+                continue;
+            }
+
+            if (parsed.hostname.toLowerCase() !== "player-cdn.com") {
+                continue;
+            }
+
+            found.add(parsed.href);
+        } catch (_) {}
+    }
+
+    for (const url of found) {
+        const streamObject = {
+            name: "🌐 [PhimLongTieng] Player / Embed",
+            title: "Player-Cdn · Mở trình phát ngoài",
+            externalUrl: url,
+            behaviorHints: {
+                bingeGroup: "phimlongtieng-embed"
+            }
+        };
+
+        streams.push(streamObject);
+
+        console.log(
+            "[PHIMLONGTIENG] EMBED ADDED:",
+            url
+        );
+    }
+}
 
 // ========================================================
 // 21. FINAL DEDUPE
@@ -22635,18 +22704,17 @@ for (
 ) {
 
     if (
-        !stream ||
-        !stream.url
-    ) {
+    !stream ||
+    (!stream.url && !stream.externalUrl)
+) {
+    continue;
+}
 
-        continue;
-
-    }
-
-    const key =
-        String(
-            stream.url
-        ).trim();
+const key = String(
+    stream.url ||
+    stream.externalUrl ||
+    ""
+).trim();
 
     if (
         !key ||
@@ -22688,7 +22756,10 @@ console.log(
                 s.title,
 
             url:
-                s.url
+    s.url,
+
+externalUrl:
+    s.externalUrl
         })
     )
 );
@@ -34141,13 +34212,26 @@ app.get(
             // =================================================
 
             const is1PhimHost =
-                /^(?:www\.)?1phim\d+\.com$/i.test(hostname);
+    /^(?:www\.)?1phim\d+\.com$/i.test(hostname);
 
-            const isCbPlayHost =
-                /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(hostname);
+const is8PhimHost =
+    /^www\.8phim1\.com$/i.test(hostname);
 
-            const allowedHost =
-                is1PhimHost || isCbPlayHost;
+const isRophimHost =
+    /^player\.rophim12\.com$/i.test(hostname);
+
+const isCloudbetaHost =
+    /^api\.cloudbeta\.win$/i.test(hostname);
+
+const isCbPlayHost =
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(hostname);
+
+const allowedHost =
+    is1PhimHost ||
+    is8PhimHost ||
+    isRophimHost ||
+    isCloudbetaHost ||
+    isCbPlayHost;
 
             if (!allowedHost) {
 
@@ -34403,8 +34487,11 @@ if (isM3U8) {
                                 .toLowerCase();
 
                         const childAllowed =
-                            /^(?:www\.)?1phim\d+\.com$/i.test(childHost) ||
-                            /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost);
+    /^(?:www\.)?1phim\d+\.com$/i.test(childHost) ||
+    /^www\.8phim1\.com$/i.test(childHost) ||
+    /^player\.rophim12\.com$/i.test(childHost) ||
+    /^api\.cloudbeta\.win$/i.test(childHost) ||
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost);
 
                         if (
                             !childAllowed
