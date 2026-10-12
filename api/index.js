@@ -27049,41 +27049,51 @@ console.log(
         animeHayFallbackTitle
     );
     
-    // -----------------------------------------------------
-    // ANIMEHAY FALLBACK — ƯU TIÊN TÊN THAY THẾ TỪ ANILIST
-    // -----------------------------------------------------
-    let animeHayFallbackTitle = movieName;
+    // -------------------------------------------------
+// ANIMEHAY FALLBACK — ƯU TIÊN TÊN THAY THẾ TỪ ANILIST
+// -------------------------------------------------
 
-    try {
-        const aniListTitles =
-            await animeHayGetAniListTitleVariants(
-                movieName,
-                movieYear
-            );
+let animeHayFallbackTitle = String(
+    movieName || ""
+).trim();
 
-        if (Array.isArray(aniListTitles)) {
-            const alternateTitle = aniListTitles.find(title =>
-                typeof title === "string" &&
-                title.trim() &&
-                title.trim().toLowerCase() !==
-                    String(movieName || "").trim().toLowerCase()
-            );
+try {
+    const aniListTitles =
+        await animeHayGetAniListTitleVariants(
+            movieName,
+            movieYear
+        );
 
-            if (alternateTitle) {
-                animeHayFallbackTitle = alternateTitle.trim();
-            }
+    if (Array.isArray(aniListTitles)) {
+        const originalTitle = animeHayFallbackTitle
+            .trim()
+            .toLowerCase();
+
+        const alternateTitle = aniListTitles.find(title =>
+            typeof title === "string" &&
+            title.trim() &&
+            title.trim().toLowerCase() !== originalTitle
+        );
+
+        if (alternateTitle) {
+            animeHayFallbackTitle =
+                alternateTitle.trim();
         }
+    }
 
-        console.log("[ANIMEHAY FALLBACK] TITLE:", {
+    console.log(
+        "[ANIMEHAY] FALLBACK TITLE:",
+        {
             originalTitle: movieName,
             selectedTitle: animeHayFallbackTitle
-        });
-    } catch (error) {
-        console.log(
-            "[ANIMEHAY FALLBACK] ANILIST TITLE ERROR:",
-            error?.message || error
-        );
-    }
+        }
+    );
+} catch (error) {
+    console.log(
+        "[ANIMEHAY] FALLBACK ANILIST ERROR:",
+        error?.message || error
+    );
+}
 
 const externalStreams = [
 
