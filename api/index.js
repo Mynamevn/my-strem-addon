@@ -20892,18 +20892,99 @@ async function scrapePhimLongTieng(
                 )
         );
 
-        const candidatesToTest =
-            ranked.slice(
-                0,
-                20
+        // -----------------------------------------------------
+        // 14.1. LỌC CANDIDATE TRƯỚC KHI MỞ TRANG PHIM
+        // Mục tiêu: không kiểm tra hàng loạt kết quả chỉ trùng
+        // một vài từ khóa trong tên phim.
+        // -----------------------------------------------------
+
+        const normalizePLTMatchTitle = (value) =>
+            String(value || "")
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase()
+                .replace(/đ/g, "d")
+                .replace(/\b(vietsub|long tieng|longtieng|thuyet minh|hd|full hd|4k|1080p|720p)\b/g, " ")
+                .replace(/[^a-z0-9]+/g, " ")
+                .trim()
+                .replace(/\s+/g, " ");
+
+        const targetTitleNormalized =
+            normalizePLTMatchTitle(movieName);
+
+        const targetTitleWords = [
+            ...new Set(
+                targetTitleNormalized
+                    .split(" ")
+                    .filter(word => word.length >= 2)
+            )
+        ];
+
+        const MIN_PLT_TITLE_OVERLAP =
+            targetTitleWords.length <= 2 ? 1 :
+            targetTitleWords.length <= 4 ? 0.67 :
+            0.60;
+
+        const candidatesToTest = ranked
+            .filter(candidate => {
+                const candidateTitleNormalized =
+                    normalizePLTMatchTitle(candidate.title);
+
+                if (!targetTitleNormalized || !candidateTitleNormalized) {
+                    return false;
+                }
+
+                // Khớp nguyên tên hoặc tên nằm trong tên kết quả.
+                if (
+                    candidateTitleNormalized === targetTitleNormalized ||
+                    candidateTitleNormalized.includes(targetTitleNormalized) ||
+                    targetTitleNormalized.includes(candidateTitleNormalized)
+                ) {
+                    return true;
+                }
+
+                const candidateWords = new Set(
+                    candidateTitleNormalized
+                        .split(" ")
+                        .filter(word => word.length >= 2)
+                );
+
+                if (targetTitleWords.length === 0) {
+                    return false;
+                }
+
+                const matchedWords = targetTitleWords.filter(
+                    word => candidateWords.has(word)
+                ).length;
+
+                const overlapRatio =
+                    matchedWords / targetTitleWords.length;
+
+                return overlapRatio >= MIN_PLT_TITLE_OVERLAP;
+            })
+            .slice(0, 5);
+
+        console.log("[PHIMLONGTIENG] CANDIDATE FILTER:", {
+            searchedTitle: movieName,
+            rankedCount: ranked.length,
+            acceptedCount: candidatesToTest.length,
+            acceptedTitles: candidatesToTest.map(candidate => ({
+                title: candidate.title,
+                score: candidate.score,
+                href: candidate.href
+            }))
+        });
+
+        // Không có tên phim đủ gần với tên cần tìm:
+        // bỏ qua provider thay vì mở từng trang kết quả.
+        if (candidatesToTest.length === 0) {
+            console.log(
+                "[PHIMLONGTIENG] SKIP: no sufficiently matching title."
             );
+            return streams;
+        }
 
-        // ========================================================
-        // 14. VALIDATE CANDIDATES
-        // ========================================================
-
-        const candidateResults =
-            [];
+        const candidateResults = [];
 
         for (
             const selected
