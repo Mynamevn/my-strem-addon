@@ -21119,6 +21119,54 @@ async function scrapePhimLongTieng(
             return streams;
         }
 
+        // ============================================================
+        // 14.1.2. PREFETCH DETAIL — TỐI ĐA 3 ỨNG VIÊN SONG SONG
+        // Giữ nguyên thứ tự xử lý và logic chấm điểm phía dưới.
+        // ============================================================
+
+        const candidateDetailResponses = new Map();
+
+        for (
+            let batchStart = 0;
+            batchStart < candidatesToTest.length;
+            batchStart += 3
+        ) {
+            const batch = candidatesToTest.slice(
+                batchStart,
+                batchStart + 3
+            );
+
+            const batchResults = await Promise.allSettled(
+                batch.map(selected =>
+                    get(
+                        selected.href,
+                        {
+                            Referer: `${directUrl}/`
+                        }
+                    )
+                )
+            );
+
+            batch.forEach((selected, index) => {
+                candidateDetailResponses.set(
+                    selected.href,
+                    batchResults[index]
+                );
+            });
+        }
+
+        console.log(
+            "[PHIMLONGTIENG] DETAIL PREFETCH COMPLETE:",
+            {
+                requested: candidatesToTest.length,
+                completed: [...candidateDetailResponses.values()]
+                    .filter(result =>
+                        result.status === "fulfilled"
+                    ).length,
+                concurrency: 3
+            }
+        );
+
         const candidateResults = [];
 
         for (
@@ -21155,14 +21203,27 @@ async function scrapePhimLongTieng(
                 // 14.1. DETAIL
                 // ==================================================
 
-                const movieRes =
-                    await get(
-                        selected.href,
-                        {
-                            Referer:
-                                `${directUrl}/`
-                        }
+                const movieFetchResult =
+                    candidateDetailResponses.get(
+                        selected.href
                     );
+
+                if (
+                    !movieFetchResult ||
+                    movieFetchResult.status !== "fulfilled"
+                ) {
+                    console.log(
+                        "[PHIMLONGTIENG] DETAIL FETCH FAILED:",
+                        selected.title,
+                        movieFetchResult?.reason?.message ||
+                        "No response"
+                    );
+
+                    continue;
+                }
+
+                const movieRes =
+                    movieFetchResult.value;
 
                 console.log(
                     "[PHIMLONGTIENG] MOVIE status:",
