@@ -26894,19 +26894,14 @@ console.log(
 
 
 // =====================================================
-// 6. CHẠY KKPHIM TRƯỚC
-// =====================================================
-// KKPhim ưu tiên tra trực tiếp bằng IMDb ID.
-// Nếu IMDb lookup không có kết quả thì fetchKKPhim()
-// mới fallback sang search theo tên + năm.
+// 6. KHỞI CHẠY KKPHIM SONG SONG VỚI CÁC NGUỒN KHÁC
 // =====================================================
 
 let kkphim = [];
 
-try {
-
-    kkphim =
-        await fetchKKPhim(
+const kkphimPromise = (async () => {
+    try {
+        return await fetchKKPhim(
             movieName,
             movieYear,
             seasonNumber,
@@ -26916,18 +26911,15 @@ try {
                 ? rawId.split(":")[0]
                 : ""
         );
+    } catch (e) {
+        console.log(
+            "[KKPHIM PRELOAD ERROR]:",
+            e?.message || e
+        );
 
-} catch (e) {
-
-    console.log(
-        "[KKPHIM PRELOAD ERROR]:",
-        e?.message ||
-        e
-    );
-
-    kkphim = [];
-
-}
+        return [];
+    }
+})();
 
 
 // =====================================================
@@ -26988,6 +26980,8 @@ try {
          e.message
      );
  }
+
+kkphim = await kkphimPromise;
 
 // -----------------------------------------------------
 // 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
