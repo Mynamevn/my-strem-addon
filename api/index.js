@@ -18184,165 +18184,213 @@ async function animeHayLoadLinks(
 }
 
 // ============================================================
- // BL-53A. ANIMEHAY — IMDb TITLE FALLBACK
- // Ưu tiên Cinemeta; chỉ tra IMDb khi tìm kiếm chính thất bại.
- // ============================================================
+// BL-53A1. ANIMEHAY — ANILIST TITLE FALLBACK
+// Tra cứu tên anime thay thế; không cần API key.
+// ============================================================
 
-const ANIMEHAY_IMDB_TITLE_CACHE = new Map();
+const ANIMEHAY_ANILIST_TITLE_CACHE = new Map();
 
-async function animeHayGetIMDbTitleVariants(imdbId = "", originalTitle = "") {
-    const id = String(imdbId || "").trim().split(":")[0];
+async function animeHayGetAniListTitleVariants(
+    originalTitle = "",
+    movieYear = 0
+) {
     const original = String(originalTitle || "").trim();
 
-    if (!/^tt\d+$/.test(id)) return [];
+    if (!original) return [];
 
-    if (ANIMEHAY_IMDB_TITLE_CACHE.has(id)) {
-        return [...ANIMEHAY_IMDB_TITLE_CACHE.get(id)];
+    const normalize = value =>
+        animeHayNormalizeText(String(value || ""));
+
+    const cacheKey =
+        `${normalize(original)}|${Number(movieYear) || 0}`;
+
+    if (ANIMEHAY_ANILIST_TITLE_CACHE.has(cacheKey)) {
+        return [...ANIMEHAY_ANILIST_TITLE_CACHE.get(cacheKey)];
     }
 
     const variants = [];
-    const seen = new Set();
+    const seen = new Set([normalize(original)]);
 
-    const addVariant = (value, source = "imdb-api") => {
+    const addVariant = (value, source) => {
         if (typeof value !== "string") return;
 
         const title = value
             .replace(/<[^>]*>/g, " ")
-            .replace(/&amp;/gi, "&")
-            .replace(/&#39;|&apos;/gi, "'")
-            .replace(/&quot;/gi, '"')
-            .replace(/&nbsp;/gi, " ")
             .replace(/\s+/g, " ")
             .trim();
 
-        if (!title || title.length > 200) return;
+        const key = normalize(title);
 
-        const key = animeHayNormalizeText(title);
-        if (!key || key === animeHayNormalizeText(original)) return;
-        if (seen.has(key)) return;
+        if (!key || title.length > 200 || seen.has(key)) {
+            return;
+        }
 
         seen.add(key);
         variants.push(title);
 
-        console.log("[ANIMEHAY IMDb] TITLE FOUND:", {
-            id,
+        console.log("[ANIMEHAY AniList] TITLE FOUND:", {
             source,
             title
         });
     };
 
-    // Đọc linh hoạt cấu trúc JSON của endpoint AKAs.
-    const collectTitles = (node, source = "akas", depth = 0) => {
-        if (!node || depth > 8) return;
-
-        if (Array.isArray(node)) {
-            for (const item of node) {
-                collectTitles(item, source, depth + 1);
-            }
-            return;
-        }
-
-        if (typeof node !== "object") return;
-
-        // Chỉ lấy các trường tiêu đề đã biết, không lấy
-        // description, tên diễn viên hoặc dữ liệu không liên quan.
-        for (const key of [
-            "title",
-            "titleText",
-            "originalTitle",
-            "primaryTitle",
-            "alternateName",
-            "name"
-        ]) {
-            const value = node[key];
-
-            if (typeof value === "string") {
-                addVariant(value, `${source}.${key}`);
-            } else if (
-                value &&
-                typeof value === "object" &&
-                typeof value.text === "string"
-            ) {
-                addVariant(value.text, `${source}.${key}.text`);
-            }
-        }
-
-        // Các khóa thường dùng để chứa danh sách kết quả.
-        for (const key of [
-            "akas",
-            "titles",
-            "items",
-            "results",
-            "data",
-            "edges",
-            "nodes"
-        ]) {
-            if (node[key] != null) {
-                collectTitles(node[key], `${source}.${key}`, depth + 1);
-            }
-        }
-
-        // Một số API trả dữ liệu theo kiểu GraphQL edges/node.
-        if (node.node) {
-            collectTitles(node.node, `${source}.node`, depth + 1);
-        }
-    };
-
     try {
-        const url =
-            `https://api.imdbapi.dev/titles/${encodeURIComponent(id)}/akas`;
-
-        const response = await axios.get(url, {
-            timeout: 2500,
-            maxRedirects: 2,
-            headers: {
-                "Accept": "application/json",
-                "User-Agent": "MOVINA/1.0"
+        const query = `
+            query ($search: String) {
+                Page(page: 1, perPage: 5) {
+                    media(
+                        search: $search,
+                        type: ANIME,
+                        format: TV
+                    ) {
+                        id
+                        title {
+                            english
+                            romaji
+                            native
+                            userPreferred
+                        }
+                        synonyms
+                        seasonYear
+                        startDate {
+                            year
+                        }
+                        episodes
+                        format
+                    }
+                }
             }
-        });
+        `;
 
-        console.log("[ANIMEHAY IMDb] AKA API RESPONSE:", {
-            id,
+        const response = await axios.post(
+            "https://graphql.anilist.co",
+            {
+                query,
+                variables: {
+                    search: original
+                }
+            },
+            {
+                timeout: 5000,
+                headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "MOVINA/1.0"
+                }
+            }
+        );
+
+        const mediaList = response.data?.data?.Page?.media;
+
+        console.log("[ANIMEHAY AniList] SEARCH RESPONSE:", {
+            title: original,
             status: response.status,
-            contentType: response.headers?.["content-type"] || "",
-            responseKeys:
-                response.data && typeof response.data === "object"
-                    ? Object.keys(response.data)
-                    : [],
-            itemCount: Array.isArray(response.data)
-                ? response.data.length
-                : null
+            resultCount: Array.isArray(mediaList)
+                ? mediaList.length
+                : 0
         });
 
-        collectTitles(response.data);
+        if (!Array.isArray(mediaList)) return [];
 
-        // Không cache kết quả rỗng để cho phép thử lại ở request sau.
-        if (variants.length) {
-            ANIMEHAY_IMDB_TITLE_CACHE.set(id, variants);
+        const targetYear = Number(movieYear) || 0;
 
-            console.log("[ANIMEHAY IMDb] TITLE VARIANTS:", {
-                id,
-                originalTitle: original,
-                count: variants.length,
-                variants
+        // Chỉ lấy tên từ kết quả có độ tin cậy hợp lý.
+        // Không lấy tên của anime khác chỉ vì API trả về.
+        const ranked = mediaList
+            .map(media => {
+                const titles = [
+                    media?.title?.english,
+                    media?.title?.romaji,
+                    media?.title?.native,
+                    media?.title?.userPreferred,
+                    ...(Array.isArray(media?.synonyms)
+                        ? media.synonyms
+                        : [])
+                ].filter(value =>
+                    typeof value === "string" &&
+                    value.trim()
+                );
+
+                const normalizedTitles = titles.map(normalize);
+                const wanted = normalize(original);
+
+                const exactMatch = normalizedTitles.some(
+                    value => value === wanted
+                );
+
+                const partialMatch = normalizedTitles.some(
+                    value =>
+                        Math.min(value.length, wanted.length) >= 12 &&
+                        (value.includes(wanted) ||
+                         wanted.includes(value))
+                );
+
+                const year = Number(
+                    media?.seasonYear ||
+                    media?.startDate?.year ||
+                    0
+                );
+
+                let score = exactMatch ? 100 : partialMatch ? 50 : 0;
+
+                if (targetYear && year) {
+                    score += year === targetYear ? 25 : -40;
+                }
+
+                return {
+                    media,
+                    titles,
+                    score,
+                    exactMatch,
+                    partialMatch,
+                    year
+                };
+            })
+            .filter(item =>
+                item.exactMatch || item.partialMatch
+            )
+            .sort((a, b) => b.score - a.score);
+
+        const best = ranked[0];
+
+        if (!best) {
+            console.log("[ANIMEHAY AniList] NO CONFIDENT MATCH:", {
+                title: original,
+                targetYear
             });
-        } else {
-            console.log("[ANIMEHAY IMDb] NO ALTERNATE TITLES:", {
-                id,
-                originalTitle: original
-            });
+
+            return [];
         }
+
+        console.log("[ANIMEHAY AniList] SELECTED MEDIA:", {
+            id: best.media.id,
+            title: best.media.title,
+            synonyms: best.media.synonyms,
+            year: best.year,
+            score: best.score
+        });
+
+        for (const title of best.titles) {
+            addVariant(title, "AniList");
+        }
+
+        // Cache cả kết quả rỗng để tránh gọi API liên tục
+        // khi không tìm được anime phù hợp.
+        ANIMEHAY_ANILIST_TITLE_CACHE.set(
+            cacheKey,
+            [...variants]
+        );
 
         return [...variants];
     } catch (error) {
-        console.log("[ANIMEHAY IMDb] AKA API ERROR:", {
-            id,
+        console.log("[ANIMEHAY AniList] API ERROR:", {
+            title: original,
             message: error?.message || String(error),
             status: error?.response?.status || null,
             code: error?.code || null
         });
 
-        // Không cache lỗi mạng để lần sau có thể thử lại.
+        // Lỗi mạng không được cache để lần sau thử lại.
         return [];
     }
 }
@@ -18601,21 +18649,63 @@ async function fetchAnimeHay(
         let selected = await searchByTitle(originalTitle, "cinemeta");
 
         // -----------------------------------------------------
-        // 4. Lượt 2: chỉ khi lượt 1 thất bại mới gọi IMDb.
+        // 4. Lượt 2: thử AniList trước, sau đó mới đến IMDb.
+        // Không thay đổi bước tìm kiếm Cinemeta ở lượt 1.
         // -----------------------------------------------------
         if (!selected) {
-            console.log("[ANIMEHAY] CINEMETA SEARCH FAILED; TRY IMDb:", {
-                originalTitle,
-                imdbId
-            });
-
-            const imdbTitles = await animeHayGetIMDbTitleVariants(
-                imdbId,
-                originalTitle
+            console.log(
+                "[ANIMEHAY] CINEMETA SEARCH FAILED; TRY ANILIST:",
+                {
+                    originalTitle,
+                    movieYear,
+                    imdbId
+                }
             );
 
+            const aniListTitles =
+                await animeHayGetAniListTitleVariants(
+                    originalTitle,
+                    movieYear
+                );
+
+            for (const alternateTitle of aniListTitles) {
+                if (
+                    normalize(alternateTitle) ===
+                    normalize(originalTitle)
+                ) {
+                    continue;
+                }
+
+                selected = await searchByTitle(
+                    alternateTitle,
+                    "anilist-alternate"
+                );
+
+                if (selected) break;
+            }
+        }
+
+        // AniList thất bại thì giữ lại IMDb fallback hiện có.
+        if (!selected) {
+            console.log(
+                "[ANIMEHAY] ANILIST SEARCH FAILED; TRY IMDb:",
+                {
+                    originalTitle,
+                    imdbId
+                }
+            );
+
+            const imdbTitles =
+                await animeHayGetIMDbTitleVariants(
+                    imdbId,
+                    originalTitle
+                );
+
             for (const alternateTitle of imdbTitles) {
-                if (normalize(alternateTitle) === normalize(originalTitle)) {
+                if (
+                    normalize(alternateTitle) ===
+                    normalize(originalTitle)
+                ) {
                     continue;
                 }
 
