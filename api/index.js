@@ -26860,45 +26860,63 @@ try {
 
 
 // =====================================================
-// 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
-// =====================================================
+ // 8. CHẠY NGUONC + CÁC NGUỒN KHÁC SONG SONG
+ // =====================================================
 
-let results = [];
+ let results = [];
 
-try {
+ // =====================
+ // 8.1. CHẠY CÁC NGUỒN ĐỘC LẬP SONG SONG
+ // =====================
 
-    // =====================
-    // 8.1. CHẠY CÁC NGUỒN ĐỘC LẬP SONG SONG
-    // =====================
+ // Khởi chạy AnimeHay sớm, không chờ PhimLongTieng.
+ // Bắt lỗi ngay trong promise để tránh unhandled rejection.
 
-    // Khởi chạy AnimeHay sớm, không chờ PhimLongTieng.
-    // Bắt lỗi ngay trong promise để tránh unhandled rejection.
-const animehayPromise = (async () => {
-    try {
-        return await fetchAnimeHay(
-            movieName,
-            movieYear,
-            seasonNumber,
-            episodeNumber,
-            streamType,
-            rawId.startsWith("tt") ? rawId.split(":")[0] : ""
-        );
-    } catch (e) {
-        console.error("[ANIMEHAY] FETCH ERROR:", e.message);
-        return [];
-    }
-})();
+ const animehayPromise = (async () => {
+     try {
+         return await fetchAnimeHay(
+             movieName,
+             movieYear,
+             seasonNumber,
+             episodeNumber,
+             streamType,
+             rawId.startsWith("tt")
+                 ? rawId.split(":")[0]
+                 : ""
+         );
+     } catch (e) {
+         console.error(
+             "[ANIMEHAY] FETCH ERROR:",
+             e.message
+         );
+         return [];
+     }
+ })();
 
-let results = [];
-try {
-    results = await Promise.allSettled([
-        fetchNguonC(nguonCFallbackName),
-        fetchVSMov(movieName, movieYear, seasonNumber, episodeNumber, streamType),
-        scrapePhimHDCS(movieName, movieYear, seasonNumber, episodeNumber, streamType)
-    ]);
-} catch (e) {
-    console.error("[STREAM] Lỗi chạy các nguồn độc lập:", e.message);
-}
+ try {
+     results = await Promise.allSettled([
+         fetchNguonC(nguonCFallbackName),
+         fetchVSMov(
+             movieName,
+             movieYear,
+             seasonNumber,
+             episodeNumber,
+             streamType
+         ),
+         scrapePhimHDCS(
+             movieName,
+             movieYear,
+             seasonNumber,
+             episodeNumber,
+             streamType
+         )
+     ]);
+ } catch (e) {
+     console.error(
+         "[STREAM] Lỗi chạy các nguồn độc lập:",
+         e.message
+     );
+ }
 
 // -----------------------------------------------------
 // 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
