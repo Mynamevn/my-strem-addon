@@ -11105,7 +11105,9 @@ if (
     // -------------------------------------------------
     // B. FALLBACK 2: SEARCH THEO TÊN
     // -------------------------------------------------
-
+    if (
+    !movie
+) {
     const searchTerms = [
         String(movieName || "").trim()
     ].filter(Boolean);
