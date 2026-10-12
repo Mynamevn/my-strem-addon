@@ -27048,6 +27048,42 @@ console.log(
         "[ANIMEHAY] FALLBACK TITLE:",
         animeHayFallbackTitle
     );
+    
+    // -----------------------------------------------------
+    // ANIMEHAY FALLBACK — ƯU TIÊN TÊN THAY THẾ TỪ ANILIST
+    // -----------------------------------------------------
+    let animeHayFallbackTitle = movieName;
+
+    try {
+        const aniListTitles =
+            await animeHayGetAniListTitleVariants(
+                movieName,
+                movieYear
+            );
+
+        if (Array.isArray(aniListTitles)) {
+            const alternateTitle = aniListTitles.find(title =>
+                typeof title === "string" &&
+                title.trim() &&
+                title.trim().toLowerCase() !==
+                    String(movieName || "").trim().toLowerCase()
+            );
+
+            if (alternateTitle) {
+                animeHayFallbackTitle = alternateTitle.trim();
+            }
+        }
+
+        console.log("[ANIMEHAY FALLBACK] TITLE:", {
+            originalTitle: movieName,
+            selectedTitle: animeHayFallbackTitle
+        });
+    } catch (error) {
+        console.log(
+            "[ANIMEHAY FALLBACK] ANILIST TITLE ERROR:",
+            error?.message || error
+        );
+    }
 
 const externalStreams = [
 
@@ -27115,22 +27151,21 @@ const externalStreams = [
     // -------------------------------------------------
 
     {
-        name: "🌐 [Fallback] AnimeHay",
+            name: "🌐 [Fallback] AnimeHay",
 
-        title:
-            `Tìm AnimeHay - ${animeHayFallbackTitle}`,
+            title:
+                "Tìm AnimeHay - " +
+                animeHayFallbackTitle,
 
-        externalUrl:
-            (
-                animeHayActiveDomain ||
-                animeHayDirectoryActiveDomain ||
-                ANIMEHAY_DIRECTORY
-            ) +
-            "/tim-kiem/" +
-            encodeURIComponent(
-                animeHaySlug(animeHayFallbackTitle)
-            )
-    }
+            externalUrl:
+                (animeHayActiveDomain ||
+                    animeHayDirectoryActiveDomain ||
+                    ANIMEHAY_DIRECTORY) +
+                "/tim-kiem/" +
+                encodeURIComponent(
+                    animeHaySlug(animeHayFallbackTitle)
+                )
+        }
 ];
 
     // =====================================================
