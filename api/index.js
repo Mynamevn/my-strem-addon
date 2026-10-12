@@ -18643,14 +18643,16 @@ async function fetchAnimeHay(
         };
 
         // -----------------------------------------------------
-        // 3. Lượt 1: chỉ tìm bằng tên Cinemeta.
-        // Không truy vấn IMDb nếu đã tìm được kết quả phù hợp.
+        // 3. Lượt 1: tìm bằng tên Cinemeta.
         // -----------------------------------------------------
-        let selected = await searchByTitle(originalTitle, "cinemeta");
+        let selected = await searchByTitle(
+            originalTitle,
+            "cinemeta"
+        );
 
         // -----------------------------------------------------
-        // 4. Lượt 2: thử AniList trước, sau đó mới đến IMDb.
-        // Không thay đổi bước tìm kiếm Cinemeta ở lượt 1.
+        // 4. Lượt 2: nếu Cinemeta thất bại, thử AniList.
+        // IMDb fallback đã được loại bỏ.
         // -----------------------------------------------------
         if (!selected) {
             console.log(
@@ -18685,44 +18687,18 @@ async function fetchAnimeHay(
             }
         }
 
-        // AniList thất bại thì giữ lại IMDb fallback hiện có.
-        if (!selected) {
+        // -----------------------------------------------------
+        // 5. Không tìm được kết quả phù hợp thì dừng.
+        // -----------------------------------------------------
+        if (!selected?.url) {
             console.log(
-                "[ANIMEHAY] ANILIST SEARCH FAILED; TRY IMDb:",
+                "[ANIMEHAY] NO SAFE TITLE MATCH:",
                 {
-                    originalTitle,
+                    title: originalTitle,
                     imdbId
                 }
             );
 
-            const imdbTitles =
-                await animeHayGetIMDbTitleVariants(
-                    imdbId,
-                    originalTitle
-                );
-
-            for (const alternateTitle of imdbTitles) {
-                if (
-                    normalize(alternateTitle) ===
-                    normalize(originalTitle)
-                ) {
-                    continue;
-                }
-
-                selected = await searchByTitle(
-                    alternateTitle,
-                    "imdb-alternate"
-                );
-
-                if (selected) break;
-            }
-        }
-
-        if (!selected?.url) {
-            console.log("[ANIMEHAY] NO SAFE TITLE MATCH:", {
-                title: originalTitle,
-                imdbId
-            });
             return [];
         }
 
@@ -18730,14 +18706,21 @@ async function fetchAnimeHay(
             source: selected.source,
             originalTitle,
             matchedSearchTitle: selected.matchedSearchTitle,
-            matchedTitle: selected.title || selected.name || selected.cardText,
+            matchedTitle:
+                selected.title ||
+                selected.name ||
+                selected.cardText,
             url: selected.url
         });
 
         // -----------------------------------------------------
-        // 5. Giữ nguyên quy trình chọn tập hiện tại.
+        // 6. Giữ nguyên quy trình chọn tập hiện tại.
         // -----------------------------------------------------
-        const detailUrl = animeHayAbsoluteUrl(selected.url, domain);
+        const detailUrl = animeHayAbsoluteUrl(
+            selected.url,
+            domain
+        );
+
         const wantedEpisode = Math.max(
             1,
             Number.parseInt(episodeNumber, 10) || 1
@@ -18754,6 +18737,7 @@ async function fetchAnimeHay(
                 detailUrl,
                 wantedEpisode
             });
+
             return [];
         }
 
@@ -18769,8 +18753,14 @@ async function fetchAnimeHay(
             detailUrl
         );
 
-        if (!Array.isArray(loadedStreams) || !loadedStreams.length) {
-            console.log("[ANIMEHAY] NO STREAMS FROM LOADLINKS");
+        if (
+            !Array.isArray(loadedStreams) ||
+            !loadedStreams.length
+        ) {
+            console.log(
+                "[ANIMEHAY] NO STREAMS FROM LOADLINKS"
+            );
+
             return [];
         }
 
@@ -18780,17 +18770,20 @@ async function fetchAnimeHay(
             /^https?:\/\//i.test(stream.url)
         );
 
-        console.log("[ANIMEHAY] LOADLINKS STREAMS:", JSON.stringify(
-            validStreams.map((stream, index) => ({
-                index,
-                title: stream.title,
-                url: stream.url,
-                type: stream.type,
-                resolver: stream.resolver
-            })),
-            null,
-            2
-        ));
+        console.log(
+            "[ANIMEHAY] LOADLINKS STREAMS:",
+            JSON.stringify(
+                validStreams.map((stream, index) => ({
+                    index,
+                    title: stream.title,
+                    url: stream.url,
+                    type: stream.type,
+                    resolver: stream.resolver
+                })),
+                null,
+                2
+            )
+        );
 
         if (!validStreams.length) return [];
 
@@ -18800,6 +18793,7 @@ async function fetchAnimeHay(
             "[ANIMEHAY] FETCH ERROR:",
             error?.stack || error?.message || error
         );
+
         return [];
     }
 }
