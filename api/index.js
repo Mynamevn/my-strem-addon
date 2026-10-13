@@ -20338,20 +20338,33 @@ async function scrapeAnimeVietsub(movieName, movieYear = 0, seasonNumber = 0, ep
         const titleOf = item => {
     const titles = item?.titles;
 
-    if (typeof titles === "string") return titles;
-
     if (titles && typeof titles === "object") {
+        // Ưu tiên tên khớp chính xác với truy vấn,
+        // kể cả tên thay thế như alt-anilist-0.
+        const titleValues = Object.values(titles)
+            .filter(value => typeof value === "string" && value.trim());
+
+        const exactMatch = titleValues.find(
+            value => normTitle(value) === normTitle(query)
+        );
+
+        if (exactMatch) return exactMatch;
+
         return String(
             titles.en ||
             titles.romaji ||
-            titles.english ||
+            titles["ja-ro"] ||
+            titles["user-preferred"] ||
+            titles.main ||
             titles.vi ||
             titles.ja ||
+            titleValues[0] ||
             ""
         );
     }
 
     const title = item?.title;
+
     if (typeof title === "string") return title;
 
     if (title && typeof title === "object") {
