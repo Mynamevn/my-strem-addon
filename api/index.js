@@ -18888,19 +18888,186 @@ async function fetchAnimeHay(
 // ============================================================
 
 const AVS_DIRECTORY_URL = "https://bit.ly/animevietsubtv";
-const AVS_FALLBACK_URL = "https://animevietsub.site";
+const AVS_FALLBACK_URLS = [
+    "https://animevietsub.app",
+    "https://animevietsub.site"
+];
 const AVS_PACEBIN_URL = "https://pacebin.onrender.com/animevietsub.m3u8";
 const AVS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
+// Cookie jar tương ứng globalCookies trong AnimeVietsubProvider.smali.
+const AVS_COOKIE_JAR = new Map();
+
+const AVS_JS_REDIRECT_RE =
+    /window\.location\.href\s*=\s*["']([^"']+)["']/i;
+
+function avsCookieHeader() {
+    return [...AVS_COOKIE_JAR.entries()]
+        .map(([name, value]) => `${name}=${value}`)
+        .join("; ");
+}
+
+function avsMergeSetCookies(setCookies) {
+    if (!Array.isArray(setCookies)) return;
+
+    for (const item of setCookies) {
+        const cookie = String(item || "");
+        const first = cookie.split(";")[0].trim();
+        const eq = first.indexOf("=");
+
+        if (eq <= 0) continue;
+
+        const name = first.slice(0, eq).trim();
+        const value = first.slice(eq + 1).trim();
+
+        if (!name) continue;
+
+        if (
+            !value ||
+            /max-age=0/i.test(cookie)
+        ) {
+            AVS_COOKIE_JAR.delete(name);
+        } else {
+            AVS_COOKIE_JAR.set(name, value);
+        }
+    }
+}
+
 function avsHeaders(referer = "") {
-    const h = {
+    const headers = {
         "User-Agent": AVS_UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "vi,en-US;q=0.9,en;q=0.8",
         "Upgrade-Insecure-Requests": "1"
     };
-    if (referer) h.Referer = referer;
-    return h;
+
+    if (referer) headers.Referer = referer;
+
+    return headers;
+}
+
+function avsIsSiteUrl(url) {
+    try {
+        const host = new URL(url).hostname.toLowerCase();
+
+        return (
+            host === "animevietsub.app" ||
+            host.endsWith(".animevietsub.app") ||
+            host === "animevietsub.site" ||
+            host.endsWith(".animevietsub.site")
+        );
+    } catch (_) {
+        return false;
+    }
+}
+
+// GET/POST: lưu cookie, theo redirect JavaScript và ghi nhận Cloudflare challenge.
+async function avsRequest(url, options = {}) {
+    const {
+        method = "GET",
+        data,
+        referer = "",
+        headers = {},
+        timeout = 12000,
+        allowHttpErrors = false,
+        responseType = "text"
+    } = options;
+
+    let currentUrl = url;
+    let response;
+
+    for (let attempt = 0; attempt <= 3; attempt++) {
+        const requestHeaders = {
+            ...avsHeaders(referer || currentUrl),
+            ...headers
+        };
+
+        const cookie = avsCookieHeader();
+        const hasExplicitCookie = Object.keys(headers)
+            .some(name => name.toLowerCase() === "cookie");
+
+        // Chỉ gửi cookie của AnimeVietsub đến domain AnimeVietsub.
+        Không gửi cookie website này sang Google CDN hoặc dịch vụ khác.
+        if (
+            cookie &&
+            avsIsSiteUrl(currentUrl) &&
+            !hasExplicitCookie
+        ) {
+            requestHeaders.Cookie = cookie;
+        }
+
+        response = await axios({
+            url: currentUrl,
+            method,
+            data,
+            timeout,
+            headers: requestHeaders,
+            responseType,
+            maxRedirects: 5,
+            validateStatus: () => true
+        });
+
+        avsMergeSetCookies(response.headers?.["set-cookie"]);
+
+        const body = typeof response.data === "string"
+            ? response.data
+            : "";
+
+        const finalResponseUrl =
+            response?.request?.res?.responseUrl ||
+            response?.request?._redirectable?._currentUrl ||
+            currentUrl;
+
+        if (finalResponseUrl) {
+            currentUrl = finalResponseUrl;
+        }
+
+        const cfChallenge =
+            String(response.headers?.["cf-mitigated"] || "")
+                .toLowerCase() === "challenge" ||
+            /cdn-cgi\/challenge-platform|cf-chl-|just a moment\.\.\./i
+                .test(body);
+
+        if (cfChallenge) {
+            response.avsChallenge = true;
+
+            console.warn(
+                `[ANIMEVIETSUB] Cloudflare challenge HTTP ${response.status}: ${currentUrl}`
+            );
+
+            break;
+        }
+
+        const redirect = body.match(AVS_JS_REDIRECT_RE)?.[1];
+
+        if (redirect && attempt < 3) {
+            currentUrl = avsAbs(redirect, currentUrl);
+
+            if (!currentUrl) break;
+
+            await new Promise(resolve => setTimeout(resolve, 300));
+            continue;
+        }
+
+        break;
+    }
+
+    if (!response) {
+        throw new Error("No response from AnimeVietsub");
+    }
+
+    if (response.avsChallenge && !allowHttpErrors) {
+        throw new Error(`Cloudflare challenge at ${currentUrl}`);
+    }
+
+    if (
+        !allowHttpErrors &&
+        (response.status < 200 || response.status >= 300)
+    ) {
+        throw new Error(`HTTP ${response.status} for ${currentUrl}`);
+    }
+
+    return response;
 }
 
 function avsAbs(url, base) {
@@ -19370,33 +19537,72 @@ async function avsDecryptGoogleApisCdn(playerUrl) {
 }
 
 async function avsGetBaseUrl() {
+    // Thử URL rút gọn trước.
     try {
-        const res = await axios.get(AVS_DIRECTORY_URL, {
-            timeout: 10000,
-            maxRedirects: 5,
-            headers: avsHeaders()
+        const res = await avsRequest(AVS_DIRECTORY_URL, {
+            timeout: 12000,
+            allowHttpErrors: true
         });
 
         const finalUrl =
             res?.request?.res?.responseUrl ||
             res?.request?._redirectable?._currentUrl ||
             res?.config?.url ||
-            "";
+            AVS_DIRECTORY_URL;
+
+        const finalOrigin = new URL(finalUrl).origin;
 
         if (
-            /^https?:\/\//i.test(finalUrl) &&
-            !/bit\.ly/i.test(finalUrl)
+            !res.avsChallenge &&
+            res.status >= 200 &&
+            res.status < 400 &&
+            !/bit\.ly/i.test(finalOrigin)
         ) {
-            return new URL(finalUrl).origin;
+            console.log("[ANIMEVIETSUB] selected domain:", finalOrigin);
+            return finalOrigin;
         }
-    } catch (e) {
-        console.log(
-            "[ANIMEVIETSUB] domain discovery:",
-            e.message
+
+        console.warn(
+            `[ANIMEVIETSUB] short URL status ${res.status}; trying known domains`
         );
+    } catch (e) {
+        console.log("[ANIMEVIETSUB] domain discovery:", e.message);
     }
 
-    return AVS_FALLBACK_URL;
+    // Thử các domain dự phòng theo thứ tự.
+    for (const candidate of AVS_FALLBACK_URLS) {
+        try {
+            const res = await avsRequest(candidate, {
+                timeout: 10000,
+                allowHttpErrors: true
+            });
+
+            if (
+                !res.avsChallenge &&
+                res.status >= 200 &&
+                res.status < 400
+            ) {
+                console.log(
+                    "[ANIMEVIETSUB] selected domain:",
+                    candidate
+                );
+
+                return candidate;
+            }
+
+            console.warn(
+                `[ANIMEVIETSUB] domain ${candidate} returned HTTP ${res.status}`
+            );
+        } catch (e) {
+            console.log(
+                `[ANIMEVIETSUB] domain probe ${candidate}:`,
+                e.message
+            );
+        }
+    }
+
+    // Giữ domain cuối để các log tiếp theo chỉ ra lỗi thực tế.
+    return AVS_FALLBACK_URLS[0];
 }
 
 async function avsSearchViaSuggest(baseUrl, query) {
@@ -19406,20 +19612,18 @@ async function avsSearchViaSuggest(baseUrl, query) {
             keysearch: String(query || "").trim()
         }).toString();
 
-        const res = await axios.post(
-            `${baseUrl}/ajax/suggest`,
-            body,
-            {
-                timeout: 12000,
-                headers: {
-                    ...avsHeaders(baseUrl + "/"),
-                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Accept": "*/*",
-                    "Origin": baseUrl
-                }
-            }
-        );
+        const res = await avsRequest(`$DIL2/ajax/suggest`, {
+    method: "POST",
+    data: body,
+    referer: baseUrl + "/",
+    timeout: 12000,
+    headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "*/*",
+        "Origin": baseUrl
+    }
+});
 
         const $ = cheerio.load(String(res.data || ""));
         const results = [];
@@ -19488,13 +19692,13 @@ async function avsFindDetail(baseUrl, movieName, movieYear = 0) {
 
     if (!candidates.length) {
         try {
-            const res = await axios.get(
-                `${baseUrl}/tim-kiem/${encodeURIComponent(String(movieName || "").trim())}/`,
-                {
-                    timeout: 12000,
-                    headers: avsHeaders(baseUrl + "/")
-                }
-            );
+            const res = await avsRequest(
+    `$DIL3/tim-kiem/$DIL4/`,
+    {
+        timeout: 12000,
+        referer: baseUrl + "/"
+    }
+);
 
             const $ = cheerio.load(String(res.data || ""));
 
@@ -19576,10 +19780,10 @@ async function avsGetEpisodePage(
     detailUrl,
     episodeNumber = 1
 ) {
-    const res = await axios.get(detailUrl, {
-        timeout: 15000,
-        headers: avsHeaders(baseUrl + "/")
-    });
+    const res = await avsRequest(detailUrl, {
+    timeout: 15000,
+    referer: baseUrl + "/"
+});
 
     const html = String(res.data || "");
     const $ = cheerio.load(html);
@@ -19626,10 +19830,10 @@ async function avsExtractLinksFromEpisode(
     detailUrl,
     episodeNumber
 ) {
-    const page = await axios.get(episodeUrl, {
-        timeout: 15000,
-        headers: avsHeaders(detailUrl || baseUrl + "/")
-    });
+    const page = await avsRequest(episodeUrl, {
+    timeout: 15000,
+    referer: detailUrl || baseUrl + "/"
+});
 
     const $ = cheerio.load(String(page.data || ""));
     const links = [];
@@ -19727,21 +19931,19 @@ async function avsResolveServer(baseUrl, episodePageUrl, server) {
             id: server.id
         }).toString();
 
-        const res = await axios.post(
-            `${baseUrl}/ajax/player`,
-            body,
-            {
-                timeout: 15000,
-                headers: {
-                    ...avsHeaders(episodePageUrl),
-                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Accept": "application/json, text/javascript, */*; q=0.01",
-                    "Origin": baseUrl
-                },
-                validateStatus: () => true
-            }
-        );
+        const res = await avsRequest(`$DIL6/ajax/player`, {
+    method: "POST",
+    data: body,
+    timeout: 15000,
+    referer: episodePageUrl,
+    allowHttpErrors: true,
+    headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Origin": baseUrl
+    }
+});
 
         if (res.status < 200 || res.status >= 300) return null;
 
