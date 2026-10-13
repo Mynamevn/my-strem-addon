@@ -18889,8 +18889,7 @@ async function fetchAnimeHay(
 
 const AVS_DIRECTORY_URL = "https://bit.ly/animevietsubtv";
 const AVS_FALLBACK_URLS = [
-    "https://animevietsub.app",
-    "https://animevietsub.site"
+    "https://animevietsub.nl"
 ];
 const AVS_PACEBIN_URL = "https://pacebin.onrender.com/animevietsub.m3u8";
 const AVS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
@@ -19539,7 +19538,6 @@ async function avsDecryptGoogleApisCdn(playerUrl) {
 }
 
 async function avsGetBaseUrl() {
-    // Thử URL rút gọn trước.
     try {
         const res = await avsRequest(AVS_DIRECTORY_URL, {
             timeout: 12000,
@@ -19560,18 +19558,24 @@ async function avsGetBaseUrl() {
             res.status < 400 &&
             !/bit\.ly/i.test(finalOrigin)
         ) {
-            console.log("[ANIMEVIETSUB] selected domain:", finalOrigin);
+            console.log(
+                "[ANIMEVIETSUB] selected domain:",
+                finalOrigin
+            );
             return finalOrigin;
         }
 
         console.warn(
-            `[ANIMEVIETSUB] short URL status ${res.status}; trying known domains`
+            `[ANIMEVIETSUB] domain discovery failed: HTTP ${res.status}` +
+            (res.avsChallenge ? " (Cloudflare challenge)" : "")
         );
     } catch (e) {
-        console.log("[ANIMEVIETSUB] domain discovery:", e.message);
+        console.warn(
+            "[ANIMEVIETSUB] domain discovery error:",
+            e.message
+        );
     }
 
-    // Thử các domain dự phòng theo thứ tự.
     for (const candidate of AVS_FALLBACK_URLS) {
         try {
             const res = await avsRequest(candidate, {
@@ -19584,27 +19588,40 @@ async function avsGetBaseUrl() {
                 res.status >= 200 &&
                 res.status < 400
             ) {
+                const finalUrl =
+                    res?.request?.res?.responseUrl ||
+                    res?.request?._redirectable?._currentUrl ||
+                    candidate;
+
+                const finalOrigin = new URL(finalUrl).origin;
+
                 console.log(
                     "[ANIMEVIETSUB] selected domain:",
-                    candidate
+                    finalOrigin
                 );
 
-                return candidate;
+                return finalOrigin;
             }
 
             console.warn(
-                `[ANIMEVIETSUB] domain ${candidate} returned HTTP ${res.status}`
+                `[ANIMEVIETSUB] domain unavailable: ${candidate}, ` +
+                `HTTP ${res.status}` +
+                (res.avsChallenge ? " (Cloudflare challenge)" : "")
             );
         } catch (e) {
-            console.log(
-                `[ANIMEVIETSUB] domain probe ${candidate}:`,
+            console.warn(
+                `[ANIMEVIETSUB] domain probe failed: ${candidate}:`,
                 e.message
             );
         }
     }
 
-    // Giữ domain cuối để các log tiếp theo chỉ ra lỗi thực tế.
-    return AVS_FALLBACK_URLS[0];
+    console.error(
+        "[ANIMEVIETSUB] No accessible domain found; " +
+        "all domain probes failed."
+    );
+
+    return "";
 }
 
 async function avsSearchViaSuggest(baseUrl, query) {
