@@ -18951,6 +18951,8 @@ function avsIsSiteUrl(url) {
         const host = new URL(url).hostname.toLowerCase();
 
         return (
+            host === "animevietsub.nl" ||
+            host.endsWith(".animevietsub.nl") ||
             host === "animevietsub.app" ||
             host.endsWith(".animevietsub.app") ||
             host === "animevietsub.site" ||
@@ -19686,46 +19688,130 @@ async function avsFindDetail(baseUrl, movieName, movieYear = 0) {
     const queries = [String(movieName || "").trim()].filter(Boolean);
     const candidates = [];
 
+    const siteBase = String(baseUrl || "").replace(/\/+$/, "");
+
+    if (!siteBase) {
+        console.warn("[ANIMEVIETSUB] Empty base URL");
+        return null;
+    }
+
+    // 1. Thử tìm kiếm qua AJAX suggest trước.
     for (const query of queries) {
-        candidates.push(...await avsSearchViaSuggest(baseUrl, query));
-    }
-
-    if (!candidates.length) {
         try {
-            const res = await avsRequest(
-    `$DIL3/tim-kiem/$DIL4/`,
-    {
-        timeout: 12000,
-        referer: baseUrl + "/"
-    }
-);
+            const results = await avsSearchViaSuggest(siteBase, query);
 
-            const $ = cheerio.load(String(res.data || ""));
-
-            $("a[href]").each((_, el) => {
-                const a = $(el);
-                const href = a.attr("href") || "";
-                const title = a.attr("title") || a.text().trim();
-
-                if (
-                    href &&
-                    title &&
-                    /thong-tin-phim|anime|phim/i.test(href)
-                ) {
-                    candidates.push({
-                        title,
-                        url: avsAbs(href, baseUrl)
-                    });
-                }
-            });
+            if (Array.isArray(results)) {
+                candidates.push(...results);
+            }
         } catch (e) {
-            console.log(
-                "[ANIMEVIETSUB] search HTML error:",
+            console.warn(
+                "[ANIMEVIETSUB] suggest search failed:",
                 e.message
             );
         }
     }
 
+    // 2. Nếu suggest không có kết quả, thử trang tìm kiếm HTML.
+    if (!candidates.length) {
+        for (const query of queries) {
+            try {
+                const searchUrl =
+                    `${siteBase}/tim-kiem/${encodeURIComponent(query)}/`;
+
+                console.log(
+                    "[ANIMEVIETSUB] HTML search URL:",
+                    searchUrl
+                );
+
+                const res = await avsRequest(searchUrl, {
+                    timeout: 12000,
+                    referer: `${siteBase}/`,
+                    allowHttpErrors: true
+                });
+
+                if (res?.avsChallenge) {
+                    console.warn(
+                        "[ANIMEVIETSUB] HTML search blocked by Cloudflare"
+                    );
+                    continue;
+                }
+
+                if (!res || res.status < 200 || res.status >= 400) {
+                    console.warn(
+                        `[ANIMEVIETSUB] HTML search HTTP ${res?.status ?? "unknown"}`
+                    );
+                    continue;
+                }
+
+                const $ = cheerio.load(String(res.data || ""));
+
+                $("a[href]").each((_, el) => {
+                    const a = $(el);
+                    const href = (a.attr("href") || "").trim();
+                    const title = (
+                        a.attr("title") ||
+                        a.text() ||
+                        ""
+                    ).trim();
+
+                    if (!href || !title) return;
+
+                    const url = avsAbs(href, siteBase);
+
+                    if (!url) return;
+
+                    let parsed;
+
+                    try {
+                        parsed = new URL(url);
+                    } catch (_) {
+                        return;
+                    }
+
+                    // Chỉ nhận liên kết cùng website, tránh thu nhầm
+                    // link quảng cáo hoặc link ngoài.
+                    let baseHost;
+
+                    try {
+                        baseHost = new URL(siteBase).hostname.toLowerCase();
+                    } catch (_) {
+                        return;
+                    }
+
+                    if (parsed.hostname.toLowerCase() !== baseHost) {
+                        return;
+                    }
+
+                    if (
+                        /tim-kiem|javascript:/i.test(parsed.pathname) ||
+                        parsed.pathname === "/"
+                    ) {
+                        return;
+                    }
+
+                    if (
+                        /thong-tin-phim|anime|phim/i.test(parsed.pathname)
+                    ) {
+                        candidates.push({
+                            title,
+                            url
+                        });
+                    }
+                });
+
+                // Đã tải được trang tìm kiếm; không cần lặp lại
+                // cùng truy vấn nếu trang không chứa kết quả.
+                break;
+            } catch (e) {
+                console.warn(
+                    "[ANIMEVIETSUB] search HTML error:",
+                    e.message
+                );
+            }
+        }
+    }
+
+    // 3. Chuẩn hóa tiêu đề để xếp hạng kết quả.
     const norm = s => String(s || "")
         .toLowerCase()
         .normalize("NFD")
@@ -19739,8 +19825,12 @@ async function avsFindDetail(baseUrl, movieName, movieYear = 0) {
     const unique = [
         ...new Map(
             candidates
-                .filter(x => x.url)
-                .map(x => [x.url, x])
+                .filter(x => x && x.url)
+                .map(x => {
+                    const url = avsAbs(x.url, siteBase);
+                    return url ? [url, { ...x, url }] : null;
+                })
+                .filter(Boolean)
         ).values()
     ];
 
@@ -19750,7 +19840,11 @@ async function avsFindDetail(baseUrl, movieName, movieYear = 0) {
 
             let n = title === target
                 ? 100
-                : (title.includes(target) || target.includes(title) ? 55 : 0);
+                : (
+                    title.includes(target) || target.includes(title)
+                        ? 55
+                        : 0
+                );
 
             const year = String(x.info || x.title || "")
                 .match(/\b(19\d{2}|20\d{2})\b/);
@@ -19764,6 +19858,7 @@ async function avsFindDetail(baseUrl, movieName, movieYear = 0) {
             }
 
             const words = target.split(" ").filter(Boolean);
+
             n += words.filter(w => title.includes(w)).length * 3;
 
             return n;
@@ -19772,7 +19867,24 @@ async function avsFindDetail(baseUrl, movieName, movieYear = 0) {
         return score(b) - score(a);
     });
 
-    return unique[0] || null;
+    const result = unique[0] || null;
+
+    if (result) {
+        console.log(
+            "[ANIMEVIETSUB] DETAIL FOUND:",
+            result.title,
+            result.url
+        );
+    } else {
+        console.warn(
+            "[ANIMEVIETSUB] DETAIL NOT FOUND:",
+            movieName,
+            "| candidates:",
+            candidates.length
+        );
+    }
+
+    return result;
 }
 
 async function avsGetEpisodePage(
