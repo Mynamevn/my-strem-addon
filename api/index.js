@@ -18891,6 +18891,7 @@ const AVS_DIRECTORY_URL = "https://bit.ly/animevietsubtv";
 
 // Thử domain .li trước, sau đó kiểm tra các domain đã biết.
 const AVS_DOMAIN_CANDIDATES = [
+    "https://animevietsub.xyz",
     "https://animevietsub.li",
     "https://animevietsub.nl",
     "https://animevietsub.site",
