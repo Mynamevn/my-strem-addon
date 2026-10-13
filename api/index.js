@@ -20319,8 +20319,21 @@ async function scrapeAnimeVietsub(movieName, movieYear = 0, seasonNumber = 0, ep
             });
 
             if (res.status < 200 || res.status >= 300) {
-                throw new Error(`AniMapper HTTP ${res.status} (${path})`);
-            }
+    const body = typeof res.data === "string"
+        ? res.data
+        : JSON.stringify(res.data);
+
+    console.error("[ANIMEVIETSUB][ANIMAPPER] API ERROR:", {
+        path,
+        url: url.href,
+        status: res.status,
+        body: String(body || "").slice(0, 2000)
+    });
+
+    throw new Error(
+        `AniMapper HTTP ${res.status} (${path}): ${String(body || "").slice(0, 500)}`
+    );
+}
 
             return typeof res.data === "string"
                 ? JSON.parse(res.data)
