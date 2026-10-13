@@ -19612,7 +19612,7 @@ async function avsSearchViaSuggest(baseUrl, query) {
             keysearch: String(query || "").trim()
         }).toString();
 
-        const res = await avsRequest(`$DIL2/ajax/suggest`, {
+        const res = await avsRequest(`${baseUrl}/ajax/suggest`, {
     method: "POST",
     data: body,
     referer: baseUrl + "/",
