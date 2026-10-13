@@ -20456,14 +20456,14 @@ console.log(
         );
 
         // ========================================================
-        // 2. Kiểm tra provider và lấy danh sách tập
+        // 2. Kiểm tra provider trước khi lấy danh sách tập
         // ========================================================
         let metadata = null;
 
         try {
             metadata = await apiGet("/metadata", { id: mediaId });
         } catch (e) {
-            console.log(
+            console.warn(
                 "[ANIMEVIETSUB][ANIMAPPER] Metadata warning:",
                 e.message
             );
@@ -20473,34 +20473,38 @@ console.log(
             metadata?.result?.streamingProviders ||
             metadata?.streamingProviders ||
             null;
-        
-        console.log(
-    "[ANIMEVIETSUB][ANIMAPPER] MAPPING DEBUG:",
-    JSON.stringify({
-        mediaId,
-        metadataSuccess: metadata?.success,
-        resultKeys: Object.keys(metadata?.result || {}),
-        providerNames: providers ? Object.keys(providers) : [],
-        animeVietsubMapping: providers?.ANIMEVIETSUB || null
-    })
-);
 
-        if (providers && typeof providers === "object") {
-            const providerNames = Object.keys(providers);
-            const hasAVS = providerNames.some(
+        const providerKey = providers && typeof providers === "object"
+            ? Object.keys(providers).find(
                 name => name.toUpperCase() === "ANIMEVIETSUB"
-            );
+            )
+            : null;
 
-            if (providerNames.length && !hasAVS) {
-                throw new Error(
-                    "Anime này không có provider ANIMEVIETSUB trong metadata"
-                );
-            }
+        console.log(
+            "[ANIMEVIETSUB][ANIMAPPER] MAPPING DEBUG:",
+            JSON.stringify({
+                mediaId,
+                metadataSuccess: metadata?.success,
+                providerNames: providers ? Object.keys(providers) : [],
+                animeVietsubMapping: providerKey
+                    ? providers[providerKey]
+                    : null
+            })
+        );
+
+        if (!providerKey) {
+            throw new Error(
+                `AniMapper chưa có mapping AnimeVietsub cho media ID ${mediaId}`
+            );
         }
 
+        // ========================================================
+        // 3. Lấy danh sách tập và nguồn HLS DU
+        // Chỉ thực hiện khi metadata xác nhận provider tồn tại.
+        // ========================================================
         const episodeData = await apiGet("/stream/episodes", {
             id: mediaId,
-            provider: "ANIMEVIETSUB"
+            provider: providerKey
         });
 
         const episodes = Array.isArray(episodeData?.episodes)
@@ -20512,14 +20516,12 @@ console.log(
         }
 
         const episodeNumberOf = ep => {
-            const direct = [
+            for (const value of [
                 ep?.episodeNumber,
                 ep?.number,
                 ep?.episode,
                 ep?.episodeNo
-            ];
-
-            for (const value of direct) {
+            ]) {
                 if (value !== undefined && value !== null && value !== "") {
                     const n = Number(value);
                     if (Number.isFinite(n) && n > 0) return n;
@@ -20537,8 +20539,6 @@ console.log(
             ep => episodeNumberOf(ep) === wantedEpisode
         );
 
-        // Chỉ dùng thứ tự danh sách làm dự phòng nếu không nhận diện
-        // được số tập từ metadata của từng episode.
         if (!selectedEpisode) {
             const hasNumberedEpisodes = episodes.some(
                 ep => episodeNumberOf(ep) > 0
@@ -20560,12 +20560,9 @@ console.log(
             selectedEpisode.episodeId
         );
 
-        // ========================================================
-        // 3. Lấy nguồn HLS DU
-        // ========================================================
         const sourceData = await apiGet("/stream/source", {
             episodeData: selectedEpisode.episodeId,
-            provider: "ANIMEVIETSUB",
+            provider: providerKey,
             server: "DU"
         });
 
@@ -20573,11 +20570,13 @@ console.log(
 
         if (
             !/^https?:\/\//i.test(streamUrl) ||
-            !/\.m3u8(?:$|[?#/])/i.test(streamUrl) &&
-            !/\/stream\/source\/m3u8\//i.test(streamUrl)
+            (
+                !/\.m3u8(?:$|[?#/])/i.test(streamUrl) &&
+                !/\/stream\/source\/m3u8\//i.test(streamUrl)
+            )
         ) {
             throw new Error(
-                "AniMapper không trả về URL HLS hợp lệ: " + streamUrl
+                "AniMapper không trả về URL HLS hợp lệ"
             );
         }
 
@@ -20605,18 +20604,11 @@ console.log(
         }];
 
         console.log(
-            "[ANIMEVIETSUB][ANIMAPPER] STREAM OK:",
-            streamUrl
+            "[ANIMEVIETSUB][ANIMAPPER] STREAM OK"
         );
 
         return normalizedStreamsToStremio(streams);
 
-    } catch (e) {
-        console.log(
-            "[ANIMEVIETSUB][ANIMAPPER] Thất bại, thử scraper cũ:",
-            e.message
-        );
-    }
 
     // ============================================================
     // 4. Fallback: giữ nguyên đường scrape AnimeVietsub hiện tại
