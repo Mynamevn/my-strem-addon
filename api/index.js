@@ -20185,20 +20185,24 @@ async function scrapeAnimeVietsub(
 
         const baseUrl = await avsGetBaseUrl();
 
-        console.log(
-            "[ANIMEVIETSUB] BASE:",
-            baseUrl,
-            "TITLE:",
-            query,
-            "EP:",
-            episodeNumber
-        );
+console.log(
+    "[ANIMEVIETSUB] BASE:",
+    baseUrl,
+    "TITLE:",
+    query,
+    "EP:",
+    episodeNumber
+);
 
-        const detail = await avsFindDetail(
-            baseUrl,
-            query,
-            movieYear
-        );
+if (!baseUrl) {
+    console.warn(
+        "[ANIMEVIETSUB] Stop: no accessible domain; " +
+        "search and episode lookup skipped."
+    );
+    return [];
+}
+
+const detail = await avsFindDetail(baseUrl, query, movieYear);
 
         if (!detail?.url) {
             console.log(
