@@ -18889,7 +18889,10 @@ async function fetchAnimeHay(
 
 const AVS_DIRECTORY_URL = "https://bit.ly/animevietsubtv";
 const AVS_FALLBACK_URLS = [
-    "https://animevietsub.nl"
+    "https://animevietsub.nl",
+    "https://animevietsub.love",
+    "https://animevietsub.site",
+    "https://animevietsub.app"
 ];
 const AVS_PACEBIN_URL = "https://pacebin.onrender.com/animevietsub.m3u8";
 const AVS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
