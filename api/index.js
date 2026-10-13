@@ -19552,11 +19552,26 @@ async function avsDecryptGoogleApisCdn(playerUrl) {
                 continue;
             }
 
-            const decrypted = avsProcessEncryptedM3u8(
-                String(playlistRes.data || ""),
-                playlistRes.headers || {},
-                token
-            );
+            const playlistText = String(playlistRes.data || "");
+
+const isAvsShieldV3 =
+    /KEYFORMAT\s*=\s*["']urn:avs:shield:v3["']/i.test(playlistText) ||
+    /\/chunks\/[^ \r\n]+\/seg\d+\.html/i.test(playlistText);
+
+if (isAvsShieldV3) {
+    console.log(
+        "[ANIMEVIETSUB] Detected AVS Shield v3 playlist. " +
+        "Current decoder supports the legacy /hls/*.ts format only; " +
+        "skipping unsupported protected playlist."
+    );
+    return "";
+}
+
+const decrypted = avsProcessEncryptedM3u8(
+    playlistText,
+    playlistRes.headers || {},
+    token
+);
 
             if (decrypted && decrypted.includes("#EXTM3U")) {
                 return decrypted;
