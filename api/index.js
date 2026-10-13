@@ -20609,6 +20609,12 @@ console.log(
 
         return normalizedStreamsToStremio(streams);
 
+    } catch (e) {
+        console.log(
+            "[ANIMEVIETSUB][ANIMAPPER] Thất bại, thử scraper cũ:",
+            e.message
+        );
+    }
 
     // ============================================================
     // 4. Fallback: giữ nguyên đường scrape AnimeVietsub hiện tại
