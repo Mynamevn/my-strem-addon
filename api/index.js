@@ -19625,136 +19625,100 @@ function avsIsChallengeResponse(response) {
 }
 
 async function avsGetBaseUrl() {
-    // Ưu tiên các domain trực tiếp thay vì phụ thuộc duy nhất vào bit.ly.
-    for (const candidate of AVS_DOMAIN_CANDIDATES) {
+    const candidates = [
+        AVS_DIRECTORY_URL,
+        "https://animevietsub.mom",
+        "https://animevietsub.fan",
+        "https://animevietsub.bio",
+        "https://animevietsub.nl",
+        "https://animevietsub.site",
+        "https://animevietsub.love",
+        "https://animevietsub.app",
+        "https://animevietsub.xyz",
+        "https://animevietsub.li"
+    ];
+
+    const seen = new Set();
+
+    for (const candidate of candidates) {
         try {
-            const response = await axios.get(candidate, {
-                timeout: 12000,
+            const res = await axios.get(candidate, {
+                timeout: 10000,
                 maxRedirects: 5,
                 headers: avsHeaders(),
-                validateStatus: () => true,
-                responseType: "text"
+                responseType: "text",
+                validateStatus: () => true
             });
 
             const finalUrl =
-                response?.request?.res?.responseUrl ||
-                response?.request?._redirectable?._currentUrl ||
-                response?.config?.url ||
+                res?.request?.res?.responseUrl ||
+                res?.request?._redirectable?._currentUrl ||
+                res?.config?.url ||
                 candidate;
 
-            let finalOrigin = candidate;
-
+            let origin = "";
             try {
-                finalOrigin = new URL(finalUrl).origin;
-            } catch (_) {}
-
-            const challenged = avsIsChallengeResponse(response);
-            const html = String(
-                typeof response.data === "string"
-                    ? response.data
-                    : ""
-            );
-
-            const looksLikeSite =
-                /<html[\s>]/i.test(html) &&
-                !challenged &&
-                response.status >= 200 &&
-                response.status < 300;
-
-            console.log("[ANIMEVIETSUB] DOMAIN PROBE:", {
-                candidate,
-                status: response.status,
-                finalUrl,
-                finalOrigin,
-                challenged,
-                looksLikeSite,
-                cfMitigated:
-                    response.headers?.["cf-mitigated"] || ""
-            });
-
-            if (challenged) {
-                console.warn(
-                    "[ANIMEVIETSUB] Domain trả trang xác minh; bỏ qua:",
-                    candidate
-                );
+                origin = new URL(finalUrl).origin;
+            } catch (_) {
                 continue;
             }
 
-            if (looksLikeSite) {
-                console.log(
-                    "[ANIMEVIETSUB] Chọn domain:",
-                    finalOrigin
+            if (seen.has(origin)) continue;
+            seen.add(origin);
+
+            const body = String(res.data || "");
+            const contentType = String(
+                res.headers?.["content-type"] || ""
+            ).toLowerCase();
+
+            const isHtml =
+                contentType.includes("text/html") ||
+                /<!doctype\s+html|<html[\s>]/i.test(body);
+
+            const isChallenge =
+                /cf-mitigated\s*:\s*challenge|just a moment\.\.\.|attention required!|\/cdn-cgi\/challenge-platform/i.test(
+                    body
                 );
-                return finalOrigin;
+
+            if (
+                res.status >= 200 &&
+                res.status < 300 &&
+                isHtml &&
+                !isChallenge
+            ) {
+                console.log(
+                    "[ANIMEVIETSUB] DOMAIN OK:",
+                    origin,
+                    "HTTP:",
+                    res.status
+                );
+                return origin;
             }
-        } catch (error) {
-            console.warn(
-                "[ANIMEVIETSUB] Domain probe failed:",
-                candidate,
-                error.message
-            );
-        }
-    }
-
-    // Thử URL rút gọn sau khi đã kiểm tra các domain trực tiếp.
-    try {
-        const response = await axios.get(AVS_DIRECTORY_URL, {
-            timeout: 12000,
-            maxRedirects: 5,
-            headers: avsHeaders(),
-            validateStatus: () => true,
-            responseType: "text"
-        });
-
-        const finalUrl =
-            response?.request?.res?.responseUrl ||
-            response?.request?._redirectable?._currentUrl ||
-            "";
-
-        const challenged = avsIsChallengeResponse(response);
-        const html = String(
-            typeof response.data === "string"
-                ? response.data
-                : ""
-        );
-
-        if (
-            !challenged &&
-            response.status >= 200 &&
-            response.status < 300 &&
-            /<html[\s>]/i.test(html) &&
-            /^https?:\/\//i.test(finalUrl)
-        ) {
-            const origin = new URL(finalUrl).origin;
 
             console.log(
-                "[ANIMEVIETSUB] Chọn domain từ directory:",
-                origin
+                "[ANIMEVIETSUB] DOMAIN SKIP:",
+                origin,
+                "HTTP:",
+                res.status,
+                "HTML:",
+                isHtml,
+                "CHALLENGE:",
+                isChallenge
             );
-
-            return origin;
+        } catch (e) {
+            console.log(
+                "[ANIMEVIETSUB] DOMAIN ERROR:",
+                candidate,
+                e.message
+            );
         }
-
-        console.warn(
-            "[ANIMEVIETSUB] Directory không trả trang hợp lệ:",
-            {
-                status: response.status,
-                finalUrl,
-                challenged
-            }
-        );
-    } catch (error) {
-        console.warn(
-            "[ANIMEVIETSUB] Directory probe failed:",
-            error.message
-        );
     }
 
-    console.error(
-        "[ANIMEVIETSUB] Không tìm được domain trả HTML hợp lệ."
+    console.log(
+        "[ANIMEVIETSUB] Không tìm được domain trả HTML dùng được; dùng fallback để ghi log lỗi tiếp theo."
     );
 
-    return "";
+    return AVS_FALLBACK_URL;
 }
 
 async function avsSearchViaSuggest(baseUrl, query) {
