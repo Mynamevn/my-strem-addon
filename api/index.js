@@ -20494,6 +20494,17 @@ console.log(
             metadata?.result?.streamingProviders ||
             metadata?.streamingProviders ||
             null;
+        
+        console.log(
+    "[ANIMEVIETSUB][ANIMAPPER] MAPPING DEBUG:",
+    JSON.stringify({
+        mediaId,
+        metadataSuccess: metadata?.success,
+        resultKeys: Object.keys(metadata?.result || {}),
+        providerNames: providers ? Object.keys(providers) : [],
+        animeVietsubMapping: providers?.ANIMEVIETSUB || null
+    })
+);
 
         if (providers && typeof providers === "object") {
             const providerNames = Object.keys(providers);
