@@ -20269,358 +20269,45 @@ async function avsResolveServer(baseUrl, episodePageUrl, server) {
     }
 }
 
-async function scrapeAnimeVietsub(movieName, movieYear = 0, seasonNumber = 0, episodeNumber = 1, streamType = "series") {
-    const query = String(movieName || "").trim();
-    if (!query) return [];
-
-    const wantedEpisode = Math.max(1, Number(episodeNumber) || 1);
-    const apiBase = "https://api.animapper.net/api/v1";
-
-    // ============================================================
-    // 1. Thử lấy stream AnimeVietsub qua AniMapper, không gọi K20
-    // ============================================================
+async function scrapeAnimeVietsub(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 1,
+    streamType = "series"
+) {
     try {
-        const apiGet = async (path, params = {}) => {
-            const url = new URL(`${apiBase}${path}`);
-            for (const [key, value] of Object.entries(params)) {
-                if (value !== undefined && value !== null && value !== "") {
-                    url.searchParams.set(key, String(value));
-                }
-            }
+        const query = String(movieName || "").trim();
+        if (!query) return [];
 
-            const res = await axios.get(url.href, {
-                timeout: 15000,
-                headers: {
-                    "User-Agent": AVS_UA,
-                    "Accept": "application/json"
-                },
-                validateStatus: () => true
-            });
-
-            if (res.status < 200 || res.status >= 300) {
-    const body = typeof res.data === "string"
-        ? res.data
-        : JSON.stringify(res.data);
-
-    console.error("[ANIMEVIETSUB][ANIMAPPER] API ERROR:", {
-        path,
-        url: url.href,
-        status: res.status,
-        body: String(body || "").slice(0, 2000)
-    });
-
-    throw new Error(
-        `AniMapper HTTP ${res.status} (${path}): ${String(body || "").slice(0, 500)}`
-    );
-}
-
-            return typeof res.data === "string"
-                ? JSON.parse(res.data)
-                : res.data;
-        };
-
-        const normTitle = value => String(value || "")
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/đ/g, "d")
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim();
-
-        const titleOf = item => {
-    const titles = item?.titles;
-
-    if (titles && typeof titles === "object") {
-        // Ưu tiên tên khớp chính xác với truy vấn,
-        // kể cả tên thay thế như alt-anilist-0.
-        const titleValues = Object.values(titles)
-            .filter(value => typeof value === "string" && value.trim());
-
-        const exactMatch = titleValues.find(
-            value => normTitle(value) === normTitle(query)
+        // ƯU TIÊN 1: K20 addon API.
+        const k20Streams = await avsK20GetStreams(
+            query,
+            episodeNumber,
+            streamType
         );
 
-        if (exactMatch) return exactMatch;
-
-        return String(
-            titles.en ||
-            titles.romaji ||
-            titles["ja-ro"] ||
-            titles["user-preferred"] ||
-            titles.main ||
-            titles.vi ||
-            titles.ja ||
-            titleValues[0] ||
-            ""
-        );
-    }
-
-    const title = item?.title;
-
-    if (typeof title === "string") return title;
-
-    if (title && typeof title === "object") {
-        return String(
-            title.en ||
-            title.romaji ||
-            title.english ||
-            title.vi ||
-            title.ja ||
-            ""
-        );
-    }
-
-    return String(
-        item?.titleEnglish ||
-        item?.titleRomaji ||
-        item?.englishTitle ||
-        item?.name ||
-        ""
-    );
-};
-
-        const searchData = await apiGet("/search", {
-    title: query,
-    mediaType: "ANIME",
-    limit: 10
-});
-
-const results = Array.isArray(searchData?.results)
-    ? searchData.results
-    : [];
-
-console.log(
-    "[ANIMEVIETSUB][ANIMAPPER] SEARCH DEBUG:",
-    JSON.stringify({
-        query,
-        responseKeys: Object.keys(searchData || {}),
-        success: searchData?.success,
-        total: searchData?.total,
-        resultsCount: results.length,
-        sample: results.slice(0, 10).map(item => ({
-            id: item?.id,
-            mediaType: item?.mediaType,
-            titles: item?.titles,
-            title: item?.title,
-            name: item?.name,
-            titleEnglish: item?.titleEnglish,
-            titleRomaji: item?.titleRomaji,
-            englishTitle: item?.englishTitle
-        }))
-    }).slice(0, 12000)
-);
-
-        const target = normTitle(query);
-        const targetWords = target.split(/\s+/).filter(Boolean);
-
-        const ranked = results
-            .filter(item => item?.id != null)
-            .map(item => {
-                const title = normTitle(titleOf(item));
-                const words = title.split(/\s+/).filter(Boolean);
-
-                let score = 0;
-
-                if (title && title === target) {
-                    score = 100;
-                } else if (
-                    title &&
-                    (title.includes(target) || target.includes(title))
-                ) {
-                    score = 65;
-                } else if (targetWords.length) {
-                    const overlap = targetWords.filter(word =>
-                        words.includes(word)
-                    ).length;
-
-                    score = 40 * overlap / targetWords.length;
-                }
-
-                return { item, score };
-            })
-            .sort((a, b) => b.score - a.score);
-
-        // Không chọn bừa một anime không khớp tên.
-        const best = ranked[0];
-
-        if (!best || best.score < 35) {
-            throw new Error(`Không tìm thấy anime phù hợp: ${query}`);
-        }
-
-        const mediaId = best.item.id;
-        console.log(
-            "[ANIMEVIETSUB][ANIMAPPER] SEARCH:",
-            titleOf(best.item),
-            "ID:",
-            mediaId
-        );
-
-        // ========================================================
-        // 2. Kiểm tra provider trước khi lấy danh sách tập
-        // ========================================================
-        let metadata = null;
-
-        try {
-            metadata = await apiGet("/metadata", { id: mediaId });
-        } catch (e) {
-            console.warn(
-                "[ANIMEVIETSUB][ANIMAPPER] Metadata warning:",
-                e.message
+        if (Array.isArray(k20Streams) && k20Streams.length) {
+            console.log(
+                "[ANIMEVIETSUB] Dùng stream K20:",
+                k20Streams.length
             );
+            return k20Streams;
         }
 
-        const providers =
-            metadata?.result?.streamingProviders ||
-            metadata?.streamingProviders ||
-            null;
-
-        const providerKey = providers && typeof providers === "object"
-            ? Object.keys(providers).find(
-                name => name.toUpperCase() === "ANIMEVIETSUB"
-            )
-            : null;
-
-        console.log(
-            "[ANIMEVIETSUB][ANIMAPPER] MAPPING DEBUG:",
-            JSON.stringify({
-                mediaId,
-                metadataSuccess: metadata?.success,
-                providerNames: providers ? Object.keys(providers) : [],
-                animeVietsubMapping: providerKey
-                    ? providers[providerKey]
-                    : null
-            })
+        console.warn(
+            "[ANIMEVIETSUB] K20 không có stream; thử AnimeVietsub trực tiếp."
         );
 
-        if (!providerKey) {
-            throw new Error(
-                `AniMapper chưa có mapping AnimeVietsub cho media ID ${mediaId}`
-            );
-        }
-
-        // ========================================================
-        // 3. Lấy danh sách tập và nguồn HLS DU
-        // Chỉ thực hiện khi metadata xác nhận provider tồn tại.
-        // ========================================================
-        const episodeData = await apiGet("/stream/episodes", {
-            id: mediaId,
-            provider: providerKey
-        });
-
-        const episodes = Array.isArray(episodeData?.episodes)
-            ? episodeData.episodes
-            : [];
-
-        if (!episodes.length) {
-            throw new Error("AniMapper không trả về danh sách tập");
-        }
-
-        const episodeNumberOf = ep => {
-            for (const value of [
-                ep?.episodeNumber,
-                ep?.number,
-                ep?.episode,
-                ep?.episodeNo
-            ]) {
-                if (value !== undefined && value !== null && value !== "") {
-                    const n = Number(value);
-                    if (Number.isFinite(n) && n > 0) return n;
-                }
-            }
-
-            return avsEpisodeNumber([
-                ep?.title,
-                ep?.name,
-                ep?.episodeId
-            ].filter(Boolean).join(" "));
-        };
-
-        let selectedEpisode = episodes.find(
-            ep => episodeNumberOf(ep) === wantedEpisode
-        );
-
-        if (!selectedEpisode) {
-            const hasNumberedEpisodes = episodes.some(
-                ep => episodeNumberOf(ep) > 0
-            );
-
-            if (!hasNumberedEpisodes) {
-                selectedEpisode = episodes[wantedEpisode - 1] || null;
-            }
-        }
-
-        if (!selectedEpisode?.episodeId) {
-            throw new Error(
-                `Không xác định được episodeId cho tập ${wantedEpisode}`
-            );
-        }
-
-        console.log(
-            "[ANIMEVIETSUB][ANIMAPPER] EPISODE:",
-            selectedEpisode.episodeId
-        );
-
-        const sourceData = await apiGet("/stream/source", {
-            episodeData: selectedEpisode.episodeId,
-            provider: providerKey,
-            server: "DU"
-        });
-
-        const streamUrl = String(sourceData?.url || "").trim();
-
-        if (
-            !/^https?:\/\//i.test(streamUrl) ||
-            (
-                !/\.m3u8(?:$|[?#/])/i.test(streamUrl) &&
-                !/\/stream\/source\/m3u8\//i.test(streamUrl)
-            )
-        ) {
-            throw new Error(
-                "AniMapper không trả về URL HLS hợp lệ"
-            );
-        }
-
-        const streams = [{
-            name: "AnimeVietsub · AniMapper · HLS",
-            title: `${query} · Tập ${wantedEpisode} · HLS`,
-            url: streamUrl,
-            type: "m3u8",
-            provider: "animevietsub",
-            source: "animevietsub",
-            serverName: "DU",
-            referer: "https://animevietsub.page",
-            headers: {
-                Referer: "https://animevietsub.page"
-            },
-            behaviorHints: {
-                notWebReady: false,
-                proxyHeaders: {
-                    request: {
-                        Referer: "https://animevietsub.page"
-                    }
-                }
-            },
-            resolver: "passthrough"
-        }];
-
-        console.log(
-            "[ANIMEVIETSUB][ANIMAPPER] STREAM OK"
-        );
-
-        return normalizedStreamsToStremio(streams);
-
-    } catch (e) {
-        console.log(
-            "[ANIMEVIETSUB][ANIMAPPER] Thất bại, thử scraper cũ:",
-            e.message
-        );
-    }
-
-    // ============================================================
-    // 4. Fallback: giữ nguyên đường scrape AnimeVietsub hiện tại
-    // ============================================================
-    try {
+        // ƯU TIÊN 2: AnimeVietsub trực tiếp.
         const baseUrl = await avsGetBaseUrl();
+
+        if (!baseUrl) {
+            console.error(
+                "[ANIMEVIETSUB] Không có domain trực tiếp hợp lệ."
+            );
+            return [];
+        }
 
         console.log(
             "[ANIMEVIETSUB] BASE:",
@@ -20628,7 +20315,7 @@ console.log(
             "TITLE:",
             query,
             "EP:",
-            wantedEpisode
+            episodeNumber
         );
 
         const detail = await avsFindDetail(baseUrl, query, movieYear);
@@ -20641,14 +20328,14 @@ console.log(
         const episode = await avsGetEpisodePage(
             baseUrl,
             detail.url,
-            wantedEpisode
+            Math.max(1, Number(episodeNumber) || 1)
         );
 
         const servers = await avsExtractLinksFromEpisode(
             baseUrl,
             episode.url,
             detail.url,
-            wantedEpisode
+            episodeNumber
         );
 
         console.log(
@@ -20672,7 +20359,7 @@ console.log(
 
         const streams = valid.map((item, index) => ({
             name: item.name || `AnimeVietsub ${index + 1}`,
-            title: `${query} · Tập ${wantedEpisode} · ${item.serverName || "Server"}`,
+            title: `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""} · ${item.serverName || "Server"}`,
             url: item.url,
             type: item.type === "m3u8" ? "m3u8" : "video",
             provider: "animevietsub",
@@ -20685,9 +20372,11 @@ console.log(
         console.log("[ANIMEVIETSUB] STREAM COUNT:", streams.length);
 
         return normalizedStreamsToStremio(streams);
-
-    } catch (e) {
-        console.error("[ANIMEVIETSUB] FETCH ERROR:", e.message);
+    } catch (error) {
+        console.error(
+            "[ANIMEVIETSUB] FETCH ERROR:",
+            error.message
+        );
         return [];
     }
 }
