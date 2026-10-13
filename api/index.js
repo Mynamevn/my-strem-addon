@@ -19023,11 +19023,39 @@ async function avsRequest(url, options = {}) {
             currentUrl = finalResponseUrl;
         }
 
+       const cfMitigated = String(
+            response.headers?.["cf-mitigated"] || ""
+        );
+
+        const cfRay = String(
+            response.headers?.["cf-ray"] || ""
+        );
+
+        const server = String(
+            response.headers?.["server"] || ""
+        );
+
+        const bodyStart = String(body || "")
+            .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "[SCRIPT]")
+            .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "[STYLE]")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .slice(0, 240);
+
         const cfChallenge =
-            String(response.headers?.["cf-mitigated"] || "")
-                .toLowerCase() === "challenge" ||
+            cfMitigated.toLowerCase() === "challenge" ||
             /cdn-cgi\/challenge-platform|cf-chl-|just a moment\.\.\./i
                 .test(body);
+
+        console.warn("[ANIMEVIETSUB] RESPONSE DIAGNOSTICS:", {
+            status: response.status,
+            url: currentUrl,
+            server,
+            cfMitigated,
+            cfRay,
+            contentType: response.headers?.["content-type"] || "",
+            bodyStart
+        });
 
         if (cfChallenge) {
             response.avsChallenge = true;
