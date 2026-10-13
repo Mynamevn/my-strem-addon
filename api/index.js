@@ -18987,7 +18987,7 @@ async function avsRequest(url, options = {}) {
             .some(name => name.toLowerCase() === "cookie");
 
         // Chỉ gửi cookie của AnimeVietsub đến domain AnimeVietsub.
-        Không gửi cookie website này sang Google CDN hoặc dịch vụ khác.
+        // Không gửi cookie website này sang Google CDN hoặc dịch vụ khác.
         if (
             cookie &&
             avsIsSiteUrl(currentUrl) &&
