@@ -20375,14 +20375,35 @@ async function scrapeAnimeVietsub(movieName, movieYear = 0, seasonNumber = 0, ep
 };
 
         const searchData = await apiGet("/search", {
-            title: query,
-            mediaType: "ANIME",
-            limit: 10
-        });
+    title: query,
+    mediaType: "ANIME",
+    limit: 10
+});
 
-        const results = Array.isArray(searchData?.results)
-            ? searchData.results
-            : [];
+const results = Array.isArray(searchData?.results)
+    ? searchData.results
+    : [];
+
+console.log(
+    "[ANIMEVIETSUB][ANIMAPPER] SEARCH DEBUG:",
+    JSON.stringify({
+        query,
+        responseKeys: Object.keys(searchData || {}),
+        success: searchData?.success,
+        total: searchData?.total,
+        resultsCount: results.length,
+        sample: results.slice(0, 10).map(item => ({
+            id: item?.id,
+            mediaType: item?.mediaType,
+            titles: item?.titles,
+            title: item?.title,
+            name: item?.name,
+            titleEnglish: item?.titleEnglish,
+            titleRomaji: item?.titleRomaji,
+            englishTitle: item?.englishTitle
+        }))
+    }).slice(0, 12000)
+);
 
         const target = normTitle(query);
         const targetWords = target.split(/\s+/).filter(Boolean);
