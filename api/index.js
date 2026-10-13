@@ -20336,19 +20336,43 @@ async function scrapeAnimeVietsub(movieName, movieYear = 0, seasonNumber = 0, ep
             .trim();
 
         const titleOf = item => {
-            const title = item?.title;
-            if (typeof title === "string") return title;
+    const titles = item?.titles;
 
-            return String(
-                title?.english ||
-                title?.romaji ||
-                item?.titleEnglish ||
-                item?.titleRomaji ||
-                item?.name ||
-                item?.englishTitle ||
-                ""
-            );
-        };
+    if (typeof titles === "string") return titles;
+
+    if (titles && typeof titles === "object") {
+        return String(
+            titles.en ||
+            titles.romaji ||
+            titles.english ||
+            titles.vi ||
+            titles.ja ||
+            ""
+        );
+    }
+
+    const title = item?.title;
+    if (typeof title === "string") return title;
+
+    if (title && typeof title === "object") {
+        return String(
+            title.en ||
+            title.romaji ||
+            title.english ||
+            title.vi ||
+            title.ja ||
+            ""
+        );
+    }
+
+    return String(
+        item?.titleEnglish ||
+        item?.titleRomaji ||
+        item?.englishTitle ||
+        item?.name ||
+        ""
+    );
+};
 
         const searchData = await apiGet("/search", {
             title: query,
