@@ -18888,12 +18888,17 @@ async function fetchAnimeHay(
 // ============================================================
 
 const AVS_DIRECTORY_URL = "https://bit.ly/animevietsubtv";
-const AVS_FALLBACK_URLS = [
+
+// Thử domain .li trước, sau đó kiểm tra các domain đã biết.
+const AVS_DOMAIN_CANDIDATES = [
+    "https://animevietsub.li",
     "https://animevietsub.nl",
-    "https://animevietsub.love",
     "https://animevietsub.site",
+    "https://animevietsub.love",
     "https://animevietsub.app"
 ];
+
+const AVS_FALLBACK_URL = "https://animevietsub.li";
 const AVS_PACEBIN_URL = "https://pacebin.onrender.com/animevietsub.m3u8";
 const AVS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
@@ -19568,88 +19573,169 @@ async function avsDecryptGoogleApisCdn(playerUrl) {
     return "";
 }
 
+function avsIsChallengeResponse(response) {
+    const headers = response?.headers || {};
+    const header = name => {
+        if (typeof headers.get === "function") {
+            return headers.get(name) || "";
+        }
+
+        const key = Object.keys(headers).find(
+            k => k.toLowerCase() === name.toLowerCase()
+        );
+
+        return key ? String(headers[key] || "") : "";
+    };
+
+    const finalUrl =
+        response?.request?.res?.responseUrl ||
+        response?.request?._redirectable?._currentUrl ||
+        response?.config?.url ||
+        "";
+
+    const body = String(
+        typeof response?.data === "string"
+            ? response.data
+            : ""
+    ).slice(0, 30000);
+
+    return (
+        header("cf-mitigated").toLowerCase() === "challenge" ||
+        /\/cdn-cgi\/challenge-platform\//i.test(body) ||
+        /xac-minh\.php/i.test(finalUrl) ||
+        /xác minh (?:an toàn|bảo mật|người dùng)/i.test(body) ||
+        /just a moment\.\.\./i.test(body)
+    );
+}
+
 async function avsGetBaseUrl() {
+    // Ưu tiên các domain trực tiếp thay vì phụ thuộc duy nhất vào bit.ly.
+    for (const candidate of AVS_DOMAIN_CANDIDATES) {
+        try {
+            const response = await axios.get(candidate, {
+                timeout: 12000,
+                maxRedirects: 5,
+                headers: avsHeaders(),
+                validateStatus: () => true,
+                responseType: "text"
+            });
+
+            const finalUrl =
+                response?.request?.res?.responseUrl ||
+                response?.request?._redirectable?._currentUrl ||
+                response?.config?.url ||
+                candidate;
+
+            let finalOrigin = candidate;
+
+            try {
+                finalOrigin = new URL(finalUrl).origin;
+            } catch (_) {}
+
+            const challenged = avsIsChallengeResponse(response);
+            const html = String(
+                typeof response.data === "string"
+                    ? response.data
+                    : ""
+            );
+
+            const looksLikeSite =
+                /<html[\s>]/i.test(html) &&
+                !challenged &&
+                response.status >= 200 &&
+                response.status < 300;
+
+            console.log("[ANIMEVIETSUB] DOMAIN PROBE:", {
+                candidate,
+                status: response.status,
+                finalUrl,
+                finalOrigin,
+                challenged,
+                looksLikeSite,
+                cfMitigated:
+                    response.headers?.["cf-mitigated"] || ""
+            });
+
+            if (challenged) {
+                console.warn(
+                    "[ANIMEVIETSUB] Domain trả trang xác minh; bỏ qua:",
+                    candidate
+                );
+                continue;
+            }
+
+            if (looksLikeSite) {
+                console.log(
+                    "[ANIMEVIETSUB] Chọn domain:",
+                    finalOrigin
+                );
+                return finalOrigin;
+            }
+        } catch (error) {
+            console.warn(
+                "[ANIMEVIETSUB] Domain probe failed:",
+                candidate,
+                error.message
+            );
+        }
+    }
+
+    // Thử URL rút gọn sau khi đã kiểm tra các domain trực tiếp.
     try {
-        const res = await avsRequest(AVS_DIRECTORY_URL, {
+        const response = await axios.get(AVS_DIRECTORY_URL, {
             timeout: 12000,
-            allowHttpErrors: true
+            maxRedirects: 5,
+            headers: avsHeaders(),
+            validateStatus: () => true,
+            responseType: "text"
         });
 
         const finalUrl =
-            res?.request?.res?.responseUrl ||
-            res?.request?._redirectable?._currentUrl ||
-            res?.config?.url ||
-            AVS_DIRECTORY_URL;
+            response?.request?.res?.responseUrl ||
+            response?.request?._redirectable?._currentUrl ||
+            "";
 
-        const finalOrigin = new URL(finalUrl).origin;
+        const challenged = avsIsChallengeResponse(response);
+        const html = String(
+            typeof response.data === "string"
+                ? response.data
+                : ""
+        );
 
         if (
-            !res.avsChallenge &&
-            res.status >= 200 &&
-            res.status < 400 &&
-            !/bit\.ly/i.test(finalOrigin)
+            !challenged &&
+            response.status >= 200 &&
+            response.status < 300 &&
+            /<html[\s>]/i.test(html) &&
+            /^https?:\/\//i.test(finalUrl)
         ) {
+            const origin = new URL(finalUrl).origin;
+
             console.log(
-                "[ANIMEVIETSUB] selected domain:",
-                finalOrigin
+                "[ANIMEVIETSUB] Chọn domain từ directory:",
+                origin
             );
-            return finalOrigin;
+
+            return origin;
         }
 
         console.warn(
-            `[ANIMEVIETSUB] domain discovery failed: HTTP ${res.status}` +
-            (res.avsChallenge ? " (Cloudflare challenge)" : "")
-        );
-    } catch (e) {
-        console.warn(
-            "[ANIMEVIETSUB] domain discovery error:",
-            e.message
-        );
-    }
-
-    for (const candidate of AVS_FALLBACK_URLS) {
-        try {
-            const res = await avsRequest(candidate, {
-                timeout: 10000,
-                allowHttpErrors: true
-            });
-
-            if (
-                !res.avsChallenge &&
-                res.status >= 200 &&
-                res.status < 400
-            ) {
-                const finalUrl =
-                    res?.request?.res?.responseUrl ||
-                    res?.request?._redirectable?._currentUrl ||
-                    candidate;
-
-                const finalOrigin = new URL(finalUrl).origin;
-
-                console.log(
-                    "[ANIMEVIETSUB] selected domain:",
-                    finalOrigin
-                );
-
-                return finalOrigin;
+            "[ANIMEVIETSUB] Directory không trả trang hợp lệ:",
+            {
+                status: response.status,
+                finalUrl,
+                challenged
             }
-
-            console.warn(
-                `[ANIMEVIETSUB] domain unavailable: ${candidate}, ` +
-                `HTTP ${res.status}` +
-                (res.avsChallenge ? " (Cloudflare challenge)" : "")
-            );
-        } catch (e) {
-            console.warn(
-                `[ANIMEVIETSUB] domain probe failed: ${candidate}:`,
-                e.message
-            );
-        }
+        );
+    } catch (error) {
+        console.warn(
+            "[ANIMEVIETSUB] Directory probe failed:",
+            error.message
+        );
     }
 
     console.error(
-        "[ANIMEVIETSUB] No accessible domain found; " +
-        "all domain probes failed."
+        "[ANIMEVIETSUB] Không tìm được domain trả HTML hợp lệ."
     );
 
     return "";
@@ -20215,6 +20301,13 @@ async function scrapeAnimeVietsub(
         if (!query) return [];
 
         const baseUrl = await avsGetBaseUrl();
+
+if (!baseUrl) {
+    console.error(
+        "[ANIMEVIETSUB] Stop: không có domain nào trả HTML hợp lệ."
+    );
+    return [];
+}
 
 console.log(
     "[ANIMEVIETSUB] BASE:",
