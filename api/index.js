@@ -18883,6 +18883,1067 @@ async function fetchAnimeHay(
 }
 
 // ============================================================
+// BL-53A. ANIMEVIETSUB PROVIDER
+// Chuyển thể từ AnimeVietsubProvider.smali
+// ============================================================
+
+const AVS_DIRECTORY_URL = "https://bit.ly/animevietsubtv";
+const AVS_FALLBACK_URL = "https://animevietsub.site";
+const AVS_PACEBIN_URL = "https://pacebin.onrender.com/animevietsub.m3u8";
+const AVS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+function avsHeaders(referer = "") {
+    const h = {
+        "User-Agent": AVS_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi,en-US;q=0.9,en;q=0.8",
+        "Upgrade-Insecure-Requests": "1"
+    };
+    if (referer) h.Referer = referer;
+    return h;
+}
+
+function avsAbs(url, base) {
+    try {
+        return new URL(String(url || ""), base).href;
+    } catch (_) {
+        return "";
+    }
+}
+
+function avsB64UrlDecode(value) {
+    let s = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    return Buffer.from(s, "base64");
+}
+
+function avsDeriveSeed(seed) {
+    const prefix = String(seed || "").slice(0, 8);
+    const m = prefix.match(/^[0-9a-fA-F]+/);
+    if (!m) return 0;
+
+    try {
+        return Number(BigInt("0x" + m[0]) & 0xffffffffn) | 0;
+    } catch (_) {
+        return 0;
+    }
+}
+
+function avsLcgNext(state) {
+    return (Math.imul(state | 0, 0x19660d) + 0x3c6ef35f) >>> 0;
+}
+
+function avsStringUnshuffle(str, seed) {
+    const chars = Array.from(String(str || ""));
+    let state = avsDeriveSeed(seed);
+    const swaps = [];
+
+    for (let i = chars.length - 1; i > 0; i--) {
+        state = avsLcgNext(state);
+        const j = state % (i + 1);
+        swaps.push([i, j]);
+    }
+
+    for (let k = swaps.length - 1; k >= 0; k--) {
+        const [a, b] = swaps[k];
+        [chars[a], chars[b]] = [chars[b], chars[a]];
+    }
+
+    return chars.join("");
+}
+
+function avsCreatePrng(seed) {
+    let hash = 0x811c9dc5;
+
+    for (const ch of String(seed || "")) {
+        hash = Math.imul(
+            (hash ^ ch.charCodeAt(0)) >>> 0,
+            0x1000193
+        ) >>> 0;
+    }
+
+    let state = hash | 0;
+    if (!state) state = 1;
+
+    return () => {
+        state ^= state << 13;
+        state |= 0;
+
+        state ^= state >>> 17;
+        state |= 0;
+
+        state ^= state << 5;
+        state |= 0;
+
+        return state >>> 0;
+    };
+}
+
+function avsDescramble(data, permKey, permSalt) {
+    const input = Buffer.from(data || []);
+    const len = input.length;
+
+    if (!len) return Buffer.alloc(0);
+
+    const rng = avsCreatePrng(`${permKey || ""}|${permSalt || ""}`);
+    const perm = Array.from({ length: len }, (_, i) => i);
+
+    for (let i = len - 1; i > 0; i--) {
+        const j = rng() % (i + 1);
+        [perm[i], perm[j]] = [perm[j], perm[i]];
+    }
+
+    const out = Buffer.alloc(len);
+    let xorState = 0;
+
+    for (let i = 0; i < len; i++) {
+        if ((i & 3) === 0) xorState = rng();
+
+        const mask = (xorState >>> ((i & 3) * 8)) & 0xff;
+        out[perm[i]] = input[i] ^ mask;
+    }
+
+    return out;
+}
+
+function avsParseEnvelope(encoded) {
+    try {
+        const b = avsB64UrlDecode(encoded);
+
+        if (
+            b.length < 11 ||
+            b.subarray(0, 4).toString("ascii") !== "USDK" ||
+            b[4] !== 1
+        ) {
+            return null;
+        }
+
+        const payloadLen = (b[5] << 8) | b[6];
+
+        // Smali kiểm tra bytes.length >= payloadLen + 11.
+        if (b.length < payloadLen + 11) return null;
+
+        const payload = b
+            .subarray(7, 7 + payloadLen)
+            .toString("latin1");
+
+        return JSON.parse(decodeURIComponent(payload));
+    } catch (_) {
+        return null;
+    }
+}
+
+function avsExtractToken(html) {
+    const source = String(html || "");
+
+    const decl = source.match(
+        /const\s+avsToken\s*=\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)\s*;/
+    );
+
+    if (decl) {
+        const chunks = [...decl[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)];
+
+        const joined = chunks.map(m => {
+            try {
+                return JSON.parse('"' + m[1] + '"');
+            } catch (_) {
+                return m[1];
+            }
+        }).join("");
+
+        if (joined.trim()) return joined;
+    }
+
+    return source.match(/const\s+avsToken\s*=\s*"([^"]+)/)?.[1] || "";
+}
+
+function avsDecryptSegmentUrls(intermediate, headerLines, jtiOdd) {
+    const lines = String(intermediate || "").split("\n");
+    const out = [...lines];
+    const hlsRe = /\/hls\/([0-9a-f]{24})\.ts/;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+
+        if (!line || line.startsWith("#")) continue;
+
+        const m = line.match(hlsRe);
+        if (!m) continue;
+
+        try {
+            const fileId = m[1];
+            const qIdx = line.indexOf("?");
+            const params = {};
+
+            if (qIdx >= 0) {
+                for (const p of line.slice(qIdx + 1).split("&")) {
+                    const eq = p.indexOf("=");
+
+                    if (eq >= 0) {
+                        params[p.slice(0, eq)] = p.slice(eq + 1);
+                    }
+                }
+            }
+
+            if (!params.e) continue;
+
+            const index = Number.parseInt(params.i || "0", 10) || 0;
+
+            const mac = crypto.createHmac(
+                "sha256",
+                Buffer.from(String(jtiOdd), "utf8")
+            );
+
+            const aesKey = mac
+                .update(`url-cipher|${fileId}`, "utf8")
+                .digest();
+
+            const counter = Buffer.alloc(16);
+            counter.writeUInt32BE(index >>> 0, 12);
+
+            const decipher = crypto.createDecipheriv(
+                "aes-256-ctr",
+                aesKey,
+                counter
+            );
+
+            const decryptedUrl = Buffer.concat([
+                decipher.update(avsB64UrlDecode(params.e)),
+                decipher.final()
+            ]).toString("utf8");
+
+            if (decryptedUrl.startsWith("http")) {
+                out[i] = decryptedUrl;
+            }
+        } catch (_) {
+            // Giữ URL gốc nếu một segment không giải mã được.
+        }
+    }
+
+    const cleanLines = out.filter(line =>
+        !line.includes("urn:avs:shield") &&
+        !/\/hls\/[0-9a-f]{24}\.ts/.test(line)
+    );
+
+    return cleanLines.join("\n");
+}
+
+function avsProcessEncryptedM3u8(m3u8Text, headers = {}, avsToken = "") {
+    try {
+        const jwtParts = String(avsToken).split(".");
+        if (jwtParts.length < 2) return "";
+
+        const payloadJson = JSON.parse(
+            avsB64UrlDecode(jwtParts[1]).toString("utf8")
+        );
+
+        const jti = String(payloadJson.jti || "");
+        if (!jti) return "";
+
+        const jtiOdd = [...jti]
+            .filter((_, i) => i % 2 === 1)
+            .join("");
+
+        const getHeader = name => {
+            const key = Object.keys(headers || {}).find(
+                k => k.toLowerCase() === name.toLowerCase()
+            );
+
+            return key ? String(headers[key] || "") : "";
+        };
+
+        const envHeader =
+            getHeader("x-envelope") ||
+            getHeader("x-avs-envelope") ||
+            getHeader("x-stream-envelope");
+
+        const env = envHeader ? avsParseEnvelope(envHeader) : null;
+
+        let cn = String(env?.cn || "");
+        let sk = String(env?.sk || "");
+        let ts = String(env?.ts || "0");
+        let uid = String(env?.uid || "anon");
+
+        if (!cn) cn = getHeader("x-edge-tag");
+        if (!sk) sk = getHeader("x-cache-node");
+
+        if (ts === "0") {
+            ts = getHeader("x-request-trace") || "0";
+        }
+
+        if (uid === "anon" && getHeader("x-proxy-digest")) {
+            try {
+                uid = decodeURIComponent(getHeader("x-proxy-digest"));
+            } catch (_) {}
+        }
+
+        if (!cn || !sk) return "";
+
+        const lines = String(m3u8Text || "").split("\n");
+        const headerLines = [];
+        const tValues = [];
+
+        for (const line of lines) {
+            if (!line.startsWith("#") && line.trim()) {
+                const match = line.match(/[?&]_t=([^&\s]+)/);
+
+                if (match) tValues.push(match[1]);
+            } else if (
+                line.startsWith("#EXTINF:") ||
+                line.startsWith("#EXT-X-ENDLIST") ||
+                line.startsWith("#EXT-X-KEY")
+            ) {
+                // Các dòng điều khiển này không được giữ trong header.
+            } else {
+                headerLines.push(line);
+            }
+        }
+
+        if (!tValues.length) return "";
+
+        const concatenated = tValues.join("");
+        const cnBytes = avsB64UrlDecode(cn);
+        const iv = cnBytes.subarray(0, Math.min(12, cnBytes.length));
+
+        if (iv.length !== 12) return "";
+
+        const unshuffleMethods = [
+            s => avsStringUnshuffle(s, sk),
+            s => s
+        ];
+
+        const hmacFormats = [
+            `${uid}:${ts}:${sk}:0`,
+            `${uid}:${ts}:${sk}`
+        ];
+
+        for (const unshuffle of unshuffleMethods) {
+            for (const hmacData of hmacFormats) {
+                try {
+                    const unshuffled = unshuffle(concatenated);
+                    const encryptedBlob = avsB64UrlDecode(unshuffled);
+
+                    const gcmKey = crypto
+                        .createHmac("sha256", cnBytes)
+                        .update(hmacData, "utf8")
+                        .digest();
+
+                    if (encryptedBlob.length < 16) continue;
+
+                    const decipher = crypto.createDecipheriv(
+                        "aes-256-gcm",
+                        gcmKey,
+                        iv,
+                        { authTagLength: 16 }
+                    );
+
+                    decipher.setAuthTag(encryptedBlob.subarray(-16));
+
+                    const body = Buffer.concat([
+                        decipher.update(encryptedBlob.subarray(0, -16)),
+                        decipher.final()
+                    ]).toString("utf8");
+
+                    let m3u8Body = body;
+
+                    if (
+                        !m3u8Body.includes("#EXTINF") &&
+                        !m3u8Body.includes("/hls/")
+                    ) {
+                        m3u8Body = avsDescramble(
+                            Buffer.from(body, "utf8"),
+                            sk,
+                            ts
+                        ).toString("utf8");
+                    }
+
+                    let full = `${headerLines.join("\n")}\n${m3u8Body}`;
+
+                    if (!full.includes("#EXT-X-ENDLIST")) {
+                        full += "\n#EXT-X-ENDLIST";
+                    }
+
+                    if (/\/hls\/[0-9a-f]{24}\.ts\?e=/.test(full)) {
+                        return avsDecryptSegmentUrls(
+                            full,
+                            headerLines,
+                            jtiOdd
+                        );
+                    }
+
+                    if (m3u8Body.includes("#EXTINF")) return full;
+                } catch (_) {
+                    // Thử tổ hợp HMAC/unshuffle tiếp theo.
+                }
+            }
+        }
+
+        return "";
+    } catch (e) {
+        console.error(
+            "[ANIMEVIETSUB] M3U8 DECRYPT ERROR:",
+            e.message
+        );
+
+        return "";
+    }
+}
+
+async function avsDecryptGoogleApisCdn(playerUrl) {
+    const hash = String(playerUrl || "")
+        .match(/\/player\/([0-9a-f]+)/i)?.[1];
+
+    const base = String(playerUrl || "")
+        .match(/^(https?:\/\/[^/]+)/i)?.[1];
+
+    if (!hash || !base) return "";
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const playerRes = await axios.get(playerUrl, {
+                timeout: 15000,
+                headers: avsHeaders(),
+                responseType: "text"
+            });
+
+            const token = avsExtractToken(
+                typeof playerRes.data === "string"
+                    ? playerRes.data
+                    : ""
+            );
+
+            if (!token) {
+                console.log(
+                    `[ANIMEVIETSUB] player page thiếu avsToken, lần ${attempt}`
+                );
+
+                await new Promise(r => setTimeout(r, 700));
+                continue;
+            }
+
+            const playlistUrl =
+                `${base}/playlist/${hash}/playlist.m3u8?token=${encodeURIComponent(token)}`;
+
+            const playlistRes = await axios.get(playlistUrl, {
+                timeout: 20000,
+                headers: {
+                    ...avsHeaders(playerUrl),
+                    Referer: playerUrl
+                },
+                responseType: "text",
+                validateStatus: () => true
+            });
+
+            if (
+                playlistRes.status < 200 ||
+                playlistRes.status >= 300
+            ) {
+                console.log(
+                    "[ANIMEVIETSUB] playlist HTTP:",
+                    playlistRes.status
+                );
+
+                await new Promise(r => setTimeout(r, 700));
+                continue;
+            }
+
+            const decrypted = avsProcessEncryptedM3u8(
+                String(playlistRes.data || ""),
+                playlistRes.headers || {},
+                token
+            );
+
+            if (decrypted && decrypted.includes("#EXTM3U")) {
+                return decrypted;
+            }
+        } catch (e) {
+            console.log(
+                `[ANIMEVIETSUB] giải mã lần ${attempt} lỗi:`,
+                e.message
+            );
+        }
+
+        await new Promise(r => setTimeout(r, 700));
+    }
+
+    return "";
+}
+
+async function avsGetBaseUrl() {
+    try {
+        const res = await axios.get(AVS_DIRECTORY_URL, {
+            timeout: 10000,
+            maxRedirects: 5,
+            headers: avsHeaders()
+        });
+
+        const finalUrl =
+            res?.request?.res?.responseUrl ||
+            res?.request?._redirectable?._currentUrl ||
+            res?.config?.url ||
+            "";
+
+        if (
+            /^https?:\/\//i.test(finalUrl) &&
+            !/bit\.ly/i.test(finalUrl)
+        ) {
+            return new URL(finalUrl).origin;
+        }
+    } catch (e) {
+        console.log(
+            "[ANIMEVIETSUB] domain discovery:",
+            e.message
+        );
+    }
+
+    return AVS_FALLBACK_URL;
+}
+
+async function avsSearchViaSuggest(baseUrl, query) {
+    try {
+        const body = new URLSearchParams({
+            ajaxSearch: "1",
+            keysearch: String(query || "").trim()
+        }).toString();
+
+        const res = await axios.post(
+            `${baseUrl}/ajax/suggest`,
+            body,
+            {
+                timeout: 12000,
+                headers: {
+                    ...avsHeaders(baseUrl + "/"),
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "*/*",
+                    "Origin": baseUrl
+                }
+            }
+        );
+
+        const $ = cheerio.load(String(res.data || ""));
+        const results = [];
+
+        $("li").each((_, el) => {
+            const li = $(el);
+
+            const anchor = li.find("a.thumb").first().length
+                ? li.find("a.thumb").first()
+                : li.find("a[href]").first();
+
+            const href = anchor.attr("href") || "";
+            if (!href) return;
+
+            const title =
+                li.find(".ss-title").first().text().trim() ||
+                anchor.attr("title") ||
+                anchor.text().trim();
+
+            const posterStyle =
+                li.find(".ss-bottom").attr("style") ||
+                anchor.find("[style]").first().attr("style") ||
+                "";
+
+            const poster =
+                posterStyle.match(/url\(['"]?([^'")]+)['"]?\)/i)?.[1] || "";
+
+            const info = li.find(".ss-info p").text().trim();
+
+            results.push({
+                title,
+                url: avsAbs(href, baseUrl),
+                poster: avsAbs(poster, baseUrl),
+                info
+            });
+        });
+
+        return results;
+    } catch (e) {
+        console.log(
+            "[ANIMEVIETSUB] suggest error:",
+            e.message
+        );
+
+        return [];
+    }
+}
+
+function avsEpisodeNumber(text) {
+    const s = String(text || "").toLowerCase();
+
+    const m =
+        s.match(/(?:tập|tap|episode|ep\.?|episode\s*)\s*0*(\d+)/i) ||
+        s.match(/(?:^|\s)0*(\d+)\s*(?:$|vietsub)/i);
+
+    return m ? Number(m[1]) : 0;
+}
+
+async function avsFindDetail(baseUrl, movieName, movieYear = 0) {
+    const queries = [String(movieName || "").trim()].filter(Boolean);
+    const candidates = [];
+
+    for (const query of queries) {
+        candidates.push(...await avsSearchViaSuggest(baseUrl, query));
+    }
+
+    if (!candidates.length) {
+        try {
+            const res = await axios.get(
+                `${baseUrl}/tim-kiem/${encodeURIComponent(String(movieName || "").trim())}/`,
+                {
+                    timeout: 12000,
+                    headers: avsHeaders(baseUrl + "/")
+                }
+            );
+
+            const $ = cheerio.load(String(res.data || ""));
+
+            $("a[href]").each((_, el) => {
+                const a = $(el);
+                const href = a.attr("href") || "";
+                const title = a.attr("title") || a.text().trim();
+
+                if (
+                    href &&
+                    title &&
+                    /thong-tin-phim|anime|phim/i.test(href)
+                ) {
+                    candidates.push({
+                        title,
+                        url: avsAbs(href, baseUrl)
+                    });
+                }
+            });
+        } catch (e) {
+            console.log(
+                "[ANIMEVIETSUB] search HTML error:",
+                e.message
+            );
+        }
+    }
+
+    const norm = s => String(s || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+
+    const target = norm(movieName);
+
+    const unique = [
+        ...new Map(
+            candidates
+                .filter(x => x.url)
+                .map(x => [x.url, x])
+        ).values()
+    ];
+
+    unique.sort((a, b) => {
+        const score = x => {
+            const title = norm(x.title);
+
+            let n = title === target
+                ? 100
+                : (title.includes(target) || target.includes(title) ? 55 : 0);
+
+            const year = String(x.info || x.title || "")
+                .match(/\b(19\d{2}|20\d{2})\b/);
+
+            if (
+                movieYear &&
+                year &&
+                Number(year[1]) === Number(movieYear)
+            ) {
+                n += 12;
+            }
+
+            const words = target.split(" ").filter(Boolean);
+            n += words.filter(w => title.includes(w)).length * 3;
+
+            return n;
+        };
+
+        return score(b) - score(a);
+    });
+
+    return unique[0] || null;
+}
+
+async function avsGetEpisodePage(
+    baseUrl,
+    detailUrl,
+    episodeNumber = 1
+) {
+    const res = await axios.get(detailUrl, {
+        timeout: 15000,
+        headers: avsHeaders(baseUrl + "/")
+    });
+
+    const html = String(res.data || "");
+    const $ = cheerio.load(html);
+
+    const episodeAnchors = $(
+        "ul.list-episode > li > a.btn-episode, div.list-episode a, .list-episode a"
+    ).toArray().map(el => {
+        const a = $(el);
+        const title = a.attr("title") || a.text().trim();
+
+        return {
+            title,
+            href: avsAbs(a.attr("href"), detailUrl),
+            number: avsEpisodeNumber(
+                title + " " + (a.attr("href") || "")
+            ),
+            hash: a.attr("data-hash") || "",
+            id: a.attr("data-id") || ""
+        };
+    }).filter(x => x.href);
+
+    let chosen = episodeAnchors.find(
+        x => x.number === Number(episodeNumber)
+    );
+
+    if (!chosen && episodeAnchors.length) {
+        chosen = episodeAnchors[
+            Math.max(0, Number(episodeNumber || 1) - 1)
+        ];
+    }
+
+    return {
+        html,
+        url: chosen?.href || detailUrl,
+        detailUrl,
+        chosen,
+        episodes: episodeAnchors
+    };
+}
+
+async function avsExtractLinksFromEpisode(
+    baseUrl,
+    episodeUrl,
+    detailUrl,
+    episodeNumber
+) {
+    const page = await axios.get(episodeUrl, {
+        timeout: 15000,
+        headers: avsHeaders(detailUrl || baseUrl + "/")
+    });
+
+    const $ = cheerio.load(String(page.data || ""));
+    const links = [];
+
+    const add = (hash, id, href, server) => {
+        hash = String(hash || "").trim();
+        id = String(id || "").trim();
+        href = avsAbs(href || episodeUrl, episodeUrl);
+
+        if (
+            hash &&
+            id &&
+            !links.some(x => x.hash === hash && x.id === id)
+        ) {
+            links.push({
+                hash,
+                id,
+                href,
+                server: String(server || "VIP").trim() || "VIP"
+            });
+        }
+    };
+
+    $(
+        "a.btn-episode.active, a.episode-link.active, .list-episode a.active"
+    ).each((_, el) => {
+        const a = $(el);
+        const group = a.closest(".server-group");
+
+        add(
+            a.attr("data-hash"),
+            a.attr("data-id"),
+            a.attr("href"),
+            group.find(
+                "h3.server-name, h3.server-title, .server-name"
+            ).first().text()
+        );
+    });
+
+    if (!links.length) {
+        $("div.server-group, li.backup-server").each((_, groupEl) => {
+            const group = $(groupEl);
+
+            const server =
+                group.find(
+                    "h3.server-name, h3.server-title, .server-name"
+                ).first().text().trim() || "VIP";
+
+            group.find(
+                "ul.list-episode > li > a.btn-episode, div.list-episode a, .list-episode a"
+            ).each((_, el) => {
+                const a = $(el);
+                const title = a.attr("title") || a.text().trim();
+
+                const num = avsEpisodeNumber(
+                    title + " " + (a.attr("href") || "")
+                );
+
+                if (
+                    !episodeNumber ||
+                    !num ||
+                    num === Number(episodeNumber)
+                ) {
+                    add(
+                        a.attr("data-hash"),
+                        a.attr("data-id"),
+                        a.attr("href"),
+                        server
+                    );
+                }
+            });
+        });
+    }
+
+    if (!links.length) {
+        $("[data-hash][data-id]").each((_, el) => {
+            const a = $(el);
+
+            add(
+                a.attr("data-hash"),
+                a.attr("data-id"),
+                a.attr("href"),
+                "VIP"
+            );
+        });
+    }
+
+    return links;
+}
+
+async function avsResolveServer(baseUrl, episodePageUrl, server) {
+    try {
+        const body = new URLSearchParams({
+            link: server.hash,
+            id: server.id
+        }).toString();
+
+        const res = await axios.post(
+            `${baseUrl}/ajax/player`,
+            body,
+            {
+                timeout: 15000,
+                headers: {
+                    ...avsHeaders(episodePageUrl),
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                    "Origin": baseUrl
+                },
+                validateStatus: () => true
+            }
+        );
+
+        if (res.status < 200 || res.status >= 300) return null;
+
+        const data = typeof res.data === "string"
+            ? JSON.parse(res.data)
+            : res.data;
+
+        let rawLink = String(data?.link || data?.url || "").trim();
+        const playTech = String(data?.playTech || "").toLowerCase();
+
+        if (!rawLink) return null;
+
+        rawLink = avsAbs(rawLink, baseUrl);
+
+        if (
+            playTech === "iframe" &&
+            /googleapiscdn\.com/i.test(rawLink)
+        ) {
+            const decrypted = await avsDecryptGoogleApisCdn(rawLink);
+            if (!decrypted) return null;
+
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    const pace = await axios.post(
+                        AVS_PACEBIN_URL,
+                        decrypted,
+                        {
+                            timeout: 20000,
+                            headers: {
+                                "Content-Type": "application/vnd.apple.mpegurl",
+                                "User-Agent": AVS_UA,
+                                "Referer": "https://stream.googleapiscdn.com/"
+                            },
+                            validateStatus: () => true
+                        }
+                    );
+
+                    const text = typeof pace.data === "string"
+                        ? pace.data
+                        : "";
+
+                    const firstLine = text
+                        .split(/\r?\n/)
+                        .map(x => x.trim())
+                        .find(Boolean) || "";
+
+                    if (
+                        pace.status >= 200 &&
+                        pace.status < 300 &&
+                        /^https?:\/\//i.test(firstLine)
+                    ) {
+                        return {
+                            url: firstLine,
+                            type: "m3u8",
+                            name: `AnimeVietsub · ${server.server}`,
+                            serverName: server.server,
+                            headers: {
+                                Referer: "https://stream.googleapiscdn.com/"
+                            }
+                        };
+                    }
+                } catch (e) {
+                    console.log(
+                        "[ANIMEVIETSUB] pacebin attempt:",
+                        attempt,
+                        e.message
+                    );
+                }
+
+                await new Promise(r => setTimeout(r, 1000));
+            }
+
+            return null;
+        }
+
+        const isM3u8 =
+            /\.m3u8(?:$|[?#])/i.test(rawLink) ||
+            /m3u8/i.test(playTech);
+
+        return {
+            url: rawLink,
+            type: isM3u8 ? "m3u8" : "video",
+            name: `AnimeVietsub · ${server.server}`,
+            serverName: server.server,
+            headers: {
+                Referer: episodePageUrl
+            }
+        };
+    } catch (e) {
+        console.log(
+            "[ANIMEVIETSUB] server error:",
+            server.server,
+            e.message
+        );
+
+        return null;
+    }
+}
+
+async function scrapeAnimeVietsub(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 1,
+    streamType = "series"
+) {
+    try {
+        const query = String(movieName || "").trim();
+        if (!query) return [];
+
+        const baseUrl = await avsGetBaseUrl();
+
+        console.log(
+            "[ANIMEVIETSUB] BASE:",
+            baseUrl,
+            "TITLE:",
+            query,
+            "EP:",
+            episodeNumber
+        );
+
+        const detail = await avsFindDetail(
+            baseUrl,
+            query,
+            movieYear
+        );
+
+        if (!detail?.url) {
+            console.log(
+                "[ANIMEVIETSUB] DETAIL NOT FOUND:",
+                query
+            );
+
+            return [];
+        }
+
+        const episode = await avsGetEpisodePage(
+            baseUrl,
+            detail.url,
+            Math.max(1, Number(episodeNumber) || 1)
+        );
+
+        const servers = await avsExtractLinksFromEpisode(
+            baseUrl,
+            episode.url,
+            detail.url,
+            episodeNumber
+        );
+
+        console.log(
+            "[ANIMEVIETSUB] SERVER COUNT:",
+            servers.length,
+            "EPISODE PAGE:",
+            episode.url
+        );
+
+        if (!servers.length) return [];
+
+        const resolved = await Promise.all(
+            servers.map(server =>
+                avsResolveServer(baseUrl, episode.url, server)
+            )
+        );
+
+        const valid = resolved.filter(
+            x => x && /^https?:\/\//i.test(x.url || "")
+        );
+
+        const streams = valid.map((s, i) => ({
+            name: s.name || `AnimeVietsub ${i + 1}`,
+            title:
+                `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""} · ${s.serverName || "Server"}`,
+            url: s.url,
+            type: s.type === "m3u8" ? "m3u8" : "video",
+            provider: "animevietsub",
+            source: "animevietsub",
+            serverName: s.serverName,
+            headers: s.headers || {},
+            resolver: "passthrough"
+        }));
+
+        console.log(
+            "[ANIMEVIETSUB] STREAM COUNT:",
+            streams.length
+        );
+
+        return normalizedStreamsToStremio(streams);
+    } catch (e) {
+        console.error(
+            "[ANIMEVIETSUB] FETCH ERROR:",
+            e.message
+        );
+
+        return [];
+    }
+}
+
+// ============================================================
+// END BL-53A. ANIMEVIETSUB PROVIDER
+// ============================================================
+
+// ============================================================
 // BL-54. PHIMLONGTIENG PROVIDER
 // ============================================================
 //
@@ -27294,6 +28355,37 @@ console.log(
         : 0
 );
 
+// =====================================================
+// ANIMEVIETSUB — FETCH STREAMS
+// =====================================================
+
+let animevietsub = [];
+
+try {
+    animevietsub = await scrapeAnimeVietsub(
+    movieName,
+    movieYear,
+    seasonNumber,
+    episodeNumber,
+    streamType
+);
+} catch (error) {
+    console.error(
+        "[ANIMEVIETSUB] FETCH ERROR:",
+        error?.stack || error?.message || error
+    );
+
+    animevietsub = [];
+}
+
+if (!Array.isArray(animevietsub)) {
+    animevietsub = [];
+}
+
+console.log(
+    "[ANIMEVIETSUB] STREAM COUNT:",
+    animevietsub.length
+);
 
 // =====================================================
 // DEBUG — STREAM THỰC TẾ SAU FETCH
@@ -27365,6 +28457,8 @@ const directStreams = [
     ...phimhdcs,
 
     ...animehay,
+
+    ...animevietsub,
 
     nguoncClientStream
 
