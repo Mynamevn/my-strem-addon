@@ -18882,6 +18882,1856 @@ async function fetchAnimeHay(
     }
 }
 
+// ============================================================================
+// PRV-ANIMET — MOVINA PROVIDER ADAPTER + HYDRAX BYTE/RANGE HELPERS
+// Hợp nhất 7 block AnimeT.
+// Đặt ở cấp module, không đặt bên trong một handler khác.
+// ============================================================================
+
+const ANIMET_HYDRAX_FAKE_HOST = "hx.animet.local";
+const ANIMET_HYDRAX_REFERER = "https://abysscdn.com/";
+const ANIMET_HYDRAX_CHUNK_SIZE = 0x2000;
+const ANIMET_DEFAULT_BASE = "https://anime14.site";
+
+// ---------------------------------------------------------------------------
+// ANIMET — COMMON HELPERS
+// ---------------------------------------------------------------------------
+
+function animetDecodeEntities(value) {
+  return String(value ?? "")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => {
+      const code = parseInt(n, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    });
+}
+
+function animetStripTags(value) {
+  return animetDecodeEntities(
+    String(value ?? "")
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+  ).replace(/\s+/g, " ").trim();
+}
+
+function animetGetAttr(tag, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(
+    "\\b" + escaped + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
+    "i"
+  );
+  const match = re.exec(String(tag ?? ""));
+  return match
+    ? animetDecodeEntities(match[1] ?? match[2] ?? match[3] ?? "")
+    : "";
+}
+
+function animetAbsoluteUrl(value, base) {
+  const raw = animetDecodeEntities(String(value ?? ""))
+    .replace(/\\\//g, "/")
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\x26/gi, "&")
+    .replace(/&amp;/gi, "&")
+    .trim();
+
+  if (!raw || /^(?:javascript|data|blob):/i.test(raw)) return "";
+
+  try {
+    return new URL(raw, base).href;
+  } catch {
+    return "";
+  }
+}
+
+function animetUnique(items, keyFn = value => String(value)) {
+  const seen = new Set();
+  return items.filter(item => {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function animetIsFakeHydraxUrl(value) {
+  try {
+    return new URL(value).hostname.toLowerCase() === ANIMET_HYDRAX_FAKE_HOST;
+  } catch {
+    return false;
+  }
+}
+
+function animetMediaType(url) {
+  const clean = String(url ?? "").split(/[?#]/)[0].toLowerCase();
+
+  if (/\.m3u8$/.test(clean)) return "hls";
+  if (/\.mpd$/.test(clean)) return "dash";
+  if (/\.(?:mp4|mkv|webm|mov|m4v)$/.test(clean)) return "direct";
+  return "unknown";
+}
+
+// ---------------------------------------------------------------------------
+// ANIMET — HTTP REQUEST WITH TIMEOUT
+// ---------------------------------------------------------------------------
+
+async function animetRequest(url, options = {}) {
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new Error("AnimeT: fetch implementation không khả dụng");
+  }
+
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 18000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const headers = {
+      "User-Agent":
+        options.userAgent ||
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+      "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+      ...(options.headers || {}),
+    };
+
+    const response = await fetchImpl(url, {
+      method: options.method || "GET",
+      headers,
+      body: options.body,
+      redirect: "follow",
+      signal: controller.signal,
+    });
+
+    const body = options.responseType === "arrayBuffer"
+      ? Buffer.from(await response.arrayBuffer())
+      : await response.text();
+
+    return {
+      url: response.url || url,
+      status: response.status,
+      ok: response.ok,
+      headers: response.headers,
+      body,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ANIMET — DEAN EDWARDS PACKER
+// ---------------------------------------------------------------------------
+
+function animetUnpackPackedScripts(source) {
+  let text = String(source ?? "");
+
+  const packedPattern =
+    /eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*(?:r|d)\s*\)\s*\{[\s\S]*?\}\s*\(\s*(['"])([\s\S]*?)\1\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(['"])([\s\S]*?)\5\.split\(['"]\|['"]\)/g;
+
+  const decodeBase = (number, radix) => {
+    const alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let n = Number(number);
+    let out = "";
+
+    if (!Number.isFinite(n) || radix < 2 || radix > alphabet.length) return "";
+
+    do {
+      out = alphabet[n % radix] + out;
+      n = Math.floor(n / radix);
+    } while (n > 0);
+
+    return out;
+  };
+
+  // Lặp lại vì một script có thể chứa nhiều lớp packed.
+  for (let pass = 0; pass < 5; pass++) {
+    let changed = false;
+
+    text = text.replace(packedPattern, (whole, _q1, payload, radixRaw, countRaw, _q2, wordsRaw) => {
+      const radix = Number(radixRaw);
+      const count = Number(countRaw);
+      const words = wordsRaw.split("|");
+
+      if (!Number.isFinite(radix) || radix < 2 || radix > 62 ||
+          !Number.isFinite(count) || count > 10000) {
+        return whole;
+      }
+
+      let decoded = payload;
+
+      for (let i = count - 1; i >= 0; i--) {
+        const token = decodeBase(i, radix);
+        if (!token) continue;
+
+        const word = words[i] || token;
+        decoded = decoded.replace(
+          new RegExp("\\b" + token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "g"),
+          word
+        );
+      }
+
+      if (decoded !== payload) changed = true;
+      return decoded;
+    });
+
+    if (!changed) break;
+  }
+
+  return text;
+}
+
+
+/*
+ * PRV-ANIMET — HYDRAX DATA DECODE / URL COLLECTION
+ *
+ * DEX checkpoint:
+ *   datas="..."
+ *   Base64(datas) -> ISO-8859-1 JSON
+ *   fields: md5_id, user_id, slug, media
+ *   key: MD5("${user_id}:${slug}:${md5_id}") as ASCII hex
+ *   IV: first 16 bytes of key
+ *   cipher: AES-CTR / NoPadding
+ *
+ * STATUS:
+ *   Implemented from the supplied DEX checkpoint.
+ *   Must still be verified against real provider responses.
+ *   Does not by itself implement the complete Hydrax Range route.
+ */
+
+function animetHydraxDecodeDatas(html) {
+    const text = String(html || "");
+
+    // Support both quoted and whitespace-separated assignments.
+    const match = text.match(
+        /\bdatas\s*=\s*["']([^"']+)["']/i
+    );
+
+    if (!match) {
+        throw new Error("AnimeT Hydrax: datas Base64 not found");
+    }
+
+    let decoded;
+
+    try {
+        decoded = Buffer.from(match[1], "base64").toString("latin1");
+    } catch (error) {
+        throw new Error(
+            "AnimeT Hydrax: cannot decode datas Base64: " +
+            String(error?.message || error)
+        );
+    }
+
+    let payload;
+
+    try {
+        payload = JSON.parse(decoded);
+    } catch {
+        throw new Error(
+            "AnimeT Hydrax: decoded datas is not valid JSON"
+        );
+    }
+
+    if (
+        !payload ||
+        typeof payload !== "object" ||
+        Array.isArray(payload)
+    ) {
+        throw new Error("AnimeT Hydrax: unexpected datas payload");
+    }
+
+    return payload;
+}
+
+function animetHydraxDecryptMedia(payload) {
+    const crypto = require("crypto");
+
+    const md5Id = String(payload?.md5_id ?? "");
+    const userId = String(payload?.user_id ?? "");
+    const slug = String(payload?.slug ?? "");
+    const media = payload?.media;
+
+    if (
+        !md5Id ||
+        !userId ||
+        !slug ||
+        typeof media !== "string"
+    ) {
+        throw new Error(
+            "AnimeT Hydrax: missing md5_id/user_id/slug/media"
+        );
+    }
+
+    // DEX checkpoint:
+    // UTF-8 seed -> MD5 hex -> ASCII key bytes.
+    const seed = `${userId}:${slug}:${md5Id}`;
+
+    const keyHex = crypto
+        .createHash("md5")
+        .update(Buffer.from(seed, "utf8"))
+        .digest("hex");
+
+    const key = Buffer.from(keyHex, "ascii");
+    const iv = key.subarray(0, 16);
+
+    if (key.length !== 32 || iv.length !== 16) {
+        throw new Error("AnimeT Hydrax: invalid AES key/IV");
+    }
+
+    // The supplied checkpoint identifies media as ISO-8859-1 bytes.
+    const encrypted = Buffer.from(media, "latin1");
+
+    let decrypted;
+
+    try {
+        const decipher = crypto.createDecipheriv(
+            "aes-256-ctr",
+            key,
+            iv
+        );
+
+        decrypted = Buffer.concat([
+            decipher.update(encrypted),
+            decipher.final()
+        ]);
+    } catch (error) {
+        throw new Error(
+            "AnimeT Hydrax: AES-CTR decryption failed: " +
+            String(error?.message || error)
+        );
+    }
+
+    const candidates = [
+        decrypted.toString("utf8").replace(/\0+$/g, ""),
+        decrypted.toString("latin1").replace(/\0+$/g, "")
+    ];
+
+    for (const candidate of candidates) {
+        try {
+            return JSON.parse(candidate);
+        } catch {
+            // Try the alternate text decoding.
+        }
+    }
+
+    throw new Error(
+        "AnimeT Hydrax: decrypted media is not valid JSON"
+    );
+}
+
+function animetHydraxCollectUrls(
+    value,
+    out = [],
+    seen = new Set(),
+    depth = 0
+) {
+    if (value == null || depth > 12) return out;
+
+    const addUrl = candidate => {
+        let url = String(candidate || "").trim();
+
+        if (!url) return;
+
+        url = url.replace(/[),\]}]+$/g, "");
+
+        let parsed;
+
+        try {
+            parsed = new URL(url);
+        } catch {
+            return;
+        }
+
+        if (!/^https?:$/.test(parsed.protocol)) return;
+
+        // Never expose the fake interception host as a playable upstream.
+        if (
+            parsed.hostname.toLowerCase() === "hx.animet.local"
+        ) {
+            return;
+        }
+
+        if (seen.has(url)) return;
+
+        seen.add(url);
+        out.push(url);
+    };
+
+    if (typeof value === "string") {
+        const text = value.trim();
+
+        const matches = text.match(
+            /https?:\/\/[^"'<>\\\s]+/gi
+        ) || [];
+
+        for (const match of matches) {
+            addUrl(match);
+        }
+
+        // Also support a string that is itself a URL.
+        if (/^https?:\/\//i.test(text)) {
+            addUrl(text);
+        }
+
+        return out;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            animetHydraxCollectUrls(
+                item,
+                out,
+                seen,
+                depth + 1
+            );
+        }
+
+        return out;
+    }
+
+    if (typeof value === "object") {
+        const priority = [
+            "sources",
+            "file",
+            "url",
+            "src",
+            "link",
+            "raw",
+            "playlist",
+            "hls",
+            "mp4",
+            "1080p",
+            "720p",
+            "480p",
+            "sub",
+            "domains",
+            "data"
+        ];
+
+        for (const key of priority) {
+            if (
+                Object.prototype.hasOwnProperty.call(value, key)
+            ) {
+                animetHydraxCollectUrls(
+                    value[key],
+                    out,
+                    seen,
+                    depth + 1
+                );
+            }
+        }
+
+        for (const [key, child] of Object.entries(value)) {
+            if (!priority.includes(key)) {
+                animetHydraxCollectUrls(
+                    child,
+                    out,
+                    seen,
+                    depth + 1
+                );
+            }
+        }
+    }
+
+    return out;
+}
+
+
+// ANIMET / HYDRAX — TOKEN + RANGE READER + RESPONSE
+// Thay nhóm helper Hydrax tương ứng; giữ nguyên các helper chung,
+// animetHydraxFakeUrlCheckpoint, fetchAnimeT, adapter và registration.
+
+function animetHydraxToken(int1, long1, long2, int2, long3) {
+    const crypto = require("crypto");
+
+    const long1Text = String(long1);
+    const digitBytes = Buffer.alloc(long1Text.length);
+
+    for (let i = 0; i < long1Text.length; i++) {
+        digitBytes[i] = (long1Text.charCodeAt(i) - 0x30) & 0xff;
+    }
+
+    const md5Hex = crypto
+        .createHash("md5")
+        .update(digitBytes)
+        .digest("hex");
+
+    const key = Buffer.from(md5Hex, "ascii");
+    const iv = Buffer.from(key.subarray(0, 16));
+
+    const plaintext = Buffer.from(
+        `/mp4/${long2}/${int2}/${long1}/${long3}/${int1}`,
+        "utf8"
+    );
+
+    const cipher = crypto.createCipheriv("aes-256-ctr", key, iv);
+    const encrypted = Buffer.concat([
+        cipher.update(plaintext),
+        cipher.final()
+    ]);
+
+    const firstBase64 = encrypted
+        .toString("base64")
+        .replace(/=+$/, "");
+
+    return Buffer.from(firstBase64, "latin1")
+        .toString("base64")
+        .replace(/=+$/, "");
+}
+
+
+function animetHydraxParseRange(rangeHeader) {
+    if (!rangeHeader || typeof rangeHeader !== "string") {
+        return null;
+    }
+
+    const match = rangeHeader.trim().match(/^bytes=(\d*)-(\d*)$/i);
+
+    if (!match || (!match[1] && !match[2])) {
+        return { invalid: true };
+    }
+
+    // Suffix range: bytes=-500
+    if (!match[1]) {
+        const suffixLength = Number(match[2]);
+
+        if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+            return { invalid: true };
+        }
+
+        return {
+            suffix: true,
+            suffixLength
+        };
+    }
+
+    const start = Number(match[1]);
+    const end = match[2] ? Number(match[2]) : null;
+
+    if (
+        !Number.isSafeInteger(start) ||
+        start < 0 ||
+        (end !== null &&
+            (!Number.isSafeInteger(end) || end < start))
+    ) {
+        return { invalid: true };
+    }
+
+    return { start, end };
+}
+
+
+async function animetHydraxReadRange(
+    meta,
+    start,
+    end,
+    requestHeaders = {}
+) {
+    const CHUNK_SIZE = 0x2000;
+    const crypto = require("crypto");
+
+    if (!meta || typeof meta !== "object") {
+        throw new Error("Hydrax: thiếu metadata.");
+    }
+
+    const origin = String(meta.origin || "").replace(/\/+$/, "");
+
+    if (!/^https?:\/\//i.test(origin)) {
+        throw new Error("Hydrax: origin không hợp lệ.");
+    }
+
+    if (
+        !Number.isSafeInteger(start) ||
+        start < 0 ||
+        (end !== null &&
+            end !== undefined &&
+            (!Number.isSafeInteger(end) || end < start))
+    ) {
+        throw new Error("Hydrax: Range không hợp lệ.");
+    }
+
+    const token = animetHydraxToken(
+        meta.int1,
+        meta.long1,
+        meta.long2,
+        meta.int2,
+        meta.long3
+    );
+
+    const url =
+        `${origin}/sora/${encodeURIComponent(String(meta.long1))}/${token}`;
+
+    const fetchImpl =
+        typeof meta.fetchImpl === "function"
+            ? meta.fetchImpl
+            : globalThis.fetch;
+
+    if (typeof fetchImpl !== "function") {
+        throw new Error("Hydrax: không có fetch implementation.");
+    }
+
+    const chunks = [];
+    let cursor = start;
+    let expectedEnd =
+        end === null || end === undefined ? null : end;
+
+    while (expectedEnd === null || cursor <= expectedEnd) {
+        const chunkEnd =
+            expectedEnd === null
+                ? cursor + CHUNK_SIZE - 1
+                : Math.min(cursor + CHUNK_SIZE - 1, expectedEnd);
+
+        const headers = {
+            ...requestHeaders,
+            Referer: ANIMET_HYDRAX_REFERER,
+            Range: `bytes=${cursor}-${chunkEnd}`
+        };
+
+        delete headers.range;
+
+        const response = await fetchImpl(url, {
+            method: "GET",
+            headers,
+            redirect: "follow"
+        });
+
+        if (response.status !== 206) {
+            throw new Error(
+                `Hydrax: upstream phải trả 206 cho Range; nhận ${response.status}.`
+            );
+        }
+
+        const contentRange =
+            response.headers?.get?.("content-range") || "";
+
+        const rangeMatch = contentRange.match(
+            /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i
+        );
+
+        if (!rangeMatch) {
+            throw new Error(
+                "Hydrax: thiếu hoặc sai Content-Range từ upstream."
+            );
+        }
+
+        const actualStart = Number(rangeMatch[1]);
+        const actualEnd = Number(rangeMatch[2]);
+
+        if (
+            actualStart !== cursor ||
+            actualEnd < actualStart ||
+            actualEnd > chunkEnd
+        ) {
+            throw new Error(
+                `Hydrax: Content-Range không khớp yêu cầu ${cursor}-${chunkEnd}.`
+            );
+        }
+
+        const bytes = Buffer.from(await response.arrayBuffer());
+        const expectedLength = actualEnd - actualStart + 1;
+
+        if (bytes.length !== expectedLength) {
+            throw new Error(
+                `Hydrax: độ dài chunk sai; cần ${expectedLength}, nhận ${bytes.length}.`
+            );
+        }
+
+        chunks.push(bytes);
+
+        if (rangeMatch[3] !== "*") {
+            const discoveredTotal = Number(rangeMatch[3]);
+
+            if (
+                !Number.isSafeInteger(discoveredTotal) ||
+                discoveredTotal <= actualEnd
+            ) {
+                throw new Error("Hydrax: tổng kích thước Content-Range không hợp lệ.");
+            }
+
+            if (
+                meta.totalSize != null &&
+                Number(meta.totalSize) !== discoveredTotal
+            ) {
+                throw new Error("Hydrax: totalSize không khớp upstream.");
+            }
+
+            meta.totalSize = discoveredTotal;
+
+            if (expectedEnd === null) {
+                expectedEnd = discoveredTotal - 1;
+            }
+        }
+
+        cursor = actualEnd + 1;
+
+        // Server kết thúc sớm: không được giả vờ đã đọc đủ dữ liệu.
+        if (actualEnd < chunkEnd) {
+            if (rangeMatch[3] !== "*" && cursor < Number(rangeMatch[3])) {
+                throw new Error("Hydrax: upstream trả chunk ngắn bất thường.");
+            }
+            break;
+        }
+
+        if (expectedEnd !== null && cursor > expectedEnd) {
+            break;
+        }
+    }
+
+    return Buffer.concat(chunks);
+}
+
+
+function animetHydraxRangeResponse(
+    request,
+    bytes,
+    start,
+    end,
+    totalSize
+) {
+    const body = Buffer.isBuffer(bytes)
+        ? bytes
+        : Buffer.from(bytes || []);
+
+    const total =
+        Number.isSafeInteger(Number(totalSize)) && Number(totalSize) >= 0
+            ? Number(totalSize)
+            : null;
+
+    const headers = {
+        "content-type": "video/mp4",
+        "accept-ranges": "bytes",
+        "content-length": String(body.length),
+        "content-range":
+            `bytes ${start}-${end}/${total === null ? "*" : total}`
+    };
+
+    return {
+        status: 206,
+        statusCode: 206,
+        headers,
+        body
+    };
+}
+
+
+async function animetHydraxResponse(request, meta) {
+    const headers = request?.headers || {};
+    const rawRange = headers.range || headers.Range || null;
+    const parsed = animetHydraxParseRange(rawRange);
+
+    if (parsed?.invalid) {
+        return {
+            status: 416,
+            statusCode: 416,
+            headers: {
+                "content-range": `bytes */${meta?.totalSize ?? "*"}`
+            },
+            body: Buffer.alloc(0)
+        };
+    }
+
+    if (parsed?.suffix) {
+        const total = Number(meta?.totalSize);
+
+        if (!Number.isSafeInteger(total) || total <= 0) {
+            return {
+                status: 416,
+                statusCode: 416,
+                headers: {
+                    "content-range": "bytes */*"
+                },
+                body: Buffer.alloc(0)
+            };
+        }
+
+        const length = Math.min(parsed.suffixLength, total);
+        const start = total - length;
+        const end = total - 1;
+
+        const bytes = await animetHydraxReadRange(
+            meta,
+            start,
+            end,
+            headers
+        );
+
+        return animetHydraxRangeResponse(
+            request,
+            bytes,
+            start,
+            end,
+            total
+        );
+    }
+
+    if (parsed) {
+        const start = parsed.start;
+        let end = parsed.end;
+
+        if (meta?.totalSize != null) {
+            const total = Number(meta.totalSize);
+
+            if (
+                !Number.isSafeInteger(total) ||
+                total <= 0 ||
+                start >= total
+            ) {
+                return {
+                    status: 416,
+                    statusCode: 416,
+                    headers: {
+                        "content-range": `bytes */${meta.totalSize}`
+                    },
+                    body: Buffer.alloc(0)
+                };
+            }
+
+            end = end === null ? total - 1 : Math.min(end, total - 1);
+        } else if (end === null) {
+            // Không biết kích thước file: chỉ đọc một chunk,
+            // không được giả định đây là toàn bộ video.
+            end = start + 0x1fff;
+        }
+
+        const bytes = await animetHydraxReadRange(
+            meta,
+            start,
+            end,
+            headers
+        );
+
+        return animetHydraxRangeResponse(
+            request,
+            bytes,
+            start,
+            start + bytes.length - 1,
+            meta?.totalSize
+        );
+    }
+
+    // Không có Range: hiện chỉ trả một chunk đầu tiên.
+    // Đây KHÔNG phải phản hồi 200 đầy đủ cho toàn bộ video.
+    const start = 0;
+    const end = 0x1fff;
+
+    const bytes = await animetHydraxReadRange(
+        meta,
+        start,
+        end,
+        headers
+    );
+
+    return animetHydraxRangeResponse(
+        request,
+        bytes,
+        start,
+        start + bytes.length - 1,
+        meta?.totalSize
+    );
+}
+
+
+// ---------------------------------------------------------------------------
+// ANIMET — FAKE URL METADATA CHECKPOINT
+// Chỉ trích xuất metadata nếu URL có dạng phù hợp; không tự khẳng định
+// cấu trúc URL giả đã được xác minh.
+// ---------------------------------------------------------------------------
+
+function animetHydraxFakeUrlCheckpoint(fakeUrl) {
+  try {
+    const parsed = new URL(fakeUrl);
+    if (parsed.hostname.toLowerCase() !== ANIMET_HYDRAX_FAKE_HOST) {
+      return null;
+    }
+
+    return {
+      fakeUrl: parsed.href,
+      pathname: parsed.pathname,
+      segments: parsed.pathname.split("/").filter(Boolean),
+      status: "METADATA_ONLY_NEEDS_BYTECODE_CONFIRMATION",
+      note:
+        "Chưa suy ra upstream origin hoặc token từ URL giả nếu chưa xác nhận cấu trúc segment.",
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PRV-ANIMET — PROVIDER ADAPTER
+// API:
+//   fetchAnimeT(query, { action: "search" })
+//   fetchAnimeT(url,   { action: "load" })
+//   fetchAnimeT(url,   { action: "links" })
+// ---------------------------------------------------------------------------
+
+async function fetchAnimeT(input, options = {}) {
+  const action = String(
+    options.action || options.mode || "links"
+  ).toLowerCase();
+
+  const BASE = String(
+    options.baseUrl || ANIMET_DEFAULT_BASE
+  ).replace(/\/+$/, "");
+
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 18000);
+  const maxDepth = Math.max(0, Math.min(8, Number(options.maxDepth) || 4));
+  const maxPages = Math.max(1, Math.min(40, Number(options.maxPages) || 12));
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+
+  const inputObject = input && typeof input === "object" ? input : null;
+  const query = String(
+    options.query ||
+    inputObject?.query ||
+    inputObject?.search ||
+    (typeof input === "string" ? input : "")
+  ).trim();
+
+  const inputUrl = String(
+    options.url ||
+    inputObject?.url ||
+    inputObject?.link ||
+    (typeof input === "string" && /^https?:\/\//i.test(input) ? input : "")
+  ).trim();
+
+  const cache = new Map();
+
+  async function request(url, referer) {
+    const absolute = animetAbsoluteUrl(url, BASE);
+    if (!absolute) throw new Error("AnimeT: URL không hợp lệ");
+
+    const cacheKey = `${absolute}\n${referer || ""}`;
+    if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+    const result = await animetRequest(absolute, {
+      fetchImpl,
+      timeoutMs,
+      headers: referer ? { Referer: referer } : {},
+    });
+
+    if (!result.ok) {
+      throw new Error(`AnimeT HTTP ${result.status}: ${absolute}`);
+    }
+
+    cache.set(cacheKey, result);
+    return result;
+  }
+
+  function extractDirectStreams(html, pageUrl) {
+    const source = animetUnpackPackedScripts(String(html ?? ""));
+    const output = [];
+
+    // URL xuất hiện trực tiếp trong HTML hoặc script.
+    const patterns = [
+      /https?:\\?\/\\?\/[^\s"'<>\\]+?\.(?:m3u8|mp4|mkv|mpd|webm)(?:\?[^\s"'<>\\]*)?/gi,
+      /(?:file|src|source|hls|url)\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4|mkv|mpd|webm)(?:\?[^"']*)?)["']/gi,
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+
+      while ((match = pattern.exec(source))) {
+        const raw = match[1] || match[0];
+        const url = animetAbsoluteUrl(raw.replace(/\\\//g, "/"), pageUrl);
+
+        if (!url || animetIsFakeHydraxUrl(url)) continue;
+
+        output.push({
+          name: "AnimeT direct",
+          title: "AnimeT direct",
+          url,
+          type: animetMediaType(url),
+          source: "AnimeT",
+          headers: { Referer: pageUrl },
+        });
+      }
+    }
+
+    return animetUnique(output, item => item.url);
+  }
+
+  function extractIframes(html, pageUrl) {
+    const output = [];
+    const source = String(html ?? "");
+    const tags = source.match(/<iframe\b[^>]*>/gi) || [];
+
+    for (const tag of tags) {
+      const raw =
+        animetGetAttr(tag, "src") ||
+        animetGetAttr(tag, "data-src") ||
+        animetGetAttr(tag, "data-lazy-src");
+
+      const url = animetAbsoluteUrl(raw, pageUrl);
+      if (!url) continue;
+
+      output.push({
+        url,
+        type: /playhydrax\.com/i.test(url)
+          ? "hydrax"
+          : /ssplay/i.test(url)
+            ? "ssplay"
+            : /anime3s/i.test(url)
+              ? "anime3s"
+              : /abysscdn/i.test(url)
+                ? "abysscdn"
+                : "iframe",
+        referer: pageUrl,
+      });
+    }
+
+    // Một số player nhúng URL trong biến JavaScript thay vì iframe.
+    const patterns = [
+      /(?:src|file|url|link|embed)\s*[:=]\s*["'](https?:[^"' ]+)["']/gi,
+      /["'](https?:\\?\/\\?\/[^"' ]*(?:playhydrax\.com|ssplay|anime3s|abysscdn)[^"' ]*)["']/gi,
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+
+      while ((match = pattern.exec(source))) {
+        const url = animetAbsoluteUrl(match[1], pageUrl);
+        if (!url) continue;
+
+        output.push({
+          url,
+          type: /playhydrax\.com/i.test(url)
+            ? "hydrax"
+            : /ssplay/i.test(url)
+              ? "ssplay"
+              : /anime3s/i.test(url)
+                ? "anime3s"
+                : /abysscdn/i.test(url)
+                  ? "abysscdn"
+                  : "iframe",
+          referer: pageUrl,
+        });
+      }
+    }
+
+    return animetUnique(output, item => item.url);
+  }
+
+  function extractServers(html, pageUrl) {
+    const output = [];
+    const source = String(html ?? "");
+
+    const blocks = source.match(
+      /<(?:li|div|button|a)\b[^>]*(?:server|player|episode-server)[^>]*>[\s\S]*?<\/(?:li|div|button|a)>/gi
+    ) || [];
+
+    for (const block of blocks) {
+      const tag = /^<[^>]+>/.exec(block)?.[0] || "";
+      const raw =
+        animetGetAttr(tag, "data-link") ||
+        animetGetAttr(tag, "data-src") ||
+        animetGetAttr(tag, "data-url") ||
+        animetGetAttr(tag, "href");
+
+      const url = animetAbsoluteUrl(raw, pageUrl);
+      if (!url) continue;
+
+      output.push({
+        name:
+          animetGetAttr(tag, "data-name") ||
+          animetStripTags(block).slice(0, 80) ||
+          "Server",
+        url,
+        referer: pageUrl,
+      });
+    }
+
+    return animetUnique(output, item => item.url);
+  }
+
+  function parseSearchResults(html, pageUrl) {
+    const source = String(html ?? "");
+    const output = [];
+    const anchorPattern = /<a\b[^>]*>[\s\S]*?<\/a>/gi;
+    let match;
+
+    while ((match = anchorPattern.exec(source))) {
+      const block = match[0];
+      const openTag = /^<a\b[^>]*>/i.exec(block)?.[0] || "";
+      const href = animetGetAttr(openTag, "href");
+      const url = animetAbsoluteUrl(href, pageUrl);
+
+      if (!url || !/anime14\.site/i.test(new URL(url).hostname)) continue;
+      if (/tim-kiem|search|category|tag|\/page\/\d+/i.test(url)) continue;
+
+      const title =
+        animetGetAttr(openTag, "title") ||
+        animetGetAttr(openTag, "data-title") ||
+        animetStripTags(block);
+
+      if (!title || title.length < 2) continue;
+
+      const imgTag = /<img\b[^>]*>/i.exec(block)?.[0] || "";
+      const poster = animetAbsoluteUrl(
+        animetGetAttr(imgTag, "data-src") ||
+        animetGetAttr(imgTag, "data-lazy-src") ||
+        animetGetAttr(imgTag, "src"),
+        pageUrl
+      );
+
+      output.push({
+        id: url,
+        url,
+        title,
+        name: title,
+        poster: poster || undefined,
+        type: "series",
+        source: "AnimeT",
+      });
+    }
+
+    return animetUnique(output, item => item.url);
+  }
+
+  function parseEpisodes(html, pageUrl) {
+    const source = String(html ?? "");
+    const output = [];
+    const anchors = source.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) || [];
+
+    for (const block of anchors) {
+      const openTag = /^<a\b[^>]*>/i.exec(block)?.[0] || "";
+      const href = animetGetAttr(openTag, "href");
+      const url = animetAbsoluteUrl(href, pageUrl);
+      const title =
+        animetGetAttr(openTag, "title") ||
+        animetStripTags(block);
+
+      if (!url || !title) continue;
+
+      if (
+        /tập|tap|episode|ep(?:isode)?[\s._-]*\d+/i.test(title) ||
+        /\/(?:tap|episode|ep)[-/\d]/i.test(url)
+      ) {
+        output.push({
+          id: url,
+          url,
+          title,
+          name: title,
+          type: "episode",
+          source: "AnimeT",
+        });
+      }
+    }
+
+    return animetUnique(output, item => item.url);
+  }
+
+  
+async function resolvePageTree(pageUrl, referer, state, depth = 0) {
+    if (
+        state.pages >= maxPages ||
+        depth > maxDepth ||
+        state.visited.has(pageUrl)
+    ) {
+        return;
+    }
+
+    state.visited.add(pageUrl);
+    state.pages++;
+
+    let page;
+
+    try {
+        page = await request(pageUrl, referer);
+    } catch (error) {
+        state.errors.push({
+            url: pageUrl,
+            stage: "request",
+            error: String(error?.message || error),
+        });
+        return;
+    }
+
+    state.pagesFound.push(page.url);
+
+    // ------------------------------------------------------------
+    // 1. Trích xuất direct media từ HTML/JavaScript ban đầu.
+    // ------------------------------------------------------------
+    try {
+        state.sources.push(
+            ...extractDirectStreams(page.body, page.url)
+        );
+    } catch (error) {
+        state.errors.push({
+            url: page.url,
+            stage: "direct-extraction",
+            error: String(error?.message || error),
+        });
+    }
+
+    // ------------------------------------------------------------
+    // 2. Giải mã JavaScript đã pack rồi quét lại URL và iframe.
+    // ------------------------------------------------------------
+    let unpacked = page.body;
+
+    try {
+        unpacked = animetUnpackPackedScripts(page.body);
+
+        if (typeof unpacked !== "string") {
+            unpacked = page.body;
+        }
+
+        if (unpacked !== page.body) {
+            state.sources.push(
+                ...extractDirectStreams(unpacked, page.url)
+            );
+        }
+    } catch (error) {
+        state.errors.push({
+            url: page.url,
+            stage: "packed-script",
+            error: String(error?.message || error),
+        });
+
+        unpacked = page.body;
+    }
+
+    // ------------------------------------------------------------
+    // 3. Đọc URL media nằm trong JSON lồng nhau.
+    // Chỉ nhận các URL có định dạng media được nhận diện.
+    // ------------------------------------------------------------
+    const jsonCandidates = [];
+
+    try {
+        const jsonPatterns = [
+            /(?:var\s+)?(?:player|video|sources|config|options)\s*=\s*(\{[\s\S]*?\})\s*;/gi,
+            /data-player\s*=\s*["']([^"']+)["']/gi,
+        ];
+
+        for (const content of [page.body, unpacked]) {
+            for (const pattern of jsonPatterns) {
+                pattern.lastIndex = 0;
+
+                let match;
+
+                while ((match = pattern.exec(String(content || "")))) {
+                    if (match[1]) {
+                        jsonCandidates.push(match[1]);
+                    }
+                }
+            }
+        }
+
+        const seenJsonMedia = new Set();
+
+        const walkJson = (value, baseUrl) => {
+            if (typeof value === "string") {
+                const candidate = value.trim();
+
+                if (
+                    !/^https?:\/\//i.test(candidate) &&
+                    !candidate.startsWith("/")
+                ) {
+                    return;
+                }
+
+                const url = animetAbsoluteUrl(candidate, baseUrl);
+
+                if (!url || seenJsonMedia.has(url)) return;
+
+                const type = animetMediaType(url);
+
+                if (type === "unknown") return;
+                if (animetIsFakeHydraxUrl(url)) return;
+
+                seenJsonMedia.add(url);
+
+                state.sources.push({
+                    name: "AnimeT JSON",
+                    title: "AnimeT JSON",
+                    url,
+                    type,
+                    source: "AnimeT",
+                    headers: {
+                        Referer: baseUrl,
+                    },
+                });
+
+                return;
+            }
+
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    walkJson(item, baseUrl);
+                }
+
+                return;
+            }
+
+            if (value && typeof value === "object") {
+                for (const child of Object.values(value)) {
+                    walkJson(child, baseUrl);
+                }
+            }
+        };
+
+        for (const candidate of jsonCandidates) {
+            try {
+                const normalized = animetDecodeEntities(candidate)
+                    .replace(/\\\//g, "/");
+
+                const parsed = JSON.parse(normalized);
+
+                walkJson(parsed, page.url);
+            } catch {
+                // JSON không hợp lệ: bỏ qua và tiếp tục xử lý player.
+            }
+        }
+    } catch (error) {
+        state.errors.push({
+            url: page.url,
+            stage: "json-extraction",
+            error: String(error?.message || error),
+        });
+    }
+
+    // ------------------------------------------------------------
+    // 4. Thu thập iframe/player từ HTML gốc và script đã unpack.
+    // ------------------------------------------------------------
+    let nested = [];
+
+    try {
+        const originalFrames = extractIframes(page.body, page.url);
+        const unpackedFrames = unpacked !== page.body
+            ? extractIframes(unpacked, page.url)
+            : [];
+
+        const uniqueFrames = new Map();
+
+        for (const item of [...originalFrames, ...unpackedFrames]) {
+            if (item?.url && !uniqueFrames.has(item.url)) {
+                uniqueFrames.set(item.url, item);
+            }
+        }
+
+        nested = [...uniqueFrames.values()];
+        state.players.push(...nested);
+    } catch (error) {
+        state.errors.push({
+            url: page.url,
+            stage: "iframe-extraction",
+            error: String(error?.message || error),
+        });
+    }
+
+    // ------------------------------------------------------------
+    // 5. HYDRAX: dùng thuật toán giải mã đã có trong helper.
+    // Không thay thế bằng cách thử key/IV phỏng đoán.
+    // ------------------------------------------------------------
+    if (
+        /playhydrax\.com/i.test(pageUrl) ||
+        /playhydrax\.com/i.test(page.url)
+    ) {
+        let datas = null;
+        let decrypted = null;
+
+        try {
+            datas = animetHydraxDecodeDatas(page.body);
+
+            if (datas) {
+                decrypted = animetHydraxDecryptMedia(datas);
+            }
+
+            state.checkpoints.push({
+                type: "hydrax",
+                url: page.url,
+                datasFound: Boolean(datas),
+                mediaDecrypted: Boolean(decrypted),
+            });
+
+            if (decrypted) {
+                const mediaUrls = animetHydraxCollectUrls(
+                    decrypted.media
+                );
+
+                for (const url of mediaUrls) {
+                    if (!url || animetIsFakeHydraxUrl(url)) continue;
+
+                    const type = animetMediaType(url);
+
+                    if (type === "unknown") continue;
+
+                    state.sources.push({
+                        name: "AnimeT Hydrax",
+                        title: "AnimeT Hydrax",
+                        url,
+                        type,
+                        source: "AnimeT",
+                        headers: {
+                            Referer: ANIMET_HYDRAX_REFERER,
+                        },
+                    });
+                }
+            }
+        } catch (error) {
+            state.checkpoints.push({
+                type: "hydrax",
+                url: page.url,
+                datasFound: Boolean(datas),
+                mediaDecrypted: false,
+                error: String(error?.message || error),
+            });
+
+            state.errors.push({
+                url: page.url,
+                stage: "hydrax-decrypt",
+                error: String(error?.message || error),
+            });
+
+            console.warn(
+                "[PRV-ANIMET] Hydrax resolver failed:",
+                String(error?.message || error)
+            );
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 6. Duyệt player lồng nhau.
+    // Dùng chung state để maxPages được áp dụng toàn bộ cây.
+    // ------------------------------------------------------------
+    for (const item of nested) {
+        if (state.pages >= maxPages) break;
+        if (!item?.url || state.visited.has(item.url)) continue;
+
+        await resolvePageTree(
+            item.url,
+            item.referer || page.url,
+            state,
+            depth + 1
+        );
+    }
+}
+
+
+  // -------------------------------------------------------------------------
+  // SEARCH
+  // -------------------------------------------------------------------------
+
+  if (action === "search") {
+    if (!query) {
+      return {
+        provider: "AnimeT",
+        action,
+        results: [],
+        error: "Thiếu từ khóa tìm kiếm.",
+      };
+    }
+
+    const searchUrls = [
+      `${BASE}/tim-kiem/${encodeURIComponent(query)}/`,
+      `${BASE}/?s=${encodeURIComponent(query)}`,
+    ];
+
+    const results = [];
+    const errors = [];
+
+    for (const url of searchUrls) {
+      try {
+        const page = await request(url);
+        results.push(...parseSearchResults(page.body, page.url));
+        if (results.length) break;
+      } catch (error) {
+        errors.push(String(error?.message || error));
+      }
+    }
+
+    const uniqueResults = animetUnique(results, item => item.url);
+
+    return {
+      provider: "AnimeT",
+      action,
+      query,
+      results: uniqueResults,
+      items: uniqueResults,
+      errors,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // LOAD — SERIES INFO + EPISODES
+  // -------------------------------------------------------------------------
+
+  if (action === "load" || action === "info") {
+    if (!inputUrl) {
+      return {
+        provider: "AnimeT",
+        action,
+        error: "Thiếu URL anime.",
+      };
+    }
+
+    const page = await request(inputUrl);
+    const title =
+      animetStripTags(
+        /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(page.body)?.[1] ||
+        /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(page.body)?.[1] ||
+        ""
+      );
+
+    const posterTag =
+      /<img\b[^>]*(?:poster|thumbnail|cover)[^>]*>/i.exec(page.body)?.[0] ||
+      /<img\b[^>]*>/i.exec(page.body)?.[0] ||
+      "";
+
+    const poster = animetAbsoluteUrl(
+      animetGetAttr(posterTag, "data-src") ||
+      animetGetAttr(posterTag, "src"),
+      page.url
+    );
+
+    const description =
+      animetStripTags(
+        /<(?:div|p)\b[^>]*(?:description|summary|content)[^>]*>([\s\S]*?)<\/(?:div|p)>/i.exec(page.body)?.[1] ||
+        ""
+      );
+
+    const episodes = parseEpisodes(page.body, page.url);
+
+    return {
+      provider: "AnimeT",
+      action: "load",
+      url: page.url,
+      id: page.url,
+      title: title || page.url,
+      name: title || page.url,
+      poster: poster || undefined,
+      description: description || undefined,
+      episodes,
+      metadata: {
+        title: title || page.url,
+        poster: poster || undefined,
+        description: description || undefined,
+        episodeCount: episodes.length,
+      },
+      checkpoint: {
+        pageLoaded: true,
+        episodesFound: episodes.length,
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // LINKS — EPISODE -> SERVERS / EMBEDS -> DIRECT MEDIA
+  // -------------------------------------------------------------------------
+
+  if (action === "links" || action === "resolve" || action === "loadlinks") {
+    if (!inputUrl) {
+      return {
+        provider: "AnimeT",
+        action: "links",
+        sources: [],
+        error: "Thiếu URL tập phim.",
+      };
+    }
+
+    const episodePage = await request(inputUrl);
+    const state = {
+      depth: 0,
+      pages: 0,
+      visited: new Set(),
+      sources: [],
+      players: [],
+      pagesFound: [],
+      checkpoints: [],
+      errors: [],
+    };
+
+    state.pagesFound.push(episodePage.url);
+    state.sources.push(...extractDirectStreams(episodePage.body, episodePage.url));
+
+    const playerHints = extractIframes(episodePage.body, episodePage.url);
+    const servers = extractServers(episodePage.body, episodePage.url);
+
+    state.players.push(...playerHints);
+
+    // Nếu có server link riêng, đưa vào danh sách resolver.
+    const candidates = animetUnique(
+      [
+        ...playerHints,
+        ...servers.map(server => ({
+          url: server.url,
+          type: /playhydrax\.com/i.test(server.url) ? "hydrax" : "server",
+          referer: server.referer || episodePage.url,
+        })),
+      ],
+      item => item.url
+    );
+
+    for (const candidate of candidates) {
+      if (state.pages >= maxPages) break;
+
+      await resolvePageTree(
+    candidate.url,
+    candidate.referer || episodePage.url,
+    state,
+    1
+);
+    }
+
+    const sources = animetUnique(
+      state.sources.filter(source =>
+        source.url &&
+        !animetIsFakeHydraxUrl(source.url) &&
+        animetMediaType(source.url) !== "unknown"
+      ),
+      source => source.url
+    );
+
+    const players = animetUnique(state.players, player => player.url);
+
+    return {
+      provider: "AnimeT",
+      action: "links",
+      url: episodePage.url,
+      sources,
+      streams: sources,
+      servers,
+      players,
+      pages: state.pagesFound,
+      errors: state.errors,
+      checkpoints: state.checkpoints,
+      _checkpoint: {
+        provider: "AnimeT",
+        episodePageLoaded: true,
+        playerCount: players.length,
+        serverCount: servers.length,
+        sourceCount: sources.length,
+        hydrax: state.checkpoints,
+        visitedPageCount: state.pages,
+        notes: [
+          "Không trả hx.animet.local như direct media.",
+          "Hydrax datas/media chỉ được đánh dấu giải mã thành công khi JSON hợp lệ.",
+          "Hydrax token và Range cần được kiểm chứng với upstream thực tế.",
+          "AJAX /ajax/player và interceptor bytecode chưa được tái tạo hoàn chỉnh.",
+        ],
+      },
+    };
+  }
+
+  return {
+    provider: "AnimeT",
+    action,
+    error: `AnimeT: action không được hỗ trợ: ${action}`,
+    supportedActions: ["search", "load", "links"],
+  };
+}
+
+// ============================================================================
+// END PRV-ANIMET
+// ============================================================================
+
+// ============================================================
+// MOVINA — ANIMET PROVIDER ADAPTER
+// Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
+// ============================================================
+
+async function fetchAnimeTProvider(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 1,
+    streamType = "series"
+) {
+    const TAG = "[MOVINA-ANIMET]";
+
+    try {
+        const query = String(movieName || "").trim();
+        if (!query) return [];
+
+        // 1. Tìm anime
+        const searchResult = await fetchAnimeT(query, {
+            action: "search"
+        });
+
+        const candidates = Array.isArray(searchResult)
+            ? searchResult
+            : (
+                searchResult?.results ||
+                searchResult?.items ||
+                []
+            );
+
+        if (!Array.isArray(candidates) || !candidates.length) {
+            console.log(TAG, "SEARCH EMPTY:", query);
+            return [];
+        }
+
+        // Ưu tiên kết quả có tiêu đề khớp truy vấn.
+        const norm = value => String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim();
+
+        const wanted = norm(query);
+        const detailCandidate =
+            candidates.find(item =>
+                norm(item.title || item.name) === wanted
+            ) ||
+            candidates.find(item => {
+                const title = norm(item.title || item.name);
+                return title && (
+                    title.includes(wanted) ||
+                    wanted.includes(title)
+                );
+            }) ||
+            candidates[0];
+
+        const detailUrl = detailCandidate?.url;
+        if (!detailUrl) {
+            console.log(TAG, "DETAIL URL MISSING:", query);
+            return [];
+        }
+
+        // 2. Tải trang thông tin và danh sách tập
+        const detail = await fetchAnimeT(detailUrl, {
+            action: "load"
+        });
+
+        const episodes = Array.isArray(detail?.episodes)
+            ? detail.episodes
+            : [];
+
+        let episodeUrl = detailUrl;
+
+        if (
+            streamType !== "movie" &&
+            episodes.length
+        ) {
+            const wantedEpisode = Math.max(
+                1,
+                Number(episodeNumber) || 1
+            );
+
+            const episode = episodes.find(item => {
+                const label = String(
+                    item.name || item.title || ""
+                );
+
+                const match = label.match(
+                    /(?:tập|episode|ep)\s*\.?\s*(\d+)/i
+                );
+
+                return match &&
+                    Number(match[1]) === wantedEpisode;
+            }) || episodes[wantedEpisode - 1];
+
+            if (episode?.url) {
+                episodeUrl = episode.url;
+            } else {
+                console.log(
+                    TAG,
+                    "EPISODE URL MISSING:",
+                    wantedEpisode
+                );
+                return [];
+            }
+        }
+
+        // 3. Lấy link từ trang tập
+        const linkResult = await fetchAnimeT(episodeUrl, {
+            action: "links"
+        });
+
+        const candidatesStreams =
+            linkResult?.normalized ||
+            linkResult?.sources ||
+            linkResult?.streams ||
+            [];
+
+        if (!Array.isArray(candidatesStreams)) {
+            console.log(TAG, "INVALID LINK RESULT");
+            return [];
+        }
+
+        // 4. Chỉ đưa URL HTTP(S) thực tế ra danh sách stream.
+        // URL giả hx.animet.local không phải direct stream.
+        const seen = new Set();
+        const streams = [];
+
+        for (const item of candidatesStreams) {
+            if (!item || typeof item !== "object") continue;
+
+            const url = String(item.url || item.link || "").trim();
+
+            if (!/^https?:\/\//i.test(url)) continue;
+            if (/^https?:\/\/hx\.animet\.local(?:\/|$)/i.test(url)) {
+                continue;
+            }
+
+            if (seen.has(url)) continue;
+            seen.add(url);
+
+            const rawType = String(item.type || "").toLowerCase();
+            const type = /m3u8|hls/.test(rawType)
+                ? "m3u8"
+                : "video";
+
+            streams.push({
+                name: item.name || item.serverName || "AnimeT",
+                title: item.title ||
+                    `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""}`,
+                url,
+                type,
+                provider: "animet",
+                source: "animet",
+                behaviorHints: item.behaviorHints,
+                headers: item.headers || {},
+                subtitles: item.subtitles || []
+            });
+        }
+
+        console.log(TAG, "STREAM COUNT:", streams.length);
+        return streams;
+    } catch (error) {
+        console.error(TAG, "ERROR:", error?.stack || error?.message || error);
+        return [];
+    }
+}
+
+// ============================================================
+// MOVINA — ANIMET PROVIDER REGISTRATION
+// ============================================================
+
+registerMovinaProvider({
+    id: "animet",
+    name: "AnimeT",
+    category: "cs3",
+    kind: "scrape",
+    sourceUrl: "https://anime14.site",
+    enabled: true,
+
+    capabilities: {
+        search: true,
+        load: true,
+        episodes: true,
+        links: true
+    },
+
+    adapter: fetchAnimeTProvider,
+
+    metadata: {
+        providerType: "anime",
+        streamPipeline: "direct-stream-adapter"
+    }
+});
+
+// ============================================================
+// END MOVINA — ANIMET PROVIDER REGISTRATION
+// ============================================================
+
 // ============================================================
 // BL-54. PHIMLONGTIENG PROVIDER
 // ============================================================
@@ -27294,6 +29144,37 @@ console.log(
         : 0
 );
 
+// =====================================================
+// MOVINA — ANIMET STREAM CALL
+// =====================================================
+
+let animet = [];
+
+try {
+    animet = await fetchAnimeTProvider(
+        movieName,
+        movieYear,
+        seasonNumber,
+        episodeNumber,
+        streamType
+    );
+
+    if (!Array.isArray(animet)) {
+        animet = [];
+    }
+} catch (e) {
+    console.error(
+        "[MOVINA-ANIMET] FETCH ERROR:",
+        e?.stack || e?.message || e
+    );
+
+    animet = [];
+}
+
+console.log(
+    "[MOVINA-ANIMET] STREAM COUNT:",
+    animet.length
+);
 
 // =====================================================
 // DEBUG — STREAM THỰC TẾ SAU FETCH
@@ -27365,6 +29246,8 @@ const directStreams = [
     ...phimhdcs,
 
     ...animehay,
+
+    ...animet,
 
     nguoncClientStream
 
