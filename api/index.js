@@ -19835,26 +19835,39 @@ async function fetchAnimeT(input, options = {}) {
 
   const cache = new Map();
 
-  async function request(url, referer) {
-    const absolute = animetAbsoluteUrl(url, BASE);
-    if (!absolute) throw new Error("AnimeT: URL không hợp lệ");
+      async function request(url, referer) {
+      const absolute = animetAbsoluteUrl(url, BASE);
+      const effectiveReferer = referer || `${BASE}/`;
 
-    const cacheKey = `${absolute}\n${referer || ""}`;
-    if (cache.has(cacheKey)) return cache.get(cacheKey);
+      const cacheKey = `${absolute}\n${effectiveReferer}`;
 
-    const result = await animetRequest(absolute, {
-      fetchImpl,
-      timeoutMs,
-      headers: referer ? { Referer: referer } : {},
-    });
+      if (cache.has(cacheKey)) {
+        return cache.get(cacheKey);
+      }
 
-    if (!result.ok) {
-      throw new Error(`AnimeT HTTP ${result.status}: ${absolute}`);
+      const result = await animetRequest(absolute, {
+        fetchImpl,
+        timeoutMs,
+        headers: {
+          Referer: effectiveReferer,
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8"
+        }
+      });
+
+      if (!result.ok) {
+        throw new Error(
+          `AnimeT HTTP ${result.status}: ${result.url || absolute}`
+        );
+      }
+
+      // Giữ nguyên metadata, bao gồm verificationPage,
+      // để SEARCH có thể phân biệt trang xác minh với trang kết quả.
+      cache.set(cacheKey, result);
+
+      return result;
     }
-
-    cache.set(cacheKey, result);
-    return result;
-  }
 
   function extractDirectStreams(html, pageUrl) {
     const source = animetUnpackPackedScripts(String(html ?? ""));
