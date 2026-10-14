@@ -18891,7 +18891,7 @@ async function fetchAnimeHay(
 const ANIMET_HYDRAX_FAKE_HOST = "hx.animet.local";
 const ANIMET_HYDRAX_REFERER = "https://abysscdn.com/";
 const ANIMET_HYDRAX_CHUNK_SIZE = 0x2000;
-const ANIMET_DEFAULT_BASE = "https://anime14.site";
+const ANIMET_DEFAULT_BASE = "https://animesub.site";
 
 // ---------------------------------------------------------------------------
 // ANIMET — COMMON HELPERS
@@ -19953,46 +19953,175 @@ async function fetchAnimeT(input, options = {}) {
   function parseSearchResults(html, pageUrl) {
     const source = String(html ?? "");
     const output = [];
-    const anchorPattern = /<a\b[^>]*>[\s\S]*?<\/a>/gi;
+
+    let baseHost = "";
+    let pageHost = "";
+
+    try {
+        baseHost = new URL(ANIMET_DEFAULT_BASE).hostname.toLowerCase();
+    } catch {}
+
+    try {
+        pageHost = new URL(pageUrl).hostname.toLowerCase();
+    } catch {}
+
+    const allowedHosts = new Set(
+        [baseHost, pageHost].filter(Boolean)
+    );
+
+    const anchorPattern = /<a\b[^>]*>[\s\S]*?<\/a\s*>/gi;
+    const seen = new Set();
+
+    const isAllowedUrl = raw => {
+        const absolute = animetAbsoluteUrl(raw, pageUrl);
+        if (!absolute) return null;
+
+        let parsed;
+
+        try {
+            parsed = new URL(absolute);
+        } catch {
+            return null;
+        }
+
+        if (!/^https?:$/.test(parsed.protocol)) return null;
+
+        const hostname = parsed.hostname.toLowerCase();
+
+        // Chấp nhận domain gốc và domain cuối cùng sau redirect.
+        // Không nhận link sang website player/CDN bên ngoài.
+        if (!allowedHosts.has(hostname)) return null;
+
+        if (
+            /\.(?:jpg|jpeg|png|gif|webp|svg|css|js|ico|woff2?)(?:$|\?)/i
+                .test(parsed.pathname)
+        ) {
+            return null;
+        }
+
+        if (
+            /\/(?:tim-kiem|search|category|tag|author|page|wp-content|wp-admin|feed)(?:\/|$)/i
+                .test(parsed.pathname)
+        ) {
+            return null;
+        }
+
+        if (
+            /\/(?:dang-nhap|login|register|wp-login\.php)(?:\/|$)/i
+                .test(parsed.pathname)
+        ) {
+            return null;
+        }
+
+        return parsed.href;
+    };
+
     let match;
 
     while ((match = anchorPattern.exec(source))) {
-      const block = match[0];
-      const openTag = /^<a\b[^>]*>/i.exec(block)?.[0] || "";
-      const href = animetGetAttr(openTag, "href");
-      const url = animetAbsoluteUrl(href, pageUrl);
+        const block = match[0];
+        const openTag = /^<a\b[^>]*>/i.exec(block)?.[0] || "";
 
-      if (!url || !/anime14\.site/i.test(new URL(url).hostname)) continue;
-      if (/tim-kiem|search|category|tag|\/page\/\d+/i.test(url)) continue;
+        const rawHref =
+            animetGetAttr(openTag, "href") ||
+            animetGetAttr(openTag, "data-href") ||
+            animetGetAttr(openTag, "data-url");
 
-      const title =
-        animetGetAttr(openTag, "title") ||
-        animetGetAttr(openTag, "data-title") ||
-        animetStripTags(block);
+        if (!rawHref) continue;
 
-      if (!title || title.length < 2) continue;
+        const url = isAllowedUrl(rawHref);
+        if (!url || seen.has(url)) continue;
 
-      const imgTag = /<img\b[^>]*>/i.exec(block)?.[0] || "";
-      const poster = animetAbsoluteUrl(
-        animetGetAttr(imgTag, "data-src") ||
-        animetGetAttr(imgTag, "data-lazy-src") ||
-        animetGetAttr(imgTag, "src"),
-        pageUrl
-      );
+        const imgTag = /<img\b[^>]*>/i.exec(block)?.[0] || "";
 
-      output.push({
-        id: url,
-        url,
-        title,
-        name: title,
-        poster: poster || undefined,
-        type: "series",
-        source: "AnimeT",
-      });
+        const cardHint = [
+            animetGetAttr(openTag, "class"),
+            animetGetAttr(openTag, "id"),
+            animetGetAttr(openTag, "data-type"),
+            animetGetAttr(openTag, "itemprop")
+        ].join(" ");
+
+        const imageTitle =
+            animetGetAttr(imgTag, "alt") ||
+            animetGetAttr(imgTag, "title") ||
+            "";
+
+        let title =
+            animetGetAttr(openTag, "data-title") ||
+            animetGetAttr(openTag, "title") ||
+            imageTitle ||
+            "";
+
+        if (!title) {
+            // Ưu tiên text của anchor nếu có; loại nội dung script/style.
+            const visibleText = block
+                .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+                .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ");
+
+            title = animetStripTags(visibleText);
+        }
+
+        title = animetDecodeEntities(String(title))
+            .replace(/\s+/g, " ")
+            .trim();
+
+        if (!title || title.length < 2 || title.length > 300) {
+            continue;
+        }
+
+        // Bỏ các anchor điều hướng phổ biến, nhưng không khóa cứng
+        // vào một class HTML duy nhất vì template có thể thay đổi.
+        if (
+            /^(?:trang chủ|home|tìm kiếm|search|đăng nhập|login|xem thêm|chi tiết|next|previous|prev|top)$/i
+                .test(title)
+        ) {
+            continue;
+        }
+
+        const hasAnimeCardHint =
+            /anime|movie|film|item|thumb|poster|cover|result|video|entry/i
+                .test(cardHint);
+
+        const hasImage = Boolean(imgTag);
+
+        // Anchor không có ảnh và không có dấu hiệu là card phim
+        // chỉ được nhận nếu đường dẫn có dạng slug nội dung.
+        const pathname = new URL(url).pathname.replace(/\/+$/, "");
+        const segments = pathname.split("/").filter(Boolean);
+
+        if (
+            !hasImage &&
+            !hasAnimeCardHint &&
+            segments.length === 0
+        ) {
+            continue;
+        }
+
+        const posterRaw =
+            animetGetAttr(imgTag, "data-src") ||
+            animetGetAttr(imgTag, "data-lazy-src") ||
+            animetGetAttr(imgTag, "data-original") ||
+            animetGetAttr(imgTag, "src");
+
+        const poster = posterRaw
+            ? animetAbsoluteUrl(posterRaw, pageUrl)
+            : null;
+
+        seen.add(url);
+
+        output.push({
+            id: url,
+            url,
+            title,
+            name: title,
+            poster: poster || undefined,
+            type: "series",
+            source: "AnimeT"
+        });
     }
 
     return animetUnique(output, item => item.url);
-  }
+}
 
   function parseEpisodes(html, pageUrl) {
     const source = String(html ?? "");
@@ -20320,43 +20449,125 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
 
   if (action === "search") {
     if (!query) {
-      return {
-        provider: "AnimeT",
-        action,
-        results: [],
-        error: "Thiếu từ khóa tìm kiếm.",
-      };
+        return {
+            provider: "AnimeT",
+            action,
+            results: [],
+            items: [],
+            errors: [],
+            error: "Thiếu từ khóa tìm kiếm."
+        };
     }
 
+    const normalizedQuery = query
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const encodedQuery = encodeURIComponent(normalizedQuery);
+
+    // Route /tim-kiem/ là route đã ghi nhận.
+    // Các route còn lại là fallback, không mặc định coi là API của DEX.
     const searchUrls = [
-      `${BASE}/tim-kiem/${encodeURIComponent(query)}/`,
-      `${BASE}/?s=${encodeURIComponent(query)}`,
+        `${BASE}/tim-kiem/${encodedQuery}/`,
+        `${BASE}/?s=${encodedQuery}`
     ];
 
     const results = [];
     const errors = [];
+    const attempts = [];
 
     for (const url of searchUrls) {
-      try {
-        const page = await request(url);
-        results.push(...parseSearchResults(page.body, page.url));
-        if (results.length) break;
-      } catch (error) {
-        errors.push(String(error?.message || error));
-      }
+        try {
+            const page = await request(url);
+            const body = String(page.body ?? "");
+
+            const parsedResults = parseSearchResults(
+                body,
+                page.url || url
+            );
+
+            attempts.push({
+                requestedUrl: url,
+                finalUrl: page.url || url,
+                status: page.status,
+                bodyLength: body.length,
+                parsedCount: parsedResults.length,
+                htmlTitle: animetStripTags(
+                    /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i
+                        .exec(body)?.[1] || ""
+                ).slice(0, 160)
+            });
+
+            results.push(...parsedResults);
+
+            if (parsedResults.length > 0) {
+                break;
+            }
+
+            console.warn(
+                "[PRV-ANIMET] SEARCH ATTEMPT EMPTY:",
+                JSON.stringify(attempts[attempts.length - 1])
+            );
+        } catch (error) {
+            const message = String(error?.message || error);
+
+            errors.push({
+                url,
+                error: message
+            });
+
+            attempts.push({
+                requestedUrl: url,
+                error: message
+            });
+
+            console.warn(
+                "[PRV-ANIMET] SEARCH ATTEMPT ERROR:",
+                url,
+                message
+            );
+        }
     }
 
-    const uniqueResults = animetUnique(results, item => item.url);
+    const uniqueResults = animetUnique(
+        results,
+        item => item.url
+    );
+
+    if (uniqueResults.length === 0) {
+        console.warn(
+            "[PRV-ANIMET] SEARCH DIAGNOSTICS:",
+            JSON.stringify({
+                query: normalizedQuery,
+                baseUrl: BASE,
+                attempts,
+                errors
+            })
+        );
+    } else {
+        console.info(
+            "[PRV-ANIMET] SEARCH SUCCESS:",
+            JSON.stringify({
+                query: normalizedQuery,
+                count: uniqueResults.length,
+                attempts
+            })
+        );
+    }
 
     return {
-      provider: "AnimeT",
-      action,
-      query,
-      results: uniqueResults,
-      items: uniqueResults,
-      errors,
+        provider: "AnimeT",
+        action,
+        query: normalizedQuery,
+        results: uniqueResults,
+        items: uniqueResults,
+        errors,
+        diagnostics: {
+            attempts,
+            resultCount: uniqueResults.length
+        }
     };
-  }
+}
 
   // -------------------------------------------------------------------------
   // LOAD — SERIES INFO + EPISODES
