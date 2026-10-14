@@ -18983,21 +18983,32 @@ function animetMediaType(url) {
 // ANIMET — HTTP REQUEST WITH TIMEOUT
 // ---------------------------------------------------------------------------
 
+
 async function animetRequest(url, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+
   if (typeof fetchImpl !== "function") {
     throw new Error("AnimeT: fetch implementation không khả dụng");
   }
 
-  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 18000);
+  const timeoutMs = Math.max(
+    1000,
+    Number(options.timeoutMs) || 18000
+  );
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    timeoutMs
+  );
 
   try {
     const headers = {
       "User-Agent":
         options.userAgent ||
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+      "Accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
       ...(options.headers || {}),
     };
@@ -19010,21 +19021,42 @@ async function animetRequest(url, options = {}) {
       signal: controller.signal,
     });
 
-    const body = options.responseType === "arrayBuffer"
-      ? Buffer.from(await response.arrayBuffer())
-      : await response.text();
+    const body =
+      options.responseType === "arrayBuffer"
+        ? Buffer.from(await response.arrayBuffer())
+        : await response.text();
+
+    const finalUrl = response.url || url;
+    const html = Buffer.isBuffer(body)
+      ? ""
+      : String(body || "");
+
+    const htmlTitle =
+      html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+        ?.replace(/<[^>]*>/g, "")
+        .replace(/\s+/g, " ")
+        .trim() || "";
+
+    const verificationPage =
+      /\/xac-minh\.php(?:[?#]|$)/i.test(finalUrl) ||
+      /xác minh truy cập|verify you are human|checking your browser/i
+        .test(htmlTitle + " " + html.slice(0, 12000));
 
     return {
-      url: response.url || url,
+      url: finalUrl,
+      requestedUrl: url,
       status: response.status,
       ok: response.ok,
       headers: response.headers,
       body,
+      htmlTitle,
+      verificationPage,
     };
   } finally {
     clearTimeout(timeout);
   }
 }
+
 
 // ---------------------------------------------------------------------------
 // ANIMET — DEAN EDWARDS PACKER
