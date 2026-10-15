@@ -19580,19 +19580,30 @@ function animetHydraxCollectUrls(
 }
 
 
-// ANIMET / HYDRAX — TOKEN + RANGE READER + RESPONSE
-// Thay nhóm helper Hydrax tương ứng; giữ nguyên các helper chung,
-// animetHydraxFakeUrlCheckpoint, fetchAnimeT, adapter và registration.
+// ANIMET / HYDRAX — DEX TOKEN + RANGE READER
+ // Compatible with existing MOVINA call signatures:
+ //   animetHydraxToken(int1, long1, long2, int2, long3)
+ //   animetHydraxReadRange(meta, start, end, requestHeaders)
+ //   animetHydraxRangeResponse(request, bytes, start, end, totalSize)
+ //   animetHydraxResponse(request, meta)
+ //
+ // IMPORTANT:
+ // meta must already contain verified upstream values:
+ // origin, int1, long1, long2, int2, long3.
+ // Do not infer these values from an unverified sentinel URL.
 
 function animetHydraxToken(int1, long1, long2, int2, long3) {
     const crypto = require("crypto");
+    const sizeText = String(long1);
 
-    const long1Text = String(long1);
-    const digitBytes = Buffer.alloc(long1Text.length);
-
-    for (let i = 0; i < long1Text.length; i++) {
-        digitBytes[i] = (long1Text.charCodeAt(i) - 0x30) & 0xff;
+    if (!/^\d+$/.test(sizeText)) {
+        throw new Error("Hydrax: long1/size không hợp lệ.");
     }
+
+    // DEX: decimal digits converted to numeric bytes before MD5.
+    const digitBytes = Buffer.from(
+        Array.from(sizeText, c => c.charCodeAt(0) - 0x30)
+    );
 
     const md5Hex = crypto
         .createHash("md5")
@@ -19600,7 +19611,7 @@ function animetHydraxToken(int1, long1, long2, int2, long3) {
         .digest("hex");
 
     const key = Buffer.from(md5Hex, "ascii");
-    const iv = Buffer.from(key.subarray(0, 16));
+    const iv = key.subarray(0, 16);
 
     const plaintext = Buffer.from(
         `/mp4/${long2}/${int2}/${long1}/${long3}/${int1}`,
@@ -19622,19 +19633,17 @@ function animetHydraxToken(int1, long1, long2, int2, long3) {
         .replace(/=+$/, "");
 }
 
-
 function animetHydraxParseRange(rangeHeader) {
-    if (!rangeHeader || typeof rangeHeader !== "string") {
-        return null;
-    }
+    if (!rangeHeader) return null;
 
-    const match = rangeHeader.trim().match(/^bytes=(\d*)-(\d*)$/i);
+    const match = String(rangeHeader)
+        .trim()
+        .match(/^bytes=(\d*)-(\d*)$/i);
 
     if (!match || (!match[1] && !match[2])) {
         return { invalid: true };
     }
 
-    // Suffix range: bytes=-500
     if (!match[1]) {
         const suffixLength = Number(match[2]);
 
@@ -19642,10 +19651,7 @@ function animetHydraxParseRange(rangeHeader) {
             return { invalid: true };
         }
 
-        return {
-            suffix: true,
-            suffixLength
-        };
+        return { suffix: true, suffixLength };
     }
 
     const start = Number(match[1]);
@@ -19663,23 +19669,32 @@ function animetHydraxParseRange(rangeHeader) {
     return { start, end };
 }
 
-
 async function animetHydraxReadRange(
     meta,
     start,
     end,
     requestHeaders = {}
 ) {
-    const CHUNK_SIZE = 0x2000;
-    const crypto = require("crypto");
+    const CHUNK_SIZE = 0x200000; // 2 MiB, per DEX checkpoint
 
     if (!meta || typeof meta !== "object") {
         throw new Error("Hydrax: thiếu metadata.");
     }
 
     const origin = String(meta.origin || "").replace(/\/+$/, "");
+    let parsedOrigin;
 
-    if (!/^https?:\/\//i.test(origin)) {
+    try {
+        parsedOrigin = new URL(origin);
+    } catch {
+        throw new Error("Hydrax: origin không hợp lệ.");
+    }
+
+    if (
+        !["https:", "http:"].includes(parsedOrigin.protocol) ||
+        parsedOrigin.username ||
+        parsedOrigin.password
+    ) {
         throw new Error("Hydrax: origin không hợp lệ.");
     }
 
@@ -19693,6 +19708,15 @@ async function animetHydraxReadRange(
         throw new Error("Hydrax: Range không hợp lệ.");
     }
 
+    const fetchImpl =
+        typeof meta.fetchImpl === "function"
+            ? meta.fetchImpl
+            : globalThis.fetch;
+
+    if (typeof fetchImpl !== "function") {
+        throw new Error("Hydrax: fetch không khả dụng.");
+    }
+
     const token = animetHydraxToken(
         meta.int1,
         meta.long1,
@@ -19701,38 +19725,33 @@ async function animetHydraxReadRange(
         meta.long3
     );
 
-    const url =
+    const upstreamUrl =
         `${origin}/sora/${encodeURIComponent(String(meta.long1))}/${token}`;
-
-    const fetchImpl =
-        typeof meta.fetchImpl === "function"
-            ? meta.fetchImpl
-            : globalThis.fetch;
-
-    if (typeof fetchImpl !== "function") {
-        throw new Error("Hydrax: không có fetch implementation.");
-    }
 
     const chunks = [];
     let cursor = start;
-    let expectedEnd =
-        end === null || end === undefined ? null : end;
+    let expectedEnd = end == null ? null : end;
 
     while (expectedEnd === null || cursor <= expectedEnd) {
-        const chunkEnd =
-            expectedEnd === null
-                ? cursor + CHUNK_SIZE - 1
-                : Math.min(cursor + CHUNK_SIZE - 1, expectedEnd);
+        const chunkEnd = expectedEnd === null
+            ? cursor + CHUNK_SIZE - 1
+            : Math.min(cursor + CHUNK_SIZE - 1, expectedEnd);
 
         const headers = {
-            ...requestHeaders,
-            Referer: ANIMET_HYDRAX_REFERER,
-            Range: `bytes=${cursor}-${chunkEnd}`
+            "Accept": "*/*",
+            "Referer": ANIMET_HYDRAX_REFERER,
+            "Range": `bytes=${cursor}-${chunkEnd}`
         };
 
-        delete headers.range;
+        // Forward only safe, relevant request headers.
+        const incomingRange = requestHeaders.range || requestHeaders.Range;
+        if (incomingRange) {
+            // The upstream range must describe the current fragment,
+            // not repeat the caller's complete range.
+            headers.Range = `bytes=${cursor}-${chunkEnd}`;
+        }
 
-        const response = await fetchImpl(url, {
+        const response = await fetchImpl(upstreamUrl, {
             method: "GET",
             headers,
             redirect: "follow"
@@ -19740,89 +19759,72 @@ async function animetHydraxReadRange(
 
         if (response.status !== 206) {
             throw new Error(
-                `Hydrax: upstream phải trả 206 cho Range; nhận ${response.status}.`
+                `Hydrax: upstream cần trả HTTP 206, nhận ${response.status}.`
             );
         }
 
         const contentRange =
             response.headers?.get?.("content-range") || "";
 
-        const rangeMatch = contentRange.match(
+        const match = contentRange.match(
             /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i
         );
 
-        if (!rangeMatch) {
-            throw new Error(
-                "Hydrax: thiếu hoặc sai Content-Range từ upstream."
-            );
+        if (!match) {
+            throw new Error("Hydrax: Content-Range upstream không hợp lệ.");
         }
 
-        const actualStart = Number(rangeMatch[1]);
-        const actualEnd = Number(rangeMatch[2]);
+        const actualStart = Number(match[1]);
+        const actualEnd = Number(match[2]);
 
         if (
             actualStart !== cursor ||
             actualEnd < actualStart ||
             actualEnd > chunkEnd
         ) {
-            throw new Error(
-                `Hydrax: Content-Range không khớp yêu cầu ${cursor}-${chunkEnd}.`
-            );
+            throw new Error("Hydrax: Content-Range không khớp yêu cầu.");
         }
 
         const bytes = Buffer.from(await response.arrayBuffer());
-        const expectedLength = actualEnd - actualStart + 1;
-
-        if (bytes.length !== expectedLength) {
-            throw new Error(
-                `Hydrax: độ dài chunk sai; cần ${expectedLength}, nhận ${bytes.length}.`
-            );
+        if (bytes.length !== actualEnd - actualStart + 1) {
+            throw new Error("Hydrax: kích thước chunk không khớp Content-Range.");
         }
 
         chunks.push(bytes);
 
-        if (rangeMatch[3] !== "*") {
-            const discoveredTotal = Number(rangeMatch[3]);
+        if (match[3] !== "*") {
+            const total = Number(match[3]);
 
-            if (
-                !Number.isSafeInteger(discoveredTotal) ||
-                discoveredTotal <= actualEnd
-            ) {
-                throw new Error("Hydrax: tổng kích thước Content-Range không hợp lệ.");
+            if (!Number.isSafeInteger(total) || total <= actualEnd) {
+                throw new Error("Hydrax: tổng kích thước upstream không hợp lệ.");
             }
 
             if (
                 meta.totalSize != null &&
-                Number(meta.totalSize) !== discoveredTotal
+                Number(meta.totalSize) !== total
             ) {
-                throw new Error("Hydrax: totalSize không khớp upstream.");
+                throw new Error("Hydrax: totalSize không khớp.");
             }
 
-            meta.totalSize = discoveredTotal;
+            meta.totalSize = total;
 
             if (expectedEnd === null) {
-                expectedEnd = discoveredTotal - 1;
+                expectedEnd = total - 1;
             }
         }
 
         cursor = actualEnd + 1;
 
-        // Server kết thúc sớm: không được giả vờ đã đọc đủ dữ liệu.
         if (actualEnd < chunkEnd) {
-            if (rangeMatch[3] !== "*" && cursor < Number(rangeMatch[3])) {
+            if (match[3] !== "*" && cursor < Number(match[3])) {
                 throw new Error("Hydrax: upstream trả chunk ngắn bất thường.");
             }
-            break;
-        }
-
-        if (expectedEnd !== null && cursor > expectedEnd) {
             break;
         }
     }
 
     return Buffer.concat(chunks);
 }
-
 
 function animetHydraxRangeResponse(
     request,
@@ -19835,95 +19837,76 @@ function animetHydraxRangeResponse(
         ? bytes
         : Buffer.from(bytes || []);
 
-    const total =
-        Number.isSafeInteger(Number(totalSize)) && Number(totalSize) >= 0
-            ? Number(totalSize)
-            : null;
-
-    const headers = {
-        "content-type": "video/mp4",
-        "accept-ranges": "bytes",
-        "content-length": String(body.length),
-        "content-range":
-            `bytes ${start}-${end}/${total === null ? "*" : total}`
-    };
+    const total = Number.isSafeInteger(Number(totalSize)) &&
+        Number(totalSize) >= 0
+        ? Number(totalSize)
+        : null;
 
     return {
         status: 206,
         statusCode: 206,
-        headers,
+        headers: {
+            "content-type": "video/mp4",
+            "accept-ranges": "bytes",
+            "content-length": String(body.length),
+            "content-range":
+                `bytes ${start}-${end}/${total === null ? "*" : total}`
+        },
         body
     };
 }
 
-
 async function animetHydraxResponse(request, meta) {
     const headers = request?.headers || {};
-    const rawRange = headers.range || headers.Range || null;
-    const parsed = animetHydraxParseRange(rawRange);
+    const parsed = animetHydraxParseRange(
+        headers.range || headers.Range || null
+    );
+
+    if (!meta || typeof meta !== "object") {
+        throw new Error("Hydrax: thiếu metadata resolver.");
+    }
 
     if (parsed?.invalid) {
         return {
             status: 416,
             statusCode: 416,
             headers: {
-                "content-range": `bytes */${meta?.totalSize ?? "*"}`
+                "content-range": `bytes */${meta.totalSize ?? "*"}`
             },
             body: Buffer.alloc(0)
         };
     }
 
-    if (parsed?.suffix) {
-        const total = Number(meta?.totalSize);
+    const total = Number(meta.totalSize);
+    const hasTotal = Number.isSafeInteger(total) && total > 0;
 
-        if (!Number.isSafeInteger(total) || total <= 0) {
+    let start;
+    let end;
+
+    if (parsed?.suffix) {
+        if (!hasTotal) {
             return {
                 status: 416,
                 statusCode: 416,
-                headers: {
-                    "content-range": "bytes */*"
-                },
+                headers: { "content-range": "bytes */*" },
                 body: Buffer.alloc(0)
             };
         }
 
         const length = Math.min(parsed.suffixLength, total);
-        const start = total - length;
-        const end = total - 1;
+        start = total - length;
+        end = total - 1;
+    } else if (parsed) {
+        start = parsed.start;
+        end = parsed.end;
 
-        const bytes = await animetHydraxReadRange(
-            meta,
-            start,
-            end,
-            headers
-        );
-
-        return animetHydraxRangeResponse(
-            request,
-            bytes,
-            start,
-            end,
-            total
-        );
-    }
-
-    if (parsed) {
-        const start = parsed.start;
-        let end = parsed.end;
-
-        if (meta?.totalSize != null) {
-            const total = Number(meta.totalSize);
-
-            if (
-                !Number.isSafeInteger(total) ||
-                total <= 0 ||
-                start >= total
-            ) {
+        if (hasTotal) {
+            if (start >= total) {
                 return {
                     status: 416,
                     statusCode: 416,
                     headers: {
-                        "content-range": `bytes */${meta.totalSize}`
+                        "content-range": `bytes */${total}`
                     },
                     body: Buffer.alloc(0)
                 };
@@ -19931,31 +19914,14 @@ async function animetHydraxResponse(request, meta) {
 
             end = end === null ? total - 1 : Math.min(end, total - 1);
         } else if (end === null) {
-            // Không biết kích thước file: chỉ đọc một chunk,
-            // không được giả định đây là toàn bộ video.
-            end = start + 0x1fff;
+            end = start + CHUNK_SIZE - 1;
         }
-
-        const bytes = await animetHydraxReadRange(
-            meta,
-            start,
-            end,
-            headers
-        );
-
-        return animetHydraxRangeResponse(
-            request,
-            bytes,
-            start,
-            start + bytes.length - 1,
-            meta?.totalSize
-        );
+    } else {
+        start = 0;
+        end = hasTotal
+            ? Math.min(total - 1, 0x7fffff)
+            : 0x1fffff;
     }
-
-    // Không có Range: hiện chỉ trả một chunk đầu tiên.
-    // Đây KHÔNG phải phản hồi 200 đầy đủ cho toàn bộ video.
-    const start = 0;
-    const end = 0x1fff;
 
     const bytes = await animetHydraxReadRange(
         meta,
@@ -19964,12 +19930,14 @@ async function animetHydraxResponse(request, meta) {
         headers
     );
 
+    const actualEnd = start + bytes.length - 1;
+
     return animetHydraxRangeResponse(
         request,
         bytes,
         start,
-        start + bytes.length - 1,
-        meta?.totalSize
+        actualEnd,
+        meta.totalSize
     );
 }
 
