@@ -20492,7 +20492,6 @@ function animetHydraxFakeUrlCheckpoint(fakeUrl) {
 //   fetchAnimeT(url,   { action: "links" })
 // ---------------------------------------------------------------------------
 
-async function fetchAnimeT(input, options = {}) {
  async function fetchAnimeT(input, options = {}) {
   const action = String(
     options.action || options.mode || "links"
