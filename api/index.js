@@ -19340,7 +19340,29 @@ async function animetDiscoverActiveBase(options = {}) {
         }
 
         function addCandidateLink(value, sourceUrl) {
-            const url = animetAbsoluteUrl(value, sourceUrl);
+            let raw = String(value || "").trim();
+
+            if (!raw) return;
+
+            // Chuẩn hóa các URL được nhúng trong HTML/JavaScript/JSON.
+            raw = raw
+                .replace(/&amp;/gi, "&")
+                .replace(/&quot;/gi, '"')
+                .replace(/&#x2f;/gi, "/")
+                .replace(/&#47;/gi, "/")
+                .replace(/\\\//g, "/")
+                .replace(/\\u002f/gi, "/")
+                .replace(/\\u003a/gi, ":")
+                .replace(/&colon;/gi, ":");
+
+            // Giải mã URL-encoded nếu đây là URL được mã hóa hoàn toàn.
+            if (/^https?%3a%2f%2f/i.test(raw)) {
+                try {
+                    raw = decodeURIComponent(raw);
+                } catch {}
+            }
+
+            const url = animetAbsoluteUrl(raw, sourceUrl);
 
             if (!url || !isSafeHttpsUrl(url)) return;
 
@@ -19353,12 +19375,40 @@ async function animetDiscoverActiveBase(options = {}) {
             }
 
             const host = parsed.hostname.toLowerCase();
-
-            // Không coi chính LinkBio, CDN ảnh hoặc mạng xã hội
-            // là tên miền AnimeT.
-            if (
+            const isLinkBioHost =
                 host === "linkbio.co" ||
-                host.endsWith(".linkbio.co") ||
+                host.endsWith(".linkbio.co");
+
+            // Không đưa chính trang LinkBio vào danh sách redirect.
+            // Nhưng cho phép giữ các route trung gian trên LinkBio
+            // để bước tiếp theo có thể lần theo redirect.
+            if (isLinkBioHost) {
+                if (
+                    parsed.pathname === "/" ||
+                    /^\/animet\/?$/i.test(parsed.pathname)
+                ) {
+                    return;
+                }
+
+                if (
+                    /\.(?:png|jpe?g|gif|webp|svg|css|js|ico|woff2?)(?:$|\?)/i
+                        .test(parsed.pathname)
+                ) {
+                    return;
+                }
+
+                const intermediateUrl = parsed.href;
+
+                if (!seenLinks.has(intermediateUrl)) {
+                    seenLinks.add(intermediateUrl);
+                    candidateLinks.push(intermediateUrl);
+                }
+
+                return;
+            }
+
+            // Loại CDN ảnh và mạng xã hội.
+            if (
                 host === "bio.linkcdn.cc" ||
                 host.endsWith(".linkcdn.cc") ||
                 /(?:^|\.)instagram\.com$/i.test(host) ||
@@ -19371,8 +19421,6 @@ async function animetDiscoverActiveBase(options = {}) {
                 return;
             }
 
-            // Chỉ lấy đường dẫn có khả năng là link website,
-            // không lấy ảnh, stylesheet hoặc JavaScript.
             if (
                 /\.(?:png|jpe?g|gif|webp|svg|css|js|ico|woff2?)(?:$|\?)/i
                     .test(parsed.pathname)
@@ -19429,7 +19477,103 @@ async function animetDiscoverActiveBase(options = {}) {
             );
         }
 
-        // 1. Đọc trang LinkBio chính thức do người dùng cung cấp.
+        // 1. Đọc trang LinkBio chính thức.
+        // Hỗ trợ anchor HTML, data attributes, URL trong JavaScript/JSON,
+        // URL có slash escape và URL-encoded.
+
+        function extractLinksFromHtml(sourceHtml, sourceUrl) {
+            const html = String(sourceHtml || "");
+            let found = 0;
+
+            function add(value) {
+                const before = candidateLinks.length;
+                addCandidateLink(value, sourceUrl);
+
+                if (candidateLinks.length > before) {
+                    found++;
+                }
+            }
+
+            // A. Thẻ anchor HTML.
+            const anchorTags = html.match(/<a\b[^>]*>/gi) || [];
+
+            for (const tag of anchorTags) {
+                for (const attr of [
+                    "href",
+                    "data-href",
+                    "data-url",
+                    "data-link",
+                    "data-target"
+                ]) {
+                    const value = animetGetAttr(tag, attr);
+
+                    if (value) add(value);
+                }
+            }
+
+            // B. URL nằm trong các thuộc tính HTML khác.
+            const attrPattern =
+                /\b(?:href|data-href|data-url|data-link|data-target|url|target)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+
+            let attrMatch;
+
+            while ((attrMatch = attrPattern.exec(html)) !== null) {
+                const value =
+                    attrMatch[1] ||
+                    attrMatch[2] ||
+                    attrMatch[3];
+
+                if (value) add(value);
+            }
+
+            // C. URL trực tiếp trong JavaScript hoặc JSON.
+            // Hỗ trợ cả https://example.com và https:\/\/example.com.
+            const rawUrlPattern =
+                /(?:https?:\\?\/\\?\/|\/\/)[^\s"'<>`]+/gi;
+
+            let urlMatch;
+
+            while ((urlMatch = rawUrlPattern.exec(html)) !== null) {
+                const value = urlMatch[0].replace(/[),;}\]]+$/g, "");
+
+                if (value) add(value);
+            }
+
+            // D. URL được encode trong dữ liệu nhúng.
+            const encodedUrlPattern =
+                /https?%3a%2f%2f[^"'<>`\s\\]+/gi;
+
+            let encodedMatch;
+
+            while (
+                (encodedMatch = encodedUrlPattern.exec(html)) !== null
+            ) {
+                try {
+                    add(decodeURIComponent(encodedMatch[0]));
+                } catch {
+                    add(encodedMatch[0]);
+                }
+            }
+
+            // E. Một số trang lưu URL trong chuỗi JSON có dấu escape.
+            const escapedUrlPattern =
+                /https?\\u003a\\u002f\\u002f[^"'<>`\s]+/gi;
+
+            let escapedMatch;
+
+            while (
+                (escapedMatch = escapedUrlPattern.exec(html)) !== null
+            ) {
+                add(escapedMatch[0]);
+            }
+
+            return {
+                found,
+                anchorCount: anchorTags.length,
+                htmlLength: html.length
+            };
+        }
+
         try {
             const directory = await animetRequest(
                 ANIMET_LINKBIO_URL,
@@ -19446,19 +19590,10 @@ async function animetDiscoverActiveBase(options = {}) {
             );
 
             const html = String(directory.body || "");
-            const anchorTags = html.match(/<a\b[^>]*>/gi) || [];
-
-            for (const tag of anchorTags) {
-                const href =
-                    animetGetAttr(tag, "href") ||
-                    animetGetAttr(tag, "data-href") ||
-                    animetGetAttr(tag, "data-url") ||
-                    animetGetAttr(tag, "data-link");
-
-                if (href) {
-                    addCandidateLink(href, ANIMET_LINKBIO_URL);
-                }
-            }
+            const extraction = extractLinksFromHtml(
+                html,
+                directory.url || ANIMET_LINKBIO_URL
+            );
 
             console.info(
                 "[PRV-ANIMET] LINKBIO DISCOVERY:",
@@ -19466,6 +19601,9 @@ async function animetDiscoverActiveBase(options = {}) {
                     status: directory.status,
                     finalUrl: directory.url,
                     verificationPage: directory.verificationPage,
+                    bodyLength: html.length,
+                    anchorCount: extraction.anchorCount,
+                    extractedLinks: extraction.found,
                     candidateLinks: candidateLinks.length
                 })
             );
@@ -19476,9 +19614,15 @@ async function animetDiscoverActiveBase(options = {}) {
             );
         }
 
-        // 2. Theo các link tìm được đến URL đích cuối cùng.
-        // LinkBio có thể chứa link chuyển hướng trung gian.
-        for (const link of candidateLinks.slice(0, 8)) {
+        // 2. Theo redirect và đọc thêm nội dung các trang trung gian.
+        // Giới hạn 16 URL để tránh vòng lặp hoặc request quá nhiều.
+        for (
+            let index = 0;
+            index < candidateLinks.length && index < 16;
+            index++
+        ) {
+            const link = candidateLinks[index];
+
             try {
                 const target = await animetRequest(link, {
                     fetchImpl,
@@ -19491,11 +19635,21 @@ async function animetDiscoverActiveBase(options = {}) {
                     }
                 });
 
-                let finalUrl = target.url || link;
+                const finalUrl = target.url || link;
 
-                // Nếu request dừng ở trang xác minh cùng hostname,
-                // vẫn giữ origin của website để ghi nhận đúng domain.
+                // Chỉ domain HTTPS công khai mới được đưa vào health check.
                 addCandidateBase(finalUrl);
+
+                // Nếu trang trung gian vẫn trả HTML, tìm tiếp URL đích
+                // bên trong nội dung đó.
+                const targetHtml = String(target.body || "");
+
+                if (
+                    targetHtml &&
+                    !target.verificationPage
+                ) {
+                    extractLinksFromHtml(targetHtml, finalUrl);
+                }
 
                 console.info(
                     "[PRV-ANIMET] DOMAIN CANDIDATE:",
@@ -19503,12 +19657,12 @@ async function animetDiscoverActiveBase(options = {}) {
                         requestedUrl: link,
                         finalUrl,
                         status: target.status,
-                        verificationPage: target.verificationPage
+                        verificationPage: target.verificationPage,
+                        discoveredLinks: candidateLinks.length
                     })
                 );
             } catch (error) {
-                // Nếu URL ứng viên vẫn là HTTPS công khai,
-                // thử kiểm tra origin của chính link đó ở bước sau.
+                // Vẫn có thể kiểm tra origin của URL HTTPS công khai.
                 addCandidateBase(link);
 
                 console.warn(
