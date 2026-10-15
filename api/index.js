@@ -20828,10 +20828,28 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
 
     try {
       // ----------------------------------------------------------
-      // ANIMET SESSION WARM-UP
-      // Mở trang chủ trước để nhận cookie phiên thông thường.
-      // Dùng chung animetRequest(), cookie jar và fetchImpl hiện có.
+      // ANIMET SESSION WARM-UP + ONE RETRY
+      // 1. Mở trang chủ để nhận cookie thông thường.
+      // 2. Thử tìm kiếm.
+      // 3. Nếu gặp trang xác minh, quay lại trang chủ thật sự,
+      //    rồi thử tìm kiếm thêm đúng một lần.
+      // Không giả mạo IP hoặc tự giải challenge.
       // ----------------------------------------------------------
+
+      const isAnimetVerification = result => {
+        const finalUrl = String(result?.url || "");
+        const html = String(result?.body || "");
+        const title = String(result?.htmlTitle || "");
+
+        return (
+          Boolean(result?.verificationPage) ||
+          /\/xac-minh\.php(?:[?#]|$)/i.test(finalUrl) ||
+          /xác minh truy cập|verify you are human|checking your browser/i
+            .test(title + " " + html.slice(0, 12000))
+        );
+      };
+
+      // Bước 1: mở trang chủ.
       try {
         const warmup = await request(`${BASE}/`);
 
@@ -20841,20 +20859,92 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
             requestedUrl: `${BASE}/`,
             finalUrl: warmup.url,
             status: warmup.status,
-            verificationPage: Boolean(warmup.verificationPage),
+            verificationPage: isAnimetVerification(warmup),
             bodyLength: String(warmup.body || "").length
           })
         );
       } catch (warmupError) {
-        // Trang chủ lỗi không ngăn thử request tìm kiếm chính.
         console.warn(
           "[PRV-ANIMET] SESSION WARMUP ERROR:",
           warmupError?.message || String(warmupError)
         );
       }
 
-      // Tiếp tục tìm kiếm bằng cùng phiên cookie.
-      const page = await request(searchUrl);
+      // Bước 2: tìm kiếm lần đầu bằng request helper hiện có.
+      let page = await request(searchUrl);
+
+      if (isAnimetVerification(page)) {
+        console.warn(
+          "[PRV-ANIMET] SEARCH VERIFICATION — RETRY:",
+          JSON.stringify({
+            requestedUrl: searchUrl,
+            finalUrl: page.url,
+            status: page.status,
+            note: "Thử quay lại trang chủ rồi tìm kiếm lại một lần."
+          })
+        );
+
+        try {
+          // Dùng referer khác để buộc request helper thực hiện
+          // request trang chủ mới, thay vì dùng kết quả cache.
+          const homeAfterVerification = await request(
+            `${BASE}/`,
+            `${BASE}/xac-minh.php?source=page`
+          );
+
+          console.info(
+            "[PRV-ANIMET] RETURN HOME:",
+            JSON.stringify({
+              finalUrl: homeAfterVerification.url,
+              status: homeAfterVerification.status,
+              verificationPage:
+                isAnimetVerification(homeAfterVerification)
+            })
+          );
+
+          // Gọi animetRequest trực tiếp để không tái sử dụng
+          // kết quả tìm kiếm đã cache trong request helper.
+          // Cookie jar dùng chung vẫn được giữ nguyên.
+          const retryPage = await animetRequest(
+            searchUrl,
+            {
+              fetchImpl,
+              timeoutMs,
+              headers: {
+                Referer: `${BASE}/`,
+                Accept:
+                  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language":
+                  "vi-VN,vi;q=0.9,en;q=0.8"
+              }
+            }
+          );
+
+          console.info(
+            "[PRV-ANIMET] SEARCH RETRY RESULT:",
+            JSON.stringify({
+              requestedUrl: searchUrl,
+              finalUrl: retryPage.url,
+              status: retryPage.status,
+              verificationPage:
+                isAnimetVerification(retryPage),
+              bodyLength:
+                String(retryPage.body || "").length
+            })
+          );
+
+          page = retryPage;
+        } catch (retryError) {
+          console.warn(
+            "[PRV-ANIMET] SEARCH RETRY ERROR:",
+            retryError?.message || String(retryError)
+          );
+
+          // Giữ response lần đầu để phần diagnostics phía dưới
+          // tiếp tục ghi nhận trang xác minh.
+        }
+      }
+
       const body = String(page.body ?? "");
       const finalUrl = page.url || searchUrl;
 
