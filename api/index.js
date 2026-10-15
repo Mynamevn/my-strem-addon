@@ -18890,7 +18890,7 @@ async function fetchAnimeHay(
 
 const ANIMET_HYDRAX_FAKE_HOST = "hx.animet.local";
 const ANIMET_HYDRAX_REFERER = "https://abysscdn.com/";
-const ANIMET_HYDRAX_CHUNK_SIZE = 0x2000;
+const ANIMET_HYDRAX_CHUNK_SIZE = 0x200000;
 const ANIMET_DEFAULT_BASE = "https://animesub.site";
 
 // ---------------------------------------------------------------------------
@@ -19487,13 +19487,6 @@ function animetHydraxCollectUrls(
 
         if (!/^https?:$/.test(parsed.protocol)) return;
 
-        // Never expose the fake interception host as a playable upstream.
-        if (
-            parsed.hostname.toLowerCase() === "hx.animet.local"
-        ) {
-            return;
-        }
-
         if (seen.has(url)) return;
 
         seen.add(url);
@@ -19580,45 +19573,62 @@ function animetHydraxCollectUrls(
 }
 
 
-// ANIMET / HYDRAX — DEX TOKEN + RANGE READER
- // Compatible with existing MOVINA call signatures:
- //   animetHydraxToken(int1, long1, long2, int2, long3)
- //   animetHydraxReadRange(meta, start, end, requestHeaders)
- //   animetHydraxRangeResponse(request, bytes, start, end, totalSize)
- //   animetHydraxResponse(request, meta)
- //
- // IMPORTANT:
- // meta must already contain verified upstream values:
- // origin, int1, long1, long2, int2, long3.
- // Do not infer these values from an unverified sentinel URL.
 
-function animetHydraxToken(int1, long1, long2, int2, long3) {
-    const crypto = require("crypto");
-    const sizeText = String(long1);
+/* ============================================================================
+ * ANIMET / HYDRAX — DEX TOKEN + RANGE READER
+ *
+ * DEX checkpoints:
+ * - Token key: MD5 của các byte chữ số dạng số (0..9), không phải ASCII "0".."9".
+ * - AES-256-CTR, key là 32 ký tự hex ASCII; IV là 16 byte đầu của key.
+ * - Token plaintext: /mp4/{md5Id}/{resId}/{size}/{frag}/{index}
+ * - Token được tạo RIÊNG cho từng fragment/index.
+ *
+ * Lưu ý: origin và ý nghĩa các segment của URL giả phải được xác minh
+ * với interceptor Smali trước khi coi luồng upstream là đã hoàn chỉnh.
+ * ========================================================================== */
+
+const ANIMET_HYDRAX_FRAGMENT_SIZE = 0x200000; // 2 MiB
+
+function animetHydraxToken(index, size, md5Id, resId, frag) {
+    const sizeText = String(size);
+    const indexText = String(index);
+    const md5Text = String(md5Id);
+    const resText = String(resId);
+    const fragText = String(frag);
 
     if (!/^\d+$/.test(sizeText)) {
-        throw new Error("Hydrax: long1/size không hợp lệ.");
+        throw new Error("Hydrax token: size không hợp lệ.");
+    }
+    if (!/^\d+$/.test(indexText)) {
+        throw new Error("Hydrax token: index không hợp lệ.");
+    }
+    if (!md5Text || !resText || !/^\d+$/.test(fragText)) {
+        throw new Error("Hydrax token: thiếu md5Id/resId/frag.");
     }
 
-    // DEX: decimal digits converted to numeric bytes before MD5.
     const digitBytes = Buffer.from(
-        Array.from(sizeText, c => c.charCodeAt(0) - 0x30)
+        Array.from(sizeText, ch => ch.charCodeAt(0) - 0x30)
     );
 
-    const md5Hex = crypto
+    const keyHex = require("crypto")
         .createHash("md5")
         .update(digitBytes)
         .digest("hex");
 
-    const key = Buffer.from(md5Hex, "ascii");
+    const key = Buffer.from(keyHex, "ascii");
     const iv = key.subarray(0, 16);
 
     const plaintext = Buffer.from(
-        `/mp4/${long2}/${int2}/${long1}/${long3}/${int1}`,
+        `/mp4/${md5Text}/${resText}/${sizeText}/${fragText}/${indexText}`,
         "utf8"
     );
 
-    const cipher = crypto.createCipheriv("aes-256-ctr", key, iv);
+    const cipher = require("crypto").createCipheriv(
+        "aes-256-ctr",
+        key,
+        iv
+    );
+
     const encrypted = Buffer.concat([
         cipher.update(plaintext),
         cipher.final()
@@ -19660,13 +19670,51 @@ function animetHydraxParseRange(rangeHeader) {
     if (
         !Number.isSafeInteger(start) ||
         start < 0 ||
-        (end !== null &&
-            (!Number.isSafeInteger(end) || end < start))
+        (
+            end !== null &&
+            (!Number.isSafeInteger(end) || end < start)
+        )
     ) {
         return { invalid: true };
     }
 
     return { start, end };
+}
+
+function animetHydraxRangeResponse(
+    request,
+    bytes,
+    start,
+    end,
+    totalSize,
+    status = 206
+) {
+    const body = Buffer.isBuffer(bytes)
+        ? bytes
+        : Buffer.from(bytes || []);
+
+    const headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": "video/mp4",
+        "Content-Length": String(body.length),
+        "Cache-Control": "no-store"
+    };
+
+    if (
+        Number.isSafeInteger(totalSize) &&
+        totalSize >= 0 &&
+        body.length > 0
+    ) {
+        headers["Content-Range"] =
+            `bytes ${start}-${end}/${totalSize}`;
+    }
+
+    return {
+        status,
+        statusCode: status,
+        headers,
+        body
+    };
 }
 
 async function animetHydraxReadRange(
@@ -19675,37 +19723,51 @@ async function animetHydraxReadRange(
     end,
     requestHeaders = {}
 ) {
-    const CHUNK_SIZE = 0x200000; // 2 MiB, per DEX checkpoint
-
     if (!meta || typeof meta !== "object") {
-        throw new Error("Hydrax: thiếu metadata.");
+        throw new Error("Hydrax Range: thiếu metadata.");
     }
 
     const origin = String(meta.origin || "").replace(/\/+$/, "");
+    const size = Number(meta.long1);
+    const md5Id = String(meta.long2 || "");
+    const resId = String(meta.int2 || "");
+    const fragSize = Number(meta.long3) || ANIMET_HYDRAX_FRAGMENT_SIZE;
+
     let parsedOrigin;
 
     try {
         parsedOrigin = new URL(origin);
     } catch {
-        throw new Error("Hydrax: origin không hợp lệ.");
+        throw new Error("Hydrax Range: origin không hợp lệ.");
     }
 
     if (
-        !["https:", "http:"].includes(parsedOrigin.protocol) ||
+        parsedOrigin.protocol !== "https:" ||
         parsedOrigin.username ||
         parsedOrigin.password
     ) {
-        throw new Error("Hydrax: origin không hợp lệ.");
+        throw new Error("Hydrax Range: chỉ chấp nhận origin HTTPS hợp lệ.");
+    }
+
+    if (
+        !Number.isSafeInteger(size) ||
+        size <= 0 ||
+        !md5Id ||
+        !resId ||
+        !Number.isSafeInteger(fragSize) ||
+        fragSize <= 0
+    ) {
+        throw new Error("Hydrax Range: metadata size/md5Id/resId/frag không hợp lệ.");
     }
 
     if (
         !Number.isSafeInteger(start) ||
         start < 0 ||
-        (end !== null &&
-            end !== undefined &&
-            (!Number.isSafeInteger(end) || end < start))
+        !Number.isSafeInteger(end) ||
+        end < start ||
+        end >= size
     ) {
-        throw new Error("Hydrax: Range không hợp lệ.");
+        throw new Error("Hydrax Range: khoảng byte không hợp lệ.");
     }
 
     const fetchImpl =
@@ -19714,217 +19776,135 @@ async function animetHydraxReadRange(
             : globalThis.fetch;
 
     if (typeof fetchImpl !== "function") {
-        throw new Error("Hydrax: fetch không khả dụng.");
+        throw new Error("Hydrax Range: fetch không khả dụng.");
     }
 
-    const token = animetHydraxToken(
-        meta.int1,
-        meta.long1,
-        meta.long2,
-        meta.int2,
-        meta.long3
-    );
-
-    const upstreamUrl =
-        `${origin}/sora/${encodeURIComponent(String(meta.long1))}/${token}`;
-
-    const chunks = [];
+    const output = [];
     let cursor = start;
-    let expectedEnd = end == null ? null : end;
 
-    while (expectedEnd === null || cursor <= expectedEnd) {
-        const chunkEnd = expectedEnd === null
-            ? cursor + CHUNK_SIZE - 1
-            : Math.min(cursor + CHUNK_SIZE - 1, expectedEnd);
+    while (cursor <= end) {
+        // Mỗi token chỉ đại diện cho fragment mà nó mã hóa.
+        const index = Math.floor(cursor / fragSize);
+        const fragmentStart = index * fragSize;
+        const fragmentEnd = Math.min(
+            size - 1,
+            fragmentStart + fragSize - 1
+        );
 
-        const headers = {
-            "Accept": "*/*",
-            "Referer": ANIMET_HYDRAX_REFERER,
-            "Range": `bytes=${cursor}-${chunkEnd}`
-        };
+        const absoluteEnd = Math.min(end, fragmentEnd);
+        const relativeStart = cursor - fragmentStart;
+        const relativeEnd = absoluteEnd - fragmentStart;
 
-        // Forward only safe, relevant request headers.
-        const incomingRange = requestHeaders.range || requestHeaders.Range;
-        if (incomingRange) {
-            // The upstream range must describe the current fragment,
-            // not repeat the caller's complete range.
-            headers.Range = `bytes=${cursor}-${chunkEnd}`;
-        }
+        const token = animetHydraxToken(
+            index,
+            size,
+            md5Id,
+            resId,
+            fragSize
+        );
+
+        // Giữ endpoint /sora/... như cấu trúc đang được dùng trong helper
+        // hiện tại; cần đối chiếu endpoint này với interceptor thực tế.
+        const upstreamUrl =
+            `${origin}/sora/${encodeURIComponent(String(size))}/${token}`;
 
         const response = await fetchImpl(upstreamUrl, {
             method: "GET",
-            headers,
-            redirect: "follow"
+            redirect: "follow",
+            headers: {
+                "Accept": "*/*",
+                "Referer": ANIMET_HYDRAX_REFERER,
+                "Range": `bytes=${relativeStart}-${relativeEnd}`
+            }
         });
 
         if (response.status !== 206) {
             throw new Error(
-                `Hydrax: upstream cần trả HTTP 206, nhận ${response.status}.`
+                `Hydrax upstream trả HTTP ${response.status}, cần 206.`
             );
         }
 
-        const contentRange =
-            response.headers?.get?.("content-range") || "";
-
-        const match = contentRange.match(
-            /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i
-        );
-
-        if (!match) {
-            throw new Error("Hydrax: Content-Range upstream không hợp lệ.");
-        }
-
-        const actualStart = Number(match[1]);
-        const actualEnd = Number(match[2]);
-
-        if (
-            actualStart !== cursor ||
-            actualEnd < actualStart ||
-            actualEnd > chunkEnd
-        ) {
-            throw new Error("Hydrax: Content-Range không khớp yêu cầu.");
-        }
-
         const bytes = Buffer.from(await response.arrayBuffer());
-        if (bytes.length !== actualEnd - actualStart + 1) {
-            throw new Error("Hydrax: kích thước chunk không khớp Content-Range.");
+        const expectedLength = relativeEnd - relativeStart + 1;
+
+        if (bytes.length !== expectedLength) {
+            throw new Error(
+                `Hydrax fragment ${index}: nhận ${bytes.length} byte, ` +
+                `cần ${expectedLength}.`
+            );
         }
 
-        chunks.push(bytes);
-
-        if (match[3] !== "*") {
-            const total = Number(match[3]);
-
-            if (!Number.isSafeInteger(total) || total <= actualEnd) {
-                throw new Error("Hydrax: tổng kích thước upstream không hợp lệ.");
-            }
-
-            if (
-                meta.totalSize != null &&
-                Number(meta.totalSize) !== total
-            ) {
-                throw new Error("Hydrax: totalSize không khớp.");
-            }
-
-            meta.totalSize = total;
-
-            if (expectedEnd === null) {
-                expectedEnd = total - 1;
-            }
-        }
-
-        cursor = actualEnd + 1;
-
-        if (actualEnd < chunkEnd) {
-            if (match[3] !== "*" && cursor < Number(match[3])) {
-                throw new Error("Hydrax: upstream trả chunk ngắn bất thường.");
-            }
-            break;
-        }
+        output.push(bytes);
+        cursor = absoluteEnd + 1;
     }
 
-    return Buffer.concat(chunks);
-}
-
-function animetHydraxRangeResponse(
-    request,
-    bytes,
-    start,
-    end,
-    totalSize
-) {
-    const body = Buffer.isBuffer(bytes)
-        ? bytes
-        : Buffer.from(bytes || []);
-
-    const total = Number.isSafeInteger(Number(totalSize)) &&
-        Number(totalSize) >= 0
-        ? Number(totalSize)
-        : null;
-
-    return {
-        status: 206,
-        statusCode: 206,
-        headers: {
-            "content-type": "video/mp4",
-            "accept-ranges": "bytes",
-            "content-length": String(body.length),
-            "content-range":
-                `bytes ${start}-${end}/${total === null ? "*" : total}`
-        },
-        body
-    };
+    return Buffer.concat(output);
 }
 
 async function animetHydraxResponse(request, meta) {
+    const totalSize = Number(meta?.totalSize ?? meta?.long1);
+
+    if (
+        !Number.isSafeInteger(totalSize) ||
+        totalSize <= 0
+    ) {
+        return {
+            status: 500,
+            statusCode: 500,
+            headers: { "Cache-Control": "no-store" },
+            body: Buffer.from("Hydrax: thiếu totalSize hợp lệ.")
+        };
+    }
+
     const headers = request?.headers || {};
     const parsed = animetHydraxParseRange(
-        headers.range || headers.Range || null
+        headers.range || headers.Range
     );
-
-    if (!meta || typeof meta !== "object") {
-        throw new Error("Hydrax: thiếu metadata resolver.");
-    }
 
     if (parsed?.invalid) {
         return {
             status: 416,
             statusCode: 416,
             headers: {
-                "content-range": `bytes */${meta.totalSize ?? "*"}`
+                "Content-Range": `bytes */${totalSize}`,
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-store"
             },
             body: Buffer.alloc(0)
         };
     }
 
-    const total = Number(meta.totalSize);
-    const hasTotal = Number.isSafeInteger(total) && total > 0;
-
-    let start;
-    let end;
+    let start = 0;
+    let end = totalSize - 1;
 
     if (parsed?.suffix) {
-        if (!hasTotal) {
-            return {
-                status: 416,
-                statusCode: 416,
-                headers: { "content-range": "bytes */*" },
-                body: Buffer.alloc(0)
-            };
-        }
-
-        const length = Math.min(parsed.suffixLength, total);
-        start = total - length;
-        end = total - 1;
+        const length = Math.min(parsed.suffixLength, totalSize);
+        start = totalSize - length;
     } else if (parsed) {
         start = parsed.start;
-        end = parsed.end;
+        end = parsed.end === null
+            ? totalSize - 1
+            : Math.min(parsed.end, totalSize - 1);
+    }
 
-        if (hasTotal) {
-            if (start >= total) {
-                return {
-                    status: 416,
-                    statusCode: 416,
-                    headers: {
-                        "content-range": `bytes */${total}`
-                    },
-                    body: Buffer.alloc(0)
-                };
-            }
-
-            end = end === null ? total - 1 : Math.min(end, total - 1);
-        } else if (end === null) {
-            end = start + CHUNK_SIZE - 1;
-        }
-    } else {
-        start = 0;
-        end = hasTotal
-            ? Math.min(total - 1, 0x7fffff)
-            : 0x1fffff;
+    if (start >= totalSize || end < start) {
+        return {
+            status: 416,
+            statusCode: 416,
+            headers: {
+                "Content-Range": `bytes */${totalSize}`,
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-store"
+            },
+            body: Buffer.alloc(0)
+        };
     }
 
     const bytes = await animetHydraxReadRange(
-        meta,
+        {
+            ...meta,
+            totalSize
+        },
         start,
         end,
         headers
@@ -19937,35 +19917,67 @@ async function animetHydraxResponse(request, meta) {
         bytes,
         start,
         actualEnd,
-        meta.totalSize
+        totalSize,
+        206
     );
 }
 
-
 // ---------------------------------------------------------------------------
-// ANIMET — FAKE URL METADATA CHECKPOINT
-// Chỉ trích xuất metadata nếu URL có dạng phù hợp; không tự khẳng định
-// cấu trúc URL giả đã được xác minh.
+// HYDRAX FAKE URL CHECKPOINT
+//
+// URL shape currently observed:
+// https://hx.animet.local/{sub}/{suffix}/{md5Id}/{size}/{resId}/video.mp4
+//
+// The sub/suffix -> origin mapping must match the real interceptor behavior.
 // ---------------------------------------------------------------------------
-
 function animetHydraxFakeUrlCheckpoint(fakeUrl) {
-  try {
-    const parsed = new URL(fakeUrl);
-    if (parsed.hostname.toLowerCase() !== ANIMET_HYDRAX_FAKE_HOST) {
-      return null;
-    }
+    try {
+        const parsed = new URL(String(fakeUrl || ""));
 
-    return {
-      fakeUrl: parsed.href,
-      pathname: parsed.pathname,
-      segments: parsed.pathname.split("/").filter(Boolean),
-      status: "METADATA_ONLY_NEEDS_BYTECODE_CONFIRMATION",
-      note:
-        "Chưa suy ra upstream origin hoặc token từ URL giả nếu chưa xác nhận cấu trúc segment.",
-    };
-  } catch {
-    return null;
-  }
+        if (
+            parsed.hostname.toLowerCase() !==
+            ANIMET_HYDRAX_FAKE_HOST
+        ) {
+            return null;
+        }
+
+        const segments = parsed.pathname
+            .split("/")
+            .filter(Boolean);
+
+        if (
+            segments.length < 5 ||
+            segments[segments.length - 1] !== "video.mp4"
+        ) {
+            return {
+                fakeUrl: parsed.href,
+                segments,
+                status: "INVALID_FAKE_URL_SHAPE"
+            };
+        }
+
+        const [sub, suffix, md5Id, sizeText, resId] = segments;
+        const size = Number(sizeText);
+
+        // sub + suffix are only treated as a candidate host here.
+        // The route validates the candidate against the configured allowlist.
+        const candidateHost = `${sub}.${suffix}`;
+
+        return {
+            fakeUrl: parsed.href,
+            pathname: parsed.pathname,
+            segments,
+            sub,
+            suffix,
+            md5Id,
+            size,
+            resId,
+            candidateHost,
+            status: "PARSED_NEEDS_INTERCEPTOR_CONFIRMATION"
+        };
+    } catch {
+        return null;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -20602,23 +20614,53 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
                 );
 
                 for (const url of mediaUrls) {
-                    if (!url || animetIsFakeHydraxUrl(url)) continue;
+    if (!url) continue;
 
-                    const type = animetMediaType(url);
+    // URL giả chỉ là metadata đầu vào cho proxy nội bộ,
+    // tuyệt đối không coi nó là direct media.
+    if (animetIsFakeHydraxUrl(url)) {
+        const checkpoint = animetHydraxFakeUrlCheckpoint(url);
 
-                    if (type === "unknown") continue;
+        state.checkpoints.push({
+            type: "hydrax-fake-url",
+            url,
+            metadata: checkpoint
+        });
 
-                    state.sources.push({
-                        name: "AnimeT Hydrax",
-                        title: "AnimeT Hydrax",
-                        url,
-                        type,
-                        source: "AnimeT",
-                        headers: {
-                            Referer: ANIMET_HYDRAX_REFERER,
-                        },
-                    });
+        if (
+            checkpoint &&
+            checkpoint.status === "PARSED_NEEDS_INTERCEPTOR_CONFIRMATION"
+        ) {
+            state.sources.push({
+                name: "AnimeT Hydrax",
+                title: "AnimeT Hydrax",
+                url,
+                type: "video",
+                source: "AnimeT",
+                hydraxFake: true,
+                headers: {
+                    Referer: ANIMET_HYDRAX_REFERER
                 }
+            });
+        }
+
+        continue;
+    }
+
+    const type = animetMediaType(url);
+    if (type === "unknown") continue;
+
+    state.sources.push({
+        name: "AnimeT Hydrax",
+        title: "AnimeT Hydrax",
+        url,
+        type,
+        source: "AnimeT",
+        headers: {
+            Referer: ANIMET_HYDRAX_REFERER
+        }
+    });
+}
             }
         } catch (error) {
             state.checkpoints.push({
@@ -21045,13 +21087,18 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
     }
 
     const sources = animetUnique(
-      state.sources.filter(source =>
+    state.sources.filter(source =>
         source.url &&
-        !animetIsFakeHydraxUrl(source.url) &&
-        animetMediaType(source.url) !== "unknown"
-      ),
-      source => source.url
-    );
+        (
+            source.hydraxFake === true ||
+            (
+                !animetIsFakeHydraxUrl(source.url) &&
+                animetMediaType(source.url) !== "unknown"
+            )
+        )
+    ),
+    source => source.url
+);
 
     const players = animetUnique(state.players, player => player.url);
 
@@ -21221,8 +21268,19 @@ async function fetchAnimeTProvider(
             return [];
         }
 
-        // 4. Chỉ đưa URL HTTP(S) thực tế ra danh sách stream.
-        // URL giả hx.animet.local không phải direct stream.
+        // 4. Chuyển URL Hydrax giả thành URL proxy của chính MOVINA.
+        // MOVINA_PUBLIC_BASE_URL nên được đặt thành URL deploy công khai
+        // nếu môi trường không cung cấp VERCEL_URL.
+        const publicBase = String(
+            process.env.MOVINA_PUBLIC_BASE_URL ||
+            process.env.PUBLIC_URL ||
+            (
+                process.env.VERCEL_URL
+                    ? `https://${process.env.VERCEL_URL}`
+                    : ""
+            )
+        ).replace(/\/+$/, "");
+
         const seen = new Set();
         const streams = [];
 
@@ -21230,41 +21288,55 @@ async function fetchAnimeTProvider(
             if (!item || typeof item !== "object") continue;
 
             const url = String(item.url || item.link || "").trim();
-
             if (!/^https?:\/\//i.test(url)) continue;
-            if (/^https?:\/\/hx\.animet\.local(?:\/|$)/i.test(url)) {
-                continue;
+
+            let outputUrl = url;
+            const isHydraxFake = animetIsFakeHydraxUrl(url);
+
+            if (isHydraxFake) {
+                if (!publicBase) {
+                    console.warn(
+                        TAG,
+                        "Bỏ Hydrax proxy source: thiếu MOVINA_PUBLIC_BASE_URL " +
+                        "hoặc VERCEL_URL."
+                    );
+                    continue;
+                }
+
+                const encoded = Buffer
+                    .from(url, "utf8")
+                    .toString("base64url");
+
+                outputUrl =
+                    `${publicBase}/animet/hydrax/${encoded}`;
             }
 
-            if (seen.has(url)) continue;
-            seen.add(url);
+            if (seen.has(outputUrl)) continue;
+            seen.add(outputUrl);
 
             const rawType = String(item.type || "").toLowerCase();
-            const type = /m3u8|hls/.test(rawType)
-                ? "m3u8"
-                : "video";
+            const type = isHydraxFake
+                ? "video"
+                : (/m3u8|hls/.test(rawType) ? "m3u8" : "video");
 
             streams.push({
-                name: item.name || item.serverName || "AnimeT",
+                name: item.name || item.serverName || "AnimeT Hydrax",
                 title: item.title ||
                     `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""}`,
-                url,
+                url: outputUrl,
                 type,
                 provider: "animet",
                 source: "animet",
                 behaviorHints: item.behaviorHints,
-                headers: item.headers || {},
+                headers: isHydraxFake
+                    ? {}
+                    : (item.headers || {}),
                 subtitles: item.subtitles || []
             });
         }
 
         console.log(TAG, "STREAM COUNT:", streams.length);
         return streams;
-    } catch (error) {
-        console.error(TAG, "ERROR:", error?.stack || error?.message || error);
-        return [];
-    }
-}
 
 // ============================================================
 // MOVINA — ANIMET PROVIDER REGISTRATION
@@ -30144,6 +30216,129 @@ const addonRouter =
 
 const app =
     express();
+
+
+/* ============================================================================
+ * MOVINA — ANIMET HYDRAX RANGE PROXY
+ *
+ * Nhận URL giả đã được adapter mã hóa Base64URL.
+ * Chỉ cho phép hostname thuộc allowlist cấu hình.
+ * ========================================================================== */
+
+app.get(
+    "/animet/hydrax/:encoded",
+    async (req, res) => {
+        try {
+            const encoded = String(req.params.encoded || "");
+
+            if (!/^[A-Za-z0-9_-]+$/.test(encoded)) {
+                return res.status(400).send("Invalid Hydrax proxy token.");
+            }
+
+            let fakeUrl;
+
+            try {
+                fakeUrl = Buffer
+                    .from(encoded, "base64url")
+                    .toString("utf8");
+            } catch {
+                return res.status(400).send("Invalid Hydrax URL encoding.");
+            }
+
+            const checkpoint = animetHydraxFakeUrlCheckpoint(fakeUrl);
+
+            if (
+                !checkpoint ||
+                checkpoint.status !== "PARSED_NEEDS_INTERCEPTOR_CONFIRMATION"
+            ) {
+                return res.status(400).send("Invalid Hydrax fake URL.");
+            }
+
+            if (
+                !Number.isSafeInteger(checkpoint.size) ||
+                checkpoint.size <= 0 ||
+                !/^[A-Za-z0-9_-]+$/.test(checkpoint.md5Id) ||
+                !/^[A-Za-z0-9_-]+$/.test(checkpoint.resId)
+            ) {
+                return res.status(400).send("Invalid Hydrax metadata.");
+            }
+
+            // Mặc định chỉ cho phép abysscdn.com và subdomain của nó.
+            // Có thể cấu hình thêm domain đã xác minh bằng biến môi trường,
+            // phân tách các suffix bằng dấu chấm phẩy.
+            const allowedSuffixes = String(
+                process.env.ANIMET_HYDRAX_ALLOWED_SUFFIXES ||
+                "abysscdn.com"
+            )
+                .split(";")
+                .map(value => value.trim().toLowerCase())
+                .filter(Boolean);
+
+            const candidateHost = String(
+                checkpoint.candidateHost || ""
+            ).toLowerCase();
+
+            const allowedHost = allowedSuffixes.some(suffix =>
+                candidateHost === suffix ||
+                candidateHost.endsWith(`.${suffix}`)
+            );
+
+            if (!allowedHost) {
+                console.warn(
+                    "[ANIMET HYDRAX] Host bị chặn:",
+                    candidateHost
+                );
+
+                return res.status(403).send(
+                    "Hydrax origin is not in the configured allowlist."
+                );
+            }
+
+            const origin = `https://${candidateHost}`;
+
+            const meta = {
+                origin,
+                int1: 0,
+                long1: checkpoint.size,
+                long2: checkpoint.md5Id,
+                int2: checkpoint.resId,
+                long3: ANIMET_HYDRAX_FRAGMENT_SIZE,
+                totalSize: checkpoint.size
+            };
+
+            const result = await animetHydraxResponse(
+                { headers: req.headers },
+                meta
+            );
+
+            for (const [name, value] of Object.entries(
+                result.headers || {}
+            )) {
+                res.setHeader(name, value);
+            }
+
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type");
+            res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+
+            return res
+                .status(result.status || result.statusCode || 502)
+                .send(result.body || Buffer.alloc(0));
+
+        } catch (error) {
+            console.error(
+                "[ANIMET HYDRAX PROXY] ERROR:",
+                error?.stack || error?.message || error
+            );
+
+            if (!res.headersSent) {
+                return res
+                    .status(502)
+                    .send("AnimeT Hydrax proxy error.");
+            }
+        }
+    }
+);
 
 /* ============================================================
    CORS
