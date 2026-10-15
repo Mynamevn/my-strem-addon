@@ -21143,10 +21143,11 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
 // END PRV-ANIMET
 // ============================================================================
 
-// ============================================================
-// MOVINA — ANIMET PROVIDER ADAPTER
-// Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
-// ============================================================
+
+/* ============================================================
+ * MOVINA — ANIMET PROVIDER ADAPTER
+ * Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
+ * ============================================================ */
 
 async function fetchAnimeTProvider(
     movieName,
@@ -21188,6 +21189,7 @@ async function fetchAnimeTProvider(
             .trim();
 
         const wanted = norm(query);
+
         const detailCandidate =
             candidates.find(item =>
                 norm(item.title || item.name) === wanted
@@ -21202,6 +21204,7 @@ async function fetchAnimeTProvider(
             candidates[0];
 
         const detailUrl = detailCandidate?.url;
+
         if (!detailUrl) {
             console.log(TAG, "DETAIL URL MISSING:", query);
             return [];
@@ -21218,10 +21221,7 @@ async function fetchAnimeTProvider(
 
         let episodeUrl = detailUrl;
 
-        if (
-            streamType !== "movie" &&
-            episodes.length
-        ) {
+        if (streamType !== "movie" && episodes.length) {
             const wantedEpisode = Math.max(
                 1,
                 Number(episodeNumber) || 1
@@ -21268,9 +21268,7 @@ async function fetchAnimeTProvider(
             return [];
         }
 
-        // 4. Chuyển URL Hydrax giả thành URL proxy của chính MOVINA.
-        // MOVINA_PUBLIC_BASE_URL nên được đặt thành URL deploy công khai
-        // nếu môi trường không cung cấp VERCEL_URL.
+        // 4. Chuyển URL Hydrax giả thành URL proxy MOVINA.
         const publicBase = String(
             process.env.MOVINA_PUBLIC_BASE_URL ||
             process.env.PUBLIC_URL ||
@@ -21287,7 +21285,10 @@ async function fetchAnimeTProvider(
         for (const item of candidatesStreams) {
             if (!item || typeof item !== "object") continue;
 
-            const url = String(item.url || item.link || "").trim();
+            const url = String(
+                item.url || item.link || ""
+            ).trim();
+
             if (!/^https?:\/\//i.test(url)) continue;
 
             let outputUrl = url;
@@ -21297,8 +21298,8 @@ async function fetchAnimeTProvider(
                 if (!publicBase) {
                     console.warn(
                         TAG,
-                        "Bỏ Hydrax proxy source: thiếu MOVINA_PUBLIC_BASE_URL " +
-                        "hoặc VERCEL_URL."
+                        "Bỏ Hydrax proxy source: thiếu " +
+                        "MOVINA_PUBLIC_BASE_URL hoặc VERCEL_URL."
                     );
                     continue;
                 }
@@ -21314,13 +21315,18 @@ async function fetchAnimeTProvider(
             if (seen.has(outputUrl)) continue;
             seen.add(outputUrl);
 
-            const rawType = String(item.type || "").toLowerCase();
+            const rawType = String(
+                item.type || ""
+            ).toLowerCase();
+
             const type = isHydraxFake
                 ? "video"
                 : (/m3u8|hls/.test(rawType) ? "m3u8" : "video");
 
             streams.push({
-                name: item.name || item.serverName || "AnimeT Hydrax",
+                name: item.name ||
+                    item.serverName ||
+                    "AnimeT Hydrax",
                 title: item.title ||
                     `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""}`,
                 url: outputUrl,
@@ -21337,7 +21343,21 @@ async function fetchAnimeTProvider(
 
         console.log(TAG, "STREAM COUNT:", streams.length);
         return streams;
-        }
+
+    } catch (error) {
+        console.error(
+            TAG,
+            "PROVIDER ADAPTER ERROR:",
+            error?.stack || error
+        );
+        return [];
+    }
+}
+
+// ============================================================
+// END MOVINA — ANIMET PROVIDER ADAPTER
+// ============================================================
+
 
 // ============================================================
 // MOVINA — ANIMET PROVIDER REGISTRATION
