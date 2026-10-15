@@ -18979,10 +18979,12 @@ function animetMediaType(url) {
   return "unknown";
 }
 
-// ---------------------------------------------------------------------------
-// ANIMET — HTTP REQUEST WITH TIMEOUT
-// ---------------------------------------------------------------------------
-
+// ANIMET REQUEST — COOKIE SESSION + REDIRECT TRACKING
+// Purpose:
+// - Preserve ordinary Set-Cookie sessions across redirects.
+// - Track requested URL versus final URL.
+// - Detect verification pages without attempting to bypass them.
+// - Keep compatibility with the existing animetRequest() call sites.
 
 async function animetRequest(url, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
@@ -18996,40 +18998,239 @@ async function animetRequest(url, options = {}) {
     Number(options.timeoutMs) || 18000
   );
 
+  const maxRedirects = Math.max(
+    0,
+    Math.min(10, Number(options.maxRedirects ?? 8))
+  );
+
+  // Shared only within this Node.js process.
+  // This is ordinary session-cookie handling, not challenge solving.
+  const cookieJar =
+    globalThis.__MOVINA_ANIMET_COOKIE_JAR ||
+    (globalThis.__MOVINA_ANIMET_COOKIE_JAR = new Map());
+
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
     timeoutMs
   );
 
+  const initialUrl = String(url);
+  let currentUrl = initialUrl;
+  let method = String(options.method || "GET").toUpperCase();
+  let body = options.body;
+
+  const headers = {
+    "User-Agent":
+      options.userAgent ||
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+      "AppleWebKit/537.36 (KHTML, like Gecko) " +
+      "Chrome/131.0 Safari/537.36",
+    "Accept":
+      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+    ...(options.headers || {}),
+  };
+
+  function cookieKey(cookie) {
+    return `${cookie.domain}|${cookie.path}|${cookie.name}`;
+  }
+
+  function saveCookies(response, responseUrl) {
+    let setCookies = [];
+
+    if (typeof response.headers.getSetCookie === "function") {
+      setCookies = response.headers.getSetCookie();
+    } else {
+      const combined = response.headers.get("set-cookie");
+      if (combined) setCookies = [combined];
+    }
+
+    let hostname;
+    try {
+      hostname = new URL(responseUrl).hostname.toLowerCase();
+    } catch {
+      return;
+    }
+
+    for (const line of setCookies) {
+      const parts = String(line).split(";");
+      const first = parts.shift() || "";
+      const separator = first.indexOf("=");
+
+      if (separator <= 0) continue;
+
+      const name = first.slice(0, separator).trim();
+      const value = first.slice(separator + 1).trim();
+
+      if (!name) continue;
+
+      const cookie = {
+        name,
+        value,
+        domain: hostname,
+        path: "/",
+        secure: false,
+        expiresAt: 0,
+      };
+
+      for (const part of parts) {
+        const index = part.indexOf("=");
+        const attrName = (
+          index < 0 ? part : part.slice(0, index)
+        ).trim().toLowerCase();
+        const attrValue = index < 0
+          ? ""
+          : part.slice(index + 1).trim();
+
+        if (attrName === "domain" && attrValue) {
+          cookie.domain = attrValue
+            .replace(/^\./, "")
+            .toLowerCase();
+        } else if (attrName === "path" && attrValue.startsWith("/")) {
+          cookie.path = attrValue;
+        } else if (attrName === "secure") {
+          cookie.secure = true;
+        } else if (attrName === "max-age") {
+          const seconds = Number(attrValue);
+          if (Number.isFinite(seconds)) {
+            cookie.expiresAt = Date.now() + seconds * 1000;
+          }
+        } else if (attrName === "expires" && !cookie.expiresAt) {
+          const timestamp = Date.parse(attrValue);
+          if (Number.isFinite(timestamp)) {
+            cookie.expiresAt = timestamp;
+          }
+        }
+      }
+
+      // Reject cookies scoped to unrelated domains.
+      if (
+        hostname !== cookie.domain &&
+        !hostname.endsWith("." + cookie.domain)
+      ) {
+        continue;
+      }
+
+      const key = cookieKey(cookie);
+
+      if (cookie.expiresAt && cookie.expiresAt <= Date.now()) {
+        cookieJar.delete(key);
+      } else {
+        cookieJar.set(key, cookie);
+      }
+    }
+  }
+
+  function getCookieHeader(requestUrl) {
+    const parsed = new URL(requestUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname || "/";
+    const isHttps = parsed.protocol === "https:";
+    const now = Date.now();
+    const selected = [];
+
+    for (const [key, cookie] of cookieJar) {
+      if (cookie.expiresAt && cookie.expiresAt <= now) {
+        cookieJar.delete(key);
+        continue;
+      }
+
+      const domainMatches =
+        hostname === cookie.domain ||
+        hostname.endsWith("." + cookie.domain);
+
+      const pathMatches =
+        pathname === cookie.path ||
+        pathname.startsWith(
+          cookie.path.endsWith("/")
+            ? cookie.path
+            : cookie.path + "/"
+        ) ||
+        (cookie.path === "/" && pathname.startsWith("/"));
+
+      if (
+        domainMatches &&
+        pathMatches &&
+        (!cookie.secure || isHttps)
+      ) {
+        selected.push(`${cookie.name}=${cookie.value}`);
+      }
+    }
+
+    return selected.join("; ");
+  }
+
   try {
-    const headers = {
-      "User-Agent":
-        options.userAgent ||
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
-      "Accept":
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
-      ...(options.headers || {}),
-    };
+    let response;
+    let redirectCount = 0;
 
-    const response = await fetchImpl(url, {
-      method: options.method || "GET",
-      headers,
-      body: options.body,
-      redirect: "follow",
-      signal: controller.signal,
-    });
+    while (true) {
+      const requestHeaders = { ...headers };
+      const cookieHeader = getCookieHeader(currentUrl);
 
-    const body =
+      if (cookieHeader) {
+        requestHeaders.Cookie = cookieHeader;
+      }
+
+      response = await fetchImpl(currentUrl, {
+        method,
+        headers: requestHeaders,
+        body: method === "GET" || method === "HEAD"
+          ? undefined
+          : body,
+        redirect: "manual",
+        signal: controller.signal,
+      });
+
+      saveCookies(response, currentUrl);
+
+      const location = response.headers.get("location");
+      const isRedirect =
+        [301, 302, 303, 307, 308].includes(response.status) &&
+        Boolean(location);
+
+      if (!isRedirect || redirectCount >= maxRedirects) {
+        break;
+      }
+
+      const nextUrl = new URL(location, currentUrl).href;
+
+      // Do not forward a caller-supplied Authorization header
+      // to a different origin.
+      if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
+        delete headers.Authorization;
+        delete headers.authorization;
+      }
+
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) &&
+          method === "POST")
+      ) {
+        method = "GET";
+        body = undefined;
+      }
+
+      try {
+        await response.body?.cancel();
+      } catch {}
+
+      currentUrl = nextUrl;
+      redirectCount++;
+    }
+
+    const responseUrl = currentUrl;
+    const responseHeaders = response.headers;
+
+    const responseBody =
       options.responseType === "arrayBuffer"
         ? Buffer.from(await response.arrayBuffer())
         : await response.text();
 
-    const finalUrl = response.url || url;
-    const html = Buffer.isBuffer(body)
+    const html = Buffer.isBuffer(responseBody)
       ? ""
-      : String(body || "");
+      : String(responseBody || "");
 
     const htmlTitle =
       html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]
@@ -19038,19 +19239,22 @@ async function animetRequest(url, options = {}) {
         .trim() || "";
 
     const verificationPage =
-      /\/xac-minh\.php(?:[?#]|$)/i.test(finalUrl) ||
+      /\/xac-minh\.php(?:[?#]|$)/i.test(responseUrl) ||
       /xác minh truy cập|verify you are human|checking your browser/i
         .test(htmlTitle + " " + html.slice(0, 12000));
 
     return {
-      url: finalUrl,
-      requestedUrl: url,
+      url: responseUrl,
+      requestedUrl: initialUrl,
       status: response.status,
       ok: response.ok,
-      headers: response.headers,
-      body,
+      headers: responseHeaders,
+      body: responseBody,
       htmlTitle,
       verificationPage,
+      redirectCount,
+      contentType: responseHeaders.get("content-type") || "",
+      contentLength: responseHeaders.get("content-length") || "",
     };
   } finally {
     clearTimeout(timeout);
