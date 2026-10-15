@@ -19717,6 +19717,7 @@ function animetHydraxRangeResponse(
     };
 }
 
+
 async function animetHydraxReadRange(
     meta,
     start,
@@ -19724,21 +19725,22 @@ async function animetHydraxReadRange(
     requestHeaders = {}
 ) {
     if (!meta || typeof meta !== "object") {
-        throw new Error("Hydrax Range: thiếu metadata.");
+        throw new Error("Hydrax Range: missing metadata.");
     }
 
     const origin = String(meta.origin || "").replace(/\/+$/, "");
     const size = Number(meta.long1);
-    const md5Id = String(meta.long2 || "");
-    const resId = String(meta.int2 || "");
-    const fragSize = Number(meta.long3) || ANIMET_HYDRAX_FRAGMENT_SIZE;
+    const md5Id = String(meta.long2 ?? "");
+    const resId = String(meta.int2 ?? "");
+    const fragSize =
+        Number(meta.long3) || ANIMET_HYDRAX_FRAGMENT_SIZE;
 
     let parsedOrigin;
 
     try {
         parsedOrigin = new URL(origin);
     } catch {
-        throw new Error("Hydrax Range: origin không hợp lệ.");
+        throw new Error("Hydrax Range: invalid origin.");
     }
 
     if (
@@ -19746,28 +19748,28 @@ async function animetHydraxReadRange(
         parsedOrigin.username ||
         parsedOrigin.password
     ) {
-        throw new Error("Hydrax Range: chỉ chấp nhận origin HTTPS hợp lệ.");
+        throw new Error("Hydrax Range: HTTPS origin required.");
     }
 
     if (
         !Number.isSafeInteger(size) ||
         size <= 0 ||
-        !md5Id ||
-        !resId ||
+        !/^\d+$/.test(md5Id) ||
+        !/^\d+$/.test(resId) ||
         !Number.isSafeInteger(fragSize) ||
         fragSize <= 0
     ) {
-        throw new Error("Hydrax Range: metadata size/md5Id/resId/frag không hợp lệ.");
+        throw new Error("Hydrax Range: invalid size/IDs/fragment size.");
     }
 
     if (
         !Number.isSafeInteger(start) ||
-        start < 0 ||
         !Number.isSafeInteger(end) ||
+        start < 0 ||
         end < start ||
         end >= size
     ) {
-        throw new Error("Hydrax Range: khoảng byte không hợp lệ.");
+        throw new Error("Hydrax Range: invalid byte interval.");
     }
 
     const fetchImpl =
@@ -19776,14 +19778,13 @@ async function animetHydraxReadRange(
             : globalThis.fetch;
 
     if (typeof fetchImpl !== "function") {
-        throw new Error("Hydrax Range: fetch không khả dụng.");
+        throw new Error("Hydrax Range: fetch unavailable.");
     }
 
-    const output = [];
-    let cursor = start;
+    // Chia dải byte toàn cục thành các đoạn nằm trong từng fragment.
+    const parts = [];
 
-    while (cursor <= end) {
-        // Mỗi token chỉ đại diện cho fragment mà nó mã hóa.
+    for (let cursor = start; cursor <= end;) {
         const index = Math.floor(cursor / fragSize);
         const fragmentStart = index * fragSize;
         const fragmentEnd = Math.min(
@@ -19795,132 +19796,222 @@ async function animetHydraxReadRange(
         const relativeStart = cursor - fragmentStart;
         const relativeEnd = absoluteEnd - fragmentStart;
 
-        const token = animetHydraxToken(
+        parts.push({
             index,
-            size,
-            md5Id,
-            resId,
-            fragSize
-        );
-
-        // Giữ endpoint /sora/... như cấu trúc đang được dùng trong helper
-        // hiện tại; cần đối chiếu endpoint này với interceptor thực tế.
-        const upstreamUrl =
-            `${origin}/sora/${encodeURIComponent(String(size))}/${token}`;
-
-        const response = await fetchImpl(upstreamUrl, {
-            method: "GET",
-            redirect: "follow",
-            headers: {
-                "Accept": "*/*",
-                "Referer": ANIMET_HYDRAX_REFERER,
-                "Range": `bytes=${relativeStart}-${relativeEnd}`
-            }
+            relativeStart,
+            relativeEnd,
+            expectedLength: relativeEnd - relativeStart + 1
         });
 
-        if (response.status !== 206) {
-            throw new Error(
-                `Hydrax upstream trả HTTP ${response.status}, cần 206.`
-            );
-        }
-
-        const bytes = Buffer.from(await response.arrayBuffer());
-        const expectedLength = relativeEnd - relativeStart + 1;
-
-        if (bytes.length !== expectedLength) {
-            throw new Error(
-                `Hydrax fragment ${index}: nhận ${bytes.length} byte, ` +
-                `cần ${expectedLength}.`
-            );
-        }
-
-        output.push(bytes);
         cursor = absoluteEnd + 1;
     }
 
-    return Buffer.concat(output);
+    // Smali dùng executor; Promise.all giữ thứ tự kết quả theo parts.
+    const results = await Promise.all(
+        parts.map(async part => {
+            const token = animetHydraxToken(
+                part.index,
+                size,
+                md5Id,
+                resId,
+                fragSize
+            );
+
+            // Endpoint được xác nhận từ hydraxReadRange lambda.
+            const upstreamUrl =
+                `${origin}/sora/${size}/${token}`;
+
+            const response = await fetchImpl(upstreamUrl, {
+                method: "GET",
+                redirect: "follow",
+                headers: {
+                    "Accept": "*/*",
+                    "Referer": "https://abysscdn.com/",
+                    "Range":
+                        `bytes=${part.relativeStart}-${part.relativeEnd}`
+                }
+            });
+
+            if (response.status !== 206) {
+                throw new Error(
+                    `Hydrax fragment ${part.index}: HTTP ` +
+                    `${response.status}, expected 206.`
+                );
+            }
+
+            const bytes = Buffer.from(await response.arrayBuffer());
+
+            if (bytes.length !== part.expectedLength) {
+                throw new Error(
+                    `Hydrax fragment ${part.index}: received ` +
+                    `${bytes.length} bytes; expected ${part.expectedLength}.`
+                );
+            }
+
+            return bytes;
+        })
+    );
+
+    return Buffer.concat(results);
 }
+
+
 
 async function animetHydraxResponse(request, meta) {
     const totalSize = Number(meta?.totalSize ?? meta?.long1);
 
-    if (
-        !Number.isSafeInteger(totalSize) ||
-        totalSize <= 0
-    ) {
-        return {
-            status: 500,
-            statusCode: 500,
-            headers: { "Cache-Control": "no-store" },
-            body: Buffer.from("Hydrax: thiếu totalSize hợp lệ.")
-        };
+    const errorResponse = (status, message, extraHeaders = {}) => ({
+        status,
+        statusCode: status,
+        headers: {
+            "Cache-Control": "no-store",
+            ...extraHeaders
+        },
+        body: Buffer.from(message || "")
+    });
+
+    if (!Number.isSafeInteger(totalSize) || totalSize <= 0) {
+        return errorResponse(500, "Hydrax: invalid totalSize.");
     }
 
     const headers = request?.headers || {};
-    const parsed = animetHydraxParseRange(
-        headers.range || headers.Range
-    );
-
-    if (parsed?.invalid) {
-        return {
-            status: 416,
-            statusCode: 416,
-            headers: {
-                "Content-Range": `bytes */${totalSize}`,
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "no-store"
-            },
-            body: Buffer.alloc(0)
-        };
-    }
+    const rangeHeader = headers.range ?? headers.Range;
 
     let start = 0;
-    let end = totalSize - 1;
+    let end;
 
-    if (parsed?.suffix) {
-        const length = Math.min(parsed.suffixLength, totalSize);
-        start = totalSize - length;
-    } else if (parsed) {
-        start = parsed.start;
-        end = parsed.end === null
-            ? totalSize - 1
-            : Math.min(parsed.end, totalSize - 1);
+    // Smali: không có Range thì chỉ đọc tối đa 8 MiB đầu.
+    if (!rangeHeader) {
+        end = Math.min(totalSize - 1, 0x800000 - 1);
+    } else {
+        // Giữ đúng dạng Range được hydraxResponse() phân tích.
+        const match = String(rangeHeader)
+            .match(/^bytes=(\d+)-(\d*)$/);
+
+        if (!match) {
+            return errorResponse(
+                416,
+                "",
+                {
+                    "Content-Range": `bytes */${totalSize}`,
+                    "Accept-Ranges": "bytes"
+                }
+            );
+        }
+
+        start = Number(match[1]);
+        const endRaw = match[2] === "" ? null : Number(match[2]);
+
+        if (
+            !Number.isSafeInteger(start) ||
+            start < 0 ||
+            start >= totalSize ||
+            (
+                endRaw !== null &&
+                (
+                    !Number.isSafeInteger(endRaw) ||
+                    endRaw < start
+                )
+            )
+        ) {
+            return errorResponse(
+                416,
+                "",
+                {
+                    "Content-Range": `bytes */${totalSize}`,
+                    "Accept-Ranges": "bytes"
+                }
+            );
+        }
+
+        // Kích thước phục vụ được xác nhận trong Smali.
+        let serveSize;
+
+        if (totalSize < 0x20000000) {
+            serveSize = 0x200000;       // 2 MiB
+        } else if (totalSize < 0x40000000) {
+            serveSize = 0x300000;       // 3 MiB
+        } else if (totalSize < 0x70800000) {
+            serveSize = 0x400000;       // 4 MiB
+        } else {
+            serveSize = 0x600000;       // 6 MiB
+        }
+
+        end = endRaw !== null
+            ? endRaw
+            : start + serveSize - 1;
+
+        end = Math.min(end, totalSize - 1);
+
+        // Hành vi đặc biệt của Smali khi start = 0:
+        // bảo đảm dải đầu tiên có thể đạt tối đa 8 MiB.
+        if (start === 0) {
+            end = Math.max(
+                end,
+                Math.min(0x7fffff, totalSize - 1)
+            );
+        }
     }
 
-    if (start >= totalSize || end < start) {
-        return {
-            status: 416,
-            statusCode: 416,
-            headers: {
+    if (end < start) {
+        return errorResponse(
+            416,
+            "",
+            {
                 "Content-Range": `bytes */${totalSize}`,
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "no-store"
-            },
-            body: Buffer.alloc(0)
-        };
+                "Accept-Ranges": "bytes"
+            }
+        );
     }
 
-    const bytes = await animetHydraxReadRange(
-        {
-            ...meta,
-            totalSize
-        },
-        start,
-        end,
-        headers
-    );
+    try {
+        const bytes = await animetHydraxReadRange(
+            {
+                ...meta,
+                totalSize
+            },
+            start,
+            end,
+            headers
+        );
 
-    const actualEnd = start + bytes.length - 1;
+        if (!Buffer.isBuffer(bytes)) {
+            throw new Error("Hydrax returned a non-Buffer body.");
+        }
 
-    return animetHydraxRangeResponse(
-        request,
-        bytes,
-        start,
-        actualEnd,
-        totalSize,
-        206
-    );
+        const expectedLength = end - start + 1;
+
+        if (bytes.length !== expectedLength) {
+            throw new Error(
+                `Hydrax byte count mismatch: got ${bytes.length}, ` +
+                `expected ${expectedLength}.`
+            );
+        }
+
+        return animetHydraxRangeResponse(
+            request,
+            bytes,
+            start,
+            end,
+            totalSize,
+            206
+        );
+    } catch (error) {
+        console.error(
+            "[ANIMET HYDRAX] Range error:",
+            error?.stack || error?.message || error
+        );
+
+        return errorResponse(
+            502,
+            "AnimeT Hydrax upstream range request failed.",
+            {
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        );
+    }
 }
+
 
 // ---------------------------------------------------------------------------
 // HYDRAX FAKE URL CHECKPOINT
@@ -30276,14 +30367,16 @@ app.get(
             }
 
             if (
-                !Number.isSafeInteger(checkpoint.size) ||
-                checkpoint.size <= 0 ||
-                !/^[A-Za-z0-9_-]+$/.test(checkpoint.md5Id) ||
-                !/^[A-Za-z0-9_-]+$/.test(checkpoint.resId)
-            ) {
-                return res.status(400).send("Invalid Hydrax metadata.");
-            }
-
+    !Number.isSafeInteger(checkpoint.size) ||
+    checkpoint.size <= 0 ||
+    !/^\d+$/.test(checkpoint.md5Id) ||
+    !/^\d+$/.test(checkpoint.resId) ||
+    !Number.isSafeInteger(Number(checkpoint.resId)) ||
+    Number(checkpoint.resId) < 0 ||
+    Number(checkpoint.resId) > 2147483647
+) {
+    return res.status(400).send("Invalid Hydrax metadata.");
+}
             // Mặc định chỉ cho phép abysscdn.com và subdomain của nó.
             // Có thể cấu hình thêm domain đã xác minh bằng biến môi trường,
             // phân tách các suffix bằng dấu chấm phẩy.
