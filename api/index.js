@@ -30246,18 +30246,24 @@ if (!hasAnimeHayStream) {
 
 // -------------------------------------------------
 // FALLBACK — ANIMET
-// Chỉ hiển thị khi AnimeT không trả về stream hợp lệ.
+// Ưu tiên tên đã được AniList chọn cho AnimeHay.
+// Nếu không có tên thay thế, dùng tên phim gốc.
 // -------------------------------------------------
+
+const animetFallbackTitle =
+    (
+        typeof animeHayFallbackTitle === "string" &&
+        animeHayFallbackTitle.trim()
+    )
+        ? animeHayFallbackTitle.trim()
+        : String(movieName || "").trim();
 
 const hasAnimeTStream =
     Array.isArray(animet) &&
     animet.some(stream =>
         stream &&
         typeof stream === "object" &&
-        Boolean(
-            stream.url ||
-            stream.externalUrl
-        )
+        Boolean(stream.url || stream.externalUrl)
     );
 
 if (!hasAnimeTStream) {
@@ -30269,18 +30275,29 @@ if (!hasAnimeTStream) {
 
     externalStreams.push({
         name: "🌐 [Fallback] AnimeT",
-        title: "Tìm anime trên AnimeT - " + movieName,
+
+        title:
+            "Tìm anime trên AnimeT - " +
+            animetFallbackTitle,
+
         externalUrl:
             animetBase +
             "/tim-kiem/" +
-            encodeURIComponent(
-                String(movieName || "").trim()
-            ) +
+            encodeURIComponent(animetFallbackTitle) +
             ".html"
     });
 
     console.info(
-        "[ANIMET] FALLBACK ADDED: Không tìm thấy stream AnimeT."
+        "[ANIMET] FALLBACK ADDED:",
+        JSON.stringify({
+            originalTitle: movieName,
+            selectedTitle: animetFallbackTitle,
+            url:
+                animetBase +
+                "/tim-kiem/" +
+                encodeURIComponent(animetFallbackTitle) +
+                ".html"
+        })
     );
 } else {
     console.info(
