@@ -19261,6 +19261,419 @@ async function animetRequest(url, options = {}) {
   }
 }
 
+// ============================================================================
+// ANIMET — LINKBIO DOMAIN DISCOVERY + HEALTH CHECK
+//
+// Nguồn khám phá chính:
+//   https://linkbio.co/animet
+//
+// Quy trình:
+//   LinkBio -> URL đích -> kiểm tra trang chủ -> kiểm tra trang tìm kiếm
+//
+// Không giải CAPTCHA, không vượt qua trang xác minh.
+// Cache kết quả 15 phút để tránh dò domain ở mọi request.
+// ============================================================================
+
+const ANIMET_LINKBIO_URL = "https://linkbio.co/animet";
+const ANIMET_DOMAIN_CACHE_MS = 15 * 60 * 1000;
+
+async function animetDiscoverActiveBase(options = {}) {
+    const fetchImpl = options.fetchImpl || globalThis.fetch;
+    const timeoutMs = Math.min(
+        12000,
+        Math.max(3000, Number(options.timeoutMs) || 10000)
+    );
+
+    const stateKey = "__MOVINA_ANIMET_DOMAIN_STATE";
+
+    const state =
+        globalThis[stateKey] ||
+        (globalThis[stateKey] = {
+            base: "",
+            status: "UNINITIALIZED",
+            checkedAt: 0,
+            promise: null
+        });
+
+    // Dùng cache nếu kết quả vẫn còn hiệu lực.
+    if (
+        state.base &&
+        Date.now() - state.checkedAt < ANIMET_DOMAIN_CACHE_MS
+    ) {
+        return state.base;
+    }
+
+    // Chống nhiều request đồng thời cùng dò LinkBio.
+    if (state.promise) {
+        return state.promise;
+    }
+
+    state.promise = (async () => {
+        const candidateLinks = [];
+        const candidateBases = [];
+        const seenLinks = new Set();
+        const seenBases = new Set();
+
+        function isSafeHttpsUrl(value) {
+            try {
+                const parsed = new URL(value);
+                const host = parsed.hostname.toLowerCase();
+
+                if (
+                    parsed.protocol !== "https:" ||
+                    parsed.username ||
+                    parsed.password ||
+                    !host ||
+                    host === "localhost" ||
+                    host.endsWith(".local") ||
+                    host.endsWith(".internal") ||
+                    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ||
+                    host.includes(":")
+                ) {
+                    return false;
+                }
+
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
+        function addCandidateLink(value, sourceUrl) {
+            const url = animetAbsoluteUrl(value, sourceUrl);
+
+            if (!url || !isSafeHttpsUrl(url)) return;
+
+            let parsed;
+
+            try {
+                parsed = new URL(url);
+            } catch {
+                return;
+            }
+
+            const host = parsed.hostname.toLowerCase();
+
+            // Không coi chính LinkBio, CDN ảnh hoặc mạng xã hội
+            // là tên miền AnimeT.
+            if (
+                host === "linkbio.co" ||
+                host.endsWith(".linkbio.co") ||
+                host === "bio.linkcdn.cc" ||
+                host.endsWith(".linkcdn.cc") ||
+                /(?:^|\.)instagram\.com$/i.test(host) ||
+                /(?:^|\.)facebook\.com$/i.test(host) ||
+                /(?:^|\.)tiktok\.com$/i.test(host) ||
+                /(?:^|\.)youtube\.com$/i.test(host) ||
+                /(?:^|\.)youtu\.be$/i.test(host) ||
+                /(?:^|\.)t\.me$/i.test(host)
+            ) {
+                return;
+            }
+
+            // Chỉ lấy đường dẫn có khả năng là link website,
+            // không lấy ảnh, stylesheet hoặc JavaScript.
+            if (
+                /\.(?:png|jpe?g|gif|webp|svg|css|js|ico|woff2?)(?:$|\?)/i
+                    .test(parsed.pathname)
+            ) {
+                return;
+            }
+
+            const cleanUrl = parsed.href;
+
+            if (!seenLinks.has(cleanUrl)) {
+                seenLinks.add(cleanUrl);
+                candidateLinks.push(cleanUrl);
+            }
+        }
+
+        function addCandidateBase(value) {
+            try {
+                const parsed = new URL(value);
+                const host = parsed.hostname.toLowerCase();
+
+                if (
+                    parsed.protocol !== "https:" ||
+                    !host ||
+                    host === "linkbio.co" ||
+                    host.endsWith(".linkbio.co") ||
+                    host === "bio.linkcdn.cc" ||
+                    host.endsWith(".linkcdn.cc") ||
+                    host === "localhost" ||
+                    host.endsWith(".local") ||
+                    host.endsWith(".internal") ||
+                    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ||
+                    host.includes(":")
+                ) {
+                    return;
+                }
+
+                const base = parsed.origin.replace(/\/+$/, "");
+
+                if (!seenBases.has(base)) {
+                    seenBases.add(base);
+                    candidateBases.push(base);
+                }
+            } catch {}
+        }
+
+        function looksLikeAnimeTSite(page) {
+            const body = String(page?.body || "");
+            const title = String(page?.htmlTitle || "");
+
+            return (
+                !page?.verificationPage &&
+                /animet|anime\s*vietsub|anime\s*t|animesub|tpostmv|movielist|xem-phim|tim-kiem/i
+                    .test(title + " " + body.slice(0, 60000))
+            );
+        }
+
+        // 1. Đọc trang LinkBio chính thức do người dùng cung cấp.
+        try {
+            const directory = await animetRequest(
+                ANIMET_LINKBIO_URL,
+                {
+                    fetchImpl,
+                    timeoutMs,
+                    maxRedirects: 6,
+                    headers: {
+                        Referer: "https://linkbio.co/",
+                        Accept:
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    }
+                }
+            );
+
+            const html = String(directory.body || "");
+            const anchorTags = html.match(/<a\b[^>]*>/gi) || [];
+
+            for (const tag of anchorTags) {
+                const href =
+                    animetGetAttr(tag, "href") ||
+                    animetGetAttr(tag, "data-href") ||
+                    animetGetAttr(tag, "data-url") ||
+                    animetGetAttr(tag, "data-link");
+
+                if (href) {
+                    addCandidateLink(href, ANIMET_LINKBIO_URL);
+                }
+            }
+
+            console.info(
+                "[PRV-ANIMET] LINKBIO DISCOVERY:",
+                JSON.stringify({
+                    status: directory.status,
+                    finalUrl: directory.url,
+                    verificationPage: directory.verificationPage,
+                    candidateLinks: candidateLinks.length
+                })
+            );
+        } catch (error) {
+            console.warn(
+                "[PRV-ANIMET] LINKBIO ERROR:",
+                error?.message || String(error)
+            );
+        }
+
+        // 2. Theo các link tìm được đến URL đích cuối cùng.
+        // LinkBio có thể chứa link chuyển hướng trung gian.
+        for (const link of candidateLinks.slice(0, 8)) {
+            try {
+                const target = await animetRequest(link, {
+                    fetchImpl,
+                    timeoutMs,
+                    maxRedirects: 6,
+                    headers: {
+                        Referer: ANIMET_LINKBIO_URL,
+                        Accept:
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    }
+                });
+
+                let finalUrl = target.url || link;
+
+                // Nếu request dừng ở trang xác minh cùng hostname,
+                // vẫn giữ origin của website để ghi nhận đúng domain.
+                addCandidateBase(finalUrl);
+
+                console.info(
+                    "[PRV-ANIMET] DOMAIN CANDIDATE:",
+                    JSON.stringify({
+                        requestedUrl: link,
+                        finalUrl,
+                        status: target.status,
+                        verificationPage: target.verificationPage
+                    })
+                );
+            } catch (error) {
+                // Nếu URL ứng viên vẫn là HTTPS công khai,
+                // thử kiểm tra origin của chính link đó ở bước sau.
+                addCandidateBase(link);
+
+                console.warn(
+                    "[PRV-ANIMET] DOMAIN REDIRECT ERROR:",
+                    link,
+                    error?.message || String(error)
+                );
+            }
+        }
+
+        // 3. Giữ domain mặc định làm ứng viên cuối cùng.
+        // Không dùng nó để ghi đè ứng viên LinkBio đã xác minh.
+        addCandidateBase(ANIMET_DEFAULT_BASE);
+
+        let firstRootHealthy = null;
+
+        // 4. Kiểm tra trang chủ và trang tìm kiếm.
+        for (const base of candidateBases) {
+            try {
+                const home = await animetRequest(base + "/", {
+                    fetchImpl,
+                    timeoutMs,
+                    maxRedirects: 6,
+                    headers: {
+                        Referer: base + "/",
+                        Accept:
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    }
+                });
+
+                const homeHealthy =
+                    home.ok &&
+                    !home.verificationPage &&
+                    looksLikeAnimeTSite(home);
+
+                if (!homeHealthy) {
+                    console.info(
+                        "[PRV-ANIMET] DOMAIN REJECTED:",
+                        JSON.stringify({
+                            base,
+                            status: home.status,
+                            finalUrl: home.url,
+                            verificationPage: home.verificationPage,
+                            title: home.htmlTitle
+                        })
+                    );
+
+                    continue;
+                }
+
+                // Kiểm tra endpoint tìm kiếm thực tế.
+                // Đây chỉ là health check, không cần kết quả phim.
+                let searchHealthy = false;
+                let searchChallenged = false;
+
+                try {
+                    const probe = await animetRequest(
+                        base + "/tim-kiem/anime-domain-health-check.html",
+                        {
+                            fetchImpl,
+                            timeoutMs,
+                            maxRedirects: 6,
+                            headers: {
+                                Referer: base + "/",
+                                Accept:
+                                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                            }
+                        }
+                    );
+
+                    searchChallenged = Boolean(probe.verificationPage);
+
+                    searchHealthy =
+                        probe.ok &&
+                        !probe.verificationPage &&
+                        looksLikeAnimeTSite(probe);
+                } catch (error) {
+                    console.warn(
+                        "[PRV-ANIMET] SEARCH HEALTH CHECK ERROR:",
+                        base,
+                        error?.message || String(error)
+                    );
+                }
+
+                const candidate = {
+                    base,
+                    homeHealthy: true,
+                    searchHealthy,
+                    status: searchHealthy
+                        ? "ACTIVE"
+                        : searchChallenged
+                            ? "CHALLENGED"
+                            : "HOME_ONLY"
+                };
+
+                console.info(
+                    "[PRV-ANIMET] DOMAIN HEALTH:",
+                    JSON.stringify(candidate)
+                );
+
+                // Ưu tiên domain mà cả trang chủ và tìm kiếm đều tải được.
+                if (searchHealthy) {
+                    state.base = base;
+                    state.status = "ACTIVE";
+                    state.checkedAt = Date.now();
+
+                    console.info(
+                        "[PRV-ANIMET] ACTIVE DOMAIN:",
+                        base
+                    );
+
+                    return base;
+                }
+
+                // Nếu mọi domain đều gặp challenge ở trang tìm kiếm,
+                // giữ lại domain AnimeT có trang chủ hợp lệ.
+                if (!firstRootHealthy) {
+                    firstRootHealthy = candidate;
+                }
+            } catch (error) {
+                console.warn(
+                    "[PRV-ANIMET] DOMAIN HEALTH ERROR:",
+                    base,
+                    error?.message || String(error)
+                );
+            }
+        }
+
+        if (firstRootHealthy) {
+            state.base = firstRootHealthy.base;
+            state.status = firstRootHealthy.status;
+            state.checkedAt = Date.now();
+
+            console.warn(
+                "[PRV-ANIMET] USING ROOT-HEALTHY DOMAIN:",
+                JSON.stringify(firstRootHealthy)
+            );
+
+            return state.base;
+        }
+
+        // Không xác minh được ứng viên nào:
+        // giữ nguyên domain mặc định để không làm crash provider.
+        state.base = ANIMET_DEFAULT_BASE;
+        state.status = "UNVERIFIED_FALLBACK";
+        state.checkedAt = Date.now();
+
+        console.warn(
+            "[PRV-ANIMET] NO VERIFIED DOMAIN; FALLBACK:",
+            ANIMET_DEFAULT_BASE
+        );
+
+        return state.base;
+    })();
+
+    try {
+        return await state.promise;
+    } finally {
+        state.promise = null;
+    }
+}
+
+// ============================================================================
+// END ANIMET — LINKBIO DOMAIN DISCOVERY + HEALTH CHECK
+// ============================================================================
 
 // ---------------------------------------------------------------------------
 // ANIMET — DEAN EDWARDS PACKER
@@ -20080,20 +20493,29 @@ function animetHydraxFakeUrlCheckpoint(fakeUrl) {
 // ---------------------------------------------------------------------------
 
 async function fetchAnimeT(input, options = {}) {
+ async function fetchAnimeT(input, options = {}) {
   const action = String(
     options.action || options.mode || "links"
   ).toLowerCase();
 
-  const BASE = String(
-    options.baseUrl || ANIMET_DEFAULT_BASE
-  ).replace(/\/+$/, "");
+  const timeoutMs = Math.max(
+    1000,
+    Number(options.timeoutMs) || 18000
+  );
 
-  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 18000);
-  const maxDepth = Math.max(0, Math.min(8, Number(options.maxDepth) || 4));
-  const maxPages = Math.max(1, Math.min(40, Number(options.maxPages) || 12));
+  const maxDepth = Math.max(
+    0,
+    Math.min(8, Number(options.maxDepth) || 4)
+  );
+
+  const maxPages = Math.max(
+    1,
+    Math.min(40, Number(options.maxPages) || 12)
+  );
+
   const fetchImpl = options.fetchImpl || globalThis.fetch;
-
   const inputObject = input && typeof input === "object" ? input : null;
+
   const query = String(
     options.query ||
     inputObject?.query ||
@@ -20101,12 +20523,61 @@ async function fetchAnimeT(input, options = {}) {
     (typeof input === "string" ? input : "")
   ).trim();
 
-  const inputUrl = String(
+  const rawInputUrl = String(
     options.url ||
     inputObject?.url ||
     inputObject?.link ||
-    (typeof input === "string" && /^https?:\/\//i.test(input) ? input : "")
+    (
+      typeof input === "string" &&
+      /^https?:\/\//i.test(input)
+        ? input
+        : ""
+    )
   ).trim();
+
+  // Nếu không được chỉ định baseUrl thủ công,
+  // tự khám phá domain qua LinkBio và health check.
+  const BASE = String(
+    options.baseUrl ||
+    await animetDiscoverActiveBase({
+      fetchImpl,
+      timeoutMs
+    }) ||
+    ANIMET_DEFAULT_BASE
+  ).replace(/\/+$/, "");
+
+  let inputUrl = rawInputUrl;
+
+  // URL cũ thuộc AnimeT có thể vẫn được lưu từ lần tìm kiếm trước.
+  // Nếu path là route nội dung AnimeT, chuyển sang hostname mới
+  // nhưng giữ nguyên pathname, query và hash.
+  if (inputUrl && !options.baseUrl) {
+    try {
+      const parsed = new URL(inputUrl);
+      const active = new URL(BASE);
+
+      const isAnimeTRoute =
+        /\/(?:tim-kiem|phim|xem-phim)\//i.test(parsed.pathname);
+
+      if (
+        isAnimeTRoute &&
+        parsed.hostname.toLowerCase() !==
+          active.hostname.toLowerCase()
+      ) {
+        parsed.protocol = active.protocol;
+        parsed.host = active.host;
+        inputUrl = parsed.href;
+
+        console.info(
+          "[PRV-ANIMET] REMAP OLD DOMAIN:",
+          JSON.stringify({
+            originalUrl: rawInputUrl,
+            activeUrl: inputUrl
+          })
+        );
+      }
+    } catch {}
+  }
 
   const cache = new Map();
 
@@ -20275,11 +20746,11 @@ async function fetchAnimeT(input, options = {}) {
     const output = [];
 
     let baseHost = "";
-    let pageHost = "";
+let pageHost = "";
 
-    try {
-        baseHost = new URL(ANIMET_DEFAULT_BASE).hostname.toLowerCase();
-    } catch {}
+try {
+    baseHost = new URL(BASE).hostname.toLowerCase();
+} catch {}
 
     try {
         pageHost = new URL(pageUrl).hostname.toLowerCase();
@@ -30267,11 +30738,10 @@ const hasAnimeTStream =
     );
 
 if (!hasAnimeTStream) {
-    const animetBase =
-        typeof ANIMET_DEFAULT_BASE === "string" &&
-        ANIMET_DEFAULT_BASE.trim()
-            ? ANIMET_DEFAULT_BASE.trim().replace(/\/+$/, "")
-            : "https://animesub.site";
+    const animetBase = String(
+    await animetDiscoverActiveBase() ||
+    ANIMET_DEFAULT_BASE
+).trim().replace(/\/+$/, "");
 
     externalStreams.push({
         name: "🌐 [Fallback] AnimeT",
