@@ -21337,6 +21337,7 @@ async function fetchAnimeTProvider(
 
         console.log(TAG, "STREAM COUNT:", streams.length);
         return streams;
+        }
 
 // ============================================================
 // MOVINA — ANIMET PROVIDER REGISTRATION
