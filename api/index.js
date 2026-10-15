@@ -21373,10 +21373,10 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
 // ============================================================================
 
 
-/* ============================================================
- * MOVINA — ANIMET PROVIDER ADAPTER
- * Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
- * ============================================================ */
+// ============================================================
+// MOVINA — ANIMET PROVIDER ADAPTER
+// SEARCH -> DIRECTORY FALLBACK -> DETAIL -> EPISODE -> LINKS
+// ============================================================
 
 async function fetchAnimeTProvider(
     movieName,
@@ -21391,55 +21391,433 @@ async function fetchAnimeTProvider(
         const query = String(movieName || "").trim();
         if (!query) return [];
 
-        // 1. Tìm anime
-        const searchResult = await fetchAnimeT(query, {
-            action: "search"
-        });
+        const BASE = String(
+            typeof ANIMET_DEFAULT_BASE !== "undefined"
+                ? ANIMET_DEFAULT_BASE
+                : "https://animesub.site"
+        ).replace(/\/+$/, "");
 
-        const candidates = Array.isArray(searchResult)
-            ? searchResult
-            : (
-                searchResult?.results ||
-                searchResult?.items ||
-                []
+        function normalize(value) {
+            return String(value || "")
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/đ/g, "d")
+                .replace(/[^a-z0-9]+/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
+
+        function titleScore(left, right) {
+            const a = normalize(left);
+            const b = normalize(right);
+
+            if (!a || !b) return 0;
+            if (a === b) return 1;
+
+            if (a.includes(b) || b.includes(a)) {
+                return 0.95;
+            }
+
+            const tokensA = [...new Set(a.split(" "))];
+            const tokensB = [...new Set(b.split(" "))];
+
+            const common = tokensA.filter(
+                token => tokensB.includes(token)
             );
 
-        if (!Array.isArray(candidates) || !candidates.length) {
-            console.log(TAG, "SEARCH EMPTY:", query);
-            return [];
+            return common.length /
+                Math.max(tokensA.length, tokensB.length, 1);
         }
 
-        // Ưu tiên kết quả có tiêu đề khớp truy vấn.
-        const norm = value => String(value || "")
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim();
+        // --------------------------------------------------------
+        // 1. DIRECTORY FALLBACK
+        //
+        // Không đoán ID phim.
+        // Chỉ nhận URL /phim/...-ID.html thực sự xuất hiện
+        // trong HTML trang chủ hoặc trang danh mục được liên kết.
+        // --------------------------------------------------------
 
-        const wanted = norm(query);
+        async function findFromDirectory(searchTitle) {
+            console.log(
+                TAG,
+                "DIRECTORY FALLBACK START:",
+                searchTitle
+            );
 
-        const detailCandidate =
-            candidates.find(item =>
-                norm(item.title || item.name) === wanted
-            ) ||
-            candidates.find(item => {
-                const title = norm(item.title || item.name);
-                return title && (
-                    title.includes(wanted) ||
-                    wanted.includes(title)
+            const pages = new Map();
+            const detailCandidates = new Map();
+            const categoryUrls = new Set();
+
+            function absoluteUrl(raw, base) {
+                try {
+                    const url = new URL(
+                        String(raw || "").replace(/&amp;/g, "&"),
+                        base
+                    );
+
+                    if (
+                        url.protocol !== "https:" &&
+                        url.protocol !== "http:"
+                    ) {
+                        return null;
+                    }
+
+                    if (
+                        url.hostname.toLowerCase() !==
+                        new URL(BASE).hostname.toLowerCase()
+                    ) {
+                        return null;
+                    }
+
+                    url.hash = "";
+                    return url.href;
+                } catch {
+                    return null;
+                }
+            }
+
+            function getAttr(tag, name) {
+                const escaped = name.replace(
+                    /[.*+?^${}()|[\]\\]/g,
+                    "\\$&"
                 );
-            }) ||
-            candidates[0];
 
-        const detailUrl = detailCandidate?.url;
+                const match = tag.match(
+                    new RegExp(
+                        "\\b" + escaped +
+                        "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
+                        "i"
+                    )
+                );
 
-        if (!detailUrl) {
-            console.log(TAG, "DETAIL URL MISSING:", query);
+                return match
+                    ? (match[1] || match[2] || match[3] || "")
+                    : "";
+            }
+
+            function cleanText(html) {
+                return String(html || "")
+                    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+                    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+                    .replace(/<[^>]+>/g, " ")
+                    .replace(/&nbsp;|&#160;/gi, " ")
+                    .replace(/&amp;/gi, "&")
+                    .replace(/&quot;/gi, '"')
+                    .replace(/&#39;|&apos;/gi, "'")
+                    .replace(/&#x([0-9a-f]+);/gi, (_, hex) =>
+                        String.fromCharCode(parseInt(hex, 16))
+                    )
+                    .replace(/&#(\d+);/g, (_, num) =>
+                        String.fromCharCode(Number(num))
+                    )
+                    .replace(/\s+/g, " ")
+                    .trim();
+            }
+
+            function collectLinks(html, sourceUrl) {
+                const anchors =
+                    String(html || "").match(
+                        /<a\b[^>]*>[\s\S]*?<\/a\s*>/gi
+                    ) || [];
+
+                for (const anchor of anchors) {
+                    const openTag =
+                        /^<a\b[^>]*>/i.exec(anchor)?.[0] || "";
+
+                    const rawHref =
+                        getAttr(openTag, "href") ||
+                        getAttr(openTag, "data-href") ||
+                        getAttr(openTag, "data-url");
+
+                    const url = absoluteUrl(rawHref, sourceUrl);
+                    if (!url) continue;
+
+                    let parsed;
+
+                    try {
+                        parsed = new URL(url);
+                    } catch {
+                        continue;
+                    }
+
+                    const path = parsed.pathname;
+
+                    // Chỉ nhận trang phim có ID ở cuối URL.
+                    if (
+                        /^\/phim\/.+-\d+\.html$/i.test(path)
+                    ) {
+                        const imageTag =
+                            /<img\b[^>]*>/i.exec(anchor)?.[0] || "";
+
+                        const title =
+                            getAttr(openTag, "title") ||
+                            getAttr(openTag, "data-title") ||
+                            getAttr(imageTag, "alt") ||
+                            getAttr(imageTag, "title") ||
+                            cleanText(anchor) ||
+                            decodeURIComponent(
+                                path.split("/").pop()
+                                    .replace(/-\d+\.html$/i, "")
+                                    .replace(/[-_]+/g, " ")
+                            );
+
+                        if (!detailCandidates.has(url)) {
+                            detailCandidates.set(url, {
+                                url,
+                                title: cleanText(title),
+                                sourceUrl
+                            });
+                        }
+
+                        continue;
+                    }
+
+                    // Không đoán đường dẫn danh mục.
+                    // Chỉ quét các trang danh mục có link thật
+                    // được phát hiện trong HTML.
+                    const label = normalize(
+                        getAttr(openTag, "title") +
+                        " " +
+                        cleanText(anchor) +
+                        " " +
+                        path
+                    );
+
+                    const looksLikeDirectory =
+                        /danh sach|the loai|hoat hinh|anime|phim le|phim bo|moi cap nhat|latest|genre|category/.test(
+                            label
+                        );
+
+                    const excluded =
+                        /\/(tim-kiem|search|xac-minh|xem-phim|dang-nhap|login|register|wp-admin|wp-content)(\/|$)/i
+                            .test(path) ||
+                        /\.(?:jpg|jpeg|png|gif|webp|svg|css|js|ico|xml|pdf)$/i
+                            .test(path);
+
+                    if (
+                        looksLikeDirectory &&
+                        !excluded &&
+                        url !== sourceUrl
+                    ) {
+                        categoryUrls.add(url);
+                    }
+                }
+            }
+
+            async function loadDirectoryPage(url) {
+                if (pages.has(url)) return;
+                if (pages.size >= 9) return;
+
+                try {
+                    const response = await animetRequest(url, {
+                        timeoutMs: 16000,
+                        headers: {
+                            Referer: `${BASE}/`,
+                            Accept:
+                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            "Accept-Language":
+                                "vi-VN,vi;q=0.9,en;q=0.8"
+                        }
+                    });
+
+                    const html = String(response.body || "");
+
+                    if (
+                        !response.ok ||
+                        response.verificationPage ||
+                        /\/xac-minh\.php(?:[?#]|$)/i.test(
+                            String(response.url || "")
+                        )
+                    ) {
+                        console.warn(
+                            TAG,
+                            "DIRECTORY PAGE UNAVAILABLE:",
+                            JSON.stringify({
+                                requestedUrl: url,
+                                finalUrl: response.url,
+                                status: response.status,
+                                verificationPage:
+                                    Boolean(response.verificationPage)
+                            })
+                        );
+                        return;
+                    }
+
+                    const finalUrl = response.url || url;
+                    pages.set(url, {
+                        url: finalUrl,
+                        html
+                    });
+
+                    collectLinks(html, finalUrl);
+                } catch (error) {
+                    console.warn(
+                        TAG,
+                        "DIRECTORY REQUEST ERROR:",
+                        url,
+                        error?.message || String(error)
+                    );
+                }
+            }
+
+            // A. Trang chủ.
+            await loadDirectoryPage(`${BASE}/`);
+
+            // B. Các danh mục thực sự được liên kết từ trang chủ.
+            const discoveredCategories = [
+                ...categoryUrls
+            ].slice(0, 8);
+
+            for (const categoryUrl of discoveredCategories) {
+                await loadDirectoryPage(categoryUrl);
+            }
+
+            // C. Xếp hạng tên phim; không chọn bừa candidate đầu tiên.
+            const ranked = [...detailCandidates.values()]
+                .map(item => ({
+                    ...item,
+                    score: titleScore(searchTitle, item.title)
+                }))
+                .sort((a, b) => b.score - a.score);
+
+            const best = ranked[0];
+
+            console.log(
+                TAG,
+                "DIRECTORY SCAN RESULT:",
+                JSON.stringify({
+                    query: searchTitle,
+                    pagesScanned: pages.size,
+                    categoriesDiscovered: discoveredCategories.length,
+                    detailCandidates: detailCandidates.size,
+                    bestMatch: best
+                        ? {
+                            title: best.title,
+                            url: best.url,
+                            score: Number(best.score.toFixed(3))
+                        }
+                        : null
+                })
+            );
+
+            // Ngưỡng tương đối nghiêm ngặt để giảm chọn nhầm.
+            if (!best || best.score < 0.60) {
+                console.warn(
+                    TAG,
+                    "DIRECTORY MATCH NOT CONFIRMED:",
+                    searchTitle
+                );
+                return null;
+            }
+
+            console.log(
+                TAG,
+                "DIRECTORY MATCH:",
+                best.title,
+                best.url
+            );
+
+            return {
+                title: best.title,
+                name: best.title,
+                url: best.url,
+                id: best.url,
+                source: "AnimeT directory",
+                matchScore: best.score
+            };
+        }
+
+        // --------------------------------------------------------
+        // 2. Thử tìm kiếm bình thường trước.
+        // --------------------------------------------------------
+
+        let searchResult = null;
+        let candidates = [];
+
+        try {
+            searchResult = await fetchAnimeT(query, {
+                action: "search"
+            });
+
+            candidates = Array.isArray(searchResult)
+                ? searchResult
+                : (
+                    searchResult?.results ||
+                    searchResult?.items ||
+                    []
+                );
+
+            if (!Array.isArray(candidates)) {
+                candidates = [];
+            }
+        } catch (error) {
+            console.warn(
+                TAG,
+                "SEARCH ERROR; WILL TRY DIRECTORY:",
+                error?.message || String(error)
+            );
+        }
+
+        let detailCandidate = null;
+
+        if (candidates.length) {
+            const rankedSearch = candidates
+                .filter(item => item?.url)
+                .map(item => ({
+                    ...item,
+                    _score: titleScore(
+                        query,
+                        item.title || item.name
+                    )
+                }))
+                .sort((a, b) => b._score - a._score);
+
+            const bestSearch = rankedSearch[0];
+
+            if (bestSearch && bestSearch._score >= 0.60) {
+                detailCandidate = bestSearch;
+
+                console.log(
+                    TAG,
+                    "SEARCH MATCH:",
+                    bestSearch.title || bestSearch.name,
+                    bestSearch.url
+                );
+            }
+        }
+
+        // --------------------------------------------------------
+        // 3. Tìm kiếm rỗng hoặc không có kết quả đủ khớp:
+        //    chuyển sang trang chủ / danh mục.
+        // --------------------------------------------------------
+
+        if (!detailCandidate) {
+            console.warn(
+                TAG,
+                "SEARCH EMPTY OR LOW CONFIDENCE:",
+                query,
+                "-> DIRECTORY FALLBACK"
+            );
+
+            detailCandidate = await findFromDirectory(query);
+        }
+
+        if (!detailCandidate?.url) {
+            console.warn(
+                TAG,
+                "NO DETAIL URL FOUND:",
+                query
+            );
             return [];
         }
 
-        // 2. Tải trang thông tin và danh sách tập
+        const detailUrl = detailCandidate.url;
+
+        // --------------------------------------------------------
+        // 4. Tải trang phim và đọc danh sách tập.
+        // --------------------------------------------------------
+
         const detail = await fetchAnimeT(detailUrl, {
             action: "load"
         });
@@ -21448,9 +21826,28 @@ async function fetchAnimeTProvider(
             ? detail.episodes
             : [];
 
+        console.log(
+            TAG,
+            "DETAIL LOADED:",
+            JSON.stringify({
+                title: detail?.title || detailCandidate.title || query,
+                url: detailUrl,
+                episodeCount: episodes.length
+            })
+        );
+
         let episodeUrl = detailUrl;
 
-        if (streamType !== "movie" && episodes.length) {
+        if (streamType !== "movie") {
+            if (!episodes.length) {
+                console.warn(
+                    TAG,
+                    "NO EPISODES FOUND:",
+                    detailUrl
+                );
+                return [];
+            }
+
             const wantedEpisode = Math.max(
                 1,
                 Number(episodeNumber) || 1
@@ -21469,19 +21866,30 @@ async function fetchAnimeTProvider(
                     Number(match[1]) === wantedEpisode;
             }) || episodes[wantedEpisode - 1];
 
-            if (episode?.url) {
-                episodeUrl = episode.url;
-            } else {
-                console.log(
+            if (!episode?.url) {
+                console.warn(
                     TAG,
                     "EPISODE URL MISSING:",
-                    wantedEpisode
+                    wantedEpisode,
+                    "available:",
+                    episodes.length
                 );
                 return [];
             }
+
+            episodeUrl = episode.url;
         }
 
-        // 3. Lấy link từ trang tập
+        console.log(
+            TAG,
+            "SELECTED EPISODE URL:",
+            episodeUrl
+        );
+
+        // --------------------------------------------------------
+        // 5. Resolver hiện có: direct / iframe / server / Hydrax.
+        // --------------------------------------------------------
+
         const linkResult = await fetchAnimeT(episodeUrl, {
             action: "links"
         });
@@ -21493,11 +21901,14 @@ async function fetchAnimeTProvider(
             [];
 
         if (!Array.isArray(candidatesStreams)) {
-            console.log(TAG, "INVALID LINK RESULT");
+            console.warn(TAG, "INVALID LINK RESULT");
             return [];
         }
 
-        // 4. Chuyển URL Hydrax giả thành URL proxy MOVINA.
+        // --------------------------------------------------------
+        // 6. Giữ nguyên cơ chế Hydrax proxy MOVINA.
+        // --------------------------------------------------------
+
         const publicBase = String(
             process.env.MOVINA_PUBLIC_BASE_URL ||
             process.env.PUBLIC_URL ||
@@ -21555,7 +21966,7 @@ async function fetchAnimeTProvider(
             streams.push({
                 name: item.name ||
                     item.serverName ||
-                    "AnimeT Hydrax",
+                    "AnimeT",
                 title: item.title ||
                     `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""}`,
                 url: outputUrl,
@@ -21570,13 +21981,17 @@ async function fetchAnimeTProvider(
             });
         }
 
-        console.log(TAG, "STREAM COUNT:", streams.length);
+        console.log(
+            TAG,
+            "STREAM COUNT:",
+            streams.length
+        );
+
         return streams;
 
     } catch (error) {
         console.error(
-            TAG,
-            "PROVIDER ADAPTER ERROR:",
+            "[MOVINA-ANIMET] PROVIDER ADAPTER ERROR:",
             error?.stack || error
         );
         return [];
