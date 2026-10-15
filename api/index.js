@@ -20827,6 +20827,33 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
     const attempts = [];
 
     try {
+      // ----------------------------------------------------------
+      // ANIMET SESSION WARM-UP
+      // Mở trang chủ trước để nhận cookie phiên thông thường.
+      // Dùng chung animetRequest(), cookie jar và fetchImpl hiện có.
+      // ----------------------------------------------------------
+      try {
+        const warmup = await request(`${BASE}/`);
+
+        console.info(
+          "[PRV-ANIMET] SESSION WARMUP:",
+          JSON.stringify({
+            requestedUrl: `${BASE}/`,
+            finalUrl: warmup.url,
+            status: warmup.status,
+            verificationPage: Boolean(warmup.verificationPage),
+            bodyLength: String(warmup.body || "").length
+          })
+        );
+      } catch (warmupError) {
+        // Trang chủ lỗi không ngăn thử request tìm kiếm chính.
+        console.warn(
+          "[PRV-ANIMET] SESSION WARMUP ERROR:",
+          warmupError?.message || String(warmupError)
+        );
+      }
+
+      // Tiếp tục tìm kiếm bằng cùng phiên cookie.
       const page = await request(searchUrl);
       const body = String(page.body ?? "");
       const finalUrl = page.url || searchUrl;
@@ -30093,12 +30120,16 @@ try {
     );
 }
 
+// =====================================================
+// 12. FALLBACK CHUNG
+// AnimeHay fallback chỉ xuất hiện khi không có stream.
+// =====================================================
+
 const externalStreams = [
 
     // -------------------------------------------------
     // FALLBACK 1 — PHIMLONGTIENG
     // -------------------------------------------------
-
     {
         name:
             "🌐 [Fallback] PhimLongTieng",
@@ -30113,11 +30144,9 @@ const externalStreams = [
             "/"
     },
 
-
     // -------------------------------------------------
     // FALLBACK 2 — NGUONC
     // -------------------------------------------------
-
     {
         name:
             "🌐 [Fallback] NguonC",
@@ -30133,11 +30162,9 @@ const externalStreams = [
             )
     },
 
-
     // -------------------------------------------------
     // FALLBACK 3 — KKPHIM2
     // -------------------------------------------------
-
     {
         name:
             "🌐 [Fallback] KKPhim2",
@@ -30151,30 +30178,115 @@ const externalStreams = [
             encodeURIComponent(
                 movieName
             )
-    },
+    }
 
+];
 
-    // -------------------------------------------------
-    // FALLBACK 4 — ANIMEHAY
-    // -------------------------------------------------
+// -------------------------------------------------
+// FALLBACK 4 — ANIMEHAY
+// Chỉ thêm nếu AnimeHay không trả về stream hợp lệ.
+// -------------------------------------------------
 
-    {
-            name: "🌐 [Fallback] AnimeHay",
+const hasAnimeHayStream =
+    Array.isArray(animehay) &&
+    animehay.some(stream =>
+        stream &&
+        typeof stream === "object" &&
+        Boolean(
+            stream.url ||
+            stream.externalUrl
+        )
+    );
 
-            title:
-                "Tìm AnimeHay - " +
-                animeHayFallbackTitle,
+if (!hasAnimeHayStream) {
 
-            externalUrl:
-            (animeHayActiveDomain ||
+    externalStreams.push({
+        name:
+            "🌐 [Fallback] AnimeHay",
+
+        title:
+            "Tìm AnimeHay - " +
+            animeHayFallbackTitle,
+
+        externalUrl:
+            (
+                animeHayActiveDomain ||
                 animeHayDirectoryActiveDomain ||
-                ANIMEHAY_DIRECTORY) +
+                ANIMEHAY_DIRECTORY
+            ) +
             "/tim-kiem?keyword=" +
             encodeURIComponent(
                 animeHayFallbackTitle
             )
-        }
-];
+    });
+
+    console.info(
+        "[ANIMEHAY] FALLBACK ADDED:",
+        "Không tìm thấy stream hợp lệ."
+    );
+
+} else {
+
+    console.info(
+        "[ANIMEHAY] FALLBACK SKIPPED:",
+        "Đã có stream AnimeHay.",
+        "Stream count:",
+        animehay.filter(stream =>
+            stream &&
+            typeof stream === "object" &&
+            Boolean(
+                stream.url ||
+                stream.externalUrl
+            )
+        ).length
+    );
+
+}
+
+
+// -------------------------------------------------
+// FALLBACK — ANIMET
+// Chỉ hiển thị khi AnimeT không trả về stream hợp lệ.
+// -------------------------------------------------
+
+const hasAnimeTStream =
+    Array.isArray(animet) &&
+    animet.some(stream =>
+        stream &&
+        typeof stream === "object" &&
+        Boolean(
+            stream.url ||
+            stream.externalUrl
+        )
+    );
+
+if (!hasAnimeTStream) {
+    const animetBase =
+        typeof ANIMET_DEFAULT_BASE === "string" &&
+        ANIMET_DEFAULT_BASE.trim()
+            ? ANIMET_DEFAULT_BASE.trim().replace(/\/+$/, "")
+            : "https://animesub.site";
+
+    externalStreams.push({
+        name: "🌐 [Fallback] AnimeT",
+        title: "Tìm anime trên AnimeT - " + movieName,
+        externalUrl:
+            animetBase +
+            "/tim-kiem/" +
+            encodeURIComponent(
+                String(movieName || "").trim()
+            ) +
+            ".html"
+    });
+
+    console.info(
+        "[ANIMET] FALLBACK ADDED: Không tìm thấy stream AnimeT."
+    );
+} else {
+    console.info(
+        "[ANIMET] FALLBACK SKIPPED: Đã có stream AnimeT."
+    );
+}
 
     // =====================================================
     // 13. LỌC DIRECT STREAM
