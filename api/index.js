@@ -19025,32 +19025,11 @@ async function animetRequest(url, options = {}) {
       options.userAgent ||
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
       "AppleWebKit/537.36 (KHTML, like Gecko) " +
-      "Chrome/131.0.0.0 Safari/537.36",
-
+      "Chrome/131.0 Safari/537.36",
     "Accept":
-      "text/html,application/xhtml+xml,application/xml;q=0.9," +
-      "image/avif,image/webp,image/apng,*/*;q=0.8",
-
-    "Accept-Language":
-      "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-
-    "Upgrade-Insecure-Requests": "1",
-
-    "Sec-CH-UA":
-      '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-
-    "Sec-CH-UA-Mobile": "?0",
-    "Sec-CH-UA-Platform": '"Windows"',
-
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-
-    ...(options.headers || {})
+      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+    ...(options.headers || {}),
   };
 
   function cookieKey(cookie) {
@@ -20849,28 +20828,10 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
 
     try {
       // ----------------------------------------------------------
-      // ANIMET SESSION WARM-UP + ONE RETRY
-      // 1. Mở trang chủ để nhận cookie thông thường.
-      // 2. Thử tìm kiếm.
-      // 3. Nếu gặp trang xác minh, quay lại trang chủ thật sự,
-      //    rồi thử tìm kiếm thêm đúng một lần.
-      // Không giả mạo IP hoặc tự giải challenge.
+      // ANIMET SESSION WARM-UP
+      // Mở trang chủ trước để nhận cookie phiên thông thường.
+      // Dùng chung animetRequest(), cookie jar và fetchImpl hiện có.
       // ----------------------------------------------------------
-
-      const isAnimetVerification = result => {
-        const finalUrl = String(result?.url || "");
-        const html = String(result?.body || "");
-        const title = String(result?.htmlTitle || "");
-
-        return (
-          Boolean(result?.verificationPage) ||
-          /\/xac-minh\.php(?:[?#]|$)/i.test(finalUrl) ||
-          /xác minh truy cập|verify you are human|checking your browser/i
-            .test(title + " " + html.slice(0, 12000))
-        );
-      };
-
-      // Bước 1: mở trang chủ.
       try {
         const warmup = await request(`${BASE}/`);
 
@@ -20880,92 +20841,20 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
             requestedUrl: `${BASE}/`,
             finalUrl: warmup.url,
             status: warmup.status,
-            verificationPage: isAnimetVerification(warmup),
+            verificationPage: Boolean(warmup.verificationPage),
             bodyLength: String(warmup.body || "").length
           })
         );
       } catch (warmupError) {
+        // Trang chủ lỗi không ngăn thử request tìm kiếm chính.
         console.warn(
           "[PRV-ANIMET] SESSION WARMUP ERROR:",
           warmupError?.message || String(warmupError)
         );
       }
 
-      // Bước 2: tìm kiếm lần đầu bằng request helper hiện có.
-      let page = await request(searchUrl);
-
-      if (isAnimetVerification(page)) {
-        console.warn(
-          "[PRV-ANIMET] SEARCH VERIFICATION — RETRY:",
-          JSON.stringify({
-            requestedUrl: searchUrl,
-            finalUrl: page.url,
-            status: page.status,
-            note: "Thử quay lại trang chủ rồi tìm kiếm lại một lần."
-          })
-        );
-
-        try {
-          // Dùng referer khác để buộc request helper thực hiện
-          // request trang chủ mới, thay vì dùng kết quả cache.
-          const homeAfterVerification = await request(
-            `${BASE}/`,
-            `${BASE}/xac-minh.php?source=page`
-          );
-
-          console.info(
-            "[PRV-ANIMET] RETURN HOME:",
-            JSON.stringify({
-              finalUrl: homeAfterVerification.url,
-              status: homeAfterVerification.status,
-              verificationPage:
-                isAnimetVerification(homeAfterVerification)
-            })
-          );
-
-          // Gọi animetRequest trực tiếp để không tái sử dụng
-          // kết quả tìm kiếm đã cache trong request helper.
-          // Cookie jar dùng chung vẫn được giữ nguyên.
-          const retryPage = await animetRequest(
-            searchUrl,
-            {
-              fetchImpl,
-              timeoutMs,
-              headers: {
-                Referer: `${BASE}/`,
-                Accept:
-                  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language":
-                  "vi-VN,vi;q=0.9,en;q=0.8"
-              }
-            }
-          );
-
-          console.info(
-            "[PRV-ANIMET] SEARCH RETRY RESULT:",
-            JSON.stringify({
-              requestedUrl: searchUrl,
-              finalUrl: retryPage.url,
-              status: retryPage.status,
-              verificationPage:
-                isAnimetVerification(retryPage),
-              bodyLength:
-                String(retryPage.body || "").length
-            })
-          );
-
-          page = retryPage;
-        } catch (retryError) {
-          console.warn(
-            "[PRV-ANIMET] SEARCH RETRY ERROR:",
-            retryError?.message || String(retryError)
-          );
-
-          // Giữ response lần đầu để phần diagnostics phía dưới
-          // tiếp tục ghi nhận trang xác minh.
-        }
-      }
-
+      // Tiếp tục tìm kiếm bằng cùng phiên cookie.
+      const page = await request(searchUrl);
       const body = String(page.body ?? "");
       const finalUrl = page.url || searchUrl;
 
@@ -21373,10 +21262,10 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
 // ============================================================================
 
 
-// ============================================================
-// MOVINA — ANIMET PROVIDER ADAPTER
-// SEARCH -> DIRECTORY FALLBACK -> DETAIL -> EPISODE -> LINKS
-// ============================================================
+/* ============================================================
+ * MOVINA — ANIMET PROVIDER ADAPTER
+ * Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
+ * ============================================================ */
 
 async function fetchAnimeTProvider(
     movieName,
@@ -21391,433 +21280,55 @@ async function fetchAnimeTProvider(
         const query = String(movieName || "").trim();
         if (!query) return [];
 
-        const BASE = String(
-            typeof ANIMET_DEFAULT_BASE !== "undefined"
-                ? ANIMET_DEFAULT_BASE
-                : "https://animesub.site"
-        ).replace(/\/+$/, "");
+        // 1. Tìm anime
+        const searchResult = await fetchAnimeT(query, {
+            action: "search"
+        });
 
-        function normalize(value) {
-            return String(value || "")
-                .toLowerCase()
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .replace(/đ/g, "d")
-                .replace(/[^a-z0-9]+/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
-        }
-
-        function titleScore(left, right) {
-            const a = normalize(left);
-            const b = normalize(right);
-
-            if (!a || !b) return 0;
-            if (a === b) return 1;
-
-            if (a.includes(b) || b.includes(a)) {
-                return 0.95;
-            }
-
-            const tokensA = [...new Set(a.split(" "))];
-            const tokensB = [...new Set(b.split(" "))];
-
-            const common = tokensA.filter(
-                token => tokensB.includes(token)
+        const candidates = Array.isArray(searchResult)
+            ? searchResult
+            : (
+                searchResult?.results ||
+                searchResult?.items ||
+                []
             );
 
-            return common.length /
-                Math.max(tokensA.length, tokensB.length, 1);
-        }
-
-        // --------------------------------------------------------
-        // 1. DIRECTORY FALLBACK
-        //
-        // Không đoán ID phim.
-        // Chỉ nhận URL /phim/...-ID.html thực sự xuất hiện
-        // trong HTML trang chủ hoặc trang danh mục được liên kết.
-        // --------------------------------------------------------
-
-        async function findFromDirectory(searchTitle) {
-            console.log(
-                TAG,
-                "DIRECTORY FALLBACK START:",
-                searchTitle
-            );
-
-            const pages = new Map();
-            const detailCandidates = new Map();
-            const categoryUrls = new Set();
-
-            function absoluteUrl(raw, base) {
-                try {
-                    const url = new URL(
-                        String(raw || "").replace(/&amp;/g, "&"),
-                        base
-                    );
-
-                    if (
-                        url.protocol !== "https:" &&
-                        url.protocol !== "http:"
-                    ) {
-                        return null;
-                    }
-
-                    if (
-                        url.hostname.toLowerCase() !==
-                        new URL(BASE).hostname.toLowerCase()
-                    ) {
-                        return null;
-                    }
-
-                    url.hash = "";
-                    return url.href;
-                } catch {
-                    return null;
-                }
-            }
-
-            function getAttr(tag, name) {
-                const escaped = name.replace(
-                    /[.*+?^${}()|[\]\\]/g,
-                    "\\$&"
-                );
-
-                const match = tag.match(
-                    new RegExp(
-                        "\\b" + escaped +
-                        "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
-                        "i"
-                    )
-                );
-
-                return match
-                    ? (match[1] || match[2] || match[3] || "")
-                    : "";
-            }
-
-            function cleanText(html) {
-                return String(html || "")
-                    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-                    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-                    .replace(/<[^>]+>/g, " ")
-                    .replace(/&nbsp;|&#160;/gi, " ")
-                    .replace(/&amp;/gi, "&")
-                    .replace(/&quot;/gi, '"')
-                    .replace(/&#39;|&apos;/gi, "'")
-                    .replace(/&#x([0-9a-f]+);/gi, (_, hex) =>
-                        String.fromCharCode(parseInt(hex, 16))
-                    )
-                    .replace(/&#(\d+);/g, (_, num) =>
-                        String.fromCharCode(Number(num))
-                    )
-                    .replace(/\s+/g, " ")
-                    .trim();
-            }
-
-            function collectLinks(html, sourceUrl) {
-                const anchors =
-                    String(html || "").match(
-                        /<a\b[^>]*>[\s\S]*?<\/a\s*>/gi
-                    ) || [];
-
-                for (const anchor of anchors) {
-                    const openTag =
-                        /^<a\b[^>]*>/i.exec(anchor)?.[0] || "";
-
-                    const rawHref =
-                        getAttr(openTag, "href") ||
-                        getAttr(openTag, "data-href") ||
-                        getAttr(openTag, "data-url");
-
-                    const url = absoluteUrl(rawHref, sourceUrl);
-                    if (!url) continue;
-
-                    let parsed;
-
-                    try {
-                        parsed = new URL(url);
-                    } catch {
-                        continue;
-                    }
-
-                    const path = parsed.pathname;
-
-                    // Chỉ nhận trang phim có ID ở cuối URL.
-                    if (
-                        /^\/phim\/.+-\d+\.html$/i.test(path)
-                    ) {
-                        const imageTag =
-                            /<img\b[^>]*>/i.exec(anchor)?.[0] || "";
-
-                        const title =
-                            getAttr(openTag, "title") ||
-                            getAttr(openTag, "data-title") ||
-                            getAttr(imageTag, "alt") ||
-                            getAttr(imageTag, "title") ||
-                            cleanText(anchor) ||
-                            decodeURIComponent(
-                                path.split("/").pop()
-                                    .replace(/-\d+\.html$/i, "")
-                                    .replace(/[-_]+/g, " ")
-                            );
-
-                        if (!detailCandidates.has(url)) {
-                            detailCandidates.set(url, {
-                                url,
-                                title: cleanText(title),
-                                sourceUrl
-                            });
-                        }
-
-                        continue;
-                    }
-
-                    // Không đoán đường dẫn danh mục.
-                    // Chỉ quét các trang danh mục có link thật
-                    // được phát hiện trong HTML.
-                    const label = normalize(
-                        getAttr(openTag, "title") +
-                        " " +
-                        cleanText(anchor) +
-                        " " +
-                        path
-                    );
-
-                    const looksLikeDirectory =
-                        /danh sach|the loai|hoat hinh|anime|phim le|phim bo|moi cap nhat|latest|genre|category/.test(
-                            label
-                        );
-
-                    const excluded =
-                        /\/(tim-kiem|search|xac-minh|xem-phim|dang-nhap|login|register|wp-admin|wp-content)(\/|$)/i
-                            .test(path) ||
-                        /\.(?:jpg|jpeg|png|gif|webp|svg|css|js|ico|xml|pdf)$/i
-                            .test(path);
-
-                    if (
-                        looksLikeDirectory &&
-                        !excluded &&
-                        url !== sourceUrl
-                    ) {
-                        categoryUrls.add(url);
-                    }
-                }
-            }
-
-            async function loadDirectoryPage(url) {
-                if (pages.has(url)) return;
-                if (pages.size >= 9) return;
-
-                try {
-                    const response = await animetRequest(url, {
-                        timeoutMs: 16000,
-                        headers: {
-                            Referer: `${BASE}/`,
-                            Accept:
-                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                            "Accept-Language":
-                                "vi-VN,vi;q=0.9,en;q=0.8"
-                        }
-                    });
-
-                    const html = String(response.body || "");
-
-                    if (
-                        !response.ok ||
-                        response.verificationPage ||
-                        /\/xac-minh\.php(?:[?#]|$)/i.test(
-                            String(response.url || "")
-                        )
-                    ) {
-                        console.warn(
-                            TAG,
-                            "DIRECTORY PAGE UNAVAILABLE:",
-                            JSON.stringify({
-                                requestedUrl: url,
-                                finalUrl: response.url,
-                                status: response.status,
-                                verificationPage:
-                                    Boolean(response.verificationPage)
-                            })
-                        );
-                        return;
-                    }
-
-                    const finalUrl = response.url || url;
-                    pages.set(url, {
-                        url: finalUrl,
-                        html
-                    });
-
-                    collectLinks(html, finalUrl);
-                } catch (error) {
-                    console.warn(
-                        TAG,
-                        "DIRECTORY REQUEST ERROR:",
-                        url,
-                        error?.message || String(error)
-                    );
-                }
-            }
-
-            // A. Trang chủ.
-            await loadDirectoryPage(`${BASE}/`);
-
-            // B. Các danh mục thực sự được liên kết từ trang chủ.
-            const discoveredCategories = [
-                ...categoryUrls
-            ].slice(0, 8);
-
-            for (const categoryUrl of discoveredCategories) {
-                await loadDirectoryPage(categoryUrl);
-            }
-
-            // C. Xếp hạng tên phim; không chọn bừa candidate đầu tiên.
-            const ranked = [...detailCandidates.values()]
-                .map(item => ({
-                    ...item,
-                    score: titleScore(searchTitle, item.title)
-                }))
-                .sort((a, b) => b.score - a.score);
-
-            const best = ranked[0];
-
-            console.log(
-                TAG,
-                "DIRECTORY SCAN RESULT:",
-                JSON.stringify({
-                    query: searchTitle,
-                    pagesScanned: pages.size,
-                    categoriesDiscovered: discoveredCategories.length,
-                    detailCandidates: detailCandidates.size,
-                    bestMatch: best
-                        ? {
-                            title: best.title,
-                            url: best.url,
-                            score: Number(best.score.toFixed(3))
-                        }
-                        : null
-                })
-            );
-
-            // Ngưỡng tương đối nghiêm ngặt để giảm chọn nhầm.
-            if (!best || best.score < 0.60) {
-                console.warn(
-                    TAG,
-                    "DIRECTORY MATCH NOT CONFIRMED:",
-                    searchTitle
-                );
-                return null;
-            }
-
-            console.log(
-                TAG,
-                "DIRECTORY MATCH:",
-                best.title,
-                best.url
-            );
-
-            return {
-                title: best.title,
-                name: best.title,
-                url: best.url,
-                id: best.url,
-                source: "AnimeT directory",
-                matchScore: best.score
-            };
-        }
-
-        // --------------------------------------------------------
-        // 2. Thử tìm kiếm bình thường trước.
-        // --------------------------------------------------------
-
-        let searchResult = null;
-        let candidates = [];
-
-        try {
-            searchResult = await fetchAnimeT(query, {
-                action: "search"
-            });
-
-            candidates = Array.isArray(searchResult)
-                ? searchResult
-                : (
-                    searchResult?.results ||
-                    searchResult?.items ||
-                    []
-                );
-
-            if (!Array.isArray(candidates)) {
-                candidates = [];
-            }
-        } catch (error) {
-            console.warn(
-                TAG,
-                "SEARCH ERROR; WILL TRY DIRECTORY:",
-                error?.message || String(error)
-            );
-        }
-
-        let detailCandidate = null;
-
-        if (candidates.length) {
-            const rankedSearch = candidates
-                .filter(item => item?.url)
-                .map(item => ({
-                    ...item,
-                    _score: titleScore(
-                        query,
-                        item.title || item.name
-                    )
-                }))
-                .sort((a, b) => b._score - a._score);
-
-            const bestSearch = rankedSearch[0];
-
-            if (bestSearch && bestSearch._score >= 0.60) {
-                detailCandidate = bestSearch;
-
-                console.log(
-                    TAG,
-                    "SEARCH MATCH:",
-                    bestSearch.title || bestSearch.name,
-                    bestSearch.url
-                );
-            }
-        }
-
-        // --------------------------------------------------------
-        // 3. Tìm kiếm rỗng hoặc không có kết quả đủ khớp:
-        //    chuyển sang trang chủ / danh mục.
-        // --------------------------------------------------------
-
-        if (!detailCandidate) {
-            console.warn(
-                TAG,
-                "SEARCH EMPTY OR LOW CONFIDENCE:",
-                query,
-                "-> DIRECTORY FALLBACK"
-            );
-
-            detailCandidate = await findFromDirectory(query);
-        }
-
-        if (!detailCandidate?.url) {
-            console.warn(
-                TAG,
-                "NO DETAIL URL FOUND:",
-                query
-            );
+        if (!Array.isArray(candidates) || !candidates.length) {
+            console.log(TAG, "SEARCH EMPTY:", query);
             return [];
         }
 
-        const detailUrl = detailCandidate.url;
+        // Ưu tiên kết quả có tiêu đề khớp truy vấn.
+        const norm = value => String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim();
 
-        // --------------------------------------------------------
-        // 4. Tải trang phim và đọc danh sách tập.
-        // --------------------------------------------------------
+        const wanted = norm(query);
 
+        const detailCandidate =
+            candidates.find(item =>
+                norm(item.title || item.name) === wanted
+            ) ||
+            candidates.find(item => {
+                const title = norm(item.title || item.name);
+                return title && (
+                    title.includes(wanted) ||
+                    wanted.includes(title)
+                );
+            }) ||
+            candidates[0];
+
+        const detailUrl = detailCandidate?.url;
+
+        if (!detailUrl) {
+            console.log(TAG, "DETAIL URL MISSING:", query);
+            return [];
+        }
+
+        // 2. Tải trang thông tin và danh sách tập
         const detail = await fetchAnimeT(detailUrl, {
             action: "load"
         });
@@ -21826,28 +21337,9 @@ async function fetchAnimeTProvider(
             ? detail.episodes
             : [];
 
-        console.log(
-            TAG,
-            "DETAIL LOADED:",
-            JSON.stringify({
-                title: detail?.title || detailCandidate.title || query,
-                url: detailUrl,
-                episodeCount: episodes.length
-            })
-        );
-
         let episodeUrl = detailUrl;
 
-        if (streamType !== "movie") {
-            if (!episodes.length) {
-                console.warn(
-                    TAG,
-                    "NO EPISODES FOUND:",
-                    detailUrl
-                );
-                return [];
-            }
-
+        if (streamType !== "movie" && episodes.length) {
             const wantedEpisode = Math.max(
                 1,
                 Number(episodeNumber) || 1
@@ -21866,30 +21358,19 @@ async function fetchAnimeTProvider(
                     Number(match[1]) === wantedEpisode;
             }) || episodes[wantedEpisode - 1];
 
-            if (!episode?.url) {
-                console.warn(
+            if (episode?.url) {
+                episodeUrl = episode.url;
+            } else {
+                console.log(
                     TAG,
                     "EPISODE URL MISSING:",
-                    wantedEpisode,
-                    "available:",
-                    episodes.length
+                    wantedEpisode
                 );
                 return [];
             }
-
-            episodeUrl = episode.url;
         }
 
-        console.log(
-            TAG,
-            "SELECTED EPISODE URL:",
-            episodeUrl
-        );
-
-        // --------------------------------------------------------
-        // 5. Resolver hiện có: direct / iframe / server / Hydrax.
-        // --------------------------------------------------------
-
+        // 3. Lấy link từ trang tập
         const linkResult = await fetchAnimeT(episodeUrl, {
             action: "links"
         });
@@ -21901,14 +21382,11 @@ async function fetchAnimeTProvider(
             [];
 
         if (!Array.isArray(candidatesStreams)) {
-            console.warn(TAG, "INVALID LINK RESULT");
+            console.log(TAG, "INVALID LINK RESULT");
             return [];
         }
 
-        // --------------------------------------------------------
-        // 6. Giữ nguyên cơ chế Hydrax proxy MOVINA.
-        // --------------------------------------------------------
-
+        // 4. Chuyển URL Hydrax giả thành URL proxy MOVINA.
         const publicBase = String(
             process.env.MOVINA_PUBLIC_BASE_URL ||
             process.env.PUBLIC_URL ||
@@ -21966,7 +21444,7 @@ async function fetchAnimeTProvider(
             streams.push({
                 name: item.name ||
                     item.serverName ||
-                    "AnimeT",
+                    "AnimeT Hydrax",
                 title: item.title ||
                     `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""}`,
                 url: outputUrl,
@@ -21981,17 +21459,13 @@ async function fetchAnimeTProvider(
             });
         }
 
-        console.log(
-            TAG,
-            "STREAM COUNT:",
-            streams.length
-        );
-
+        console.log(TAG, "STREAM COUNT:", streams.length);
         return streams;
 
     } catch (error) {
         console.error(
-            "[MOVINA-ANIMET] PROVIDER ADAPTER ERROR:",
+            TAG,
+            "PROVIDER ADAPTER ERROR:",
             error?.stack || error
         );
         return [];
