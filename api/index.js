@@ -30406,67 +30406,100 @@ const kkphimPromise = (async () => {
  let results = [];
 
  
- // =====================================================
-  // 8.1. PROVIDER ORCHESTRATION — TIMEOUT RIÊNG
-  // =====================================================
+  // =====================
+  // 8.1. PHÂN LOẠI NỘI DUNG + CHẠY PROVIDER ANIME CÓ ĐIỀU KIỆN
+  // =====================
 
-  // Giới hạn thời gian chờ mỗi provider.
-  // Timeout chỉ giới hạn thời gian chờ của luồng điều phối;
-  // không tự hủy request HTTP bên trong provider.
+  const animeMetadataGenres = Array.isArray(resolvedMetadata?.genres)
+      ? resolvedMetadata.genres
+          .map(value =>
+              String(
+                  typeof value === "string"
+                      ? value
+                      : value?.name || ""
+              ).trim().toLowerCase()
+          )
+          .filter(Boolean)
+      : [];
 
-  async function withProviderTimeout(
-      promise,
-      providerName,
-      timeoutMs,
-      fallbackValue = []
-  ) {
-      let timer = null;
-      const startedAt = Date.now();
+  const animeMetadataText = [
+      resolvedMetadata?.country,
+      resolvedMetadata?.countries,
+      resolvedMetadata?.original_language,
+      resolvedMetadata?.language,
+      resolvedMetadata?.type
+  ]
+      .flatMap(value =>
+          Array.isArray(value) ? value : [value]
+      )
+      .map(value =>
+          String(
+              typeof value === "object"
+                  ? value?.name || value?.code || ""
+                  : value || ""
+          ).trim().toLowerCase()
+      )
+      .filter(Boolean)
+      .join(" ");
 
-      try {
-          return await Promise.race([
-              Promise.resolve(promise),
+  const hasAnimationMetadata = animeMetadataGenres.some(genre =>
+      /\banime\b|animation|animated|hoat hinh/.test(genre)
+  );
 
-              new Promise(resolve => {
-                  timer = setTimeout(() => {
-                      console.warn(
-                          "[PROVIDER TIMEOUT]",
-                          JSON.stringify({
-                              provider: providerName,
-                              timeoutMs,
-                              elapsedMs: Date.now() - startedAt
-                          })
-                      );
+  const hasJapaneseMetadata =
+      /\bjapan\b|\bjapanese\b|nhat ban|日本|ja-jp/.test(
+          animeMetadataText
+      );
 
-                      resolve(fallbackValue);
-                  }, timeoutMs);
-              })
-          ]);
-      } finally {
-          if (timer) {
-              clearTimeout(timer);
-          }
-      }
-  }
+  const hasExplicitAnimeTitle = /\banime\b|anime movie|anime series/i.test(
+      String(
+          resolvedMetadata?.name ||
+          resolvedMetadata?.original_name ||
+          movieName ||
+          ""
+      )
+  );
 
-  // Các ngưỡng timeout có thể điều chỉnh sau khi xem log.
-  const PROVIDER_TIMEOUTS = {
-      nguonc: 7000,
-      vsmov: 8000,
-      phimhdcs: 12000,
-      kkphim: 8000,
-      phimlongtieng: 10000,
-      animehay: 9000,
-      animet: 8000
-  };
+  /*
+   * Quy tắc:
+   * 1. Thể loại Animation/Anime: chạy AnimeHay + AnimeT.
+   * 2. Metadata Nhật Bản + dấu hiệu anime trong tên: vẫn chạy.
+   * 3. Metadata có thể loại rõ ràng nhưng không phải hoạt hình:
+   *    bỏ qua hai provider anime.
+   * 4. Metadata không có/không đủ: vẫn chạy để tránh bỏ sót anime
+   *    khi dùng ID MOVINA tùy chỉnh hoặc Cinemeta không trả dữ liệu.
+   */
+  const hasUsableMetadata =
+      animeMetadataGenres.length > 0 ||
+      Boolean(animeMetadataText.trim());
 
-  // =====================================================
-  // ANIMEHAY
-  // =====================================================
+  const animeProvidersEnabled =
+      hasAnimationMetadata ||
+      (hasJapaneseMetadata && hasExplicitAnimeTitle) ||
+      !hasUsableMetadata;
 
+  console.log(
+      "[ANIME PROVIDER GATE]",
+      JSON.stringify({
+          enabled: animeProvidersEnabled,
+          genres: animeMetadataGenres,
+          japaneseMetadata: hasJapaneseMetadata,
+          explicitAnimeTitle: hasExplicitAnimeTitle,
+          metadataAvailable: hasUsableMetadata
+      })
+  );
+
+  // AnimeHay: chỉ khởi chạy khi điều kiện cho phép.
   const animehayPromise = (async () => {
+      if (!animeProvidersEnabled) {
+          console.log(
+              "[ANIMEHAY] SKIPPED: metadata không cho thấy nội dung anime/hoạt hình."
+          );
+          return [];
+      }
+
       try {
-          const streams = await fetchAnimeHay(
+          return await fetchAnimeHay(
               movieName,
               movieYear,
               seasonNumber,
@@ -30476,23 +30509,24 @@ const kkphimPromise = (async () => {
                   ? rawId.split(":")[0]
                   : ""
           );
-
-          return Array.isArray(streams) ? streams : [];
       } catch (e) {
           console.error(
               "[ANIMEHAY] FETCH ERROR:",
               e?.message || e
           );
-
           return [];
       }
   })();
 
-  // =====================================================
-  // ANIMET
-  // =====================================================
-
+  // AnimeT: cùng điều kiện với AnimeHay.
   const animetPromise = (async () => {
+      if (!animeProvidersEnabled) {
+          console.log(
+              "[MOVINA-ANIMET] SKIPPED: metadata không cho thấy nội dung anime/hoạt hình."
+          );
+          return [];
+      }
+
       const startedAt = Date.now();
 
       try {
@@ -30520,56 +30554,34 @@ const kkphimPromise = (async () => {
               "[MOVINA-ANIMET] FETCH ERROR:",
               e?.stack || e?.message || e
           );
-
           return [];
       }
   })();
 
-  // =====================================================
-  // NGUONC + VSMOV + PHIMHDCS
-  //
-  // Giữ nguyên thứ tự:
-  // providerResults[0] = NguonC
-  // providerResults[1] = VSMov
-  // providerResults[2] = PhimHDCS
-  // =====================================================
 
+  // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
-      withProviderTimeout(
-          fetchNguonC(nguonCFallbackName),
-          "NguonC",
-          PROVIDER_TIMEOUTS.nguonc
+      fetchNguonC(nguonCFallbackName),
+
+      fetchVSMov(
+          movieName,
+          movieYear,
+          seasonNumber,
+          episodeNumber,
+          streamType
       ),
 
-      withProviderTimeout(
-          fetchVSMov(
-              movieName,
-              movieYear,
-              seasonNumber,
-              episodeNumber,
-              streamType
-          ),
-          "VSMov",
-          PROVIDER_TIMEOUTS.vsmov
-      ),
-
-      withProviderTimeout(
-          scrapePhimHDCS(
-              movieName,
-              movieYear,
-              seasonNumber,
-              episodeNumber,
-              streamType
-          ),
-          "PhimHDCS",
-          PROVIDER_TIMEOUTS.phimhdcs
+      scrapePhimHDCS(
+          movieName,
+          movieYear,
+          seasonNumber,
+          episodeNumber,
+          streamType
       )
   ]);
 
-  // =====================================================
-  // PHIMLONGTIENG
-  // =====================================================
-
+  // PhimLongTieng bắt đầu sớm, chỉ chờ KKPhim để lấy
+  // bằng chứng hỗ trợ. Không chờ NguonC/VSMov/PhimHDCS.
   const longtiengPromise = (async () => {
       try {
           const kkphimSupport = await kkphimPromise;
@@ -30585,7 +30597,8 @@ const kkphimPromise = (async () => {
                   ? kkphimSupport
                   : [],
 
-              // Giữ nguyên cách đối chiếu hiện tại.
+              // Các nguồn này vẫn đang chạy song song.
+              // PhimLongTieng tự đối chiếu bằng tên/năm/tập.
               nguonc: [],
               vsmov: [],
               phimhdcs: []
@@ -30604,15 +30617,11 @@ const kkphimPromise = (async () => {
               "[PHIM LONG TIENG ERROR]:",
               e?.stack || e?.message || e
           );
-
           return [];
       }
   })();
 
-  // =====================================================
-  // THU GOM CÓ TIMEOUT
-  // =====================================================
-
+  // Thu gom toàn bộ kết quả; không trả sớm khi mới có một nguồn.
   let providerResults = [];
   let longtiengResult = [];
 
@@ -30623,22 +30632,11 @@ const kkphimPromise = (async () => {
           settledLongtieng
       ] = await Promise.all([
           providerResultsPromise,
-
-          withProviderTimeout(
-              kkphimPromise,
-              "KKPhim",
-              PROVIDER_TIMEOUTS.kkphim
-          ),
-
-          withProviderTimeout(
-              longtiengPromise,
-              "PhimLongTieng",
-              PROVIDER_TIMEOUTS.phimlongtieng
-          )
+          kkphimPromise,
+          longtiengPromise
       ]);
 
       providerResults = settledProviders;
-
       kkphim = Array.isArray(kkphimResult)
           ? kkphimResult
           : [];
@@ -30653,10 +30651,11 @@ const kkphimPromise = (async () => {
       );
   }
 
-  // =====================================================
-  // RESULTS — KHÔNG ĐỔI INDEX
-  // =====================================================
-
+  // Giữ đúng thứ tự index mà phần 9 đang sử dụng:
+  // results[0] = NguonC
+  // results[1] = VSMov
+  // results[2] = PhimLongTieng
+  // results[3] = PhimHDCS
   results = [
       providerResults[0] || {
           status: "fulfilled",
@@ -30833,24 +30832,10 @@ console.log(
 
 
 let animehay = [];
-
 try {
-    animehay = await withProviderTimeout(
-        animehayPromise,
-        "AnimeHay",
-        PROVIDER_TIMEOUTS.animehay
-    );
+    animehay = await animehayPromise;
 } catch (e) {
-    console.error(
-        "[ANIMEHAY] COLLECT ERROR:",
-        e?.message || e
-    );
-
-    animehay = [];
-}
-
-if (!Array.isArray(animehay)) {
-    animehay = [];
+    console.error("[ANIMEHAY] FETCH ERROR:", e.message);
 }
 
 console.log(
@@ -30869,20 +30854,17 @@ console.log(
 
   let animet = [];
 
-try {
-    animet = await withProviderTimeout(
-        animetPromise,
-        "AnimeT",
-        PROVIDER_TIMEOUTS.animet
-    );
-} catch (e) {
-    console.error(
-        "[MOVINA-ANIMET] COLLECT ERROR:",
-        e?.stack || e?.message || e
-    );
+  try {
+      animet = await animetPromise;
+  } catch (e) {
+      // Phòng vệ bổ sung; animetPromise đã tự bắt lỗi.
+      console.error(
+          "[MOVINA-ANIMET] COLLECT ERROR:",
+          e?.stack || e?.message || e
+      );
 
-    animet = [];
-}
+      animet = [];
+  }
 
   if (!Array.isArray(animet)) {
       animet = [];
