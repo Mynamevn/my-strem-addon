@@ -27552,43 +27552,6 @@ console.log(
     selectedEpisodes.length
 );
 
-        console.log(
-            "[PHIMHDCS] LOADED EPISODE PAGE:",
-            {
-                server:
-                    selected.server,
-
-                episode:
-                    selected.episode.name,
-
-                url:
-                    episodeUrl
-            }
-        );
-
-    } catch (
-        episodeLoadError
-    ) {
-
-        console.warn(
-            "[PHIMHDCS] EPISODE LOAD ERROR:",
-            {
-                server:
-                    selected.server,
-
-                url:
-                    selected?.episode?.url,
-
-                error:
-                    episodeLoadError?.message ||
-                    episodeLoadError
-            }
-        );
-
-    }
-
-}
-
 console.log(
     "[PHIMHDCS] LOADED EPISODE PAGES:",
     episodePages.length
