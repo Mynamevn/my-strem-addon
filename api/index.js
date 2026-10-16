@@ -21434,31 +21434,21 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
     const attempts = [];
 
     try {
+      
       // ----------------------------------------------------------
-      // ANIMET SESSION WARM-UP
-      // Mở trang chủ trước để nhận cookie phiên thông thường.
-      // Dùng chung animetRequest(), cookie jar và fetchImpl hiện có.
+      // ANIMET SESSION WARM-UP — SKIPPED
+      //
+      // Log thực tế cho thấy warm-up có thể chờ gần 18 giây,
+      // nhưng request tìm kiếm vẫn bị chuyển đến trang xác minh.
+      // Bỏ lượt chờ trang chủ để chuyển thẳng sang tìm kiếm.
+      //
+      // Không bypass trang xác minh; nếu server tiếp tục chặn,
+      // provider trả kết quả rỗng và fallback hiện có vẫn hoạt động.
       // ----------------------------------------------------------
-      try {
-        const warmup = await request(`${BASE}/`);
-
-        console.info(
-          "[PRV-ANIMET] SESSION WARMUP:",
-          JSON.stringify({
-            requestedUrl: `${BASE}/`,
-            finalUrl: warmup.url,
-            status: warmup.status,
-            verificationPage: Boolean(warmup.verificationPage),
-            bodyLength: String(warmup.body || "").length
-          })
-        );
-      } catch (warmupError) {
-        // Trang chủ lỗi không ngăn thử request tìm kiếm chính.
-        console.warn(
-          "[PRV-ANIMET] SESSION WARMUP ERROR:",
-          warmupError?.message || String(warmupError)
-        );
-      }
+      console.info(
+        "[PRV-ANIMET] SESSION WARMUP SKIPPED:",
+        "Chuyển thẳng sang request tìm kiếm."
+      );
 
       // Tiếp tục tìm kiếm bằng cùng phiên cookie.
       const page = await request(searchUrl);
