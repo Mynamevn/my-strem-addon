@@ -10791,6 +10791,182 @@ async function fetchNguonC(movieName) {
 //
 // ============================================================
 
+/*
+ * KKPHIM — GENERIC TITLE VARIANTS
+ *
+ * Dùng chung cho movie và series.
+ * - Tạo biến thể từ tên đầu vào.
+ * - Có IMDb ID: tra tên/alias trên Wikidata.
+ * - Không hardcode IMDb ID hay tên phim cụ thể.
+ */
+
+const KKPHIM_TITLE_VARIANT_CACHE = new Map();
+
+function kkphimNormalizeTitle(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/đ/g, "d")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function kkphimBuildBasicTitleVariants(title) {
+    const original = String(title || "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    if (!original) return [];
+
+    const variants = [];
+    const seen = new Set();
+
+    const add = value => {
+        const text = String(value || "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        const key = kkphimNormalizeTitle(text);
+
+        if (
+            !key ||
+            key.length < 2 ||
+            key.length > 200 ||
+            seen.has(key)
+        ) {
+            return;
+        }
+
+        seen.add(key);
+        variants.push(text);
+    };
+
+    add(original);
+
+    // Bỏ phần phụ đề trong ngoặc.
+    add(original.replace(/\s*[\(\[][^\)\]]*[\)\]]\s*/g, " "));
+
+    // Tên chính trước dấu phân cách phụ đề.
+    add(original.split(/\s[:|–—]\s/)[0]);
+
+    // Biến thể không có mạo từ tiếng Anh.
+    add(original.replace(/^(the|a|an)\s+/i, ""));
+
+    // Bỏ dấu câu nhưng giữ nguyên các từ.
+    add(original.replace(/[^\p{L}\p{N}\s]/gu, " "));
+
+    return variants.slice(0, 5);
+}
+
+async function kkphimGetMetadataTitleVariants(
+    title,
+    imdbId = "",
+    movieYear = 0
+) {
+    const basic = kkphimBuildBasicTitleVariants(title);
+    const id = String(imdbId || "").trim();
+
+    if (!id || !/^tt\d+$/i.test(id)) {
+        return basic;
+    }
+
+    const cacheKey = id.toLowerCase();
+
+    if (KKPHIM_TITLE_VARIANT_CACHE.has(cacheKey)) {
+        return [
+            ...new Set([
+                ...basic,
+                ...KKPHIM_TITLE_VARIANT_CACHE.get(cacheKey)
+            ])
+        ].slice(0, 12);
+    }
+
+    const variants = [];
+    const query = `
+        SELECT DISTINCT ?label WHERE {
+            ?item wdt:P345 "${id}" .
+            {
+                ?item rdfs:label ?label .
+            }
+            UNION
+            {
+                ?item skos:altLabel ?label .
+            }
+            FILTER(
+                LANG(?label) IN (
+                    "en", "vi", "ja", "zh", "ko",
+                    "fr", "de", "es", "pt", "ru"
+                )
+            )
+        }
+        LIMIT 30
+    `;
+
+    try {
+        const response = await axios.get(
+            "https://query.wikidata.org/sparql",
+            {
+                params: {
+                    query,
+                    format: "json"
+                },
+                timeout: 4000,
+                headers: {
+                    "User-Agent": "MOVINA/1.0",
+                    "Accept": "application/sparql-results+json"
+                }
+            }
+        );
+
+        const rows =
+            response.data?.results?.bindings || [];
+
+        for (const row of rows) {
+            const label = row?.label?.value;
+
+            if (typeof label === "string" && label.trim()) {
+                variants.push(label.trim());
+            }
+        }
+
+        const uniqueVariants = [
+            ...new Set(
+                variants.filter(value =>
+                    kkphimNormalizeTitle(value) !==
+                    kkphimNormalizeTitle(title)
+                )
+            )
+        ].slice(0, 8);
+
+        KKPHIM_TITLE_VARIANT_CACHE.set(
+            cacheKey,
+            uniqueVariants
+        );
+
+        console.log("[KKPHIM] METADATA TITLE VARIANTS:", {
+            imdbId: id,
+            year: Number(movieYear) || 0,
+            count: uniqueVariants.length,
+            variants: uniqueVariants
+        });
+
+        return [
+            ...new Set([...basic, ...uniqueVariants])
+        ].slice(0, 12);
+
+    } catch (error) {
+        console.log("[KKPHIM] METADATA ALIAS LOOKUP ERROR:", {
+            imdbId: id,
+            status: error?.response?.status || 0,
+            message: error?.message || String(error)
+        });
+
+        return basic;
+    }
+}
+
 async function fetchKKPhim(
     movieName,
     movieYear = 0,
@@ -11102,152 +11278,136 @@ if (
 
 }
 
+       // -------------------------------------------------
+    // B. FALLBACK 2: GENERIC TITLE SEARCH
     // -------------------------------------------------
-    // B. FALLBACK 2: SEARCH THEO TÊN
-    // -------------------------------------------------
-    if (
-    !movie
-) {
-    const searchTerms = [
-        String(movieName || "").trim()
-    ].filter(Boolean);
 
-    /*
-     * Trường hợp Cinemeta dùng tên tiếng Anh
-     * nhưng dữ liệu PhimAPI lưu tên tiếng Việt.
-     *
-     * Chỉ bật alias cho Journey to the West (1996),
-     * không thay đổi cách tìm của phim khác.
-     */
-    if (
-        streamType === "series" &&
-        Number(movieYear) === 1996 &&
-        /journey\s+to\s+the\s+west/i.test(
-            String(movieName || "")
-        )
-    ) {
-        searchTerms.push("Tây Du Ký");
-    }
+    let uniqueSearchTerms =
+        kkphimBuildBasicTitleVariants(movieName);
 
-    const uniqueSearchTerms = [
-        ...new Set(searchTerms)
-    ];
+    let searchGroups = [];
+    let items = [];
 
-    console.log(
-        "[KKPHIM] Search terms:",
-        uniqueSearchTerms
-    );
-
-    const searchGroups = await Promise.all(
-        uniqueSearchTerms.map(
-            async keyword => {
+    const searchKKPhimTerms = async terms => {
+        const groups = await Promise.all(
+            terms.map(async keyword => {
                 const searchUrl =
                     "https://phimapi.com/v1/api/tim-kiem?keyword=" +
                     encodeURIComponent(keyword) +
                     "&limit=64";
 
-                console.log(
-                    "[KKPHIM] Search URL:",
-                    searchUrl
-                );
+                console.log("[KKPHIM] Search URL:", searchUrl);
 
                 try {
-                    const res = await axios.get(
-                        searchUrl,
-                        {
-                            timeout: 10000,
-                            headers: {
-                                "User-Agent": "Mozilla/5.0",
-                                "Accept": "application/json"
-                            }
+                    const res = await axios.get(searchUrl, {
+                        timeout: 10000,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
                         }
-                    );
+                    });
 
                     const results =
                         res.data?.data?.items ||
                         res.data?.items ||
                         [];
 
-                    console.log(
-                        "[KKPHIM] Search results:",
-                        {
-                            keyword,
-                            status: res.status,
-                            count: Array.isArray(results)
-                                ? results.length
-                                : 0
-                        }
-                    );
+                    console.log("[KKPHIM] Search results:", {
+                        keyword,
+                        status: res.status,
+                        count: Array.isArray(results)
+                            ? results.length
+                            : 0
+                    });
 
-                    return Array.isArray(results)
-                        ? results
-                        : [];
+                    return Array.isArray(results) ? results : [];
 
-                } catch (e) {
-                    console.log(
-                        "[KKPHIM] Search error:",
-                        {
-                            keyword,
-                            status: e?.response?.status || 0,
-                            message: e?.message || String(e)
-                        }
-                    );
+                } catch (error) {
+                    console.log("[KKPHIM] Search error:", {
+                        keyword,
+                        status: error?.response?.status || 0,
+                        message: error?.message || String(error)
+                    });
 
                     return [];
                 }
-            }
-        )
-    );
+            })
+        );
 
-    /*
-     * Gộp kết quả từ các từ khóa và loại trùng.
-     * Ưu tiên slug/id; nếu thiếu cả hai thì dùng
-     * tên + năm làm khóa dự phòng.
-     */
-    const seenSearchItems = new Set();
+        const seen = new Set();
 
-    const items = searchGroups
-        .flat()
-        .filter(item => {
+        return groups.flat().filter(item => {
             const key = String(
                 item?.slug ||
                 item?._id ||
                 item?.id ||
-                (
-                    String(item?.name || "") +
-                    "|" +
-                    String(item?.year || "")
-                )
+                `${item?.name || ""}|${item?.year || ""}`
             ).trim();
 
-            if (!key || seenSearchItems.has(key)) {
-                return false;
-            }
+            if (!key || seen.has(key)) return false;
 
-            seenSearchItems.add(key);
+            seen.add(key);
             return true;
         });
+    };
 
-    console.log(
-        "[KKPHIM] MERGED SEARCH RESULTS:",
-        {
-            terms: uniqueSearchTerms,
-            count: items.length,
-            candidates: items.slice(0, 20).map(item => ({
-                name: item?.name || "",
-                origin_name: item?.origin_name || "",
-                year: item?.year || 0,
-                type: item?.type || "",
-                slug: item?.slug || ""
-            }))
-        }
-    );
+    console.log("[KKPHIM] Basic search terms:", uniqueSearchTerms);
 
+    // Lượt 1: tìm bằng tên gốc và biến thể cú pháp.
+    items = await searchKKPhimTerms(uniqueSearchTerms);
+
+    /*
+     * Lượt 2: chỉ khi lượt đầu không trả kết quả,
+     * thử tên thay thế từ metadata chung.
+     */
     if (!items.length) {
         console.log(
-            "[KKPHIM] NO SEARCH RESULT FROM ANY TERM"
+            "[KKPHIM] BASIC SEARCH EMPTY; TRY METADATA ALIASES"
         );
 
+        const metadataTerms =
+            await kkphimGetMetadataTitleVariants(
+                movieName,
+                imdbId,
+                movieYear
+            );
+
+        uniqueSearchTerms = [
+            ...new Set([
+                ...uniqueSearchTerms,
+                ...metadataTerms
+            ])
+        ].slice(0, 12);
+
+        const basicKeys = new Set(
+            kkphimBuildBasicTitleVariants(movieName)
+                .map(kkphimNormalizeTitle)
+        );
+
+        const aliasTerms = uniqueSearchTerms.filter(
+            term => !basicKeys.has(kkphimNormalizeTitle(term))
+        );
+
+        if (aliasTerms.length) {
+            console.log("[KKPHIM] Alias search terms:", aliasTerms);
+            items = await searchKKPhimTerms(aliasTerms);
+        }
+    }
+
+    console.log("[KKPHIM] MERGED SEARCH RESULTS:", {
+        terms: uniqueSearchTerms,
+        count: items.length,
+        candidates: items.slice(0, 20).map(item => ({
+            name: item?.name || "",
+            origin_name: item?.origin_name || "",
+            year: item?.year || 0,
+            type: item?.type || "",
+            slug: item?.slug || ""
+        }))
+    });
+
+    if (!items.length) {
+        console.log("[KKPHIM] NO SEARCH RESULT FROM ANY TERM");
         return streams;
     }
 
@@ -11281,9 +11441,15 @@ if (
         };
 
     const normalizedSearch =
-        normalizeTitle(
-            movieName
-        );
+        normalizeTitle(movieName);
+
+    const normalizedSearchTerms = [
+        ...new Set(
+            uniqueSearchTerms
+                .map(term => normalizeTitle(term))
+                .filter(Boolean)
+        )
+    ];
 
     // =================================================
     // 15.3 RANK CÁC KẾT QUẢ
@@ -11317,39 +11483,41 @@ if (
                 let score = 0;
 
                 // -------------------------------------
-                // TITLE
+                // TITLE — GỐC VÀ TÊN THAY THẾ
                 // -------------------------------------
 
-                if (
-                    origin ===
-                    normalizedSearch
-                ) {
+                const exactOriginMatch =
+                    normalizedSearchTerms.some(
+                        term => origin === term
+                    );
 
+                const exactNameMatch =
+                    normalizedSearchTerms.some(
+                        term => name === term
+                    );
+
+                const partialOriginMatch =
+                    normalizedSearchTerms.some(
+                        term =>
+                            term.length >= 8 &&
+                            origin.includes(term)
+                    );
+
+                const partialNameMatch =
+                    normalizedSearchTerms.some(
+                        term =>
+                            term.length >= 8 &&
+                            name.includes(term)
+                    );
+
+                if (exactOriginMatch) {
                     score += 1000;
-
-                } else if (
-                    name ===
-                    normalizedSearch
-                ) {
-
+                } else if (exactNameMatch) {
                     score += 900;
-
-                } else if (
-                    origin.includes(
-                        normalizedSearch
-                    )
-                ) {
-
+                } else if (partialOriginMatch) {
                     score += 300;
-
-                } else if (
-                    name.includes(
-                        normalizedSearch
-                    )
-                ) {
-
+                } else if (partialNameMatch) {
                     score += 200;
-
                 }
 
                 // -------------------------------------
