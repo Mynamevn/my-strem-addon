@@ -24510,7 +24510,7 @@ title:
             );
         };
 
-        const pltDirectMatches = ranked.filter(
+                const pltDirectMatches = ranked.filter(
             pltHasDirectTitleMatch
         );
 
@@ -24522,69 +24522,92 @@ title:
             pltIsOriginalSeriesCandidate
         );
 
-        // Có tên khớp trực tiếp: ưu tiên các kết quả đó.
-        // Nếu tên không khớp, chỉ nhận ứng viên khi có
-        // bằng chứng độc lập: năm, series gốc hoặc cặp
-        // phiên bản Vietsub + Lồng Tiếng cùng tên phim.
+        // -----------------------------------------------------
+        // 14.1.0.1. FALLBACK CHO PHIM CÓ TÊN VIỆT HÓA
         //
-        // Không dùng ranked.slice(0, 8) làm fallback chung,
-        // tránh kiểm tra hàng loạt phim không liên quan.
+        // Không bắt buộc một phim phải có cả Vietsub và Lồng Tiếng.
+        // Khi tên tiếng Anh khác tên tiếng Việt, chỉ chấp nhận
+        // fallback nếu có đúng MỘT ứng viên lồng tiếng không phải
+        // phần tiếp theo, còn các ứng viên còn lại đều là sequel.
+        //
+        // Không dùng ranked[0] hoặc ranked.slice(...) làm fallback
+        // chung vì có thể kéo phim không liên quan vào detail fetch.
+        // -----------------------------------------------------
 
-        const pltLocalizedVersionMatches = ranked.filter(candidate => {
-            if (candidate.status !== "Lồng Tiếng") {
-                return false;
+        const pltIsDubbedCandidate = (candidate) =>
+            /lồng tiếng|long tieng|longtieng|thuyết minh|thuyet minh|uslt|ffvn/i.test(
+                `${candidate?.title || ""} ${candidate?.status || ""}`
+            );
+
+        const pltIsSequelCandidate = (candidate) => {
+            const title = pltNormalizeCandidateText(
+                candidate?.title
+            );
+
+            return (
+                /\b(?:phan|part|season|mua)\s*(?:hai|2|ba|3|bon|4|nam|5|s[2-9])\b/i.test(
+                    title
+                ) ||
+                /\b(?:ii|iii|iv|v)\b/i.test(title) ||
+                /\b(?:2|3|4|5)\s*$/i.test(title)
+            );
+        };
+
+        const pltDubbedNonSequelCandidates = ranked.filter(
+            candidate =>
+                pltIsDubbedCandidate(candidate) &&
+                !pltIsSequelCandidate(candidate) &&
+                Number(candidate?.score || 0) >= 0
+        );
+
+        const pltHasSafeLocalizedFallback =
+            pltDirectMatches.length === 0 &&
+            pltYearMatches.length === 0 &&
+            pltOriginalSeriesMatches.length === 0 &&
+            pltDubbedNonSequelCandidates.length === 1 &&
+            ranked.length > 1 &&
+            ranked
+                .filter(candidate =>
+                    candidate !== pltDubbedNonSequelCandidates[0]
+                )
+                .every(pltIsSequelCandidate);
+
+        const pltLocalizedFallbackMatches =
+            pltHasSafeLocalizedFallback
+                ? pltDubbedNonSequelCandidates
+                : [];
+
+        console.log(
+            "[PHIMLONGTIENG] LOCALIZED FALLBACK:",
+            {
+                enabled: pltHasSafeLocalizedFallback,
+                candidates: pltLocalizedFallbackMatches.map(
+                    candidate => ({
+                        title: candidate.title,
+                        status: candidate.status,
+                        score: candidate.score,
+                        href: candidate.href
+                    })
+                )
             }
+        );
 
-            const candidateTitle =
-                pltNormalizeCandidateText(candidate.title);
-
-            if (!candidateTitle) {
-                return false;
-            }
-
-            // Chỉ xem là bằng chứng bổ trợ khi cùng tên phim
-            // có một kết quả Vietsub riêng biệt.
-            return ranked.some(other => {
-                if (
-                    other.href === candidate.href ||
-                    other.status !== "Vietsub"
-                ) {
-                    return false;
-                }
-
-                const otherTitle =
-                    pltNormalizeCandidateText(other.title);
-
-                return (
-                    otherTitle &&
-                    otherTitle === candidateTitle
-                );
-            });
-        });
-
+        // Có tên khớp trực tiếp: ưu tiên các kết quả đó.
+        // Nếu không có tên khớp, chỉ dùng bằng chứng độc lập
+        // từ năm, series gốc hoặc fallback Việt hóa an toàn.
         const pltCandidatePool =
             pltDirectMatches.length > 0
                 ? [
                     ...pltDirectMatches.slice(0, 8),
                     ...pltYearMatches,
-                    ...pltOriginalSeriesMatches,
-                    ...pltLocalizedVersionMatches
+                    ...pltOriginalSeriesMatches
                 ]
                 : [
                     ...pltYearMatches,
                     ...pltOriginalSeriesMatches,
-                    ...pltLocalizedVersionMatches
+                    ...pltLocalizedFallbackMatches
                 ];
 
-        console.log(
-            "[PHIMLONGTIENG] LOCALIZED VERSION MATCHES:",
-            pltLocalizedVersionMatches.map(candidate => ({
-                title: candidate.title,
-                status: candidate.status,
-                score: candidate.score,
-                href: candidate.href
-            }))
-        );
 
         // -----------------------------------------------------
         // 14.1.1. LỌC SỚM CANDIDATE SAI NĂM
