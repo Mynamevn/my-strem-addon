@@ -24298,18 +24298,9 @@ title:
 
                         }
 
-                        if (
-                            /lồng tiếng|thuyết minh|uslt|ffvn/i.test(
-                                item.title +
-                                " " +
-                                item.status
-                            )
-                        ) {
-
-                            score +=
-                                100;
-
-                        }
+                        // Không cộng điểm theo phiên bản ngôn ngữ.
+// Vietsub, Lồng Tiếng và Thuyết Minh được xếp hạng
+// dựa trên mức độ khớp phim, không dựa vào loại tiếng Việt.
 
                         if (
                             /(?:phần|phan)\s*(?:hai|2|ba|3|bon|4|năm|5)\b/i.test(
@@ -24523,19 +24514,31 @@ title:
         );
 
         // -----------------------------------------------------
-        // 14.1.0.1. FALLBACK CHO PHIM CÓ TÊN VIỆT HÓA
+        // 14.1.0.1. CANDIDATE FILTER — TẤT CẢ PHIÊN BẢN TIẾNG VIỆT
         //
-        // Không bắt buộc một phim phải có cả Vietsub và Lồng Tiếng.
-        // Khi tên tiếng Anh khác tên tiếng Việt, chỉ chấp nhận
-        // fallback nếu có đúng MỘT ứng viên lồng tiếng không phải
-        // phần tiếp theo, còn các ứng viên còn lại đều là sequel.
-        //
-        // Không dùng ranked[0] hoặc ranked.slice(...) làm fallback
-        // chung vì có thể kéo phim không liên quan vào detail fetch.
+        // Nguyên tắc:
+        // - Không bắt buộc phải có cả Vietsub và Lồng Tiếng.
+        // - Không ưu tiên ngôn ngữ của phiên bản.
+        // - Khi tên tiếng Anh không khớp tên Việt hóa, vẫn xét
+        //   ứng viên có trạng thái tiếng Việt và không phải sequel.
+        // - Các bước kiểm tra detail/year/episode/confidence bên
+        //   dưới vẫn chịu trách nhiệm loại phim không đúng.
         // -----------------------------------------------------
 
-        const pltIsDubbedCandidate = (candidate) =>
-            /lồng tiếng|long tieng|longtieng|thuyết minh|thuyet minh|uslt|ffvn/i.test(
+        const pltDirectMatches = ranked.filter(
+            pltHasDirectTitleMatch
+        );
+
+        const pltYearMatches = ranked.filter(
+            pltHasYearHint
+        );
+
+        const pltOriginalSeriesMatches = ranked.filter(
+            pltIsOriginalSeriesCandidate
+        );
+
+        const pltIsVietnameseVersion = (candidate) =>
+            /viet\s*sub|vietsub|phụ\s*đề|lồng\s*tiếng|long\s*tiếng|longtieng|thuyết\s*minh|thuyet\s*minh|uslt|ffvn/i.test(
                 `${candidate?.title || ""} ${candidate?.status || ""}`
             );
 
@@ -24553,67 +24556,22 @@ title:
             );
         };
 
-        const pltDubbedNonSequelCandidates = ranked.filter(
-            candidate =>
-                pltIsDubbedCandidate(candidate) &&
-                !pltIsSequelCandidate(candidate) &&
-                Number(candidate?.score || 0) >= 0
-        );
-
-        // Cùng tên Việt hóa ở hai phiên bản ngôn ngữ là bằng chứng
-        // đủ mạnh để kiểm tra bản Lồng Tiếng.
-        // Không yêu cầu phải có đủ cả Vietsub và Lồng Tiếng.
-        const pltIsVietsubCandidate = (candidate) =>
-            /\bviet\s*sub\b|\bvietsub\b/i.test(
-                String(candidate?.status || "")
-            );
-
-        const pltPairedLocalizedMatches =
-            pltDubbedNonSequelCandidates.filter(dubbedCandidate => {
-                const dubbedTitle = pltNormalizeCandidateText(
-                    dubbedCandidate?.title
-                );
-
-                return (
-                    dubbedTitle &&
-                    ranked.some(otherCandidate =>
-                        otherCandidate !== dubbedCandidate &&
-                        pltIsVietsubCandidate(otherCandidate) &&
-                        pltNormalizeCandidateText(
-                            otherCandidate?.title
-                        ) === dubbedTitle
-                    )
-                );
-            });
-
-        // Fallback độc lập: chỉ có một bản Lồng Tiếng không phải
-        // phần tiếp theo, các kết quả còn lại đều là sequel.
-        // Dùng cho trường hợp The Christmas Chronicles.
-        const pltHasSafeSingleVersionFallback =
+        // Fallback độc lập với phiên bản ngôn ngữ:
+        // chỉ dùng khi chưa có bằng chứng khớp tiêu đề,
+        // năm hoặc series gốc.
+        //
+        // Không yêu cầu ứng viên phải có bản Vietsub/Lồng Tiếng
+        // cùng tên làm đối chứng.
+        const pltLocalizedFallbackMatches =
             pltDirectMatches.length === 0 &&
             pltYearMatches.length === 0 &&
-            pltOriginalSeriesMatches.length === 0 &&
-            pltDubbedNonSequelCandidates.length === 1 &&
-            ranked.length > 1 &&
-            ranked
-                .filter(candidate =>
-                    candidate !== pltDubbedNonSequelCandidates[0]
+            pltOriginalSeriesMatches.length === 0
+                ? ranked.filter(candidate =>
+                    pltIsVietnameseVersion(candidate) &&
+                    !pltIsSequelCandidate(candidate) &&
+                    Number(candidate?.score || 0) >= 0
                 )
-                .every(pltIsSequelCandidate);
-
-        const pltLocalizedFallbackMatches = [
-            ...new Map(
-                [
-                    ...pltPairedLocalizedMatches,
-                    ...(pltHasSafeSingleVersionFallback
-                        ? pltDubbedNonSequelCandidates
-                        : [])
-                ].map(candidate => [
-                    candidate.href || candidate.title,
-                    candidate
-                ])
-            ).values()
-        ];
+                : [];
 
         const pltHasSafeLocalizedFallback =
             pltLocalizedFallbackMatches.length > 0;
@@ -24633,22 +24591,23 @@ title:
             }
         );
 
-        // Có tên khớp trực tiếp: ưu tiên các kết quả đó.
-        // Nếu không có tên khớp, chỉ dùng bằng chứng độc lập
-        // từ năm, series gốc hoặc fallback Việt hóa an toàn.
-        const pltCandidatePool =
-            pltDirectMatches.length > 0
-                ? [
-                    ...pltDirectMatches.slice(0, 8),
-                    ...pltYearMatches,
-                    ...pltOriginalSeriesMatches
-                ]
-                : [
+        // Gộp tất cả nhóm ứng viên, loại URL trùng.
+        // Không chỉ lấy một phiên bản ngôn ngữ.
+        const pltCandidatePool = [
+            ...new Map(
+                [
+                    ...pltDirectMatches,
                     ...pltYearMatches,
                     ...pltOriginalSeriesMatches,
                     ...pltLocalizedFallbackMatches
-                ];
-
+                ].map(candidate => [
+                    String(candidate?.href || candidate?.title || ""),
+                    candidate
+                ])
+            ).values()
+        ].filter(candidate =>
+            Boolean(String(candidate?.href || "").trim())
+        );
 
         // -----------------------------------------------------
         // 14.1.1. LỌC SỚM CANDIDATE SAI NĂM
@@ -25485,36 +25444,9 @@ title:
                 // 14.11. FINAL CANDIDATE SCORE
                 // ==================================================
 
-                // Ưu tiên rõ ràng Lồng Tiếng / Thuyết Minh.
-                if (
-                    /lồng\s*tiếng|thuyết\s*minh|uslt|ffvn/i.test(
-                        selected.title +
-                        " " +
-                        selected.status +
-                        " " +
-                        selectedEpisode.name
-                    )
-                ) {
-
-                    finalScore +=
-                        700;
-
-                }
-
-                if (
-                    /vietsub|phụ\s*đề/i.test(
-                        selected.title +
-                        " " +
-                        selected.status +
-                        " " +
-                        selectedEpisode.name
-                    )
-                ) {
-
-                    finalScore -=
-                        500;
-
-                }
+                                // Không ưu tiên hoặc phạt phiên bản theo ngôn ngữ.
+                // Mọi phiên bản tiếng Việt đều được đánh giá bằng
+                // độ khớp phim, năm, tập và các bước xác thực stream.
 
                 console.log(
                     "[PHIMLONGTIENG] VALID CANDIDATE:",
