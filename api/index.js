@@ -29852,11 +29852,14 @@ console.log(
 
     let movieName = "";
 
-    let movieYear = 0;
+let movieYear = 0;
 
-    let seasonNumber = 0;
+// Metadata Cinemeta, dùng để quyết định có nên gọi AnimeHay/AnimeT.
+let resolvedMetadata = null;
 
-    let episodeNumber = 0;
+let seasonNumber = 0;
+
+let episodeNumber = 0;
 
     // =====================================================
     // A. MOVINA SERIES VIDEO ID
@@ -30041,7 +30044,8 @@ console.log(
             const cinemetaMeta =
                 metaRes.data?.meta ||
                 {};
-
+        
+                    resolvedMetadata = cinemetaMeta;
             movieName =
                 cinemetaMeta.name ||
                 "";
@@ -30124,6 +30128,7 @@ console.log(
                 metaRes.data?.meta ||
                 {};
 
+                resolvedMetadata = cinemetaMeta;
             movieName =
                 cinemetaMeta.name ||
                 "";
@@ -30400,12 +30405,99 @@ const kkphimPromise = (async () => {
 
  let results = [];
 
- // =====================
-  // 8.1. CHẠY TẤT CẢ PROVIDER SONG SONG
+ 
+  // =====================
+  // 8.1. PHÂN LOẠI NỘI DUNG + CHẠY PROVIDER ANIME CÓ ĐIỀU KIỆN
   // =====================
 
-  // AnimeHay: khởi chạy độc lập.
+  const animeMetadataGenres = Array.isArray(resolvedMetadata?.genres)
+      ? resolvedMetadata.genres
+          .map(value =>
+              String(
+                  typeof value === "string"
+                      ? value
+                      : value?.name || ""
+              ).trim().toLowerCase()
+          )
+          .filter(Boolean)
+      : [];
+
+  const animeMetadataText = [
+      resolvedMetadata?.country,
+      resolvedMetadata?.countries,
+      resolvedMetadata?.original_language,
+      resolvedMetadata?.language,
+      resolvedMetadata?.type
+  ]
+      .flatMap(value =>
+          Array.isArray(value) ? value : [value]
+      )
+      .map(value =>
+          String(
+              typeof value === "object"
+                  ? value?.name || value?.code || ""
+                  : value || ""
+          ).trim().toLowerCase()
+      )
+      .filter(Boolean)
+      .join(" ");
+
+  const hasAnimationMetadata = animeMetadataGenres.some(genre =>
+      /\banime\b|animation|animated|hoat hinh/.test(genre)
+  );
+
+  const hasJapaneseMetadata =
+      /\bjapan\b|\bjapanese\b|nhat ban|日本|ja-jp/.test(
+          animeMetadataText
+      );
+
+  const hasExplicitAnimeTitle = /\banime\b|anime movie|anime series/i.test(
+      String(
+          resolvedMetadata?.name ||
+          resolvedMetadata?.original_name ||
+          movieName ||
+          ""
+      )
+  );
+
+  /*
+   * Quy tắc:
+   * 1. Thể loại Animation/Anime: chạy AnimeHay + AnimeT.
+   * 2. Metadata Nhật Bản + dấu hiệu anime trong tên: vẫn chạy.
+   * 3. Metadata có thể loại rõ ràng nhưng không phải hoạt hình:
+   *    bỏ qua hai provider anime.
+   * 4. Metadata không có/không đủ: vẫn chạy để tránh bỏ sót anime
+   *    khi dùng ID MOVINA tùy chỉnh hoặc Cinemeta không trả dữ liệu.
+   */
+  const hasUsableMetadata =
+      animeMetadataGenres.length > 0 ||
+      Boolean(animeMetadataText.trim());
+
+  const animeProvidersEnabled =
+      hasAnimationMetadata ||
+      (hasJapaneseMetadata && hasExplicitAnimeTitle) ||
+      !hasUsableMetadata;
+
+  console.log(
+      "[ANIME PROVIDER GATE]",
+      JSON.stringify({
+          enabled: animeProvidersEnabled,
+          genres: animeMetadataGenres,
+          japaneseMetadata: hasJapaneseMetadata,
+          explicitAnimeTitle: hasExplicitAnimeTitle,
+          metadataAvailable: hasUsableMetadata
+      })
+  );
+
+  // AnimeHay: chỉ khởi chạy khi điều kiện cho phép.
   const animehayPromise = (async () => {
+      if (!animeProvidersEnabled) {
+          console.log(
+              "[ANIMEHAY] SKIPPED: metadata không cho thấy nội dung anime/hoạt hình."
+          );
+          return [];
+      }
+
       try {
           return await fetchAnimeHay(
               movieName,
@@ -30426,8 +30518,15 @@ const kkphimPromise = (async () => {
       }
   })();
 
-  // AnimeT: khởi chạy độc lập.
+  // AnimeT: cùng điều kiện với AnimeHay.
   const animetPromise = (async () => {
+      if (!animeProvidersEnabled) {
+          console.log(
+              "[MOVINA-ANIMET] SKIPPED: metadata không cho thấy nội dung anime/hoạt hình."
+          );
+          return [];
+      }
+
       const startedAt = Date.now();
 
       try {
@@ -30458,6 +30557,7 @@ const kkphimPromise = (async () => {
           return [];
       }
   })();
+
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
@@ -30899,48 +30999,52 @@ console.log(
 
      
     // -------------------------------------------------
-// ANIMEHAY FALLBACK — ƯU TIÊN TÊN THAY THẾ TỪ ANILIST
+// ANIMEHAY FALLBACK TITLE — CHỈ XỬ LÝ KHI ĐƯỢC PHÉP
 // -------------------------------------------------
 
 let animeHayFallbackTitle = String(
     movieName || ""
 ).trim();
 
-try {
-    const aniListTitles =
-        await animeHayGetAniListTitleVariants(
-            movieName,
-            movieYear
-        );
+if (animeProvidersEnabled) {
+    try {
+        const aniListTitles =
+            await animeHayGetAniListTitleVariants(
+                movieName,
+                movieYear
+            );
 
-    if (Array.isArray(aniListTitles)) {
-        const originalTitle = animeHayFallbackTitle
-            .trim()
-            .toLowerCase();
+        if (Array.isArray(aniListTitles)) {
+            const originalTitle =
+                animeHayFallbackTitle.trim().toLowerCase();
 
-        const alternateTitle = aniListTitles.find(title =>
-            typeof title === "string" &&
-            title.trim() &&
-            title.trim().toLowerCase() !== originalTitle
-        );
+            const alternateTitle = aniListTitles.find(title =>
+                typeof title === "string" &&
+                title.trim() &&
+                title.trim().toLowerCase() !== originalTitle
+            );
 
-        if (alternateTitle) {
-            animeHayFallbackTitle =
-                alternateTitle.trim();
+            if (alternateTitle) {
+                animeHayFallbackTitle = alternateTitle.trim();
+            }
         }
+
+        console.log(
+            "[ANIMEHAY] FALLBACK TITLE:",
+            {
+                originalTitle: movieName,
+                selectedTitle: animeHayFallbackTitle
+            }
+        );
+    } catch (error) {
+        console.log(
+            "[ANIMEHAY] FALLBACK ANILIST ERROR:",
+            error?.message || error
+        );
     }
-
+} else {
     console.log(
-        "[ANIMEHAY] FALLBACK TITLE:",
-        {
-            originalTitle: movieName,
-            selectedTitle: animeHayFallbackTitle
-        }
-    );
-} catch (error) {
-    console.log(
-        "[ANIMEHAY] FALLBACK ANILIST ERROR:",
-        error?.message || error
+        "[ANIMEHAY] ANILIST SKIPPED: nội dung không được phân loại là anime."
     );
 }
 
@@ -31022,7 +31126,7 @@ const hasAnimeHayStream =
         )
     );
 
-if (!hasAnimeHayStream) {
+if (!hasAnimeHayStream && animeProvidersEnabled) {
 
     externalStreams.push({
         name:
@@ -31090,7 +31194,7 @@ const hasAnimeTStream =
         Boolean(stream.url || stream.externalUrl)
     );
 
-if (!hasAnimeTStream) {
+if (!hasAnimeTStream && animeProvidersEnabled) {
     const animetBase = String(
     await animetDiscoverActiveBase() ||
     ANIMET_DEFAULT_BASE
