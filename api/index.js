@@ -20499,13 +20499,9 @@ function animetHydraxFakeUrlCheckpoint(fakeUrl) {
 
   // Nếu không được chỉ định baseUrl thủ công,
   // tự khám phá domain qua LinkBio và health check.
+  
   const BASE = String(
-    options.baseUrl ||
-    await animetDiscoverActiveBase({
-      fetchImpl,
-      timeoutMs
-    }) ||
-    ANIMET_DEFAULT_BASE
+      options.baseUrl || ANIMET_DEFAULT_BASE
   ).replace(/\/+$/, "");
 
   let inputUrl = rawInputUrl;
@@ -29643,7 +29639,7 @@ console.log(
                 await axios.get(
                     cinemetaUrl,
                     {
-                        timeout: 8000,
+                        timeout: 4000,
 
                         headers: {
                             "User-Agent":
@@ -29725,7 +29721,7 @@ console.log(
                 await axios.get(
                     cinemetaUrl,
                     {
-                        timeout: 8000,
+                        timeout: 4000,
 
                         headers: {
                             "User-Agent":
@@ -29794,7 +29790,7 @@ console.log(
                     await axios.get(
                         imdbSuggestionUrl,
                         {
-                            timeout: 8000,
+                            timeout: 4000,
 
                             headers: {
                                 "User-Agent":
@@ -30070,6 +30066,45 @@ const kkphimPromise = (async () => {
  }
 
 kkphim = await kkphimPromise;
+
+
+  // =====================================================
+  // MOVINA — START ANIMET CONCURRENTLY
+  // Khởi chạy AnimeT cùng nhóm provider độc lập.
+  // Bắt lỗi bên trong Promise để không tạo rejection treo.
+  // =====================================================
+
+  const animetPromise = (async () => {
+      const startedAt = Date.now();
+
+      try {
+          const streams = await fetchAnimeTProvider(
+              movieName,
+              movieYear,
+              seasonNumber,
+              episodeNumber,
+              streamType
+          );
+
+          console.log(
+              "[MOVINA-ANIMET] FETCH COMPLETE:",
+              JSON.stringify({
+                  elapsedMs: Date.now() - startedAt,
+                  count: Array.isArray(streams) ? streams.length : 0
+              })
+          );
+
+          return Array.isArray(streams) ? streams : [];
+      } catch (e) {
+          console.error(
+              "[MOVINA-ANIMET] FETCH ERROR:",
+              e?.stack || e?.message || e
+          );
+
+          return [];
+      }
+  })();
+
 
 // -----------------------------------------------------
 // 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
@@ -30353,37 +30388,36 @@ console.log(
         : 0
 );
 
-// =====================================================
-// MOVINA — ANIMET STREAM CALL
-// =====================================================
 
-let animet = [];
+  // =====================================================
+  // MOVINA — COLLECT ANIMET RESULT
+  // AnimeT đã được khởi chạy song song từ trước.
+  // Chỉ chờ kết quả Promise đã khởi chạy, không fetch lần hai.
+  // =====================================================
 
-try {
-    animet = await fetchAnimeTProvider(
-        movieName,
-        movieYear,
-        seasonNumber,
-        episodeNumber,
-        streamType
-    );
+  let animet = [];
 
-    if (!Array.isArray(animet)) {
-        animet = [];
-    }
-} catch (e) {
-    console.error(
-        "[MOVINA-ANIMET] FETCH ERROR:",
-        e?.stack || e?.message || e
-    );
+  try {
+      animet = await animetPromise;
+  } catch (e) {
+      // Phòng vệ bổ sung; animetPromise đã tự bắt lỗi.
+      console.error(
+          "[MOVINA-ANIMET] COLLECT ERROR:",
+          e?.stack || e?.message || e
+      );
 
-    animet = [];
-}
+      animet = [];
+  }
 
-console.log(
-    "[MOVINA-ANIMET] STREAM COUNT:",
-    animet.length
-);
+  if (!Array.isArray(animet)) {
+      animet = [];
+  }
+
+  console.log(
+      "[MOVINA-ANIMET] STREAM COUNT:",
+      animet.length
+  );
+
 
 // =====================================================
 // DEBUG — STREAM THỰC TẾ SAU FETCH
@@ -30701,9 +30735,8 @@ const hasAnimeTStream =
 
 if (!hasAnimeTStream) {
     const animetBase = String(
-    await animetDiscoverActiveBase() ||
-    ANIMET_DEFAULT_BASE
-).trim().replace(/\/+$/, "");
+      ANIMET_DEFAULT_BASE
+  ).trim().replace(/\/+$/, "");
 
     externalStreams.push({
         name: "🌐 [Fallback] AnimeT",
