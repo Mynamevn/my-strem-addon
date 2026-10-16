@@ -24351,22 +24351,27 @@ title:
             pltIsOriginalSeriesCandidate
         );
 
-        // Có tên khớp: ưu tiên tên khớp.
-        // Không có tên khớp: vẫn kiểm tra các kết quả đầu,
-        // đồng thời bổ sung ứng viên khớp năm và tên series gốc.
-        const pltCandidatePool = pltDirectMatches.length > 0
-            ? [
-                ...pltDirectMatches.slice(0, 8),
-                ...pltYearMatches,
-                ...pltOriginalSeriesMatches
-            ]
-            : [
-                ...ranked.slice(0, 8),
-                ...pltYearMatches,
-                ...pltOriginalSeriesMatches
-            ];
+        // Có tên khớp trực tiếp: ưu tiên các kết quả đó.
+        // Nếu không có tên khớp, chỉ kiểm tra các ứng viên
+        // có bằng chứng độc lập về năm hoặc tên series gốc.
+        //
+        // KHÔNG lấy ranked.slice(0, 8) làm fallback tùy tiện:
+        // các từ phổ biến như "high school" có thể khiến
+        // phim không liên quan lọt vào vòng tải trang chi tiết.
 
-// -----------------------------------------------------
+        const pltCandidatePool =
+            pltDirectMatches.length > 0
+                ? [
+                    ...pltDirectMatches.slice(0, 8),
+                    ...pltYearMatches,
+                    ...pltOriginalSeriesMatches
+                ]
+                : [
+                    ...pltYearMatches,
+                    ...pltOriginalSeriesMatches
+                ];
+
+        // -----------------------------------------------------
         // 14.1.1. LỌC SỚM CANDIDATE SAI NĂM
         // Chỉ loại khi tên hoặc URL ghi rõ năm khác năm cần tìm.
         // Candidate không ghi rõ năm vẫn được giữ để kiểm tra
