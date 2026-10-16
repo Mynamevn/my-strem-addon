@@ -24501,18 +24501,6 @@ title:
             );
         };
 
-                const pltDirectMatches = ranked.filter(
-            pltHasDirectTitleMatch
-        );
-
-        const pltYearMatches = ranked.filter(
-            pltHasYearHint
-        );
-
-        const pltOriginalSeriesMatches = ranked.filter(
-            pltIsOriginalSeriesCandidate
-        );
-
         // -----------------------------------------------------
         // 14.1.0.1. CANDIDATE FILTER — TẤT CẢ PHIÊN BẢN TIẾNG VIỆT
         //
