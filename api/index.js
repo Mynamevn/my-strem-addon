@@ -24560,7 +24560,36 @@ title:
                 Number(candidate?.score || 0) >= 0
         );
 
-        const pltHasSafeLocalizedFallback =
+        // Cùng tên Việt hóa ở hai phiên bản ngôn ngữ là bằng chứng
+        // đủ mạnh để kiểm tra bản Lồng Tiếng.
+        // Không yêu cầu phải có đủ cả Vietsub và Lồng Tiếng.
+        const pltIsVietsubCandidate = (candidate) =>
+            /\bviet\s*sub\b|\bvietsub\b/i.test(
+                String(candidate?.status || "")
+            );
+
+        const pltPairedLocalizedMatches =
+            pltDubbedNonSequelCandidates.filter(dubbedCandidate => {
+                const dubbedTitle = pltNormalizeCandidateText(
+                    dubbedCandidate?.title
+                );
+
+                return (
+                    dubbedTitle &&
+                    ranked.some(otherCandidate =>
+                        otherCandidate !== dubbedCandidate &&
+                        pltIsVietsubCandidate(otherCandidate) &&
+                        pltNormalizeCandidateText(
+                            otherCandidate?.title
+                        ) === dubbedTitle
+                    )
+                );
+            });
+
+        // Fallback độc lập: chỉ có một bản Lồng Tiếng không phải
+        // phần tiếp theo, các kết quả còn lại đều là sequel.
+        // Dùng cho trường hợp The Christmas Chronicles.
+        const pltHasSafeSingleVersionFallback =
             pltDirectMatches.length === 0 &&
             pltYearMatches.length === 0 &&
             pltOriginalSeriesMatches.length === 0 &&
@@ -24572,10 +24601,22 @@ title:
                 )
                 .every(pltIsSequelCandidate);
 
-        const pltLocalizedFallbackMatches =
-            pltHasSafeLocalizedFallback
-                ? pltDubbedNonSequelCandidates
-                : [];
+        const pltLocalizedFallbackMatches = [
+            ...new Map(
+                [
+                    ...pltPairedLocalizedMatches,
+                    ...(pltHasSafeSingleVersionFallback
+                        ? pltDubbedNonSequelCandidates
+                        : [])
+                ].map(candidate => [
+                    candidate.href || candidate.title,
+                    candidate
+                ])
+            ).values()
+        ];
+
+        const pltHasSafeLocalizedFallback =
+            pltLocalizedFallbackMatches.length > 0;
 
         console.log(
             "[PHIMLONGTIENG] LOCALIZED FALLBACK:",
