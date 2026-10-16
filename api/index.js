@@ -11278,6 +11278,9 @@ if (
 
 }
 
+// Chỉ tìm theo tên nếu IMDb và tìm theo năm chưa tìm được phim.
+if (!movie) {
+
        // -------------------------------------------------
     // B. FALLBACK 2: GENERIC TITLE SEARCH
     // -------------------------------------------------
