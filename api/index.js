@@ -19503,6 +19503,16 @@ async function animetDiscoverActiveBase(options = {}) {
         return ANIMET_DISCOVERY_CACHE.base;
     }
 
+    // Chống discovery bị kích hoạt liên tục khi nhiều
+    // request cùng gặp trang xác minh AnimeT.
+    if (
+        options.force &&
+        ANIMET_DISCOVERY_CACHE.lastAttemptAt &&
+        now - ANIMET_DISCOVERY_CACHE.lastAttemptAt < 60_000
+    ) {
+        return cachedBase;
+    }
+
     // Đã có discovery chạy nền: không khởi chạy thêm.
     if (ANIMET_DISCOVERY_CACHE.pending) {
         return cachedBase;
@@ -19526,6 +19536,9 @@ async function animetDiscoverActiveBase(options = {}) {
 
     // Giữ domain đang hoạt động trong lúc dò domain mới.
     const activeBaseAtStart = cachedBase;
+
+    // Ghi nhận thời điểm bắt đầu để chống kích hoạt lặp.
+    ANIMET_DISCOVERY_CACHE.lastAttemptAt = now;
 
     const refreshPromise = (async () => {
         let selectedBase = activeBaseAtStart;
