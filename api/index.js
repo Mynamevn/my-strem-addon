@@ -27478,69 +27478,57 @@ console.log(
 // - Giữ thứ tự kết quả để không ảnh hưởng pipeline giải mã.
 // ====================================================
 
-const episodePageResults = await Promise.allSettled(
-    selectedEpisodes.map(async (selected) => {
-        const episodeUrl = selected?.episode?.url;
-
-        if (!episodeUrl) {
-            throw new Error("Missing episode URL");
-        }
-
-        const episodeRes = await axios.get(
-            episodeUrl,
-            {
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-
-                    "Referer":
-                        selectedMovie.url
-                },
-
-                timeout: 10000
-            }
-        );
-
-        return {
-            server: selected.server,
-            episode: selected.episode,
-            url: episodeUrl,
-            html: String(episodeRes.data || "")
-        };
-    })
-);
-
 const episodePages = [];
 
-episodePageResults.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-        episodePages.push(result.value);
-        return;
-    }
+for (
+    const selected
+    of selectedEpisodes
+) {
 
-    const selected = selectedEpisodes[index];
+    try {
 
-    console.warn(
-        "[PHIMHDCS] EPISODE LOAD ERROR:",
-        {
-            server: selected?.server || "",
-            url: selected?.episode?.url || "",
-            error:
-                result.reason?.message ||
-                String(result.reason || "Unknown error")
-        }
-    );
-});
+        const episodeUrl =
+            selected
+                .episode
+                .url;
 
-console.log(
-    "[PHIMHDCS] EPISODE PAGE LOAD SUMMARY:",
-    {
-        requested: selectedEpisodes.length,
-        loaded: episodePages.length,
-        failed: selectedEpisodes.length - episodePages.length,
-        mode: "parallel"
-    }
-);
+        const episodeRes =
+            await axios.get(
+                episodeUrl,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+
+                        "Referer":
+                            selectedMovie.url
+                    },
+
+                    timeout: 10000
+                }
+            );
+
+        const episodeHtml =
+            String(
+                episodeRes.data ||
+                ""
+            );
+
+        episodePages.push({
+
+            server:
+                selected.server,
+
+            episode:
+                selected.episode,
+
+            url:
+                episodeUrl,
+
+            html:
+                episodeHtml
+
+        });
 
         console.log(
             "[PHIMHDCS] LOADED EPISODE PAGE:",
