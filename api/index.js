@@ -19480,163 +19480,323 @@ async function animetDiscoveryFetch(url, fetchImpl, timeoutMs) {
   }
 }
 
+
 async function animetDiscoverActiveBase(options = {}) {
-  const now = Date.now();
+    const now = Date.now();
 
-  if (
-    ANIMET_DISCOVERY_CACHE.base &&
-    ANIMET_DISCOVERY_CACHE.expiresAt > now
-  ) {
-    return ANIMET_DISCOVERY_CACHE.base;
-  }
+    const fallbackBase = String(
+        options.baseUrl ||
+        ANIMET_DEFAULT_BASE ||
+        "https://animesub.site"
+    ).replace(/\/+$/, "");
 
-  if (ANIMET_DISCOVERY_CACHE.pending) {
-    return ANIMET_DISCOVERY_CACHE.pending;
-  }
+    const cachedBase =
+        ANIMET_DISCOVERY_CACHE.base ||
+        fallbackBase;
 
-  const fetchImpl = options.fetchImpl || globalThis.fetch;
-  const timeoutMs = Math.min(
-    ANIMET_DISCOVERY_TIMEOUT_MS,
-    Math.max(1000, Number(options.timeoutMs) || ANIMET_DISCOVERY_TIMEOUT_MS)
-  );
-
-  const fallbackBase = String(
-    options.baseUrl ||
-    ANIMET_DEFAULT_BASE ||
-    "https://animesub.site"
-  ).replace(/\/+$/, "");
-
-  if (typeof fetchImpl !== "function") {
-    return fallbackBase;
-  }
-
-  ANIMET_DISCOVERY_CACHE.pending = (async () => {
-    let selectedBase = fallbackBase;
-
-    try {
-      const response = await animetDiscoveryFetch(
-        ANIMET_LINKBIO_PAGE,
-        fetchImpl,
-        timeoutMs
-      );
-
-      const html = await response.text();
-
-      console.info("[PRV-ANIMET] LINKBIO DISCOVERY:", JSON.stringify({
-        status: response.status,
-        finalUrl: response.url || ANIMET_LINKBIO_PAGE,
-        bodyLength: html.length
-      }));
-
-      if (!response.ok || !html) {
-        throw new Error(`LinkBio HTTP ${response.status}`);
-      }
-
-      const candidates = animetDiscoveryExtractCandidates(
-        html,
-        response.url || ANIMET_LINKBIO_PAGE
-      );
-
-      console.info("[PRV-ANIMET] LINKBIO CANDIDATES:", JSON.stringify({
-        count: candidates.length,
-        candidates
-      }));
-
-      // Nếu LinkBio trỏ về domain đang dùng thì không cần health-check
-      // lại domain đó trong mỗi lần cache hết hạn.
-      const fallbackHost = new URL(fallbackBase).host.toLowerCase();
-
-      const sameAsFallback = candidates.find(candidate => {
-        try {
-          return new URL(candidate).host.toLowerCase() === fallbackHost;
-        } catch {
-          return false;
-        }
-      });
-
-      if (sameAsFallback) {
-        selectedBase = sameAsFallback;
-
-        console.info("[PRV-ANIMET] LINKBIO DOMAIN UNCHANGED:", JSON.stringify({
-          base: selectedBase,
-          note: "LinkBio vẫn trỏ về domain mặc định; chưa phát hiện domain thay thế."
-        }));
-      } else {
-        // Chỉ thử các domain thực sự được trích xuất từ LinkBio.
-        // Không quét URL tài nguyên và không crawl trang đích.
-        for (const candidate of candidates.slice(0, 3)) {
-          try {
-            const health = await animetDiscoveryFetch(
-              `${candidate}/`,
-              fetchImpl,
-              timeoutMs
-            );
-
-            const body = await health.text();
-            const titleMatch = body.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-            const title = titleMatch
-              ? titleMatch[1].replace(/<[^>]*>/g, " ").trim()
-              : "";
-
-            const verificationPage =
-              /xac-minh|xác minh truy cập|verify you are human|captcha|access denied/i
-                .test(`${title}\n${body.slice(0, 12000)}`);
-
-            const healthy =
-              health.ok &&
-              !verificationPage &&
-              body.length > 500;
-
-            console.info("[PRV-ANIMET] DOMAIN HEALTH:", JSON.stringify({
-              base: candidate,
-              status: health.status,
-              finalUrl: health.url || candidate,
-              healthy,
-              verificationPage,
-              title
-            }));
-
-            if (healthy) {
-              selectedBase = candidate;
-              console.info("[PRV-ANIMET] DOMAIN DISCOVERED:", selectedBase);
-              break;
-            }
-          } catch (error) {
-            console.warn(
-              "[PRV-ANIMET] DOMAIN HEALTH ERROR:",
-              candidate,
-              error?.message || error
-            );
-          }
-        }
-
-        if (selectedBase === fallbackBase) {
-          console.warn("[PRV-ANIMET] DISCOVERY FALLBACK:", JSON.stringify({
-            base: fallbackBase,
-            note: "Không xác nhận được domain thay thế; giữ domain mặc định."
-          }));
-        }
-      }
-    } catch (error) {
-      console.warn(
-        "[PRV-ANIMET] LINKBIO DISCOVERY ERROR:",
-        error?.message || error
-      );
+    // Cache còn hạn: trả ngay, không thực hiện network request.
+    if (
+        !options.force &&
+        ANIMET_DISCOVERY_CACHE.base &&
+        ANIMET_DISCOVERY_CACHE.expiresAt > now
+    ) {
+        return ANIMET_DISCOVERY_CACHE.base;
     }
 
-    ANIMET_DISCOVERY_CACHE.base = selectedBase;
-    ANIMET_DISCOVERY_CACHE.expiresAt =
-      Date.now() + ANIMET_DISCOVERY_CACHE_TTL;
+    // Đã có discovery chạy nền: không khởi chạy thêm.
+    if (ANIMET_DISCOVERY_CACHE.pending) {
+        return cachedBase;
+    }
 
-    return selectedBase;
-  })();
+    const fetchImpl =
+        options.fetchImpl || globalThis.fetch;
 
-  try {
-    return await ANIMET_DISCOVERY_CACHE.pending;
-  } finally {
-    ANIMET_DISCOVERY_CACHE.pending = null;
-  }
+    const timeoutMs = Math.min(
+        ANIMET_DISCOVERY_TIMEOUT_MS,
+        Math.max(
+            1000,
+            Number(options.timeoutMs) ||
+            ANIMET_DISCOVERY_TIMEOUT_MS
+        )
+    );
+
+    if (typeof fetchImpl !== "function") {
+        return cachedBase;
+    }
+
+    // Giữ domain đang hoạt động trong lúc dò domain mới.
+    const activeBaseAtStart = cachedBase;
+
+    const refreshPromise = (async () => {
+        let selectedBase = activeBaseAtStart;
+        let cacheTtl = 5 * 60 * 1000;
+        let confirmed = false;
+
+        try {
+            const response = await animetDiscoveryFetch(
+                ANIMET_LINKBIO_PAGE,
+                fetchImpl,
+                timeoutMs
+            );
+
+            const html = await response.text();
+
+            console.info(
+                "[PRV-ANIMET] LINKBIO DISCOVERY:",
+                JSON.stringify({
+                    status: response.status,
+                    finalUrl:
+                        response.url ||
+                        ANIMET_LINKBIO_PAGE,
+                    bodyLength: html.length,
+                    background: true
+                })
+            );
+
+            if (!response.ok || !html) {
+                throw new Error(
+                    `LinkBio HTTP ${response.status}`
+                );
+            }
+
+            const candidates =
+                animetDiscoveryExtractCandidates(
+                    html,
+                    response.url ||
+                    ANIMET_LINKBIO_PAGE
+                );
+
+            console.info(
+                "[PRV-ANIMET] LINKBIO CANDIDATES:",
+                JSON.stringify({
+                    count: candidates.length,
+                    candidates
+                })
+            );
+
+            const getOrigin = value => {
+                try {
+                    return new URL(value).origin;
+                } catch {
+                    return "";
+                }
+            };
+
+            const fallbackOrigin =
+                getOrigin(fallbackBase);
+
+            const activeOrigin =
+                getOrigin(activeBaseAtStart);
+
+            // Nếu LinkBio trỏ về domain mặc định,
+            // dùng domain đó mà không cần health-check lại.
+            const fallbackMatch = candidates.find(
+                candidate =>
+                    getOrigin(candidate) ===
+                    fallbackOrigin
+            );
+
+            if (fallbackMatch) {
+                selectedBase = fallbackOrigin;
+                confirmed = true;
+
+                console.info(
+                    "[PRV-ANIMET] LINKBIO DOMAIN UNCHANGED:",
+                    JSON.stringify({
+                        base: selectedBase
+                    })
+                );
+            } else {
+                // Nếu LinkBio vẫn trỏ về domain đang cache,
+                // không cần tải trang chủ thêm lần nữa.
+                const activeMatch = candidates.find(
+                    candidate =>
+                        getOrigin(candidate) ===
+                        activeOrigin
+                );
+
+                if (activeMatch) {
+                    selectedBase = activeOrigin;
+                    confirmed = true;
+
+                    console.info(
+                        "[PRV-ANIMET] ACTIVE DOMAIN CONFIRMED:",
+                        selectedBase
+                    );
+                } else {
+                    // Chỉ kiểm tra tối đa 3 domain ứng viên.
+                    // Không crawl đệ quy các trang hoặc tài nguyên.
+                    for (
+                        const candidate of candidates.slice(0, 3)
+                    ) {
+                        try {
+                            const health =
+                                await animetDiscoveryFetch(
+                                    `${candidate}/`,
+                                    fetchImpl,
+                                    timeoutMs
+                                );
+
+                            const body =
+                                await health.text();
+
+                            const title =
+                                animetStripTags(
+                                    body.match(
+                                        /<title\b[^>]*>([\s\S]*?)<\/title>/i
+                                    )?.[1] || ""
+                                );
+
+                            const finalUrl =
+                                health.url || candidate;
+
+                            let finalOrigin = "";
+                            let finalHostname = "";
+
+                            try {
+                                const parsed =
+                                    new URL(finalUrl);
+
+                                finalOrigin = parsed.origin;
+                                finalHostname =
+                                    parsed.hostname;
+                            } catch {}
+
+                            const verificationPage =
+                                /xac-minh|xác minh truy cập|verify you are human|captcha|access denied|checking your browser/i
+                                    .test(
+                                        `${title}\n${body.slice(0, 12000)}`
+                                    );
+
+                            // Không chấp nhận một trang bất kỳ
+                            // chỉ vì trả HTTP 200 và HTML dài.
+                            const looksLikeAnimeT =
+                                /animet|anime/i.test(
+                                    `${title}\n${body.slice(0, 20000)}`
+                                );
+
+                            const healthy =
+                                health.ok &&
+                                !verificationPage &&
+                                body.length > 500 &&
+                                looksLikeAnimeT &&
+                                Boolean(finalOrigin) &&
+                                !animetDiscoveryIsBlockedHost(
+                                    finalHostname
+                                );
+
+                            console.info(
+                                "[PRV-ANIMET] DOMAIN HEALTH:",
+                                JSON.stringify({
+                                    candidate,
+                                    status: health.status,
+                                    finalUrl,
+                                    healthy,
+                                    verificationPage,
+                                    looksLikeAnimeT,
+                                    title
+                                })
+                            );
+
+                            if (healthy) {
+                                selectedBase = finalOrigin;
+                                confirmed = true;
+
+                                console.info(
+                                    "[PRV-ANIMET] DOMAIN DISCOVERED:",
+                                    selectedBase
+                                );
+
+                                break;
+                            }
+                        } catch (error) {
+                            console.warn(
+                                "[PRV-ANIMET] DOMAIN HEALTH ERROR:",
+                                candidate,
+                                error?.message || error
+                            );
+                        }
+                    }
+                }
+            }
+
+            if (confirmed) {
+                cacheTtl =
+                    ANIMET_DISCOVERY_CACHE_TTL;
+            } else {
+                // Không có domain mới được xác nhận:
+                // giữ domain đang cache, thử lại sau 5 phút.
+                selectedBase = activeBaseAtStart;
+
+                console.warn(
+                    "[PRV-ANIMET] DISCOVERY FALLBACK:",
+                    JSON.stringify({
+                        base: selectedBase,
+                        retryAfterMs: cacheTtl,
+                        note:
+                            "Không xác nhận được domain mới; " +
+                            "giữ domain hiện tại."
+                    })
+                );
+            }
+        } catch (error) {
+            // Lỗi LinkBio không làm hỏng lượt stream.
+            selectedBase = activeBaseAtStart;
+
+            console.warn(
+                "[PRV-ANIMET] LINKBIO DISCOVERY ERROR:",
+                error?.message || error
+            );
+        }
+
+        return {
+            base: selectedBase,
+            ttl: cacheTtl,
+            confirmed
+        };
+    })();
+
+    ANIMET_DISCOVERY_CACHE.pending =
+        refreshPromise;
+
+    // Cập nhật cache bất đồng bộ; không await trong đường stream.
+    void refreshPromise
+        .then(result => {
+            ANIMET_DISCOVERY_CACHE.base =
+                result.base;
+
+            ANIMET_DISCOVERY_CACHE.expiresAt =
+                Date.now() + result.ttl;
+
+            console.info(
+                "[PRV-ANIMET] DISCOVERY CACHE UPDATED:",
+                JSON.stringify({
+                    base: result.base,
+                    confirmed: result.confirmed,
+                    ttlMs: result.ttl
+                })
+            );
+        })
+        .catch(error => {
+            console.warn(
+                "[PRV-ANIMET] DISCOVERY BACKGROUND ERROR:",
+                error?.message || error
+            );
+        })
+        .finally(() => {
+            if (
+                ANIMET_DISCOVERY_CACHE.pending ===
+                refreshPromise
+            ) {
+                ANIMET_DISCOVERY_CACHE.pending = null;
+            }
+        })
+        .catch(() => {});
+
+    // Trả ngay domain hiện có; tuyệt đối không chờ LinkBio.
+    return cachedBase;
 }
+
 
 // ---------------------------------------------------------------------------
 // ANIMET — DEAN EDWARDS PACKER
@@ -20501,8 +20661,13 @@ function animetHydraxFakeUrlCheckpoint(fakeUrl) {
   // tự khám phá domain qua LinkBio và health check.
   
   const BASE = String(
-      options.baseUrl || ANIMET_DEFAULT_BASE
-  ).replace(/\/+$/, "");
+    options.baseUrl ||
+    await animetDiscoverActiveBase({
+        fetchImpl,
+        timeoutMs
+    }) ||
+    ANIMET_DEFAULT_BASE
+).replace(/\/+$/, "");
 
   let inputUrl = rawInputUrl;
 
@@ -21312,23 +21477,36 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
       };
 
       if (verificationPage) {
-        attempt.note =
-          "Server trả về trang xác minh, không phải trang kết quả tìm kiếm.";
+    attempt.note =
+        "Server trả về trang xác minh, không phải trang kết quả tìm kiếm.";
 
-        attempts.push(attempt);
+    attempts.push(attempt);
 
+    console.warn(
+        "[PRV-ANIMET] SEARCH VERIFICATION:",
+        JSON.stringify(attempt)
+    );
+
+    // Kích hoạt kiểm tra domain mới ở nền.
+    // Không chờ discovery, không chặn provider khác.
+    void animetDiscoverActiveBase({
+        force: true,
+        fetchImpl,
+        timeoutMs
+    }).catch(error => {
         console.warn(
-          "[PRV-ANIMET] SEARCH VERIFICATION:",
-          JSON.stringify(attempt)
+            "[PRV-ANIMET] BACKGROUND DISCOVERY ERROR:",
+            error?.message || error
         );
+    });
 
-        errors.push({
-          url: searchUrl,
-          finalUrl,
-          error:
+    errors.push({
+        url: searchUrl,
+        finalUrl,
+        error:
             "AnimeT trả về trang xác minh truy cập. Chưa thể lấy kết quả bằng request này."
-        });
-      } else {
+    });
+} else {
         // Selector đã xác nhận trực tiếp từ AnimetProvider.smali.
         const cardPattern =
           /<li\b(?=[^>]*\bclass\s*=\s*["'][^"']*\bTPostMv\b[^"']*["'])[^>]*>[\s\S]*?<\/li\s*>/gi;
@@ -30735,8 +30913,9 @@ const hasAnimeTStream =
 
 if (!hasAnimeTStream) {
     const animetBase = String(
-      ANIMET_DEFAULT_BASE
-  ).trim().replace(/\/+$/, "");
+    await animetDiscoverActiveBase() ||
+    ANIMET_DEFAULT_BASE
+).trim().replace(/\/+$/, "");
 
     externalStreams.push({
         name: "🌐 [Fallback] AnimeT",
