@@ -30231,38 +30231,10 @@ const kkphimPromise = (async () => {
      }
  })();
 
- try {
-     results = await Promise.allSettled([
-         fetchNguonC(nguonCFallbackName),
-         fetchVSMov(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType
-         ),
-         scrapePhimHDCS(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType
-         )
-     ]);
- } catch (e) {
-     console.error(
-         "[STREAM] Lỗi chạy các nguồn độc lập:",
-         e.message
-     );
- }
-
-kkphim = await kkphimPromise;
-
-
   // =====================================================
-  // MOVINA — START ANIMET CONCURRENTLY
-  // Khởi chạy AnimeT cùng nhóm provider độc lập.
-  // Bắt lỗi bên trong Promise để không tạo rejection treo.
+  // MOVINA — START ANIMET EARLY
+  // Khởi chạy AnimeT ngay cùng nhóm provider độc lập.
+  // Không chờ NguonC / VSMov / PhimHDCS / KKPhim.
   // =====================================================
 
   const animetPromise = (async () => {
@@ -30295,6 +30267,33 @@ kkphim = await kkphimPromise;
           return [];
       }
   })();
+
+ try {
+     results = await Promise.allSettled([
+         fetchNguonC(nguonCFallbackName),
+         fetchVSMov(
+             movieName,
+             movieYear,
+             seasonNumber,
+             episodeNumber,
+             streamType
+         ),
+         scrapePhimHDCS(
+             movieName,
+             movieYear,
+             seasonNumber,
+             episodeNumber,
+             streamType
+         )
+     ]);
+ } catch (e) {
+     console.error(
+         "[STREAM] Lỗi chạy các nguồn độc lập:",
+         e.message
+     );
+ }
+
+kkphim = await kkphimPromise;
 
 
 // -----------------------------------------------------
