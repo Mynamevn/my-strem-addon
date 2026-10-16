@@ -12944,30 +12944,27 @@ async function resolveVSMovEmbed(
         // -------------------------------------------------
 
         const response =
-            await axios.get(
-                url,
-                {
-                    timeout:
-                        12000,
+    await axios.get(
+        url,
+        {
+            // VSMov có embed fallback nếu không resolve được.
+            // Không chờ 12 giây cho một request bị treo.
+            timeout: 3500,
 
-                    headers: {
+            headers: {
+                "Referer":
+                    "https://vsmov.com/",
 
-                        "Referer":
-                            "https://vsmov.com/",
+                "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
 
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                "Accept":
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
 
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-
-                    },
-
-                    responseType:
-                        "text"
-
-                }
-            );
+            responseType: "text"
+        }
+    );
 
 
         const html =
