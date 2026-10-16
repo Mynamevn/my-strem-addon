@@ -10859,7 +10859,7 @@ if (
             await axios.get(
                 imdbUrl,
                 {
-                    timeout: 4000,
+                    timeout: 8000,
 
                     headers: {
                         "User-Agent":
@@ -15539,25 +15539,13 @@ async function animeHaySearch(domain, title) {
 
     console.log("[ANIMEHAY] SEARCH TITLE:", searchTitle);
 
-    // Chạy slug-search và keyword-search song song.
-    // Giữ nguyên parsePage() để tận dụng cơ chế lọc và chống trùng
-    // ứng viên hiện có trong hàm.
-    await Promise.all(
-        searchUrls.map(async (item) => {
-            try {
-                await parsePage(item.url, item.label);
-            } catch (error) {
-                console.warn(
-                    "[ANIMEHAY] SEARCH ATTEMPT ERROR:",
-                    JSON.stringify({
-                        label: item.label,
-                        url: item.url,
-                        error: error?.message || String(error)
-                    })
-                );
-            }
-        })
-    );
+    for (const item of searchUrls) {
+        await parsePage(item.url, item.label);
+
+        if (results.length > 0) {
+            break;
+        }
+    }
 
     console.log("[ANIMEHAY] SEARCH CANDIDATES:", results.length);
 
@@ -21450,19 +21438,19 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
       // ----------------------------------------------------------
       // ANIMET SESSION WARM-UP — SKIPPED
       //
-      // Warm-up có thể chờ gần 18 giây nhưng request tìm kiếm
-      // vẫn bị chuyển đến trang xác minh.
-      // Bỏ lượt chờ trang chủ để tìm kiếm trực tiếp.
+      // Log thực tế cho thấy warm-up có thể chờ gần 18 giây,
+      // nhưng request tìm kiếm vẫn bị chuyển đến trang xác minh.
+      // Bỏ lượt chờ trang chủ để chuyển thẳng sang tìm kiếm.
       //
-      // Không bypass trang xác minh. Nếu server tiếp tục chặn,
-      // giữ nguyên cơ chế phát hiện verification và fallback.
+      // Không bypass trang xác minh; nếu server tiếp tục chặn,
+      // provider trả kết quả rỗng và fallback hiện có vẫn hoạt động.
       // ----------------------------------------------------------
       console.info(
         "[PRV-ANIMET] SESSION WARMUP SKIPPED:",
         "Chuyển thẳng sang request tìm kiếm."
       );
 
-      // Tìm kiếm trực tiếp, không chờ warm-up trang chủ.
+      // Tiếp tục tìm kiếm bằng cùng phiên cookie.
       const page = await request(searchUrl);
       const body = String(page.body ?? "");
       const finalUrl = page.url || searchUrl;
