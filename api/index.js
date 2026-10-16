@@ -30413,39 +30413,32 @@ const kkphimPromise = (async () => {
  let results = [];
 
  // =====================
- // 8.1. CHẠY CÁC NGUỒN ĐỘC LẬP SONG SONG
- // =====================
+  // 8.1. CHẠY TẤT CẢ PROVIDER SONG SONG
+  // =====================
 
- // Khởi chạy AnimeHay sớm, không chờ PhimLongTieng.
- // Bắt lỗi ngay trong promise để tránh unhandled rejection.
+  // AnimeHay: khởi chạy độc lập.
+  const animehayPromise = (async () => {
+      try {
+          return await fetchAnimeHay(
+              movieName,
+              movieYear,
+              seasonNumber,
+              episodeNumber,
+              streamType,
+              rawId.startsWith("tt")
+                  ? rawId.split(":")[0]
+                  : ""
+          );
+      } catch (e) {
+          console.error(
+              "[ANIMEHAY] FETCH ERROR:",
+              e?.message || e
+          );
+          return [];
+      }
+  })();
 
- const animehayPromise = (async () => {
-     try {
-         return await fetchAnimeHay(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType,
-             rawId.startsWith("tt")
-                 ? rawId.split(":")[0]
-                 : ""
-         );
-     } catch (e) {
-         console.error(
-             "[ANIMEHAY] FETCH ERROR:",
-             e.message
-         );
-         return [];
-     }
- })();
-
-  // =====================================================
-  // MOVINA — START ANIMET EARLY
-  // Khởi chạy AnimeT ngay cùng nhóm provider độc lập.
-  // Không chờ NguonC / VSMov / PhimHDCS / KKPhim.
-  // =====================================================
-
+  // AnimeT: khởi chạy độc lập.
   const animetPromise = (async () => {
       const startedAt = Date.now();
 
@@ -30462,7 +30455,9 @@ const kkphimPromise = (async () => {
               "[MOVINA-ANIMET] FETCH COMPLETE:",
               JSON.stringify({
                   elapsedMs: Date.now() - startedAt,
-                  count: Array.isArray(streams) ? streams.length : 0
+                  count: Array.isArray(streams)
+                      ? streams.length
+                      : 0
               })
           );
 
@@ -30472,153 +30467,128 @@ const kkphimPromise = (async () => {
               "[MOVINA-ANIMET] FETCH ERROR:",
               e?.stack || e?.message || e
           );
-
           return [];
       }
   })();
 
- try {
-     results = await Promise.allSettled([
-         fetchNguonC(nguonCFallbackName),
-         fetchVSMov(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType
-         ),
-         scrapePhimHDCS(
-             movieName,
-             movieYear,
-             seasonNumber,
-             episodeNumber,
-             streamType
-         )
-     ]);
- } catch (e) {
-     console.error(
-         "[STREAM] Lỗi chạy các nguồn độc lập:",
-         e.message
-     );
- }
+  // NguonC, VSMov và PhimHDCS chạy đồng thời.
+  const providerResultsPromise = Promise.allSettled([
+      fetchNguonC(nguonCFallbackName),
 
-kkphim = await kkphimPromise;
+      fetchVSMov(
+          movieName,
+          movieYear,
+          seasonNumber,
+          episodeNumber,
+          streamType
+      ),
 
+      scrapePhimHDCS(
+          movieName,
+          movieYear,
+          seasonNumber,
+          episodeNumber,
+          streamType
+      )
+  ]);
 
-// -----------------------------------------------------
-// 8.2. Lấy kết quả tạm của các nguồn hỗ trợ PLT
-// -----------------------------------------------------
+  // PhimLongTieng bắt đầu sớm, chỉ chờ KKPhim để lấy
+  // bằng chứng hỗ trợ. Không chờ NguonC/VSMov/PhimHDCS.
+  const longtiengPromise = (async () => {
+      try {
+          const kkphimSupport = await kkphimPromise;
 
-const nguoncSupport =
-    results[0]?.status === "fulfilled" &&
-    Array.isArray(
-        results[0].value
-    )
-        ? results[0].value
-        : [];
+          const supportContext = {
+              originalName: movieName,
+              targetYear: movieYear,
+              seasonNumber,
+              episodeNumber,
+              streamType,
 
-const vsmovSupport =
-    results[1]?.status === "fulfilled" &&
-    Array.isArray(
-        results[1].value
-    )
-        ? results[1].value
-        : [];
+              kkphim: Array.isArray(kkphimSupport)
+                  ? kkphimSupport
+                  : [],
 
-const phimhdcsSupport =
-    results[2]?.status === "fulfilled" &&
-    Array.isArray(
-        results[2].value
-    )
-        ? results[2].value
-        : [];
+              // Các nguồn này vẫn đang chạy song song.
+              // PhimLongTieng tự đối chiếu bằng tên/năm/tập.
+              nguonc: [],
+              vsmov: [],
+              phimhdcs: []
+          };
 
+          const streams = await scrapePhimLongTieng(
+              movieName,
+              episodeNumber,
+              movieYear,
+              supportContext
+          );
 
-// -----------------------------------------------------
-// 8.3. Context hỗ trợ từ các nguồn đã resolve
-// -----------------------------------------------------
+          return Array.isArray(streams) ? streams : [];
+      } catch (e) {
+          console.error(
+              "[PHIM LONG TIENG ERROR]:",
+              e?.stack || e?.message || e
+          );
+          return [];
+      }
+  })();
 
-const phimLongTiengSupportContext = {
+  // Thu gom toàn bộ kết quả; không trả sớm khi mới có một nguồn.
+  let providerResults = [];
+  let longtiengResult = [];
 
-    originalName:
-        movieName,
+  try {
+      const [
+          settledProviders,
+          kkphimResult,
+          settledLongtieng
+      ] = await Promise.all([
+          providerResultsPromise,
+          kkphimPromise,
+          longtiengPromise
+      ]);
 
-    targetYear:
-        movieYear,
+      providerResults = settledProviders;
+      kkphim = Array.isArray(kkphimResult)
+          ? kkphimResult
+          : [];
 
-    seasonNumber:
-        seasonNumber,
+      longtiengResult = Array.isArray(settledLongtieng)
+          ? settledLongtieng
+          : [];
+  } catch (e) {
+      console.error(
+          "[STREAM] PROVIDER COLLECTION ERROR:",
+          e?.stack || e?.message || e
+      );
+  }
 
-    episodeNumber:
-        episodeNumber,
+  // Giữ đúng thứ tự index mà phần 9 đang sử dụng:
+  // results[0] = NguonC
+  // results[1] = VSMov
+  // results[2] = PhimLongTieng
+  // results[3] = PhimHDCS
+  results = [
+      providerResults[0] || {
+          status: "fulfilled",
+          value: []
+      },
 
-    streamType:
-        streamType,
+      providerResults[1] || {
+          status: "fulfilled",
+          value: []
+      },
 
-    kkphim:
-        Array.isArray(kkphim)
-            ? kkphim
-            : [],
+      {
+          status: "fulfilled",
+          value: longtiengResult
+      },
 
-    nguonc:
-        nguoncSupport,
-
-    vsmov:
-        vsmovSupport,
-
-    phimhdcs:
-        phimhdcsSupport
-};
-
-
-// -----------------------------------------------------
-// 8.4. Chạy PhimLongTieng sau khi đã có context
-// -----------------------------------------------------
-
-let longtiengResult = [];
-
-try {
-
-    longtiengResult =
-        await scrapePhimLongTieng(
-            movieName,
-            episodeNumber,
-            movieYear,
-            phimLongTiengSupportContext
-        );
-
-} catch (e) {
-
-    console.log(
-        "[PHIM LONG TIENG ERROR]:",
-        e?.message ||
-        e
-    );
-
-}
-
-
-// -----------------------------------------------------
-// 8.5. Đưa kết quả PLT vào vị trí cũ của results
-// -----------------------------------------------------
-
-results = [
-
-    results[0],
-    results[1],
-
-    {
-        status:
-            "fulfilled",
-
-        value:
-            Array.isArray(longtiengResult)
-                ? longtiengResult
-                : []
-    },
-
-    results[2]
-];
+      providerResults[2] || {
+          status: "fulfilled",
+          value: []
+      }
+  ];
 
 
 // =====================================================
