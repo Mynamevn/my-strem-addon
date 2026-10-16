@@ -24523,24 +24523,68 @@ title:
         );
 
         // Có tên khớp trực tiếp: ưu tiên các kết quả đó.
-        // Nếu không có tên khớp, chỉ kiểm tra các ứng viên
-        // có bằng chứng độc lập về năm hoặc tên series gốc.
+        // Nếu tên không khớp, chỉ nhận ứng viên khi có
+        // bằng chứng độc lập: năm, series gốc hoặc cặp
+        // phiên bản Vietsub + Lồng Tiếng cùng tên phim.
         //
-        // KHÔNG lấy ranked.slice(0, 8) làm fallback tùy tiện:
-        // các từ phổ biến như "high school" có thể khiến
-        // phim không liên quan lọt vào vòng tải trang chi tiết.
+        // Không dùng ranked.slice(0, 8) làm fallback chung,
+        // tránh kiểm tra hàng loạt phim không liên quan.
+
+        const pltLocalizedVersionMatches = ranked.filter(candidate => {
+            if (candidate.status !== "Lồng Tiếng") {
+                return false;
+            }
+
+            const candidateTitle =
+                pltNormalizeCandidateText(candidate.title);
+
+            if (!candidateTitle) {
+                return false;
+            }
+
+            // Chỉ xem là bằng chứng bổ trợ khi cùng tên phim
+            // có một kết quả Vietsub riêng biệt.
+            return ranked.some(other => {
+                if (
+                    other.href === candidate.href ||
+                    other.status !== "Vietsub"
+                ) {
+                    return false;
+                }
+
+                const otherTitle =
+                    pltNormalizeCandidateText(other.title);
+
+                return (
+                    otherTitle &&
+                    otherTitle === candidateTitle
+                );
+            });
+        });
 
         const pltCandidatePool =
             pltDirectMatches.length > 0
                 ? [
                     ...pltDirectMatches.slice(0, 8),
                     ...pltYearMatches,
-                    ...pltOriginalSeriesMatches
+                    ...pltOriginalSeriesMatches,
+                    ...pltLocalizedVersionMatches
                 ]
                 : [
                     ...pltYearMatches,
-                    ...pltOriginalSeriesMatches
+                    ...pltOriginalSeriesMatches,
+                    ...pltLocalizedVersionMatches
                 ];
+
+        console.log(
+            "[PHIMLONGTIENG] LOCALIZED VERSION MATCHES:",
+            pltLocalizedVersionMatches.map(candidate => ({
+                title: candidate.title,
+                status: candidate.status,
+                score: candidate.score,
+                href: candidate.href
+            }))
+        );
 
         // -----------------------------------------------------
         // 14.1.1. LỌC SỚM CANDIDATE SAI NĂM
