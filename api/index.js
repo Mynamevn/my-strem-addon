@@ -22553,19 +22553,12 @@ async function onflixResolveStreamc(embedUrl) {
  * ============================================================================
  */
 
+
 async function onflixFetchSoraMaster(record) {
     const epId = String(record?.id ?? "").trim();
     const src = String(record?.src ?? "").trim();
 
-    // Không ép ID phải có tiền tố ep_.
-    // Smali nhận epId và src làm tham số; không nên tự thêm
-    // điều kiện tiền tố nếu dữ liệu record không bảo đảm điều đó.
     if (!epId || !src) {
-        console.warn("[ONFLIX-SORA] Missing id/src", {
-            hasId: Boolean(epId),
-            hasSrc: Boolean(src)
-        });
-
         return {
             master: null,
             dataVodUrl: null,
@@ -22582,13 +22575,16 @@ async function onflixFetchSoraMaster(record) {
     try {
         console.info("[ONFLIX-SORA] STEP 1: Fetch player", {
             src,
-            idType: typeof record?.id
+            idPresent: Boolean(epId)
         });
 
         const playerResponse = await onflixRequest(playerUrl, {
             timeout: 12000,
             referer: "https://playembed.vip/",
-            accept: "text/html,application/xhtml+xml,*/*"
+            accept: "text/html,application/xhtml+xml,*/*",
+            headers: {
+                "Origin": "https://playembed.vip"
+            }
         });
 
         const html = String(
@@ -22597,32 +22593,30 @@ async function onflixFetchSoraMaster(record) {
             ""
         );
 
-        // Tìm enc_ gần khóa initialM3u8, kể cả khi JSON
-        // có dấu escape hoặc dấu gạch chéo ngược.
         const markerIndex = html.search(/initialM3u8/i);
-
         const markerText = markerIndex >= 0
-            ? html.slice(markerIndex, markerIndex + 300)
+            ? html.slice(markerIndex, markerIndex + 500)
             : "";
 
         const encrypted =
             markerText.match(/enc_[a-fA-F0-9]+/)?.[0] || "";
 
         if (!encrypted) {
-            console.warn("[ONFLIX-SORA] initialM3u8 not found", {
+            console.warn("[ONFLIX-SORA] Player token missing", {
                 status: playerResponse?.status,
                 bodyLength: html.length,
                 markerFound: markerIndex >= 0,
-                bodyPreview: markerIndex >= 0
-                    ? markerText.slice(0, 160)
-                    : html.slice(0, 160)
+                preview: html.slice(
+                    Math.max(0, markerIndex),
+                    Math.max(0, markerIndex) + 180
+                )
             });
 
             return {
                 master: null,
                 dataVodUrl: null,
-                error: "initialM3u8 enc_ not found",
-                playerStatus: playerResponse?.status
+                playerUrl,
+                error: "initialM3u8 enc_ not found"
             };
         }
 
@@ -22637,27 +22631,39 @@ async function onflixFetchSoraMaster(record) {
             return {
                 master: null,
                 dataVodUrl: null,
-                error: "Decoded dataVodUrl is not HTTP(S)"
+                playerUrl,
+                error: "Decoded URL is not HTTP(S)"
             };
         }
 
-        console.info("[ONFLIX-SORA] STEP 2: Fetch master");
+        const masterHost = (() => {
+            try {
+                return new URL(dataVodUrl).host;
+            } catch {
+                return "invalid-url";
+            }
+        })();
+
+        console.info("[ONFLIX-SORA] STEP 2: Fetch master", {
+            host: masterHost,
+            referer: playerUrl
+        });
 
         const vodResponse = await onflixRequest(dataVodUrl, {
             timeout: 12000,
-            referer: "https://playembed.vip/",
+            referer: playerUrl,
             accept: "application/json,text/plain,*/*",
             headers: {
-                "User-Agent": ONFLIX_USER_AGENT,
-                "Referer": "https://playembed.vip/"
+                "Origin": "https://playembed.vip",
+                "Referer": playerUrl,
+                "User-Agent": ONFLIX_USER_AGENT
             }
         });
 
         let master = null;
+        const raw = vodResponse?.data;
 
         try {
-            const raw = vodResponse?.data;
-
             if (
                 raw &&
                 typeof raw === "object" &&
@@ -22681,7 +22687,7 @@ async function onflixFetchSoraMaster(record) {
             }
         } catch (error) {
             console.warn(
-                "[ONFLIX-SORA] Master JSON parse failed:",
+                "[ONFLIX-SORA] Master JSON parse error:",
                 error?.message || error
             );
         }
@@ -22689,24 +22695,26 @@ async function onflixFetchSoraMaster(record) {
         if (!master) {
             console.warn("[ONFLIX-SORA] Invalid master response", {
                 status: vodResponse?.status,
+                host: masterHost,
                 bodyPreview: String(
                     vodResponse?.body || ""
-                ).slice(0, 160)
+                ).slice(0, 180)
             });
 
             return {
                 master: null,
                 dataVodUrl,
-                error: "Invalid master response",
-                masterStatus: vodResponse?.status
+                playerUrl,
+                error: "Invalid master response"
             };
         }
 
         console.info("[ONFLIX-SORA] MASTER OK", {
-            hasSubtitles: typeof master.sub === "string",
+            host: masterHost,
             qualitiesCount: Array.isArray(master.qualities)
                 ? master.qualities.length
-                : 0
+                : 0,
+            hasSubtitles: typeof master.sub === "string"
         });
 
         return {
@@ -22717,16 +22725,25 @@ async function onflixFetchSoraMaster(record) {
             masterStatus: vodResponse?.status
         };
     } catch (error) {
-        console.warn(
-            "[ONFLIX-SORA] FETCH MASTER ERROR:",
-            error?.response?.status || "",
-            error?.message || String(error)
-        );
+        let failedHost = "";
+
+        try {
+            failedHost = new URL(
+                error?.config?.url || ""
+            ).host;
+        } catch {}
+
+        console.warn("[ONFLIX-SORA] FETCH MASTER ERROR", {
+            status: error?.response?.status || 0,
+            host: failedHost || "(unknown)",
+            message: error?.message || String(error)
+        });
 
         return {
             master: null,
             dataVodUrl: null,
-            error: String(error?.message || error)
+            error: String(error?.message || error),
+            status: error?.response?.status || 0
         };
     }
 }
@@ -22734,59 +22751,65 @@ async function onflixFetchSoraMaster(record) {
 
 async function onflixResolveSora(record) {
     try {
-        // Tương đương fetchSoraMaster(epId, src) trong Smali.
         const sora = await onflixFetchSoraMaster(record);
 
         const master = sora?.master;
         const dataVodUrl = sora?.dataVodUrl;
+        const playerUrl =
+            sora?.playerUrl || "https://playembed.vip/";
 
         if (!master || !dataVodUrl) {
-            console.warn(
-                "[ONFLIX-SORA] Cannot continue:",
-                sora?.error || "Missing master/dataVodUrl"
-            );
+            console.warn("[ONFLIX-SORA] Cannot continue", {
+                status: sora?.status || 0,
+                error: sora?.error || "Missing master/dataVodUrl"
+            });
+
             return [];
         }
 
-        // Smali: master.qualities.firstOrNull()?.qid as Number.
-        // Không có qualities hoặc qid hợp lệ thì qid = 0.
         const firstQuality = Array.isArray(master.qualities)
             ? master.qualities[0]
             : null;
 
         const rawQid = firstQuality?.qid;
-
         const qid =
             typeof rawQid === "number" &&
             Number.isFinite(rawQid)
                 ? Math.trunc(rawQid)
                 : 0;
 
-        // Smali nối "&q=" + qid vào dataVodUrl.
         const playVidUrl =
-            dataVodUrl + "&q=" + encodeURIComponent(String(qid));
+            dataVodUrl +
+            "&q=" +
+            encodeURIComponent(String(qid));
 
-        console.info(
-            "[ONFLIX-SORA] Requesting play_vid:",
-            JSON.stringify({ qid })
-        );
+        const playHost = (() => {
+            try {
+                return new URL(playVidUrl).host;
+            } catch {
+                return "invalid-url";
+            }
+        })();
 
-        // Bước 4: GET endpoint chất lượng để lấy trường play_vid.
+        console.info("[ONFLIX-SORA] STEP 3: Fetch play_vid", {
+            host: playHost,
+            qid
+        });
+
         const playResponse = await onflixRequest(playVidUrl, {
             timeout: 12000,
             accept: "application/json,text/plain,*/*",
-            referer: "https://playembed.vip/",
+            referer: playerUrl,
             headers: {
-                "User-Agent": ONFLIX_USER_AGENT,
-                "Referer": "https://playembed.vip/"
+                "Origin": "https://playembed.vip",
+                "Referer": playerUrl,
+                "User-Agent": ONFLIX_USER_AGENT
             }
         });
 
-        let playPayload = playResponse.data;
+        let playPayload = playResponse?.data;
 
-        if (
-            typeof playPayload === "string"
-        ) {
+        if (typeof playPayload === "string") {
             try {
                 playPayload = JSON.parse(playPayload);
             } catch {
@@ -22800,14 +22823,19 @@ async function onflixResolveSora(record) {
                 : "";
 
         if (!playVid) {
-            console.warn(
-                "[ONFLIX-SORA] play_vid missing from response"
-            );
+            console.warn("[ONFLIX-SORA] play_vid missing", {
+                status: playResponse?.status,
+                host: playHost,
+                bodyPreview: String(
+                    playResponse?.body || ""
+                ).slice(0, 160)
+            });
+
             return [];
         }
 
-        // Bước 5: POST nội dung play_vid dạng raw body tới Pacebin.
-        // Smali dùng RequestBody với media type application/vnd.apple.mpegurl.
+        console.info("[ONFLIX-SORA] STEP 3 OK: play_vid received");
+
         const pacebinUrl =
             "https://pacebin.onrender.com/onflix.m3u8";
 
@@ -22820,7 +22848,8 @@ async function onflixResolveSora(record) {
                 responseType: "text",
                 transformResponse: [data => data],
                 headers: {
-                    "Content-Type": "application/vnd.apple.mpegurl",
+                    "Content-Type":
+                        "application/vnd.apple.mpegurl",
                     "User-Agent": ONFLIX_USER_AGENT
                 },
                 validateStatus: status =>
@@ -22828,19 +22857,16 @@ async function onflixResolveSora(record) {
             }
         );
 
-        // Smali: getText().trim(); chỉ nhận kết quả bắt đầu bằng "http".
         const rawUrl = String(
-            pacebinResponse.data ?? ""
+            pacebinResponse?.data ?? ""
         ).trim();
 
-        if (!rawUrl.startsWith("http")) {
-            console.warn(
-                "[ONFLIX-SORA] Pacebin did not return an HTTP URL:",
-                JSON.stringify({
-                    status: pacebinResponse.status,
-                    bodyPreview: rawUrl.slice(0, 200)
-                })
-            );
+        if (!/^https?:\/\//i.test(rawUrl)) {
+            console.warn("[ONFLIX-SORA] Invalid Pacebin result", {
+                status: pacebinResponse?.status,
+                bodyPreview: rawUrl.slice(0, 180)
+            });
+
             return [];
         }
 
@@ -22851,37 +22877,32 @@ async function onflixResolveSora(record) {
             return [];
         }
 
-        console.info(
-            "[ONFLIX-SORA] RESOLVED:",
-            JSON.stringify({
-                qid,
-                status: pacebinResponse.status,
-                url: finalUrl
-            })
-        );
+        console.info("[ONFLIX-SORA] RESOLVED", {
+            qid,
+            status: pacebinResponse.status,
+            host: new URL(finalUrl).host
+        });
 
-        // Tương đương ExtractorLink loại M3U8 trong Smali.
         return [{
             url: finalUrl,
-            name: "Vietsub (SN) 1080p",
+            name: "Onflix Sora",
             type: "m3u8",
             provider: "onflix",
             headers: {
-                Referer: "https://playembed.vip/",
+                Referer: playerUrl,
                 "User-Agent": ONFLIX_USER_AGENT
             }
         }];
     } catch (error) {
-        console.warn(
-            "[ONFLIX-SORA] resolveSoraCdn failed:",
-            error?.response?.status ||
-            error?.message ||
-            error
-        );
+        console.warn("[ONFLIX-SORA] RESOLVE ERROR", {
+            status: error?.response?.status || 0,
+            message: error?.message || String(error)
+        });
 
         return [];
     }
 }
+
 
 async function onflixLinks(input) {
     let payload = input;
