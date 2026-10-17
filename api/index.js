@@ -17,7 +17,7 @@ const manifest = {
     name:
         "MOVINA",
 
-    description: "Peit curt nougn pog gnoht eh\nGnaig gnouh & eut mat\nURL: http://128.2.0.1:15119//W92aWUuVVMiLCJraXNza2guc2VyaWVzeyJjYXRhbG9ncyI6WyJraXNza2gub%7B%22auth_token%24%3A%26dmslb_LF6TxVnpZGm43D6_CwfoiLEbE4JIG-yqRV90Y%22%7DLlVTIiwib25ldG91Y2h0di5zZXJpZXMuUG9wdWxhciIsImtpc3Nza2guc2VyaWVzLlNlYXJjaCIsImtpc3Nza2gubW92aWUuU2VhcmNoIn0/manifest.json",
+    description: "Peit curt nougn pog gnoht eh\nGnaig gnouh & eut mat\nURL: https://suttacentral.net/mn148//W92aWUuVVMiLCJraXNza2guc2VyaWVzeyJjYXRhbG9ncyI6WyJraXNza2gub%7B%22auth_token%24%3A%26dmslb_LF6TxVnpZGm43D6_CwfoiLEbE4JIG-yqRV90Y%22%7DLlVTIiwib25ldG91Y2h0di5zZXJpZXMuUG9wdWxhciIsImtpc3Nza2guc2VyaWVzLlNlYXJjaCIsImtpc3Nza2gubW92aWUuU2VhcmNoIn0/manifest.json",
 
     resources: [
         "catalog",
@@ -22721,6 +22721,9 @@ async function onflixResolveSora(record) {
 }
 
 async function onflixLinks(input) {
+console.info("[ONFLIX TRACE] onflixLinks ENTER", {
+        inputType: typeof input
+    })
     let payload = input;
 
     if (typeof input === "string") {
@@ -22841,6 +22844,10 @@ async function onflixLinks(input) {
 }
 
 async function fetchOnflix(input, options = {}) {
+console.info("[ONFLIX TRACE] fetchOnflix ENTER", {
+        inputType: typeof input,
+        action: options?.action || "search"
+    });
     const action = String(options.action || "search").toLowerCase();
 
     try {
