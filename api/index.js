@@ -31603,6 +31603,75 @@ const kkphimPromise = (async () => {
       }
   })();
 
+  // =====================================================
+  // MOVINA — ONFLIX PROVIDER
+  // Chạy song song, không phụ thuộc điều kiện nhận diện anime.
+  // Có giới hạn chờ riêng để tránh Onflix giữ request quá lâu.
+  // =====================================================
+
+  const onflixPromise = (async () => {
+      const startedAt = Date.now();
+      let timeoutHandle;
+
+      console.log(
+          "[MOVINA-ONFLIX] FETCH START:",
+          JSON.stringify({
+              title: movieName,
+              year: movieYear,
+              episode: episodeNumber,
+              streamType
+          })
+      );
+
+      try {
+          const timeoutPromise = new Promise(resolve => {
+              timeoutHandle = setTimeout(
+                  () => resolve(null),
+                  18000
+              );
+          });
+
+          const fetchPromise = fetchOnflixProvider(
+              movieName,
+              movieYear,
+              seasonNumber,
+              episodeNumber,
+              streamType
+          );
+
+          const result = await Promise.race([
+              fetchPromise,
+              timeoutPromise
+          ]);
+
+          const streams = Array.isArray(result)
+              ? result
+              : [];
+
+          console.log(
+              "[MOVINA-ONFLIX] FETCH COMPLETE:",
+              JSON.stringify({
+                  elapsedMs: Date.now() - startedAt,
+                  count: streams.length,
+                  timedOut: result === null
+              })
+          );
+
+          return streams;
+      } catch (e) {
+          console.error(
+              "[MOVINA-ONFLIX] FETCH ERROR:",
+              e?.stack || e?.message || e
+          );
+
+          return [];
+      } finally {
+          if (timeoutHandle) {
+              clearTimeout(timeoutHandle);
+          }
+      }
+  })();
+
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
@@ -31891,10 +31960,9 @@ console.log(
 );
 
 
+  
   // =====================================================
   // MOVINA — COLLECT ANIMET RESULT
-  // AnimeT đã được khởi chạy song song từ trước.
-  // Chỉ chờ kết quả Promise đã khởi chạy, không fetch lần hai.
   // =====================================================
 
   let animet = [];
@@ -31902,7 +31970,6 @@ console.log(
   try {
       animet = await animetPromise;
   } catch (e) {
-      // Phòng vệ bổ sung; animetPromise đã tự bắt lỗi.
       console.error(
           "[MOVINA-ANIMET] COLLECT ERROR:",
           e?.stack || e?.message || e
@@ -31918,6 +31985,32 @@ console.log(
   console.log(
       "[MOVINA-ANIMET] STREAM COUNT:",
       animet.length
+  );
+
+  // =====================================================
+  // MOVINA — COLLECT ONFLIX RESULT
+  // =====================================================
+
+  let onflix = [];
+
+  try {
+      onflix = await onflixPromise;
+  } catch (e) {
+      console.error(
+          "[MOVINA-ONFLIX] COLLECT ERROR:",
+          e?.stack || e?.message || e
+      );
+
+      onflix = [];
+  }
+
+  if (!Array.isArray(onflix)) {
+      onflix = [];
+  }
+
+  console.log(
+      "[MOVINA-ONFLIX] STREAM COUNT:",
+      onflix.length
   );
 
 
@@ -31993,6 +32086,8 @@ const directStreams = [
     ...animehay,
 
     ...animet,
+
+    ...onflix,
 
     nguoncClientStream
 
