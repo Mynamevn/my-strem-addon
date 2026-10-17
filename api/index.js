@@ -22946,6 +22946,19 @@ async function onflixLinks(input) {
     const records = Array.isArray(payload?.records)
         ? payload.records
         : [];
+    
+    console.log("[ONFLIX-TEST-URLS]", JSON.stringify(
+    records.map((r, i) => ({
+        index: i + 1,
+        id: r.id,
+        src: r.src,
+        server: r.server_name,
+        embed: r.link_embed,
+        m3u8: r.link_m3u8
+    })),
+    null,
+    2
+));
 
     if (!records.length) {
         console.warn(TAG, "No records received");
