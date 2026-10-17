@@ -22418,15 +22418,22 @@ async function onflixResolveStreamc(embedUrl) {
  */
 
 async function onflixFetchSoraMaster(record) {
-    const epId = String(record?.id || "");
-    const src = String(record?.src || "");
+    const epId = String(record?.id ?? "").trim();
+    const src = String(record?.src ?? "").trim();
 
-    if (!epId.startsWith("ep_") || !src) {
-        console.warn("[ONFLIX-SORA] Missing epId/src");
+    // Không ép ID phải có tiền tố ep_.
+    // Smali nhận epId và src làm tham số; không nên tự thêm
+    // điều kiện tiền tố nếu dữ liệu record không bảo đảm điều đó.
+    if (!epId || !src) {
+        console.warn("[ONFLIX-SORA] Missing id/src", {
+            hasId: Boolean(epId),
+            hasSrc: Boolean(src)
+        });
+
         return {
             master: null,
             dataVodUrl: null,
-            error: "Missing or invalid epId/src"
+            error: "Missing id/src"
         };
     }
 
@@ -22437,51 +22444,73 @@ async function onflixFetchSoraMaster(record) {
         encodeURIComponent(src);
 
     try {
-        // Bước 1: GET trang player để lấy initialM3u8 đã mã hóa.
+        console.info("[ONFLIX-SORA] STEP 1: Fetch player", {
+            src,
+            idType: typeof record?.id
+        });
+
         const playerResponse = await onflixRequest(playerUrl, {
             timeout: 12000,
             referer: "https://playembed.vip/",
             accept: "text/html,application/xhtml+xml,*/*"
         });
 
-        const html = String(playerResponse.body || "");
+        const html = String(
+            playerResponse?.body ??
+            playerResponse?.data ??
+            ""
+        );
 
-        // Giữ cả hai dạng JSON mà Smali xử lý.
+        // Tìm enc_ gần khóa initialM3u8, kể cả khi JSON
+        // có dấu escape hoặc dấu gạch chéo ngược.
+        const markerIndex = html.search(/initialM3u8/i);
+
+        const markerText = markerIndex >= 0
+            ? html.slice(markerIndex, markerIndex + 300)
+            : "";
+
         const encrypted =
-            html.match(/"initialM3u8"\s*:\s*"(enc_[a-fA-F0-9]+)"/)?.[1] ||
-            html.match(/"initialM3u8\\?"\s*:\s*\\?"(enc_[a-fA-F0-9]+)"/)?.[1];
+            markerText.match(/enc_[a-fA-F0-9]+/)?.[0] || "";
 
         if (!encrypted) {
-            console.warn(
-                "[ONFLIX-SORA] initialM3u8 not found",
-                playerResponse.status
-            );
+            console.warn("[ONFLIX-SORA] initialM3u8 not found", {
+                status: playerResponse?.status,
+                bodyLength: html.length,
+                markerFound: markerIndex >= 0,
+                bodyPreview: markerIndex >= 0
+                    ? markerText.slice(0, 160)
+                    : html.slice(0, 160)
+            });
 
             return {
                 master: null,
                 dataVodUrl: null,
-                error: "initialM3u8 enc_ not found"
+                error: "initialM3u8 enc_ not found",
+                playerStatus: playerResponse?.status
             };
         }
 
-        // Bước 2: giải mã enc_ bằng thuật toán onflixDecodeEnc hiện có.
         const dataVodUrl = onflixDecodeEnc(encrypted);
 
-        if (!/^https?:\/\//i.test(String(dataVodUrl || ""))) {
-            console.warn("[ONFLIX-SORA] Invalid decoded dataVodUrl");
+        if (
+            typeof dataVodUrl !== "string" ||
+            !/^https?:\/\//i.test(dataVodUrl)
+        ) {
+            console.warn("[ONFLIX-SORA] Decoded URL invalid");
 
             return {
                 master: null,
                 dataVodUrl: null,
-                error: "Decoded URL is not HTTP(S)"
+                error: "Decoded dataVodUrl is not HTTP(S)"
             };
         }
 
-        // Bước 3: GET dataVodUrl với đúng hai header quan trọng.
+        console.info("[ONFLIX-SORA] STEP 2: Fetch master");
+
         const vodResponse = await onflixRequest(dataVodUrl, {
             timeout: 12000,
-            accept: "application/json,text/plain,*/*",
             referer: "https://playembed.vip/",
+            accept: "application/json,text/plain,*/*",
             headers: {
                 "User-Agent": ONFLIX_USER_AGENT,
                 "Referer": "https://playembed.vip/"
@@ -22491,7 +22520,7 @@ async function onflixFetchSoraMaster(record) {
         let master = null;
 
         try {
-            const raw = vodResponse.data;
+            const raw = vodResponse?.data;
 
             if (
                 raw &&
@@ -22500,9 +22529,11 @@ async function onflixFetchSoraMaster(record) {
             ) {
                 master = raw;
             } else {
-                const parsed = JSON.parse(
-                    String(vodResponse.body || "")
-                );
+                const body = typeof raw === "string"
+                    ? raw
+                    : String(vodResponse?.body || "");
+
+                const parsed = JSON.parse(body);
 
                 if (
                     parsed &&
@@ -22514,38 +22545,46 @@ async function onflixFetchSoraMaster(record) {
             }
         } catch (error) {
             console.warn(
-                "[ONFLIX-SORA] Cannot parse master JSON:",
+                "[ONFLIX-SORA] Master JSON parse failed:",
                 error?.message || error
             );
         }
 
         if (!master) {
+            console.warn("[ONFLIX-SORA] Invalid master response", {
+                status: vodResponse?.status,
+                bodyPreview: String(
+                    vodResponse?.body || ""
+                ).slice(0, 160)
+            });
+
             return {
                 master: null,
                 dataVodUrl,
-                error: "Invalid master response"
+                error: "Invalid master response",
+                masterStatus: vodResponse?.status
             };
         }
 
-        console.info(
-            "[ONFLIX-SORA] Master loaded:",
-            JSON.stringify({
-                hasSubtitles: typeof master.sub === "string",
-                qualitiesCount: Array.isArray(master.qualities)
-                    ? master.qualities.length
-                    : 0,
-                hasDataVodUrl: true
-            })
-        );
+        console.info("[ONFLIX-SORA] MASTER OK", {
+            hasSubtitles: typeof master.sub === "string",
+            qualitiesCount: Array.isArray(master.qualities)
+                ? master.qualities.length
+                : 0
+        });
 
         return {
             master,
-            dataVodUrl
+            dataVodUrl,
+            playerUrl,
+            playerStatus: playerResponse?.status,
+            masterStatus: vodResponse?.status
         };
     } catch (error) {
         console.warn(
-            "[ONFLIX-SORA] fetchSoraMaster failed:",
-            error?.message || error
+            "[ONFLIX-SORA] FETCH MASTER ERROR:",
+            error?.response?.status || "",
+            error?.message || String(error)
         );
 
         return {
@@ -22811,16 +22850,35 @@ async function onflixLinks(input) {
             }
         }
 
-        if (
-            String(record.id || "").startsWith("ep_") &&
-            (!record.link_m3u8 || !String(record.link_m3u8).trim())
-        ) {
+        const hasDirectM3u8 = Boolean(
+            direct && /\.m3u8(?:$|\?)/i.test(direct)
+        );
+
+        const soraId = String(record?.id ?? "").trim();
+        const soraSrc = String(record?.src ?? "").trim();
+
+        if (!hasDirectM3u8 && soraId && soraSrc) {
+            console.info("[ONFLIX-SORA] Trying fallback", {
+                idType: typeof record?.id,
+                src: soraSrc,
+                hasEmbed: Boolean(record?.link_embed)
+            });
+
             try {
-                for (const stream of await onflixResolveSora(record)) {
+                const soraStreams = await onflixResolveSora(record);
+
+                for (const stream of soraStreams) {
                     add(stream);
                 }
+
+                console.info("[ONFLIX-SORA] Fallback result", {
+                    count: soraStreams.length
+                });
             } catch (error) {
-                console.warn("[ONFLIX] Sora error:", error.message);
+                console.warn(
+                    "[ONFLIX] Sora error:",
+                    error?.stack || error
+                );
             }
         }
     }
