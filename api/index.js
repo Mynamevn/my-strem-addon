@@ -22215,57 +22215,112 @@ async function onflixRequest(url, options = {}) {
     };
 }
 
+
 async function onflixSearch(query) {
     const keyword = String(query || "").trim();
 
-    if (!keyword) return [];
-
-    const endpoint =
-        ONFLIX_API_URL + "/search?q=" +
-        encodeURIComponent(keyword);
-
-    const response = await onflixRequest(endpoint, {
-        accept: "application/json"
-    });
-
-    let payload = response.data;
-
-    if (typeof payload === "string") {
-        try {
-            payload = JSON.parse(payload);
-        } catch {
-            return [];
-        }
+    if (!keyword) {
+        console.warn("[ONFLIX] SEARCH SKIPPED: empty query");
+        return [];
     }
 
-    const movies = Array.isArray(payload?.movies)
-        ? payload.movies
-        : [];
+    const endpoint =
+        ONFLIX_API_URL +
+        "/search?q=" +
+        encodeURIComponent(keyword);
 
-    return movies
-        .filter(item => item && item.slug && item.title)
-        .map(item => {
-            const url = onflixAbsoluteUrl(
-                "/phim/" + String(item.slug).replace(/^\/+/, ""),
-                response.url
-            );
+    console.info("[ONFLIX] SEARCH REQUEST:", JSON.stringify({
+        query: keyword,
+        endpoint
+    }));
 
-            return {
-                id: url,
-                url,
-                title: String(item.title),
-                name: String(item.title),
-                poster: onflixAbsoluteUrl(
-                    item.thumb_url || item.poster_url || item.image_url,
-                    response.url
-                ) || undefined,
-                year: Number(item.year) || 0,
-                type: String(item.type || ""),
-                provider: "onflix",
-                source: "Onflix"
-            };
-        })
-        .filter(item => item.url);
+    try {
+        const response = await onflixRequest(endpoint, {
+            timeout: 10000,
+            accept: "application/json"
+        });
+
+        let payload = response.data;
+
+        if (typeof payload === "string") {
+            try {
+                payload = JSON.parse(payload);
+            } catch (error) {
+                console.warn(
+                    "[ONFLIX] SEARCH JSON PARSE ERROR:",
+                    error?.message || error
+                );
+                return [];
+            }
+        }
+
+        const movies = Array.isArray(payload?.movies)
+            ? payload.movies
+            : [];
+
+        console.info("[ONFLIX] SEARCH RESPONSE:", JSON.stringify({
+            status: response.status,
+            count: movies.length,
+            titles: movies.slice(0, 5).map(item => item?.title || ""),
+            slugs: movies.slice(0, 5).map(item => item?.slug || "")
+        }));
+
+        const results = movies
+            .filter(item => item && item.slug && item.title)
+            .map(item => {
+                // QUAN TRỌNG:
+                // Slug phim phải được ghép với website Onflix,
+                // không phải host API k8s.onflixcdn.com.
+                const slug = String(item.slug)
+                    .trim()
+                    .replace(/^\/+/, "")
+                    .replace(/^phim\//i, "");
+
+                const url = onflixAbsoluteUrl(
+                    "/phim/" + slug,
+                    ONFLIX_BASE_URL
+                );
+
+                return {
+                    id: url,
+                    url,
+                    title: String(item.title),
+                    name: String(item.title),
+
+                    poster: onflixAbsoluteUrl(
+                        item.thumb_url ||
+                        item.poster_url ||
+                        item.image_url ||
+                        "",
+                        ONFLIX_BASE_URL
+                    ) || undefined,
+
+                    year: Number(item.year) || 0,
+                    type: String(item.type || ""),
+                    provider: "onflix",
+                    source: "Onflix"
+                };
+            })
+            .filter(item => item.url);
+
+        console.info("[ONFLIX] SEARCH URLS:", JSON.stringify(
+            results.slice(0, 5).map(item => ({
+                title: item.title,
+                year: item.year,
+                url: item.url
+            }))
+        ));
+
+        return results;
+    } catch (error) {
+        console.error(
+            "[ONFLIX] SEARCH ERROR:",
+            error?.response?.status || "",
+            error?.message || error
+        );
+
+        return [];
+    }
 }
 
 async function onflixLoad(url) {
