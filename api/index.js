@@ -22400,7 +22400,8 @@ async function onflixResolveStreamc(embedUrl) {
     return results;
 }
 
-* ============================================================================
+/*
+ * ============================================================================
  * ONFLIX SORA — FETCH MASTER
  *
  * Port từ OnflixProvider.fetchSoraMaster() trong Smali.
@@ -22411,7 +22412,8 @@ async function onflixResolveStreamc(embedUrl) {
  * 3. Gọi onflixDecodeEnc() để giải mã.
  * 4. GET dataVodUrl với User-Agent + Referer playembed.vip.
  * 5. Parse JSON thành master Map.
- * ========================================================================== */
+ * ============================================================================
+ */
 
 async function onflixFetchSoraMaster(record) {
     const epId = String(record?.id || "");
