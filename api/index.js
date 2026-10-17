@@ -22400,53 +22400,438 @@ async function onflixResolveStreamc(embedUrl) {
     return results;
 }
 
-async function onflixResolveSora(record) {
-    const id = String(record?.id || "");
+* ============================================================================
+ * ONFLIX SORA — FETCH MASTER
+ *
+ * Port từ OnflixProvider.fetchSoraMaster() trong Smali.
+ *
+ * ĐÃ XÁC NHẬN:
+ * 1. GET playembed.vip/player?ep_id=...&src=...
+ * 2. Tìm initialM3u8 có tiền tố enc_ và dữ liệu hex.
+ * 3. Gọi onflixDecodeEnc() để giải mã.
+ * 4. GET dataVodUrl với User-Agent + Referer playembed.vip.
+ * 5. Parse JSON thành master Map.
+ * ========================================================================== */
+
+async function onflixFetchSoraMaster(record) {
+    const epId = String(record?.id || "");
     const src = String(record?.src || "");
 
-    if (!id.startsWith("ep_")) return [];
+    if (!epId || !src) {
+        return {
+            master: null,
+            dataVodUrl: null,
+            error: "Missing epId/src"
+        };
+    }
 
     const playerUrl =
         "https://playembed.vip/player?ep_id=" +
-        encodeURIComponent(id) +
+        encodeURIComponent(epId) +
         "&src=" +
         encodeURIComponent(src);
 
-    const response = await onflixRequest(playerUrl, {
-        referer: "https://playembed.vip/"
-    });
+    try {
+        // Bước 1: tải HTML player.
+        const playerResponse = await onflixRequest(playerUrl, {
+            timeout: 12000,
+            referer: "https://playembed.vip/",
+            accept: "text/html,application/xhtml+xml,*/*"
+        });
 
-    const html = response.body;
-    const encrypted =
-        html.match(/"initialM3u8"\s*:\s*"(enc_[a-fA-F0-9]+)"/)?.[1] ||
-        html.match(/"initialM3u8\\?"\s*:\s*\\?"(enc_[a-fA-F0-9]+)"/)?.[1];
+        const html = String(playerResponse.body || "");
 
-    if (!encrypted) return [];
+        // Hỗ trợ hai dạng escape được xác nhận từ Smali.
+        const encrypted =
+            html.match(
+                /"initialM3u8\\?"\s*:\s*\\?"(enc_[a-fA-F0-9]+)"/
+            )?.[1] ||
+            html.match(
+                /"initialM3u8"\s*:\s*"(enc_[a-fA-F0-9]+)"/
+            )?.[1];
 
-    const decoded = onflixDecodeEnc(encrypted);
-    const mediaUrl = onflixAbsoluteUrl(decoded, response.url);
+        if (!encrypted) {
+            return {
+                master: null,
+                dataVodUrl: null,
+                error: "initialM3u8 enc_ not found",
+                playerUrl,
+                playerStatus: playerResponse.status
+            };
+        }
 
-    if (!mediaUrl) return [];
+        // Bước 2: giải mã bằng thuật toán XOR đã xác nhận.
+        const decoded = onflixDecodeEnc(encrypted);
 
-    // Chỉ xuất URL media thực sự; không coi URL player là direct stream.
-    if (!/\.m3u8(?:$|\?)/i.test(mediaUrl)) {
-        console.info(
-            "[ONFLIX] Sora decoded URL is not a direct playlist",
-            mediaUrl
+        if (
+            !decoded ||
+            !/^https?:\/\//i.test(decoded)
+        ) {
+            return {
+                master: null,
+                dataVodUrl: null,
+                error: "Decoded dataVodUrl is not HTTP(S)",
+                playerUrl
+            };
+        }
+
+        const dataVodUrl = decoded;
+
+        // Bước 3: tải dữ liệu VOD.
+        const vodResponse = await onflixRequest(dataVodUrl, {
+            timeout: 12000,
+            referer: "https://playembed.vip/",
+            accept: "application/json,text/plain,*/*",
+            headers: {
+                "User-Agent": ONFLIX_USER_AGENT,
+                "Referer": "https://playembed.vip/"
+            }
+        });
+
+        // Smali dùng parsedSafe(..., Map::class).
+        // JSON không hợp lệ => master null.
+        let master = null;
+
+        try {
+            const raw = vodResponse.data;
+
+            if (
+                raw &&
+                typeof raw === "object" &&
+                !Array.isArray(raw)
+            ) {
+                master = raw;
+            } else {
+                master = JSON.parse(
+                    String(vodResponse.body || "")
+                );
+
+                if (
+                    !master ||
+                    typeof master !== "object" ||
+                    Array.isArray(master)
+                ) {
+                    master = null;
+                }
+            }
+        } catch {
+            master = null;
+        }
+
+        return {
+            master,
+            dataVodUrl,
+            playerUrl,
+            playerStatus: playerResponse.status,
+            vodStatus: vodResponse.status,
+            vodHeaders: {
+                "User-Agent": ONFLIX_USER_AGENT,
+                "Referer": "https://playembed.vip/"
+            }
+        };
+    } catch (error) {
+        console.warn(
+            "[ONFLIX-SORA] fetchSoraMaster failed:",
+            error?.message || error
         );
-        return [];
+
+        return {
+            master: null,
+            dataVodUrl: null,
+            error: String(error?.message || error)
+        };
+    }
+}
+
+async function onflixFetchSoraMaster(record) {
+    const epId = String(record?.id || "");
+    const src = String(record?.src || "");
+
+    if (!epId.startsWith("ep_") || !src) {
+        console.warn("[ONFLIX-SORA] Missing epId/src");
+        return {
+            master: null,
+            dataVodUrl: null,
+            error: "Missing or invalid epId/src"
+        };
     }
 
-    return [{
-        url: mediaUrl,
-        name: "Onflix Sora",
-        type: "m3u8",
-        provider: "onflix",
-        headers: {
-            Referer: "https://playembed.vip/",
-            "User-Agent": ONFLIX_USER_AGENT
+    const playerUrl =
+        "https://playembed.vip/player?ep_id=" +
+        encodeURIComponent(epId) +
+        "&src=" +
+        encodeURIComponent(src);
+
+    try {
+        // Bước 1: GET trang player để lấy initialM3u8 đã mã hóa.
+        const playerResponse = await onflixRequest(playerUrl, {
+            timeout: 12000,
+            referer: "https://playembed.vip/",
+            accept: "text/html,application/xhtml+xml,*/*"
+        });
+
+        const html = String(playerResponse.body || "");
+
+        // Giữ cả hai dạng JSON mà Smali xử lý.
+        const encrypted =
+            html.match(/"initialM3u8"\s*:\s*"(enc_[a-fA-F0-9]+)"/)?.[1] ||
+            html.match(/"initialM3u8\\?"\s*:\s*\\?"(enc_[a-fA-F0-9]+)"/)?.[1];
+
+        if (!encrypted) {
+            console.warn(
+                "[ONFLIX-SORA] initialM3u8 not found",
+                playerResponse.status
+            );
+
+            return {
+                master: null,
+                dataVodUrl: null,
+                error: "initialM3u8 enc_ not found"
+            };
         }
-    }];
+
+        // Bước 2: giải mã enc_ bằng thuật toán onflixDecodeEnc hiện có.
+        const dataVodUrl = onflixDecodeEnc(encrypted);
+
+        if (!/^https?:\/\//i.test(String(dataVodUrl || ""))) {
+            console.warn("[ONFLIX-SORA] Invalid decoded dataVodUrl");
+
+            return {
+                master: null,
+                dataVodUrl: null,
+                error: "Decoded URL is not HTTP(S)"
+            };
+        }
+
+        // Bước 3: GET dataVodUrl với đúng hai header quan trọng.
+        const vodResponse = await onflixRequest(dataVodUrl, {
+            timeout: 12000,
+            accept: "application/json,text/plain,*/*",
+            referer: "https://playembed.vip/",
+            headers: {
+                "User-Agent": ONFLIX_USER_AGENT,
+                "Referer": "https://playembed.vip/"
+            }
+        });
+
+        let master = null;
+
+        try {
+            const raw = vodResponse.data;
+
+            if (
+                raw &&
+                typeof raw === "object" &&
+                !Array.isArray(raw)
+            ) {
+                master = raw;
+            } else {
+                const parsed = JSON.parse(
+                    String(vodResponse.body || "")
+                );
+
+                if (
+                    parsed &&
+                    typeof parsed === "object" &&
+                    !Array.isArray(parsed)
+                ) {
+                    master = parsed;
+                }
+            }
+        } catch (error) {
+            console.warn(
+                "[ONFLIX-SORA] Cannot parse master JSON:",
+                error?.message || error
+            );
+        }
+
+        if (!master) {
+            return {
+                master: null,
+                dataVodUrl,
+                error: "Invalid master response"
+            };
+        }
+
+        console.info(
+            "[ONFLIX-SORA] Master loaded:",
+            JSON.stringify({
+                hasSubtitles: typeof master.sub === "string",
+                qualitiesCount: Array.isArray(master.qualities)
+                    ? master.qualities.length
+                    : 0,
+                hasDataVodUrl: true
+            })
+        );
+
+        return {
+            master,
+            dataVodUrl
+        };
+    } catch (error) {
+        console.warn(
+            "[ONFLIX-SORA] fetchSoraMaster failed:",
+            error?.message || error
+        );
+
+        return {
+            master: null,
+            dataVodUrl: null,
+            error: String(error?.message || error)
+        };
+    }
+}
+
+
+async function onflixResolveSora(record) {
+    try {
+        // Tương đương fetchSoraMaster(epId, src) trong Smali.
+        const sora = await onflixFetchSoraMaster(record);
+
+        const master = sora?.master;
+        const dataVodUrl = sora?.dataVodUrl;
+
+        if (!master || !dataVodUrl) {
+            console.warn(
+                "[ONFLIX-SORA] Cannot continue:",
+                sora?.error || "Missing master/dataVodUrl"
+            );
+            return [];
+        }
+
+        // Smali: master.qualities.firstOrNull()?.qid as Number.
+        // Không có qualities hoặc qid hợp lệ thì qid = 0.
+        const firstQuality = Array.isArray(master.qualities)
+            ? master.qualities[0]
+            : null;
+
+        const rawQid = firstQuality?.qid;
+
+        const qid =
+            typeof rawQid === "number" &&
+            Number.isFinite(rawQid)
+                ? Math.trunc(rawQid)
+                : 0;
+
+        // Smali nối "&q=" + qid vào dataVodUrl.
+        const playVidUrl =
+            dataVodUrl + "&q=" + encodeURIComponent(String(qid));
+
+        console.info(
+            "[ONFLIX-SORA] Requesting play_vid:",
+            JSON.stringify({ qid })
+        );
+
+        // Bước 4: GET endpoint chất lượng để lấy trường play_vid.
+        const playResponse = await onflixRequest(playVidUrl, {
+            timeout: 12000,
+            accept: "application/json,text/plain,*/*",
+            referer: "https://playembed.vip/",
+            headers: {
+                "User-Agent": ONFLIX_USER_AGENT,
+                "Referer": "https://playembed.vip/"
+            }
+        });
+
+        let playPayload = playResponse.data;
+
+        if (
+            typeof playPayload === "string"
+        ) {
+            try {
+                playPayload = JSON.parse(playPayload);
+            } catch {
+                playPayload = null;
+            }
+        }
+
+        const playVid =
+            typeof playPayload?.play_vid === "string"
+                ? playPayload.play_vid.trim()
+                : "";
+
+        if (!playVid) {
+            console.warn(
+                "[ONFLIX-SORA] play_vid missing from response"
+            );
+            return [];
+        }
+
+        // Bước 5: POST nội dung play_vid dạng raw body tới Pacebin.
+        // Smali dùng RequestBody với media type application/vnd.apple.mpegurl.
+        const pacebinUrl =
+            "https://pacebin.onrender.com/onflix.m3u8";
+
+        const pacebinResponse = await axios.post(
+            pacebinUrl,
+            playVid,
+            {
+                timeout: 15000,
+                maxRedirects: 5,
+                responseType: "text",
+                transformResponse: [data => data],
+                headers: {
+                    "Content-Type": "application/vnd.apple.mpegurl",
+                    "User-Agent": ONFLIX_USER_AGENT
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        // Smali: getText().trim(); chỉ nhận kết quả bắt đầu bằng "http".
+        const rawUrl = String(
+            pacebinResponse.data ?? ""
+        ).trim();
+
+        if (!rawUrl.startsWith("http")) {
+            console.warn(
+                "[ONFLIX-SORA] Pacebin did not return an HTTP URL:",
+                JSON.stringify({
+                    status: pacebinResponse.status,
+                    bodyPreview: rawUrl.slice(0, 200)
+                })
+            );
+            return [];
+        }
+
+        const finalUrl = onflixAbsoluteUrl(rawUrl);
+
+        if (!finalUrl) {
+            console.warn("[ONFLIX-SORA] Invalid final URL");
+            return [];
+        }
+
+        console.info(
+            "[ONFLIX-SORA] RESOLVED:",
+            JSON.stringify({
+                qid,
+                status: pacebinResponse.status,
+                url: finalUrl
+            })
+        );
+
+        // Tương đương ExtractorLink loại M3U8 trong Smali.
+        return [{
+            url: finalUrl,
+            name: "Vietsub (SN) 1080p",
+            type: "m3u8",
+            provider: "onflix",
+            headers: {
+                Referer: "https://playembed.vip/",
+                "User-Agent": ONFLIX_USER_AGENT
+            }
+        }];
+    } catch (error) {
+        console.warn(
+            "[ONFLIX-SORA] resolveSoraCdn failed:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return [];
+    }
 }
 
 async function onflixLinks(input) {
