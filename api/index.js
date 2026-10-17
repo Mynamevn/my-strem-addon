@@ -22554,198 +22554,211 @@ async function onflixResolveStreamc(embedUrl) {
  */
 
 
+
 async function onflixFetchSoraMaster(record) {
-    const epId = String(record?.id ?? "").trim();
-    const src = String(record?.src ?? "").trim();
+    const TAG = "[ONFLIX-SORA]";
+    const epId = String(record?.id || "").trim();
+    const src = String(record?.src || "").trim();
+    const actualEmbed = String(record?.link_embed || "").trim();
 
     if (!epId || !src) {
         return {
             master: null,
             dataVodUrl: null,
-            error: "Missing id/src"
+            error: "Missing episode id or source"
         };
     }
 
-    const playerUrl =
+    const generatedPlayer =
         "https://playembed.vip/player?ep_id=" +
         encodeURIComponent(epId) +
         "&src=" +
         encodeURIComponent(src);
 
-    try {
-        console.info("[ONFLIX-SORA] STEP 1: Fetch player", {
-            src,
-            idPresent: Boolean(epId)
-        });
+    // Thử URL embed gốc trước; URL tự dựng chỉ là phương án dự phòng.
+    const candidates = [
+        actualEmbed,
+        generatedPlayer
+    ].filter((url, index, list) =>
+        /^https?:\/\//i.test(url) &&
+        list.indexOf(url) === index
+    );
 
-        const playerResponse = await onflixRequest(playerUrl, {
-            timeout: 12000,
-            referer: "https://playembed.vip/",
-            accept: "text/html,application/xhtml+xml,*/*",
-            headers: {
-                "Origin": "https://playembed.vip"
-            }
-        });
+    let lastError = "No player URL succeeded";
+    let lastStatus = 0;
 
-        const html = String(
-            playerResponse?.body ??
-            playerResponse?.data ??
-            ""
-        );
-
-        const markerIndex = html.search(/initialM3u8/i);
-        const markerText = markerIndex >= 0
-            ? html.slice(markerIndex, markerIndex + 500)
-            : "";
-
-        const encrypted =
-            markerText.match(/enc_[a-fA-F0-9]+/)?.[0] || "";
-
-        if (!encrypted) {
-            console.warn("[ONFLIX-SORA] Player token missing", {
-                status: playerResponse?.status,
-                bodyLength: html.length,
-                markerFound: markerIndex >= 0,
-                preview: html.slice(
-                    Math.max(0, markerIndex),
-                    Math.max(0, markerIndex) + 180
-                )
-            });
-
-            return {
-                master: null,
-                dataVodUrl: null,
-                playerUrl,
-                error: "initialM3u8 enc_ not found"
-            };
-        }
-
-        const dataVodUrl = onflixDecodeEnc(encrypted);
-
-        if (
-            typeof dataVodUrl !== "string" ||
-            !/^https?:\/\//i.test(dataVodUrl)
-        ) {
-            console.warn("[ONFLIX-SORA] Decoded URL invalid");
-
-            return {
-                master: null,
-                dataVodUrl: null,
-                playerUrl,
-                error: "Decoded URL is not HTTP(S)"
-            };
-        }
-
-        const masterHost = (() => {
-            try {
-                return new URL(dataVodUrl).host;
-            } catch {
-                return "invalid-url";
-            }
-        })();
-
-        console.info("[ONFLIX-SORA] STEP 2: Fetch master", {
-            host: masterHost,
-            referer: playerUrl
-        });
-
-        const vodResponse = await onflixRequest(dataVodUrl, {
-            timeout: 12000,
-            referer: playerUrl,
-            accept: "application/json,text/plain,*/*",
-            headers: {
-                "Origin": "https://playembed.vip",
-                "Referer": playerUrl,
-                "User-Agent": ONFLIX_USER_AGENT
-            }
-        });
-
-        let master = null;
-        const raw = vodResponse?.data;
+    for (const playerUrl of candidates) {
+        let playerHost = "";
 
         try {
+            const parsedPlayer = new URL(playerUrl);
+            playerHost = parsedPlayer.host;
+
+            console.info(TAG, "TRY PLAYER", {
+                src,
+                host: playerHost,
+                actualEmbed: playerUrl === actualEmbed
+            });
+
+            const playerResponse = await onflixRequest(playerUrl, {
+                timeout: 8000,
+                referer: parsedPlayer.origin + "/",
+                accept: "text/html,application/xhtml+xml,*/*",
+                headers: {
+                    "User-Agent": ONFLIX_USER_AGENT,
+                    "Referer": parsedPlayer.origin + "/",
+                    "Origin": parsedPlayer.origin
+                }
+            });
+
+            const html = String(
+                playerResponse?.body ??
+                playerResponse?.data ??
+                ""
+            );
+
+            // Token có thể nằm sau initialM3u8 trong HTML/script.
+            const marker = html.search(/initialM3u8/i);
+            const searchArea = marker >= 0
+                ? html.slice(marker, marker + 5000)
+                : html;
+
+            const tokenMatch = searchArea.match(
+                /enc_[a-fA-F0-9]+/
+            );
+
+            if (!tokenMatch) {
+                lastError = "Encrypted initialM3u8 token not found";
+                lastStatus = playerResponse?.status || 0;
+
+                console.warn(TAG, "TOKEN NOT FOUND", {
+                    host: playerHost,
+                    status: lastStatus,
+                    htmlLength: html.length,
+                    markerFound: marker >= 0,
+                    preview: html.slice(0, 180)
+                });
+
+                continue;
+            }
+
+            const dataVodUrl = onflixDecodeEnc(tokenMatch[0]);
+
             if (
-                raw &&
-                typeof raw === "object" &&
-                !Array.isArray(raw)
+                typeof dataVodUrl !== "string" ||
+                !/^https?:\/\//i.test(dataVodUrl)
             ) {
-                master = raw;
-            } else {
-                const body = typeof raw === "string"
-                    ? raw
-                    : String(vodResponse?.body || "");
+                lastError = "Decoded dataVodUrl is invalid";
 
-                const parsed = JSON.parse(body);
+                console.warn(TAG, "DECODED URL INVALID", {
+                    host: playerHost
+                });
 
-                if (
-                    parsed &&
-                    typeof parsed === "object" &&
-                    !Array.isArray(parsed)
-                ) {
-                    master = parsed;
+                continue;
+            }
+
+            let masterResponse;
+
+            try {
+                masterResponse = await onflixRequest(dataVodUrl, {
+                    timeout: 8000,
+                    referer: playerUrl,
+                    accept: "application/json,text/plain,*/*",
+                    headers: {
+                        "User-Agent": ONFLIX_USER_AGENT,
+                        "Referer": playerUrl,
+                        "Origin": parsedPlayer.origin
+                    }
+                });
+            } catch (error) {
+                lastStatus = error?.response?.status || 0;
+                lastError = error?.message || String(error);
+
+                console.warn(TAG, "MASTER REQUEST FAILED", {
+                    playerHost,
+                    masterHost: (() => {
+                        try {
+                            return new URL(dataVodUrl).host;
+                        } catch {
+                            return "";
+                        }
+                    })(),
+                    status: lastStatus,
+                    message: lastError
+                });
+
+                continue;
+            }
+
+            let master = masterResponse?.data;
+
+            if (master == null || master === "") {
+                master = masterResponse?.body;
+            }
+
+            if (typeof master === "string") {
+                try {
+                    master = JSON.parse(master);
+                } catch {
+                    lastError = "Master response is not valid JSON";
+                    lastStatus = masterResponse?.status || 0;
+
+                    console.warn(TAG, "MASTER NOT JSON", {
+                        status: lastStatus,
+                        preview: master.slice(0, 180)
+                    });
+
+                    continue;
                 }
             }
-        } catch (error) {
-            console.warn(
-                "[ONFLIX-SORA] Master JSON parse error:",
-                error?.message || error
-            );
-        }
 
-        if (!master) {
-            console.warn("[ONFLIX-SORA] Invalid master response", {
-                status: vodResponse?.status,
-                host: masterHost,
-                bodyPreview: String(
-                    vodResponse?.body || ""
-                ).slice(0, 180)
+            if (
+                !master ||
+                typeof master !== "object" ||
+                Array.isArray(master)
+            ) {
+                lastError = "Master response has an unexpected format";
+                continue;
+            }
+
+            console.info(TAG, "MASTER OK", {
+                playerHost,
+                qualities: Array.isArray(master.qualities)
+                    ? master.qualities.length
+                    : 0
             });
 
             return {
-                master: null,
+                master,
                 dataVodUrl,
                 playerUrl,
-                error: "Invalid master response"
+                status: masterResponse?.status || 0
             };
+        } catch (error) {
+            lastStatus = error?.response?.status || 0;
+            lastError = error?.message || String(error);
+
+            console.warn(TAG, "PLAYER REQUEST FAILED", {
+                host: playerHost,
+                actualEmbed: playerUrl === actualEmbed,
+                status: lastStatus,
+                message: lastError
+            });
         }
-
-        console.info("[ONFLIX-SORA] MASTER OK", {
-            host: masterHost,
-            qualitiesCount: Array.isArray(master.qualities)
-                ? master.qualities.length
-                : 0,
-            hasSubtitles: typeof master.sub === "string"
-        });
-
-        return {
-            master,
-            dataVodUrl,
-            playerUrl,
-            playerStatus: playerResponse?.status,
-            masterStatus: vodResponse?.status
-        };
-    } catch (error) {
-        let failedHost = "";
-
-        try {
-            failedHost = new URL(
-                error?.config?.url || ""
-            ).host;
-        } catch {}
-
-        console.warn("[ONFLIX-SORA] FETCH MASTER ERROR", {
-            status: error?.response?.status || 0,
-            host: failedHost || "(unknown)",
-            message: error?.message || String(error)
-        });
-
-        return {
-            master: null,
-            dataVodUrl: null,
-            error: String(error?.message || error),
-            status: error?.response?.status || 0
-        };
     }
+
+    console.warn(TAG, "ALL PLAYER ATTEMPTS FAILED", {
+        src,
+        status: lastStatus,
+        error: lastError
+    });
+
+    return {
+        master: null,
+        dataVodUrl: null,
+        error: lastError,
+        status: lastStatus
+    };
 }
 
 
@@ -23036,11 +23049,20 @@ async function onflixLinks(input) {
         const server = record.server_name || "Onflix";
         const before = streams.length;
 
-        const playlistUrl = onflixAbsoluteUrl(record.link_m3u8);
-        const embedUrl = onflixAbsoluteUrl(
-            record.link_embed,
-            payload?.detailUrl || ONFLIX_BASE_URL
-        );
+        const rawPlaylistUrl = String(record.link_m3u8 || "").trim();
+
+const playlistUrl = rawPlaylistUrl
+    ? onflixAbsoluteUrl(rawPlaylistUrl)
+    : "";
+
+const rawEmbedUrl = String(record.link_embed || "").trim();
+
+const embedUrl = rawEmbedUrl
+    ? onflixAbsoluteUrl(
+        rawEmbedUrl,
+        payload?.detailUrl || ONFLIX_BASE_URL
+    )
+    : "";
 
         console.info(TAG, "RECORD", JSON.stringify({
             index: i + 1,
