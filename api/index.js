@@ -22052,6 +22052,579 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
 // ============================================================================
 
 
+/* ============================================================================
+ * PRV-ONFLIX — ONFLIX PROVIDER ADAPTER
+ *
+ * Đã xác nhận từ OnflixProvider.smali:
+ *   Search API: https://k8s.onflixcdn.com/api/search?q=
+ *   Detail:     https://onflix.lat/phim/{slug}
+ *   Player:     https://playembed.vip/player?ep_id={id}&src={src}
+ *   Encrypted URL prefix: enc_
+ *
+ * MOVINA actions:
+ *   fetchOnflix(query, { action: "search" })
+ *   fetchOnflix(url,   { action: "load" })
+ *   fetchOnflix(data,  { action: "links" })
+ * ========================================================================== */
+
+const ONFLIX_BASE_URL = "https://onflix.lat";
+const ONFLIX_API_URL = "https://k8s.onflixcdn.com/api";
+const ONFLIX_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
+
+const ONFLIX_SORA_KEY = "onflix_secure_stream_v2_2026";
+const ONFLIX_SRC_PRIORITY = ["pa", "sn", "nc", "op"];
+
+function onflixDecodeEnc(value) {
+    const input = String(value || "");
+
+    if (!input.startsWith("enc_")) {
+        return input;
+    }
+
+    const hex = input.slice(4);
+
+    if (!hex || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) {
+        return null;
+    }
+
+    let decoded = "";
+
+    for (let i = 0; i < hex.length; i += 2) {
+        const byte = parseInt(hex.slice(i, i + 2), 16);
+        const keyIndex = (i / 2) % ONFLIX_SORA_KEY.length;
+
+        decoded += String.fromCharCode(
+            byte ^ ONFLIX_SORA_KEY.charCodeAt(keyIndex)
+        );
+    }
+
+    try {
+        return decodeURIComponent(decoded);
+    } catch {
+        return decoded;
+    }
+}
+
+function onflixAbsoluteUrl(value, base = ONFLIX_BASE_URL) {
+    try {
+        const url = new URL(String(value || ""), base);
+
+        if (!["http:", "https:"].includes(url.protocol)) {
+            return null;
+        }
+
+        return url.href;
+    } catch {
+        return null;
+    }
+}
+
+function onflixNormalizeText(value) {
+    return String(value || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
+function onflixDecodeJsonString(value) {
+    try {
+        return JSON.parse('"' + value + '"');
+    } catch {
+        return value;
+    }
+}
+
+function onflixExtractNextData(html) {
+    const chunks = [];
+    const pattern =
+        /__next_f\.push\(\[1,"((?:\\.|[^"\\])*)"\]\)/g;
+
+    let match;
+
+    while ((match = pattern.exec(String(html || ""))) !== null) {
+        try {
+            chunks.push(JSON.parse('"' + match[1] + '"'));
+        } catch {
+            chunks.push(match[1]);
+        }
+    }
+
+    return chunks.join("")
+        .replace(/\\\\/g, "\\")
+        .replace(/\\"/g, '"')
+        .replace(/\\\//g, "/")
+        .replace(/\\n/g, "\n");
+}
+
+function onflixParseEpisodeRecords(source) {
+    const text = String(source || "");
+    const records = [];
+
+    const pattern =
+        /"id":("(?:\\.|[^"\\])*"|\d+),"image_url":"((?:\\.|[^"\\])*)","link_embed":"((?:\\.|[^"\\])*)","link_m3u8":"((?:\\.|[^"\\])*)","name":"((?:\\.|[^"\\])*)","server_name":"((?:\\.|[^"\\])*)","slug":"((?:\\.|[^"\\])*)","src":"((?:\\.|[^"\\])*)","type":"((?:\\.|[^"\\])*)"/g;
+
+    let match;
+
+    while ((match = pattern.exec(text)) !== null) {
+        const id = match[1].startsWith('"')
+            ? onflixDecodeJsonString(match[1].slice(1, -1))
+            : match[1];
+
+        records.push({
+            id,
+            image_url: onflixDecodeJsonString(match[2]),
+            link_embed: onflixDecodeJsonString(match[3]),
+            link_m3u8: onflixDecodeJsonString(match[4]),
+            name: onflixDecodeJsonString(match[5]),
+            server_name: onflixDecodeJsonString(match[6]),
+            slug: onflixDecodeJsonString(match[7]),
+            src: onflixDecodeJsonString(match[8]),
+            type: onflixDecodeJsonString(match[9])
+        });
+    }
+
+    return records;
+}
+
+async function onflixRequest(url, options = {}) {
+    const response = await axios.get(url, {
+        timeout: options.timeout || 10000,
+        maxRedirects: 5,
+        responseType: "text",
+        headers: {
+            "User-Agent": ONFLIX_USER_AGENT,
+            "Accept": options.accept || "*/*",
+            "Referer": options.referer || ONFLIX_BASE_URL + "/",
+            ...(options.headers || {})
+        },
+        validateStatus: status => status >= 200 && status < 400
+    });
+
+    return {
+        body: typeof response.data === "string"
+            ? response.data
+            : JSON.stringify(response.data),
+        data: response.data,
+        url: response.request?.res?.responseUrl || url,
+        status: response.status,
+        headers: response.headers
+    };
+}
+
+async function onflixSearch(query) {
+    const keyword = String(query || "").trim();
+
+    if (!keyword) return [];
+
+    const endpoint =
+        ONFLIX_API_URL + "/search?q=" +
+        encodeURIComponent(keyword);
+
+    const response = await onflixRequest(endpoint, {
+        accept: "application/json"
+    });
+
+    let payload = response.data;
+
+    if (typeof payload === "string") {
+        try {
+            payload = JSON.parse(payload);
+        } catch {
+            return [];
+        }
+    }
+
+    const movies = Array.isArray(payload?.movies)
+        ? payload.movies
+        : [];
+
+    return movies
+        .filter(item => item && item.slug && item.title)
+        .map(item => {
+            const url = onflixAbsoluteUrl(
+                "/phim/" + String(item.slug).replace(/^\/+/, ""),
+                response.url
+            );
+
+            return {
+                id: url,
+                url,
+                title: String(item.title),
+                name: String(item.title),
+                poster: onflixAbsoluteUrl(
+                    item.thumb_url || item.poster_url || item.image_url,
+                    response.url
+                ) || undefined,
+                year: Number(item.year) || 0,
+                type: String(item.type || ""),
+                provider: "onflix",
+                source: "Onflix"
+            };
+        })
+        .filter(item => item.url);
+}
+
+async function onflixLoad(url) {
+    const detailUrl = onflixAbsoluteUrl(url);
+
+    if (!detailUrl) {
+        return { provider: "onflix", episodes: [], error: "Invalid detail URL" };
+    }
+
+    const page = await onflixRequest(detailUrl);
+    const html = page.body;
+
+    const $ = cheerio.load(html);
+
+    const title = (
+        $("h1").first().text().trim() ||
+        $('meta[property="og:title"]').attr("content") ||
+        $("title").text().trim()
+    );
+
+    const poster = onflixAbsoluteUrl(
+        $('meta[property="og:image"]').attr("content") ||
+        $("img").first().attr("src"),
+        page.url
+    );
+
+    const extracted = onflixExtractNextData(html);
+    const records = onflixParseEpisodeRecords(extracted);
+
+    // Một episode có thể chứa nhiều record/server.
+    const groups = new Map();
+
+    for (const record of records) {
+        const key = String(record.slug || record.name || "").trim();
+
+        if (!key) continue;
+
+        if (!groups.has(key)) {
+            groups.set(key, {
+                name: record.name || key,
+                slug: record.slug || key,
+                records: []
+            });
+        }
+
+        groups.get(key).records.push(record);
+    }
+
+    const episodes = [...groups.values()].map((group, index) => ({
+        id: `${detailUrl}#onflix-${encodeURIComponent(group.slug)}`,
+        url: detailUrl,
+        name: group.name || `Tập ${index + 1}`,
+        title: group.name || `Tập ${index + 1}`,
+        number: (
+            Number(
+                String(group.name).match(/(?:tập|ep(?:isode)?)\s*(\d+)/i)?.[1]
+            ) || index + 1
+        ),
+        data: JSON.stringify({
+            detailUrl,
+            records: group.records
+        }),
+        provider: "onflix"
+    }));
+
+    return {
+        provider: "onflix",
+        action: "load",
+        id: detailUrl,
+        url: detailUrl,
+        title: title || detailUrl,
+        name: title || detailUrl,
+        poster: poster || undefined,
+        episodes,
+        recordsFound: records.length
+    };
+}
+
+async function onflixResolveStreamc(embedUrl) {
+    const url = onflixAbsoluteUrl(embedUrl);
+
+    if (!url) return [];
+
+    const response = await onflixRequest(url, {
+        referer: ONFLIX_BASE_URL + "/"
+    });
+
+    const $ = cheerio.load(response.body);
+    const results = [];
+
+    // Thu thập URL media được nhúng trực tiếp.
+    const candidates = [
+        ...response.body.matchAll(
+            /https?:\\?\/\\?\/[^"'\\\s<>]+?\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+        )
+    ].map(match => match[0].replace(/\\\//g, "/"));
+
+    $("video source, source, video").each((_, node) => {
+        const src = $(node).attr("src");
+
+        if (src) candidates.push(src);
+    });
+
+    for (const candidate of candidates) {
+        const mediaUrl = onflixAbsoluteUrl(candidate, response.url);
+
+        if (!mediaUrl || !/\.m3u8(?:$|\?)/i.test(mediaUrl)) continue;
+
+        results.push({
+            url: mediaUrl,
+            name: "Onflix Streamc",
+            type: "m3u8",
+            provider: "onflix",
+            headers: {
+                Referer: response.url,
+                "User-Agent": ONFLIX_USER_AGENT
+            }
+        });
+    }
+
+    // data-obf / sUb là nhánh obfuscation riêng của Streamc.
+    // Không tự giả định giải mã thành công nếu thiếu thuật toán xác nhận.
+    const playerData = $('div#player').attr("data-obf");
+
+    if (playerData) {
+        console.info(
+            "[ONFLIX] Streamc data-obf found; needs exact decoder",
+            response.url
+        );
+    }
+
+    return results;
+}
+
+async function onflixResolveSora(record) {
+    const id = String(record?.id || "");
+    const src = String(record?.src || "");
+
+    if (!id.startsWith("ep_")) return [];
+
+    const playerUrl =
+        "https://playembed.vip/player?ep_id=" +
+        encodeURIComponent(id) +
+        "&src=" +
+        encodeURIComponent(src);
+
+    const response = await onflixRequest(playerUrl, {
+        referer: "https://playembed.vip/"
+    });
+
+    const html = response.body;
+    const encrypted =
+        html.match(/"initialM3u8"\s*:\s*"(enc_[a-fA-F0-9]+)"/)?.[1] ||
+        html.match(/"initialM3u8\\?"\s*:\s*\\?"(enc_[a-fA-F0-9]+)"/)?.[1];
+
+    if (!encrypted) return [];
+
+    const decoded = onflixDecodeEnc(encrypted);
+    const mediaUrl = onflixAbsoluteUrl(decoded, response.url);
+
+    if (!mediaUrl) return [];
+
+    // Chỉ xuất URL media thực sự; không coi URL player là direct stream.
+    if (!/\.m3u8(?:$|\?)/i.test(mediaUrl)) {
+        console.info(
+            "[ONFLIX] Sora decoded URL is not a direct playlist",
+            mediaUrl
+        );
+        return [];
+    }
+
+    return [{
+        url: mediaUrl,
+        name: "Onflix Sora",
+        type: "m3u8",
+        provider: "onflix",
+        headers: {
+            Referer: "https://playembed.vip/",
+            "User-Agent": ONFLIX_USER_AGENT
+        }
+    }];
+}
+
+async function onflixLinks(input) {
+    let payload = input;
+
+    if (typeof input === "string") {
+        try {
+            payload = JSON.parse(input);
+        } catch {
+            // Có thể là URL trang tập.
+            const pageUrl = onflixAbsoluteUrl(input);
+
+            if (!pageUrl) return [];
+
+            const page = await onflixRequest(pageUrl);
+            const records = onflixParseEpisodeRecords(
+                onflixExtractNextData(page.body)
+            );
+
+            payload = {
+                detailUrl: pageUrl,
+                records
+            };
+        }
+    }
+
+    const records = Array.isArray(payload?.records)
+        ? payload.records
+        : [];
+
+    if (!records.length) return [];
+
+    const ordered = [...records].sort((a, b) => {
+        const pa = ONFLIX_SRC_PRIORITY.indexOf(String(a.src || ""));
+        const pb = ONFLIX_SRC_PRIORITY.indexOf(String(b.src || ""));
+
+        return (pa < 0 ? 999 : pa) - (pb < 0 ? 999 : pb);
+    });
+
+    const streams = [];
+    const seen = new Set();
+
+    const add = item => {
+        if (!item?.url || seen.has(item.url)) return;
+
+        if (!/^https?:\/\//i.test(item.url)) return;
+
+        seen.add(item.url);
+        streams.push(item);
+    };
+
+    for (const record of ordered) {
+        const direct = onflixAbsoluteUrl(record.link_m3u8);
+
+        if (direct && /\.m3u8(?:$|\?)/i.test(direct)) {
+            add({
+                url: direct,
+                name: record.server_name || "Onflix Direct",
+                type: "m3u8",
+                provider: "onflix",
+                headers: {
+                    Referer: payload.detailUrl || ONFLIX_BASE_URL + "/",
+                    "User-Agent": ONFLIX_USER_AGENT
+                }
+            });
+        }
+
+        const embed = onflixAbsoluteUrl(
+            record.link_embed,
+            payload.detailUrl || ONFLIX_BASE_URL
+        );
+
+        if (embed) {
+            if (/streamc\.xyz/i.test(new URL(embed).hostname)) {
+                try {
+                    for (const stream of await onflixResolveStreamc(embed)) {
+                        add(stream);
+                    }
+                } catch (error) {
+                    console.warn("[ONFLIX] Streamc error:", error.message);
+                }
+            } else if (/player\.phimapi\.com\/player\//i.test(embed)) {
+                try {
+                    const parsed = new URL(embed);
+                    const target = parsed.searchParams.get("url");
+                    const mediaUrl = target
+                        ? onflixAbsoluteUrl(target, embed)
+                        : null;
+
+                    if (mediaUrl && /\.m3u8(?:$|\?)/i.test(mediaUrl)) {
+                        add({
+                            url: mediaUrl,
+                            name: record.server_name || "Onflix PhimAPI",
+                            type: "m3u8",
+                            provider: "onflix",
+                            headers: {
+                                Referer: embed,
+                                "User-Agent": ONFLIX_USER_AGENT
+                            }
+                        });
+                    }
+                } catch {}
+            }
+        }
+
+        if (
+            String(record.id || "").startsWith("ep_") &&
+            (!record.link_m3u8 || !String(record.link_m3u8).trim())
+        ) {
+            try {
+                for (const stream of await onflixResolveSora(record)) {
+                    add(stream);
+                }
+            } catch (error) {
+                console.warn("[ONFLIX] Sora error:", error.message);
+            }
+        }
+    }
+
+    return streams;
+}
+
+async function fetchOnflix(input, options = {}) {
+    const action = String(options.action || "search").toLowerCase();
+
+    try {
+        if (action === "search") {
+            const results = await onflixSearch(input);
+
+            return {
+                provider: "onflix",
+                action,
+                results,
+                items: results
+            };
+        }
+
+        if (action === "load" || action === "info") {
+            return await onflixLoad(input);
+        }
+
+        if (["links", "resolve", "loadlinks"].includes(action)) {
+            const streams = await onflixLinks(input);
+
+            return {
+                provider: "onflix",
+                action: "links",
+                sources: streams,
+                streams,
+                normalized: streams
+            };
+        }
+
+        return {
+            provider: "onflix",
+            action,
+            error: "Unsupported Onflix action"
+        };
+    } catch (error) {
+        console.error(
+            "[ONFLIX] Adapter error:",
+            action,
+            error?.stack || error
+        );
+
+        return {
+            provider: "onflix",
+            action,
+            results: [],
+            items: [],
+            episodes: [],
+            sources: [],
+            streams: [],
+            error: String(error?.message || error)
+        };
+    }
+}
+
 /* ============================================================
  * MOVINA — ANIMET PROVIDER ADAPTER
  * Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
@@ -22294,9 +22867,164 @@ registerMovinaProvider({
     }
 });
 
+registerMovinaProvider({
+    id: "onflix",
+    name: "Onflix",
+    category: "cs3",
+    kind: "scrape",
+    sourceUrl: "https://onflix.lat",
+    enabled: true,
+
+    capabilities: {
+        search: true,
+        load: true,
+        episodes: true,
+        links: true
+    },
+
+    adapter: fetchOnflixProvider,
+
+    metadata: {
+        providerType: "vod",
+        streamPipeline: "direct-stream-adapter"
+    }
+});
+
 // ============================================================
 // END MOVINA — ANIMET PROVIDER REGISTRATION
 // ============================================================
+
+
+async function fetchOnflixProvider(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 1,
+    streamType = "series"
+) {
+    const TAG = "[MOVINA-ONFLIX]";
+
+    try {
+        const query = String(movieName || "").trim();
+
+        if (!query) return [];
+
+        const search = await fetchOnflix(query, {
+            action: "search"
+        });
+
+        const candidates = search?.results || search?.items || [];
+
+        if (!candidates.length) {
+            console.log(TAG, "SEARCH EMPTY:", query);
+            return [];
+        }
+
+        const normalize = onflixNormalizeText;
+        const wanted = normalize(query);
+
+        const candidate =
+            candidates.find(item =>
+                normalize(item.title) === wanted
+            ) ||
+            candidates.find(item => {
+                const title = normalize(item.title);
+
+                return title &&
+                    (title.includes(wanted) || wanted.includes(title));
+            }) ||
+            candidates[0];
+
+        if (!candidate?.url) return [];
+
+        if (
+            movieYear &&
+            candidate.year &&
+            Math.abs(Number(candidate.year) - Number(movieYear)) > 1
+        ) {
+            console.log(TAG, "YEAR MISMATCH:", {
+                wanted: movieYear,
+                found: candidate.year
+            });
+        }
+
+        const detail = await fetchOnflix(candidate.url, {
+            action: "load"
+        });
+
+        const episodes = Array.isArray(detail?.episodes)
+            ? detail.episodes
+            : [];
+
+        let selected = null;
+
+        if (streamType !== "movie" && episodes.length) {
+            const targetEpisode = Math.max(
+                1,
+                Number(episodeNumber) || 1
+            );
+
+            selected = episodes.find(
+                episode => Number(episode.number) === targetEpisode
+            ) || episodes[targetEpisode - 1];
+
+            if (!selected) {
+                console.log(TAG, "EPISODE NOT FOUND:", targetEpisode);
+                return [];
+            }
+        }
+
+        const linkInput = selected?.data || JSON.stringify({
+            detailUrl: candidate.url,
+            records: []
+        });
+
+        const linkResult = await fetchOnflix(linkInput, {
+            action: "links"
+        });
+
+        const sourceList =
+            linkResult?.normalized ||
+            linkResult?.sources ||
+            linkResult?.streams ||
+            [];
+
+        const streams = [];
+        const seen = new Set();
+
+        for (const item of sourceList) {
+            const url = String(item?.url || "").trim();
+
+            if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+
+            seen.add(url);
+
+            streams.push({
+                name: item.name || "Onflix",
+                title: selected
+                    ? `${detail.title} · ${selected.name}`
+                    : detail.title,
+                url,
+                type: /\.m3u8(?:$|\?)/i.test(url) ? "m3u8" : "video",
+                provider: "onflix",
+                source: "onflix",
+                headers: item.headers || {}
+            });
+        }
+
+        console.log(TAG, "STREAM COUNT:", streams.length);
+
+        return streams;
+    } catch (error) {
+        console.error(
+            TAG,
+            "PROVIDER ERROR:",
+            error?.stack || error
+        );
+
+        return [];
+    }
+}
 
 // ============================================================
 // BL-54. PHIMLONGTIENG PROVIDER
