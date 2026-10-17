@@ -22554,9 +22554,9 @@ async function onflixResolveStreamc(embedUrl) {
  */
 
 
-
 async function onflixFetchSoraMaster(record) {
     const TAG = "[ONFLIX-SORA]";
+
     const epId = String(record?.id || "").trim();
     const src = String(record?.src || "").trim();
     const actualEmbed = String(record?.link_embed || "").trim();
@@ -22575,7 +22575,6 @@ async function onflixFetchSoraMaster(record) {
         "&src=" +
         encodeURIComponent(src);
 
-    // Thử URL embed gốc trước; URL tự dựng chỉ là phương án dự phòng.
     const candidates = [
         actualEmbed,
         generatedPlayer
@@ -22602,12 +22601,14 @@ async function onflixFetchSoraMaster(record) {
 
             const playerResponse = await onflixRequest(playerUrl, {
                 timeout: 8000,
-                referer: parsedPlayer.origin + "/",
-                accept: "text/html,application/xhtml+xml,*/*",
+                referer: "https://onflix.lat/",
+                accept:
+                    "text/html,application/xhtml+xml," +
+                    "application/json,*/*",
                 headers: {
                     "User-Agent": ONFLIX_USER_AGENT,
-                    "Referer": parsedPlayer.origin + "/",
-                    "Origin": parsedPlayer.origin
+                    "Referer": "https://onflix.lat/",
+                    "Origin": "https://onflix.lat"
                 }
             });
 
@@ -22615,80 +22616,148 @@ async function onflixFetchSoraMaster(record) {
                 playerResponse?.body ??
                 playerResponse?.data ??
                 ""
-            );
+            ).replace(/\\\//g, "/");
 
-            // Token có thể nằm sau initialM3u8 trong HTML/script.
-            const marker = html.search(/initialM3u8/i);
-            const searchArea = marker >= 0
-                ? html.slice(marker, marker + 5000)
-                : html;
+            lastStatus = Number(playerResponse?.status || 0);
 
-            const tokenMatch = searchArea.match(
-                /enc_[a-fA-F0-9]+/
-            );
+            /*
+             * Tìm enc_ theo hai hướng:
+             * 1. Ưu tiên vùng gần initialM3u8.
+             * 2. Nếu không thấy ở đó, tìm toàn bộ HTML.
+             *
+             * Không tự tạo token từ episode ID.
+             */
+            const tokenCandidates = [];
+            const addToken = value => {
+                const token = String(value || "").trim();
 
-            if (!tokenMatch) {
-                lastError = "Encrypted initialM3u8 token not found";
-                lastStatus = playerResponse?.status || 0;
+                if (
+                    /^enc_[0-9a-f]+$/i.test(token) &&
+                    !tokenCandidates.includes(token)
+                ) {
+                    tokenCandidates.push(token);
+                }
+            };
 
-                console.warn(TAG, "TOKEN NOT FOUND", {
+            const markerPositions = [];
+            const markerRegex = /initialM3u8/gi;
+            let markerMatch;
+
+            while (
+                (markerMatch = markerRegex.exec(html)) !== null
+            ) {
+                markerPositions.push(markerMatch.index);
+            }
+
+            for (const position of markerPositions) {
+                const area = html.slice(
+                    Math.max(0, position - 1000),
+                    position + 12000
+                );
+
+                const matches = area.match(
+                    /enc_[0-9a-f]+/gi
+                ) || [];
+
+                for (const token of matches) {
+                    addToken(token);
+                }
+            }
+
+            const allMatches = html.match(
+                /enc_[0-9a-f]+/gi
+            ) || [];
+
+            for (const token of allMatches) {
+                addToken(token);
+            }
+
+            /*
+             * Thử giải mã các token tìm được.
+             * Chỉ chấp nhận URL data-vod endpoint đã xác nhận.
+             */
+            let dataVodUrl = "";
+
+            for (const token of tokenCandidates) {
+                const decoded = onflixDecodeEnc(token);
+
+                if (!decoded) continue;
+
+                try {
+                    const parsed = new URL(decoded);
+
+                    if (
+                        parsed.protocol === "https:" &&
+                        parsed.hostname ===
+                            "data-vod-node.onflixcdn.com"
+                    ) {
+                        dataVodUrl = parsed.href;
+                        break;
+                    }
+                } catch {
+                    // Token này không giải mã thành URL hợp lệ.
+                }
+            }
+
+            /*
+             * Một số response có thể chứa URL đã giải mã.
+             * Chỉ nhận URL đúng endpoint đã biết.
+             */
+            if (!dataVodUrl) {
+                const directMatches = html.match(
+                    /https:\/\/data-vod-node\.onflixcdn\.com\/[^"'\\\s<>]*/gi
+                ) || [];
+
+                for (const candidate of directMatches) {
+                    try {
+                        const parsed = new URL(
+                            candidate.replace(/&amp;/g, "&")
+                        );
+
+                        if (parsed.searchParams.has("url")) {
+                            dataVodUrl = parsed.href;
+                            break;
+                        }
+                    } catch {
+                        // Bỏ qua URL không hợp lệ.
+                    }
+                }
+            }
+
+            if (!dataVodUrl) {
+                lastError =
+                    "No usable data-vod URL found in player response";
+
+                console.warn(TAG, "TOKEN/URL NOT FOUND", {
                     host: playerHost,
                     status: lastStatus,
                     htmlLength: html.length,
-                    markerFound: marker >= 0,
-                    preview: html.slice(0, 180)
+                    initialM3u8Found: markerPositions.length > 0,
+                    encodedTokensFound: tokenCandidates.length,
+                    preview: html.slice(0, 160)
                 });
 
                 continue;
             }
 
-            const dataVodUrl = onflixDecodeEnc(tokenMatch[0]);
-
-            if (
-                typeof dataVodUrl !== "string" ||
-                !/^https?:\/\//i.test(dataVodUrl)
-            ) {
-                lastError = "Decoded dataVodUrl is invalid";
-
-                console.warn(TAG, "DECODED URL INVALID", {
-                    host: playerHost
-                });
-
-                continue;
-            }
-
-            let masterResponse;
-
-            try {
-                masterResponse = await onflixRequest(dataVodUrl, {
-                    timeout: 8000,
+            /*
+             * Yêu cầu master JSON.
+             * Không ghi token đầy đủ vào log.
+             */
+            const masterResponse = await onflixRequest(
+                dataVodUrl,
+                {
+                    timeout: 10000,
                     referer: playerUrl,
-                    accept: "application/json,text/plain,*/*",
+                    accept:
+                        "application/json,text/plain,*/*",
                     headers: {
                         "User-Agent": ONFLIX_USER_AGENT,
                         "Referer": playerUrl,
                         "Origin": parsedPlayer.origin
                     }
-                });
-            } catch (error) {
-                lastStatus = error?.response?.status || 0;
-                lastError = error?.message || String(error);
-
-                console.warn(TAG, "MASTER REQUEST FAILED", {
-                    playerHost,
-                    masterHost: (() => {
-                        try {
-                            return new URL(dataVodUrl).host;
-                        } catch {
-                            return "";
-                        }
-                    })(),
-                    status: lastStatus,
-                    message: lastError
-                });
-
-                continue;
-            }
+                }
+            );
 
             let master = masterResponse?.data;
 
@@ -22701,11 +22770,12 @@ async function onflixFetchSoraMaster(record) {
                     master = JSON.parse(master);
                 } catch {
                     lastError = "Master response is not valid JSON";
-                    lastStatus = masterResponse?.status || 0;
+                    lastStatus =
+                        Number(masterResponse?.status || 0);
 
                     console.warn(TAG, "MASTER NOT JSON", {
                         status: lastStatus,
-                        preview: master.slice(0, 180)
+                        preview: master.slice(0, 160)
                     });
 
                     continue;
@@ -22715,30 +22785,49 @@ async function onflixFetchSoraMaster(record) {
             if (
                 !master ||
                 typeof master !== "object" ||
-                Array.isArray(master)
+                !Array.isArray(master.qualities) ||
+                master.qualities.length === 0
             ) {
-                lastError = "Master response has an unexpected format";
+                lastError =
+                    "Master JSON has no usable qualities";
+                lastStatus =
+                    Number(masterResponse?.status || 0);
+
+                console.warn(TAG, "MASTER INVALID", {
+                    status: lastStatus,
+                    type: master?.type || "",
+                    qualityCount: Array.isArray(master?.qualities)
+                        ? master.qualities.length
+                        : 0
+                });
+
                 continue;
             }
 
             console.info(TAG, "MASTER OK", {
                 playerHost,
-                qualities: Array.isArray(master.qualities)
-                    ? master.qualities.length
-                    : 0
+                status: Number(masterResponse?.status || 0),
+                type: master.type || "",
+                qualities: master.qualities.map(q => ({
+                    qid: q.qid,
+                    quality: q.quality
+                }))
             });
 
             return {
                 master,
                 dataVodUrl,
                 playerUrl,
-                status: masterResponse?.status || 0
+                status: Number(masterResponse?.status || 0)
             };
         } catch (error) {
-            lastStatus = error?.response?.status || 0;
-            lastError = error?.message || String(error);
+            lastStatus =
+                Number(error?.response?.status || 0);
 
-            console.warn(TAG, "PLAYER REQUEST FAILED", {
+            lastError =
+                error?.message || String(error);
+
+            console.warn(TAG, "PLAYER/MASTER REQUEST FAILED", {
                 host: playerHost,
                 actualEmbed: playerUrl === actualEmbed,
                 status: lastStatus,
