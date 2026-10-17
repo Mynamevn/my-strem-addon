@@ -22906,6 +22906,8 @@ async function onflixResolveSora(record) {
 
 
 async function onflixLinks(input) {
+
+async function onflixLinks(input) {
     const TAG = "[ONFLIX-LINKS]";
     let payload = input;
 
@@ -22914,15 +22916,11 @@ async function onflixLinks(input) {
             payload = JSON.parse(input);
         } catch {
             const pageUrl = onflixAbsoluteUrl(input);
-
-            if (!pageUrl) {
-                console.warn(TAG, "Invalid input URL");
-                return [];
-            }
+            if (!pageUrl) return [];
 
             try {
                 const page = await onflixRequest(pageUrl, {
-                    timeout: 12000,
+                    timeout: 10000,
                     referer: ONFLIX_BASE_URL + "/",
                     accept: "text/html,application/xhtml+xml,*/*"
                 });
@@ -22930,11 +22928,11 @@ async function onflixLinks(input) {
                 payload = {
                     detailUrl: page.url || pageUrl,
                     records: onflixParseEpisodeRecords(
-                        onflixExtractNextData(page.body)
+                        onflixExtractNextData(page.body || page.data || "")
                     )
                 };
             } catch (error) {
-                console.warn(TAG, "Page load failed:", {
+                console.warn(TAG, "PAGE ERROR", {
                     status: error?.response?.status || 0,
                     message: error?.message || String(error)
                 });
@@ -22946,221 +22944,287 @@ async function onflixLinks(input) {
     const records = Array.isArray(payload?.records)
         ? payload.records
         : [];
-    
-    console.log("[ONFLIX-TEST-URLS]", JSON.stringify(
-    records.map((r, i) => ({
-        index: i + 1,
-        id: r.id,
-        src: r.src,
-        server: r.server_name,
-        embed: r.link_embed,
-        m3u8: r.link_m3u8
-    })),
-    null,
-    2
-));
 
     if (!records.length) {
-        console.warn(TAG, "No records received");
+        console.warn(TAG, "NO RECORDS");
         return [];
     }
 
-    const ordered = [...records].sort((a, b) => {
-        const pa = ONFLIX_SRC_PRIORITY.indexOf(String(a.src || ""));
-        const pb = ONFLIX_SRC_PRIORITY.indexOf(String(b.src || ""));
-
-        return (pa < 0 ? 999 : pa) - (pb < 0 ? 999 : pb);
-    });
-
     const streams = [];
-    const seenUrls = new Set();
-
-    // Lưu những src đã gặp lỗi Sora để không gọi lại
-    // cùng nhánh host nhiều lần trong một lần resolve.
+    const seen = new Set();
     const failedSoraSources = new Set();
 
-    const add = (item) => {
+    function addStream(item) {
         const url = String(item?.url || "").trim();
+        if (!/^https?:\/\//i.test(url) || seen.has(url)) return false;
 
-        if (!/^https?:\/\//i.test(url)) return;
-        if (seenUrls.has(url)) return;
-
-        seenUrls.add(url);
-
+        seen.add(url);
         streams.push({
             ...item,
             url,
+            name: item.name || "Onflix",
+            type: item.type || "m3u8",
             provider: "onflix",
             headers: item.headers || {}
         });
-    };
+        return true;
+    }
 
-    console.info(TAG, "START:", JSON.stringify({
-        records: ordered.length,
-        sources: [...new Set(
-            ordered.map(record => String(record.src || ""))
-        )],
-        directCount: ordered.filter(record =>
-            /\.m3u8(?:$|\?)/i.test(
-                String(record.link_m3u8 || "")
-            )
-        ).length
+    function responseBody(response) {
+        if (typeof response?.body === "string") return response.body;
+        if (typeof response?.data === "string") return response.data;
+        if (response?.data && typeof response.data === "object") {
+            return JSON.stringify(response.data);
+        }
+        return "";
+    }
+
+    function findMediaUrl(value, depth = 0) {
+        if (depth > 5 || value == null) return "";
+
+        if (typeof value === "string") {
+            const text = value.trim();
+
+            if (/^https?:\/\//i.test(text) &&
+                /\.(m3u8|mp4)(?:$|[?#])/i.test(text)) {
+                return text;
+            }
+
+            if (/^[\[{]/.test(text)) {
+                try {
+                    return findMediaUrl(JSON.parse(text), depth + 1);
+                } catch {}
+            }
+
+            const match = text.match(
+                /https?:\\?\/\\?\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/i
+            );
+            return match ? match[0].replace(/\\\//g, "/") : "";
+        }
+
+        if (typeof value === "object") {
+            for (const key of [
+                "url", "file", "src", "playlist", "m3u8",
+                "stream", "data", "result", "sources"
+            ]) {
+                if (value[key] != null) {
+                    const found = findMediaUrl(value[key], depth + 1);
+                    if (found) return found;
+                }
+            }
+
+            for (const child of Object.values(value)) {
+                const found = findMediaUrl(child, depth + 1);
+                if (found) return found;
+            }
+        }
+
+        return "";
+    }
+
+    console.info(TAG, "START", JSON.stringify({
+        records: records.length,
+        sources: [...new Set(records.map(r => String(r.src || "")))],
+        candidates: records.map(r => ({
+            src: r.src || "",
+            server: r.server_name || "",
+            hasPlaylistUrl: Boolean(r.link_m3u8),
+            hasEmbedUrl: Boolean(r.link_embed)
+        }))
     }));
 
-    for (let index = 0; index < ordered.length; index++) {
-        const record = ordered[index];
-
+    for (let i = 0; i < records.length; i++) {
+        const record = records[i];
         const src = String(record.src || "").trim();
-        const direct = onflixAbsoluteUrl(record.link_m3u8);
-        const embed = onflixAbsoluteUrl(
+        const server = record.server_name || "Onflix";
+        const before = streams.length;
+
+        const playlistUrl = onflixAbsoluteUrl(record.link_m3u8);
+        const embedUrl = onflixAbsoluteUrl(
             record.link_embed,
             payload?.detailUrl || ONFLIX_BASE_URL
         );
 
-        const beforeCount = streams.length;
-
-        console.info(TAG, "RECORD:", JSON.stringify({
-            index: index + 1,
-            total: ordered.length,
-            id: String(record.id || ""),
+        console.info(TAG, "RECORD", JSON.stringify({
+            index: i + 1,
+            total: records.length,
             src,
-            server: record.server_name || "",
-            hasDirect: Boolean(
-                direct && /\.m3u8(?:$|\?)/i.test(direct)
-            ),
-            embedHost: (() => {
-                try {
-                    return embed ? new URL(embed).host : "";
-                } catch {
-                    return "";
-                }
-            })()
+            server,
+            playlistUrl: playlistUrl || "",
+            embedUrl: embedUrl || ""
         }));
 
-        // 1. Direct M3U8.
-        if (direct && /\.m3u8(?:$|\?)/i.test(direct)) {
-            add({
-                url: direct,
-                name: record.server_name || "Onflix Direct",
-                type: "m3u8",
-                headers: {
-                    Referer:
-                        payload?.detailUrl ||
-                        ONFLIX_BASE_URL + "/",
-                    "User-Agent": ONFLIX_USER_AGENT
-                }
-            });
-        }
-
-        // 2. Resolver Streamc.
-        if (embed && /streamc\.xyz/i.test(embed)) {
+        // A. Ưu tiên endpoint playlist mà Onflix cung cấp.
+        // Không yêu cầu URL phải có đuôi .m3u8.
+        if (playlistUrl) {
             try {
-                const resolved = await onflixResolveStreamc(embed);
+                const response = await onflixRequest(playlistUrl, {
+                    timeout: 7000,
+                    referer: ONFLIX_BASE_URL + "/",
+                    accept:
+                        "application/vnd.apple.mpegurl," +
+                        "application/x-mpegURL,application/json,text/plain,*/*"
+                });
 
-                for (const stream of resolved) {
-                    add(stream);
+                const body = responseBody(response)
+                    .replace(/^\uFEFF/, "")
+                    .trim();
+
+                const contentType = String(
+                    response?.headers?.["content-type"] || ""
+                );
+
+                let isHls = /^#EXTM3U(?:\s|$)/i.test(body);
+                let actualUrl = onflixAbsoluteUrl(
+                    response?.url || playlistUrl
+                ) || playlistUrl;
+
+                // Nếu endpoint trả JSON chứa URL media, thử URL đó.
+                if (!isHls) {
+                    let mediaUrl = "";
+
+                    try {
+                        mediaUrl = findMediaUrl(JSON.parse(body));
+                    } catch {
+                        mediaUrl = findMediaUrl(body);
+                    }
+
+                    if (mediaUrl) {
+                        try {
+                            const mediaResponse = await onflixRequest(
+                                mediaUrl,
+                                {
+                                    timeout: 6000,
+                                    referer: playlistUrl,
+                                    accept:
+                                        "application/vnd.apple.mpegurl," +
+                                        "application/x-mpegURL,*/*"
+                                }
+                            );
+
+                            const mediaBody = responseBody(mediaResponse)
+                                .replace(/^\uFEFF/, "")
+                                .trim();
+
+                            if (/^#EXTM3U(?:\s|$)/i.test(mediaBody)) {
+                                isHls = true;
+                                actualUrl = onflixAbsoluteUrl(
+                                    mediaResponse?.url || mediaUrl
+                                ) || mediaUrl;
+                            }
+                        } catch (error) {
+                            console.warn(TAG, "MEDIA URL CHECK FAILED", {
+                                src,
+                                status: error?.response?.status || 0,
+                                message: error?.message || String(error)
+                            });
+                        }
+                    }
                 }
 
-                console.info(TAG, "STREAMC RESULT:", JSON.stringify({
-                    index: index + 1,
-                    count: resolved.length
-                }));
-            } catch (error) {
-                console.warn(TAG, "STREAMC ERROR:", JSON.stringify({
-                    index: index + 1,
-                    status: error?.response?.status || 0,
-                    message: error?.message || String(error)
-                }));
-            }
-        }
-
-        // 3. PhimAPI player có URL media trực tiếp.
-        if (embed && /player\.phimapi\.com\/player\//i.test(embed)) {
-            try {
-                const parsed = new URL(embed);
-                const target = parsed.searchParams.get("url");
-                const mediaUrl = target
-                    ? onflixAbsoluteUrl(target, embed)
-                    : null;
-
-                if (
-                    mediaUrl &&
-                    /\.m3u8(?:$|\?)/i.test(mediaUrl)
-                ) {
-                    add({
-                        url: mediaUrl,
-                        name: record.server_name || "Onflix PhimAPI",
+                if (isHls) {
+                    addStream({
+                        url: actualUrl,
+                        name: server,
+                        title: record.name || server,
                         type: "m3u8",
                         headers: {
-                            Referer: embed,
+                            Referer: ONFLIX_BASE_URL + "/",
                             "User-Agent": ONFLIX_USER_AGENT
                         }
                     });
+
+                    console.info(TAG, "PLAYLIST ACCEPTED", {
+                        index: i + 1,
+                        src,
+                        server,
+                        status: response?.status || 0,
+                        contentType
+                    });
+                } else {
+                    console.warn(TAG, "PLAYLIST NOT HLS", {
+                        index: i + 1,
+                        src,
+                        server,
+                        status: response?.status || 0,
+                        contentType,
+                        preview: body.slice(0, 120)
+                    });
                 }
             } catch (error) {
-                console.warn(TAG, "PHIMAPI URL ERROR:", {
-                    index: index + 1,
+                console.warn(TAG, "PLAYLIST FAILED", {
+                    index: i + 1,
+                    src,
+                    server,
+                    status: error?.response?.status || 0,
                     message: error?.message || String(error)
                 });
             }
         }
 
-        // 4. Sora fallback.
-        // Nếu một src đã thất bại trong lượt resolve này,
-        // không lặp lại cùng nhánh Sora cho các record cùng src.
-        const hasDirectM3u8 = Boolean(
-            direct && /\.m3u8(?:$|\?)/i.test(direct)
-        );
+        // B. Nếu playlist không dùng được, thử Streamc.
+        if (
+            streams.length === before &&
+            embedUrl &&
+            /streamc\.xyz/i.test(embedUrl)
+        ) {
+            try {
+                const result = await onflixResolveStreamc(embedUrl);
+                for (const item of result || []) addStream(item);
 
-        if (!hasDirectM3u8 && record.id && src) {
-            if (failedSoraSources.has(src)) {
-                console.info(TAG, "SORA SKIPPED AFTER FAILURE:", {
-                    index: index + 1,
-                    src
+                console.info(TAG, "STREAMC RESULT", {
+                    index: i + 1,
+                    count: result?.length || 0
                 });
+            } catch (error) {
+                console.warn(TAG, "STREAMC FAILED", {
+                    index: i + 1,
+                    status: error?.response?.status || 0,
+                    message: error?.message || String(error)
+                });
+            }
+        }
+
+        // C. Nếu vẫn chưa có link, thử resolver Sora hiện có.
+        if (streams.length === before && record.id && src) {
+            if (failedSoraSources.has(src)) {
+                console.info(TAG, "SORA SKIPPED", { index: i + 1, src });
             } else {
                 try {
-                    const soraStreams = await onflixResolveSora(record);
+                    const result = await onflixResolveSora(record);
+                    for (const item of result || []) addStream(item);
 
-                    for (const stream of soraStreams) {
-                        add(stream);
-                    }
-
-                    console.info(TAG, "SORA RESULT:", JSON.stringify({
-                        index: index + 1,
+                    console.info(TAG, "SORA RESULT", {
+                        index: i + 1,
                         src,
-                        count: soraStreams.length
-                    }));
+                        count: result?.length || 0
+                    });
 
-                    // Resolver hiện trả [] cả khi lỗi upstream.
-                    // Tránh thử lại liên tiếp cùng src trong lượt này.
-                    if (!soraStreams.length) {
-                        failedSoraSources.add(src);
-                    }
+                    if (!result?.length) failedSoraSources.add(src);
                 } catch (error) {
                     failedSoraSources.add(src);
-
-                    console.warn(TAG, "SORA ERROR:", JSON.stringify({
-                        index: index + 1,
+                    console.warn(TAG, "SORA FAILED", {
+                        index: i + 1,
                         src,
                         status: error?.response?.status || 0,
                         message: error?.message || String(error)
-                    }));
+                    });
                 }
             }
         }
 
-        console.info(TAG, "RECORD COMPLETE:", JSON.stringify({
-            index: index + 1,
-            added: streams.length - beforeCount,
+        console.info(TAG, "RECORD COMPLETE", JSON.stringify({
+            index: i + 1,
+            server,
+            added: streams.length - before,
             totalStreams: streams.length
         }));
     }
 
-    console.info(TAG, "FINAL:", JSON.stringify({
-        recordsProcessed: ordered.length,
+    console.info(TAG, "FINAL", JSON.stringify({
+        records: records.length,
         streams: streams.length,
-        uniqueUrls: seenUrls.size,
+        uniqueUrls: seen.size,
         failedSoraSources: [...failedSoraSources]
     }));
 
