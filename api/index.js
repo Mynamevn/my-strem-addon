@@ -24092,7 +24092,20 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
     }
 }
 
- // 3. Giữ lại các embed SN/PA hợp lệ để không mất lựa chọn nguồn.
+ // 3. Chỉ giữ embed SN/PA của đúng tập đang được yêu cầu.
+const selectedEpisodeForEmbeds = Math.max(
+    1,
+    Number(
+        requestedEpisodeNumberArg ||
+        payload?.selectedEpisode ||
+        payload?.episodeNumber ||
+        String(currentWatchUrl).match(
+            /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
+        )?.[1] ||
+        1
+    )
+);
+
 for (const record of soraRecords) {
     const src = String(
         onflixSoraGetSource(record) || record?.src || ""
@@ -24114,30 +24127,43 @@ for (const record of soraRecords) {
         continue;
     }
 
-    // Chỉ khôi phục những embed đã xác định được của SN.
-    // Không đưa các URL không rõ nguồn vào danh sách.
-    if (src === "sn" && host === "playembed.vip") {
-        addExternalStream({
-            externalUrl: embedUrl,
-            name: "Onflix SN Embed",
-            title: "Vietsub SN · Mở player ngoài"
-        });
+    // Chỉ giữ player thuộc các nguồn đã xác nhận.
+    const isSnEmbed = src === "sn" && host === "playembed.vip";
+    const isPaEmbed = src === "pa" && host === "player.phimapi.com";
+
+    if (!isSnEmbed && !isPaEmbed) continue;
+
+    // PA có nhiều bản ghi tập: chỉ cho phép đúng tập yêu cầu.
+    if (src === "pa") {
+        const episodeLabel = String(
+            record?.name || record?.slug || ""
+        ).trim();
+
+        const episodeMatch = episodeLabel.match(/^0*(\d+)$/);
+
+        if (
+            !episodeMatch ||
+            Number(episodeMatch[1]) !== selectedEpisodeForEmbeds
+        ) {
+            continue;
+        }
     }
 
-    // PA player được giữ riêng; không nhầm URL player với M3U8.
-    if (src === "pa" && host === "player.phimapi.com") {
-        addExternalStream({
-            externalUrl: embedUrl,
-            name: "Onflix PA Embed",
-            title: "Vietsub PA · Mở player ngoài"
-        });
-    }
+    addExternalStream({
+        externalUrl: embedUrl,
+        name: src === "pa" ? "Onflix PA Embed" : "Onflix SN Embed",
+        title: src === "pa"
+            ? `Vietsub PA · Tập ${selectedEpisodeForEmbeds}`
+            : `Vietsub SN · Tập ${selectedEpisodeForEmbeds}`
+    });
 
-    console.info("[ONFLIX] SORA EMBED CANDIDATE", {
+    console.info("[ONFLIX] EPISODE EMBED FILTER", {
         src,
-        epId: onflixSoraGetEpisodeId(record),
+        requestedEpisode: selectedEpisodeForEmbeds,
+        recordName: record?.name || "",
+        recordSlug: record?.slug || "",
         host,
-        externalAdded: seen.has(embedUrl)
+        added: true
     });
 }
 
