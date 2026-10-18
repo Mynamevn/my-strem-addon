@@ -24204,15 +24204,21 @@ try {
         }
     }
 
+} catch (error) {
+    console.warn("[ONFLIX] SORA RESOLVE ERROR", {
+        message: error?.message || String(error)
+    });
+}
 
-    function responseBody(response) {
-        if (typeof response?.body === "string") return response.body;
-        if (typeof response?.data === "string") return response.data;
-        if (response?.data && typeof response.data === "object") {
-            return JSON.stringify(response.data);
-        }
-        return "";
+function responseBody(response) {
+    if (typeof response?.body === "string") return response.body;
+    if (typeof response?.data === "string") return response.data;
+    if (response?.data && typeof response.data === "object") {
+        return JSON.stringify(response.data);
     }
+    return "";
+}
+
 
     function findMediaUrl(value, depth = 0) {
         if (depth > 5 || value == null) return "";
