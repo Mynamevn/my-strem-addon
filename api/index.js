@@ -23992,13 +23992,25 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
         const paExtracted = onflixExtractNextData(paHtml);
         const paRecords = onflixParseEpisodeRecords(paExtracted);
 
+        
         const paOnly = paRecords.filter(record =>
             String(onflixSoraGetSource(record) || "")
                 .trim()
                 .toLowerCase() === "pa"
         );
 
+        // DEBUG: kiểm tra các bản ghi PA lấy được từ trang tập phim.
+        console.info("[ONFLIX] PA RECORD DEBUG", paOnly.map(record => ({
+            src: onflixSoraGetSource(record),
+            epId: onflixSoraGetEpisodeId(record),
+            name: record?.name || "",
+            slug: record?.slug || "",
+            embed: record?.link_embed || "",
+            m3u8: record?.link_m3u8 || ""
+        })));
+
         for (const record of paOnly) {
+
             const recordKey = [
                 onflixSoraGetEpisodeId(record),
                 onflixSoraGetSource(record),
@@ -24041,13 +24053,45 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
     }
 }
 
-// 3. Resolver chạy trên records đã bổ sung PA thật.
-const soraStreams = await onflixResolveSoraRecords(soraRecords);
+// 3. Giữ lại embed SN/PA ngay cả khi resolve luồng trực tiếp thất bại.
+// Chỉ giữ embed Sora, không nhận player của provider khác.
+for (const record of soraRecords) {
+    const src = String(
+        onflixSoraGetSource(record) || ""
+    ).trim().toLowerCase();
 
-for (const item of soraStreams) {
-    if (item?.url) {
-        addStream(item);
+    if (src !== "sn" && src !== "pa") continue;
+
+    const embedUrl = String(record?.link_embed || "").trim();
+    if (!embedUrl) continue;
+
+    let host = "";
+    try {
+        host = new URL(embedUrl).hostname.toLowerCase();
+    } catch (_) {
+        continue;
     }
+
+    if (host !== "playembed.vip") continue;
+
+    console.info("[ONFLIX] SORA EMBED CANDIDATE", {
+        src,
+        epId: onflixSoraGetEpisodeId(record),
+        embedUrl
+    });
+}
+
+// 4. Thử resolve trực tiếp; lỗi không làm mất embed đã tìm thấy.
+try {
+    const soraStreams = await onflixResolveSoraRecords(soraRecords);
+
+    for (const item of soraStreams || []) {
+        if (item?.url) addStream(item);
+    }
+} catch (error) {
+    console.warn("[ONFLIX] SORA RESOLVE ERROR", {
+        message: error?.message || String(error)
+    });
 }
 
     function responseBody(response) {
