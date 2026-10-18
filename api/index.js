@@ -23922,7 +23922,7 @@ const soraRecords = Array.isArray(payload?.records)
     ? payload.records
     : [];
 
-// 1. Ưu tiên stream trực tiếp nếu Sora resolver lấy được.
+// 1. Ưu tiên resolver Sora hiện có với các record thực tế.
 const soraStreams = await onflixResolveSoraRecords(soraRecords);
 
 for (const item of soraStreams) {
@@ -23931,8 +23931,49 @@ for (const item of soraStreams) {
     }
 }
 
-// 2. Fallback: giữ lại embed SN/PA để người dùng vẫn nhìn thấy
-// nguồn trong Stremio khi endpoint trích xuất video trả về 403.
+// 2. Thử lấy URL stream SoraCDN đã ký trực tiếp từ trang xem phim.
+// Hàm này tự kiểm tra cả SN và PA; không lấy epId của SN giả làm PA.
+const watchUrl = String(
+    payload?.watchUrl ||
+    (
+        typeof input === "string" &&
+        /^https:\/\/onflix\.lat\/xem-phim\//i.test(input.trim())
+            ? input.trim()
+            : ""
+    )
+).trim();
+
+if (watchUrl) {
+    try {
+        const soraCdnStreams =
+            await onflixExtractSoraCdnStreams(watchUrl);
+
+        for (const item of soraCdnStreams) {
+            if (item?.url) {
+                addStream(item);
+            }
+        }
+
+        console.info("[ONFLIX-SORA-CDN] EXTRACT RESULT", {
+            watchUrl,
+            count: soraCdnStreams.length,
+            streams: soraCdnStreams.map(item => ({
+                name: item.name,
+                type: item.type,
+                hasUrl: Boolean(item.url),
+                source: item.source
+            }))
+        });
+    } catch (error) {
+        console.warn("[ONFLIX-SORA-CDN] EXTRACT FAILED", {
+            watchUrl,
+            error: error?.message || String(error)
+        });
+    }
+}
+
+// 3. Giữ fallback embed cho SN/PA thực sự có trong records.
+// Nếu chưa lấy được direct link, người dùng vẫn thấy nguồn embed.
 const embedFallbackSeen = new Set();
 
 for (const record of soraRecords) {
