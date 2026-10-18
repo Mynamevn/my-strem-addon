@@ -34386,36 +34386,204 @@ if (!hasAnimeTStream && animeProvidersEnabled) {
     ];
 
     // =====================================================
-    // 16. LOẠI URL TRÙNG
+    // 16. LOẠI URL TRÙNG + BẢO TOÀN ONFLIX DIRECT HLS
     // =====================================================
 
-    const seen =
-        new Set();
+    const seen = new Set();
+    const uniqueStreams = [];
 
-    const uniqueStreams =
-        allStreams.filter(
-            stream => {
+    // 16A. Gộp và loại URL trùng như trước.
+    for (const stream of allStreams) {
+        if (!stream || typeof stream !== "object") {
+            continue;
+        }
 
-                const key =
-                    stream.url ||
-                    stream.externalUrl;
+        const url = String(
+            stream.url || stream.externalUrl || ""
+        ).trim();
 
-                if (!key) {
-                    return false;
-                }
+        if (!/^https?:\/\//i.test(url)) {
+            continue;
+        }
 
-                if (
-                    seen.has(key)
-                ) {
-                    return false;
-                }
+        if (seen.has(url)) {
+            continue;
+        }
 
-                seen.add(key);
+        seen.add(url);
+        uniqueStreams.push(stream);
+    }
 
-                return true;
+    // 16B. Bảo đảm các luồng PA direct HLS của Onflix
+    // được giữ trong danh sách trả về cho Stremio.
+    //
+    // Hỗ trợ cả:
+    // - Luồng direct đã có trong uniqueStreams.
+    // - Luồng direct cần bổ sung từ kết quả fetchOnflixProvider().
+    //
+    // Không chuyển externalUrl thành URL phát trực tiếp.
+    let onflixDirectRestored = 0;
 
-            }
+    for (const stream of onflix) {
+        if (!stream || typeof stream !== "object") {
+            continue;
+        }
+
+        const url = String(stream.url || "").trim();
+
+        // Chỉ khôi phục URL media HLS thực sự.
+        if (
+            !/^https?:\/\//i.test(url) ||
+            !/\.m3u8(?:$|[?#])/i.test(url)
+        ) {
+            continue;
+        }
+
+        const existingIndex = uniqueStreams.findIndex(
+            item => String(item?.url || "").trim() === url
         );
+
+        const existing = existingIndex >= 0
+            ? uniqueStreams[existingIndex]
+            : {};
+
+        const originalHeaders =
+            stream.headers &&
+            typeof stream.headers === "object"
+                ? stream.headers
+                : {};
+
+        const existingHints =
+            existing.behaviorHints &&
+            typeof existing.behaviorHints === "object"
+                ? existing.behaviorHints
+                : {};
+
+        const streamHints =
+            stream.behaviorHints &&
+            typeof stream.behaviorHints === "object"
+                ? stream.behaviorHints
+                : {};
+
+        const existingProxyHeaders =
+            existingHints.proxyHeaders &&
+            typeof existingHints.proxyHeaders === "object"
+                ? existingHints.proxyHeaders
+                : {};
+
+        const streamProxyHeaders =
+            streamHints.proxyHeaders &&
+            typeof streamHints.proxyHeaders === "object"
+                ? streamHints.proxyHeaders
+                : {};
+
+        const existingRequestHeaders =
+            existingProxyHeaders.request &&
+            typeof existingProxyHeaders.request === "object"
+                ? existingProxyHeaders.request
+                : {};
+
+        const streamRequestHeaders =
+            streamProxyHeaders.request &&
+            typeof streamProxyHeaders.request === "object"
+                ? streamProxyHeaders.request
+                : {};
+
+        const requestHeaders = {
+            ...originalHeaders,
+            ...streamRequestHeaders,
+            ...existingRequestHeaders
+        };
+
+        // Giữ Referer của nguồn nếu đã có.
+        if (
+            !requestHeaders.Referer &&
+            !requestHeaders.referer
+        ) {
+            requestHeaders.Referer =
+                "https://player.phimapi.com/";
+        }
+
+        const directStream = {
+            ...stream,
+            ...existing,
+
+            name:
+                stream.name ||
+                existing.name ||
+                "Onflix PA · Direct",
+
+            title:
+                stream.title ||
+                existing.title ||
+                String(movieName || "Onflix"),
+
+            url,
+            type: "m3u8",
+            provider: "onflix",
+            source: "onflix",
+
+            behaviorHints: {
+                ...streamHints,
+                ...existingHints,
+
+                // Gửi header theo định dạng proxyHeaders
+                // được Stremio hỗ trợ.
+                proxyHeaders: {
+                    ...streamProxyHeaders,
+                    ...existingProxyHeaders,
+                    request: requestHeaders
+                }
+            }
+        };
+
+        if (existingIndex >= 0) {
+            // Thay object cùng URL bằng bản đã chuẩn hóa,
+            // không tạo thêm một stream trùng.
+            uniqueStreams[existingIndex] = directStream;
+        } else {
+            seen.add(url);
+            uniqueStreams.push(directStream);
+        }
+
+        onflixDirectRestored++;
+
+        console.log(
+            "[MOVINA-ONFLIX] FINAL DIRECT HLS:",
+            JSON.stringify({
+                name: directStream.name,
+                type: directStream.type,
+                url: directStream.url,
+                hasReferer: Boolean(
+                    requestHeaders.Referer ||
+                    requestHeaders.referer
+                )
+            })
+        );
+    }
+
+    // 16C. Xác nhận các URL Onflix thực sự nằm trong
+    // mảng streams chuẩn bị trả về Stremio.
+    console.log(
+        "[MOVINA-ONFLIX] FINAL RESPONSE CHECK:",
+        JSON.stringify({
+            providerStreams: onflix.length,
+            directHlsRestored: onflixDirectRestored,
+            directHlsInResponse: uniqueStreams.filter(
+                stream =>
+                    stream?.provider === "onflix" &&
+                    /\.m3u8(?:$|[?#])/i.test(
+                        String(stream?.url || "")
+                    )
+            ).map(stream => ({
+                name: stream.name,
+                url: stream.url,
+                type: stream.type
+            })),
+            totalResponseStreams: uniqueStreams.length
+        })
+    );
+
 console.log(
     "[DEBUG] PhimLongTieng FINAL:",
     JSON.stringify(
