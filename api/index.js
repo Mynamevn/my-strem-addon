@@ -23975,8 +23975,6 @@ for (const record of soraRecords) {
     });
 }
 
-}
-
     function responseBody(response) {
         if (typeof response?.body === "string") return response.body;
         if (typeof response?.data === "string") return response.data;
