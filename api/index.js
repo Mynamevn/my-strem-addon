@@ -22421,9 +22421,10 @@ async function onflixLoad(url) {
                     ) || index + 1
                 ),
                 data: JSON.stringify({
-                    detailUrl,
-                    records: group.records
-                }),
+    detailUrl,
+    watchUrl,
+    records: group.records
+}),
                 provider: "onflix"
             })
         );
@@ -23118,6 +23119,201 @@ async function onflixResolveSora(record) {
     }
 }
 
+// ============================================================================
+// ONFLIX SORACDN — EXTRACT SIGNED MP4 URLS FOR SN / PA
+//
+// Ưu tiên các URL stream SoraCDN thực tế được nhúng trong trang phát.
+// Không tự tạo chữ ký time/exp và không tái sử dụng URL đã hết hạn.
+// ============================================================================
+
+async function onflixExtractSoraCdnStreams(
+    watchUrl,
+    options = {}
+) {
+    const TAG = "[ONFLIX-SORACDN]";
+
+    const baseWatchUrl = String(watchUrl || "").trim();
+
+    if (!/^https:\/\/onflix\.lat\//i.test(baseWatchUrl)) {
+        console.warn(TAG, "INVALID WATCH URL");
+        return [];
+    }
+
+    const sourceCandidates = [
+        {
+            src: "sn",
+            pattern: /vietsub-sn/i
+        },
+        {
+            src: "pa",
+            pattern: /vietsub-pa/i
+        }
+    ];
+
+    const watchCandidates = [];
+
+    function addCandidate(url, src) {
+        if (
+            /^https:\/\/onflix\.lat\//i.test(url) &&
+            !watchCandidates.some(x => x.url === url)
+        ) {
+            watchCandidates.push({ url, src });
+        }
+    }
+
+    // Giữ URL gốc và xác định server theo đường dẫn.
+    const originalSource =
+        /vietsub-pa/i.test(baseWatchUrl) ? "pa" :
+        /vietsub-sn/i.test(baseWatchUrl) ? "sn" :
+        "";
+
+    if (originalSource) {
+        addCandidate(baseWatchUrl, originalSource);
+    }
+
+    // Thử cả SN và PA trên cùng phim / tập.
+    for (const source of sourceCandidates) {
+        let candidate = baseWatchUrl;
+
+        if (/vietsub-(?:sn|pa)/i.test(candidate)) {
+            candidate = candidate.replace(
+                /vietsub-(?:sn|pa)/i,
+                `vietsub-${source.src}`
+            );
+        } else {
+            continue;
+        }
+
+        addCandidate(candidate, source.src);
+    }
+
+    const results = [];
+    const seen = new Set();
+
+    for (const candidate of watchCandidates) {
+        try {
+            console.info(TAG, "FETCH WATCH PAGE", {
+                src: candidate.src,
+                url: candidate.url
+            });
+
+            const response = await onflixRequest(
+                candidate.url,
+                {
+                    timeout: 12000,
+                    referer: "https://onflix.lat/",
+                    accept:
+                        "text/html,application/xhtml+xml," +
+                        "application/json,*/*"
+                }
+            );
+
+            let body = String(
+                response?.body ||
+                response?.data ||
+                ""
+            );
+
+            // Chuẩn hóa JSON/HTML escape trước khi tìm URL.
+            body = body
+                .replace(/&amp;/gi, "&")
+                .replace(/\\u0026/gi, "&")
+                .replace(/\\x26/gi, "&")
+                .replace(/\\\//g, "/")
+                .replace(/&quot;/gi, '"')
+                .replace(/&#x2F;/gi, "/");
+
+            const matches = body.match(
+                /https?:\/\/[a-z0-9.-]+\.workers\.dev\/[^"'`\s<>\\]+/gi
+            ) || [];
+
+            let found = 0;
+
+            for (const rawUrl of matches) {
+                let mediaUrl;
+
+                try {
+                    mediaUrl = new URL(
+                        rawUrl.replace(/[),;]+$/, "")
+                    );
+                } catch {
+                    continue;
+                }
+
+                const hostname =
+                    mediaUrl.hostname.toLowerCase();
+
+                const params = mediaUrl.searchParams;
+
+                // Chỉ nhận URL SoraCDN có cấu trúc đã quan sát.
+                if (
+                    !hostname.endsWith(".workers.dev") ||
+                    params.get("src") !== "onflix" ||
+                    params.get("cdn") !== "soracdn" ||
+                    params.get("type") !== "stream" ||
+                    !params.get("time") ||
+                    !params.get("exp") ||
+                    !params.get("q")
+                ) {
+                    continue;
+                }
+
+                // Không tự suy diễn hoặc sửa chữ ký.
+                const finalUrl = mediaUrl.href;
+
+                if (seen.has(finalUrl)) {
+                    continue;
+                }
+
+                seen.add(finalUrl);
+                found++;
+
+                const quality =
+                    params.get("q") || "Unknown";
+
+                results.push({
+                    url: finalUrl,
+                    name:
+                        `Onflix ${candidate.src.toUpperCase()} ` +
+                        `SoraCDN ${quality}`,
+                    title:
+                        `Onflix ${candidate.src.toUpperCase()} ` +
+                        `${quality}`,
+                    type: "mp4",
+                    provider: "onflix",
+                    source: candidate.src,
+                    headers: {
+                        "User-Agent": ONFLIX_USER_AGENT,
+                        "Referer": "https://onflix.lat/"
+                    }
+                });
+            }
+
+            console.info(TAG, "PAGE PARSED", {
+                src: candidate.src,
+                status: response?.status || 0,
+                htmlLength: body.length,
+                workerUrls: matches.length,
+                accepted: found
+            });
+
+        } catch (error) {
+            console.warn(TAG, "PAGE FAILED", {
+                src: candidate.src,
+                status: error?.response?.status || 0,
+                message: error?.message || String(error)
+            });
+        }
+    }
+
+    console.info(TAG, "RESULT", {
+        watchPages: watchCandidates.length,
+        streams: results.length,
+        qualities: results.map(item => item.name)
+    });
+
+    return results;
+}
 
 async function onflixLinks(input) {
     const TAG = "[ONFLIX-LINKS]";
@@ -23180,6 +23376,24 @@ async function onflixLinks(input) {
             headers: item.headers || {}
         });
         return true;
+    }
+
+    // Ưu tiên URL SoraCDN thực tế từ trang phát SN / PA.
+    const soraWatchUrl = String(
+        payload?.watchUrl ||
+        payload?.watch_url ||
+        ""
+    ).trim();
+
+    if (soraWatchUrl) {
+        const soraStreams =
+            await onflixExtractSoraCdnStreams(
+                soraWatchUrl
+            );
+
+        for (const item of soraStreams) {
+            addStream(item);
+        }
     }
 
     function responseBody(response) {
@@ -23246,8 +23460,13 @@ async function onflixLinks(input) {
     }));
 
     for (let i = 0; i < records.length; i++) {
-        const record = records[i];
-        const src = String(record.src || "").trim();
+    const record = records[i];
+    const src = String(record.src || "").trim();
+
+    // Theo yêu cầu hiện tại: chỉ xử lý SN và PA.
+    if (!["sn", "pa"].includes(src.toLowerCase())) {
+        continue;
+    }
         const server = record.server_name || "Onflix";
         const before = streams.length;
 
