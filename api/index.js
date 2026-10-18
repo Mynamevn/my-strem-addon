@@ -24742,6 +24742,7 @@ try {
             action: "links"
         });
 
+        
         const sourceList =
             linkResult?.normalized ||
             linkResult?.sources ||
@@ -24750,7 +24751,15 @@ try {
 
         console.info(TAG, "LINKS RESULT:", JSON.stringify({
             count: Array.isArray(sourceList) ? sourceList.length : 0,
-            error: linkResult?.error || null
+            error: linkResult?.error || null,
+            items: Array.isArray(sourceList)
+                ? sourceList.map(item => ({
+                    name: item?.name || "",
+                    hasUrl: !!item?.url,
+                    hasExternalUrl: !!item?.externalUrl,
+                    urlType: item?.type || ""
+                }))
+                : []
         }));
 
         if (!Array.isArray(sourceList)) {
@@ -24759,34 +24768,78 @@ try {
 
         const streams = [];
         const seen = new Set();
+        const seenExternal = new Set();
 
         for (const item of sourceList) {
             const url = String(item?.url || "").trim();
+            const externalUrl = String(
+                item?.externalUrl || ""
+            ).trim();
 
-            if (!/^https?:\/\//i.test(url) || seen.has(url)) {
+            // A. Direct media: ưu tiên link video thật.
+            if (/^https?:\/\//i.test(url)) {
+                if (seen.has(url)) {
+                    continue;
+                }
+
+                seen.add(url);
+
+                streams.push({
+                    name: item.name || "Onflix",
+                    title: item.title ||
+                        (selected
+                            ? `${detail?.title || candidate.title} · ${selected.name}`
+                            : (detail?.title || candidate.title)),
+                    url,
+                    type: /\.m3u8(?:$|[?#])|\.mpd(?:$|[?#])/i.test(url)
+                        ? "m3u8"
+                        : "video",
+                    provider: "onflix",
+                    source: "onflix",
+                    headers: item.headers || {}
+                });
+
                 continue;
             }
 
-            seen.add(url);
+            // B. Embed fallback: giữ URL trang embed riêng,
+            // tuyệt đối không giả định đây là direct video.
+            if (
+                /^https?:\/\//i.test(externalUrl) &&
+                (item?.name || "").toLowerCase().includes("onflix") &&
+                !seenExternal.has(externalUrl)
+            ) {
+                seenExternal.add(externalUrl);
 
-            streams.push({
-                name: item.name || "Onflix",
-                title: selected
-                    ? `${detail?.title || candidate.title} · ${selected.name}`
-                    : (detail?.title || candidate.title),
-                url,
-                type: /\.m3u8(?:$|\?)/i.test(url)
-                    ? "m3u8"
-                    : "video",
-                provider: "onflix",
-                source: "onflix",
-                headers: item.headers || {}
-            });
+                streams.push({
+                    name: item.name || "Onflix · Embed",
+                    title: item.title ||
+                        (selected
+                            ? `${detail?.title || candidate.title} · ${selected.name}`
+                            : (detail?.title || candidate.title)),
+                    externalUrl,
+                    behaviorHints: {
+                        notWebReady: true
+                    },
+                    provider: "onflix",
+                    source: "onflix"
+                });
+
+                console.info(TAG, "EMBED FALLBACK PRESERVED:", JSON.stringify({
+                    name: item.name || "Onflix · Embed",
+                    externalUrl
+                }));
+            }
         }
 
-        console.log(TAG, "STREAM COUNT:", streams.length);
+        console.info(TAG, "STREAM COUNT:", JSON.stringify({
+            total: streams.length,
+            direct: streams.filter(item => !!item.url).length,
+            external: streams.filter(item => !!item.externalUrl).length
+        }));
 
         return streams;
+
     } catch (error) {
         console.error(
             TAG,
