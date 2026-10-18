@@ -23746,14 +23746,35 @@ async function onflixResolveSoraRecords(records) {
 
     // Chỉ xử lý record SN/PA thực sự tồn tại.
     // Tuyệt đối không lấy record SN để giả làm PA hoặc ngược lại.
-    const validRecords = list.filter(record => {
+        const validRecords = list.filter(record => {
         const src = String(
             onflixSoraGetSource(record) || ""
         ).trim().toLowerCase();
 
-        const epId = onflixSoraGetEpisodeId(record);
+        const epId = String(
+            onflixSoraGetEpisodeId(record) || ""
+        ).trim();
 
-        return (src === "sn" || src === "pa") && Boolean(epId);
+        const embedUrl = String(
+            record?.link_embed || ""
+        ).trim();
+
+        let embedHost = "";
+
+        try {
+            embedHost = new URL(embedUrl).hostname.toLowerCase();
+        } catch (_) {}
+
+        // Chỉ nhận epId dạng Sora đã quan sát được.
+        if (!/^ep_[a-z0-9_-]+$/i.test(epId)) return false;
+
+        // Chỉ nhận hai nguồn SN và PA.
+        if (src !== "sn" && src !== "pa") return false;
+
+        // Loại player của provider khác.
+        if (embedUrl && embedHost !== "playembed.vip") return false;
+
+        return true;
     });
 
     if (!validRecords.length) {
