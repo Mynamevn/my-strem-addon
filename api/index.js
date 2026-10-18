@@ -24242,126 +24242,137 @@ console.info("[ONFLIX-DEBUG] AFTER PA FETCH BLOCK", {
     soraRecordCount: soraRecords.length
 });
 
-// 4. Thử resolve trực tiếp; lỗi không làm mất embed đã tìm thấy.
-try {
-    const soraStreams = await onflixResolveSoraRecords(soraRecords);
 
-    for (const item of soraStreams || []) {
-        if (item?.url) addStream(item);
-    }
+    // 4. Thử resolve trực tiếp; lỗi không làm mất embed đã tìm thấy.
+    try {
+        const soraStreams = await onflixResolveSoraRecords(soraRecords);
 
-    
-    // FALLBACK: chọn đúng tập, ưu tiên URL media trực tiếp.
-    
-
-const requestedEpisodeNumber = Math.max(
-    1,
-    Number(requestedEpisodeNumberArg) ||
-    Number(payload?.selectedEpisode) ||
-    Number(payload?.episodeNumber) ||
-    Number(
-        String(currentWatchUrl).match(
-            /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
-        )?.[1]
-    ) ||
-    1
-);
-
-
-    const fallbackSeen = new Set();
-
-    // Không biến URL trang HTML của embed thành URL HLS.
-    for (const record of soraRecords) {
-        const src = String(
-            onflixSoraGetSource(record) || record?.src || ""
-        ).trim().toLowerCase();
-
-        if (src !== "sn" && src !== "pa") continue;
-
-        const episodeLabel = String(
-            record?.name || record?.slug || ""
-        ).trim();
-
-        const episodeMatch = episodeLabel.match(/^0*(\d+)$/);
-
-        // PA có nhiều nhóm tập; chỉ lấy đúng số tập yêu cầu.
-        if (src === "pa") {
-            if (!episodeMatch) continue;
-            if (Number(episodeMatch[1]) !== requestedEpisodeNumber) continue;
+        for (const item of soraStreams || []) {
+            if (item?.url) addStream(item);
         }
 
-        const rawM3u8 = String(record?.link_m3u8 || "").trim();
-        const embedUrl = String(record?.link_embed || "").trim();
+        // FALLBACK: chọn đúng tập, ưu tiên URL media trực tiếp.
+        const requestedEpisodeNumber = Math.max(
+            1,
+            Number(requestedEpisodeNumberArg) ||
+            Number(payload?.selectedEpisode) ||
+            Number(payload?.episodeNumber) ||
+            Number(
+                String(currentWatchUrl).match(
+                    /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
+                )?.[1]
+            ) ||
+            1
+        );
 
-        let directUrl = "";
+        const fallbackSeen = new Set();
 
-        // link_m3u8 phải là URL playlist thật, không phải URL player HTML.
-        if (/^https?:\/\/[^\s"'<>]+\.m3u8(?:[?#][^\s"'<>]*)?$/i.test(rawM3u8)) {
-            directUrl = rawM3u8;
-        } else if (embedUrl) {
-            // Một số player nhúng M3U8 trong tham số url=.
-            try {
-                const parsedEmbed = new URL(embedUrl);
-                const embeddedMedia = parsedEmbed.searchParams.get("url") || "";
+        // Không biến URL trang HTML của embed thành URL HLS.
+        for (const record of soraRecords) {
+            const src = String(
+                onflixSoraGetSource(record) || record?.src || ""
+            ).trim().toLowerCase();
 
-                if (
-                    /^https?:\/\/[^\s"'<>]+\.m3u8(?:[?#][^\s"'<>]*)?$/i.test(embeddedMedia)
-                ) {
-                    directUrl = embeddedMedia;
+            if (src !== "sn" && src !== "pa") continue;
+
+            const episodeLabel = String(
+                record?.name || record?.slug || ""
+            ).trim();
+
+            const episodeMatch = episodeLabel.match(/^0*(\d+)$/);
+
+            // PA có nhiều nhóm tập; chỉ lấy đúng số tập yêu cầu.
+            if (src === "pa") {
+                if (!episodeMatch) continue;
+
+                if (Number(episodeMatch[1]) !== requestedEpisodeNumber) {
+                    continue;
                 }
-            } catch (_) {}
+            }
+
+            const rawM3u8 = String(record?.link_m3u8 || "").trim();
+            const embedUrl = String(record?.link_embed || "").trim();
+
+            let directUrl = "";
+
+            // link_m3u8 phải là URL playlist thật.
+            if (
+                /^https?:\/\/[^\s"'<>]+\.m3u8(?:[?#][^\s"'<>]*)?$/i.test(
+                    rawM3u8
+                )
+            ) {
+                directUrl = rawM3u8;
+            } else if (embedUrl) {
+                // Một số player nhúng M3U8 trong tham số url=.
+                try {
+                    const parsedEmbed = new URL(embedUrl);
+                    const embeddedMedia =
+                        parsedEmbed.searchParams.get("url") || "";
+
+                    if (
+                        /^https?:\/\/[^\s"'<>]+\.m3u8(?:[?#][^\s"'<>]*)?$/i.test(
+                            embeddedMedia
+                        )
+                    ) {
+                        directUrl = embeddedMedia;
+                    }
+                } catch (_) {
+                    // URL embed không hợp lệ: bỏ qua fallback này.
+                }
+            }
+
+            if (directUrl && !fallbackSeen.has(directUrl)) {
+                fallbackSeen.add(directUrl);
+
+                const audioLabel = onflixGetAudioLabel(record, src);
+                const sourceLabel = src.toUpperCase();
+
+                addStream({
+                    url: directUrl,
+                    name: `Onflix ${sourceLabel} · ${audioLabel} · Direct`,
+                    title: `${audioLabel} · Tập ${requestedEpisodeNumber}`,
+                    type: "m3u8",
+                    headers: {
+                        Referer: src === "pa"
+                            ? "https://player.phimapi.com/"
+                            : "https://playembed.vip/",
+                        "User-Agent": ONFLIX_USER_AGENT
+                    }
+                });
+
+                console.info("[ONFLIX] DIRECT FALLBACK ADDED", {
+                    src,
+                    episode: requestedEpisodeNumber,
+                    audioLabel,
+                    url: directUrl
+                });
+            }
+
+            // Ghi nhận embed để chẩn đoán; không giả dạng HTML thành HLS.
+            if (embedUrl) {
+                let host = "";
+
+                try {
+                    host = new URL(embedUrl).hostname.toLowerCase();
+                } catch (_) {
+                    // URL embed không hợp lệ.
+                }
+
+                console.info("[ONFLIX] EMBED CANDIDATE ONLY", {
+                    src,
+                    episode: requestedEpisodeNumber,
+                    host,
+                    hasDirectMedia: Boolean(directUrl),
+                    note: "Không xuất embed HTML dưới dạng stream m3u8"
+                });
+            }
         }
-
-        
-if (directUrl && !fallbackSeen.has(directUrl)) {
-    fallbackSeen.add(directUrl);
-
-    const audioLabel = onflixGetAudioLabel(record, src);
-    const sourceLabel = src.toUpperCase();
-
-    addStream({
-        url: directUrl,
-        name: `Onflix ${sourceLabel} · ${audioLabel} · Direct`,
-        title: `${audioLabel} · Tập ${requestedEpisodeNumber}`,
-        type: "m3u8",
-        headers: {
-            Referer: src === "pa"
-                ? "https://player.phimapi.com/"
-                : "https://playembed.vip/",
-            "User-Agent": ONFLIX_USER_AGENT
-        }
-    });
-}
-
-            console.info("[ONFLIX] DIRECT FALLBACK ADDED", {
-                src,
-                episode: requestedEpisodeNumber,
-                url: directUrl
-            });
-        }
-
-        // Ghi nhận embed để chẩn đoán, nhưng không trả URL HTML giả dạng HLS.
-        if (embedUrl) {
-            let host = "";
-            try {
-                host = new URL(embedUrl).hostname.toLowerCase();
-            } catch (_) {}
-
-            console.info("[ONFLIX] EMBED CANDIDATE ONLY", {
-                src,
-                episode: requestedEpisodeNumber,
-                host,
-                hasDirectMedia: Boolean(directUrl),
-                note: "Không xuất embed HTML dưới dạng stream m3u8"
-            });
-        }
+    } catch (error) {
+        console.warn("[ONFLIX] SORA RESOLVE ERROR", {
+            message: error?.message || String(error)
+        });
     }
 
-} catch (error) {
-    console.warn("[ONFLIX] SORA RESOLVE ERROR", {
-        message: error?.message || String(error)
-    });
-}
 
 function responseBody(response) {
     if (typeof response?.body === "string") return response.body;
