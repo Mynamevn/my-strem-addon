@@ -24092,7 +24092,8 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
     }
 }
 
- // 3. Chỉ giữ embed SN/PA của đúng tập đang được yêu cầu.
+ 
+ // 3. Giữ embed đúng tập và phân loại ngôn ngữ tổng quát.
 const selectedEpisodeForEmbeds = Math.max(
     1,
     Number(
@@ -24105,6 +24106,43 @@ const selectedEpisodeForEmbeds = Math.max(
         1
     )
 );
+
+function onflixGetAudioLabel(record, src) {
+    // SN đã được xác nhận là Vietsub.
+    if (src === "sn") return "Vietsub";
+
+    // PA: đọc metadata thực tế của từng record.
+    const metadataText = [
+        record?.name,
+        record?.slug,
+        record?.server_name,
+        record?.title,
+        record?.audio,
+        record?.language,
+        record?.lang,
+        record?.label,
+        record?.type,
+        record?.note,
+        record?.description
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    if (
+        /thuyết\s*minh|thuyet\s*minh|lồng\s*tiếng|long\s*tieng|dubbed|voice[\s_-]*over/i
+            .test(metadataText)
+    ) {
+        return "Thuyết minh";
+    }
+
+    if (
+        /vietsub|phụ\s*đề|phu\s*de|subbed|original[\s_-]*audio/i
+            .test(metadataText)
+    ) {
+        return "Vietsub";
+    }
+
+    // Không đủ dữ liệu thì không tự đoán ngôn ngữ.
+    return "Chưa xác định ngôn ngữ";
+}
 
 for (const record of soraRecords) {
     const src = String(
@@ -24120,20 +24158,24 @@ for (const record of soraRecords) {
 
     if (!embedUrl) continue;
 
-    let host = "";
+    let parsedEmbed;
     try {
-        host = new URL(embedUrl).hostname.toLowerCase();
+        parsedEmbed = new URL(embedUrl);
     } catch (_) {
         continue;
     }
 
-    // Chỉ giữ player thuộc các nguồn đã xác nhận.
-    const isSnEmbed = src === "sn" && host === "playembed.vip";
-    const isPaEmbed = src === "pa" && host === "player.phimapi.com";
+    const host = parsedEmbed.hostname.toLowerCase();
+
+    const isSnEmbed =
+        src === "sn" && host === "playembed.vip";
+
+    const isPaEmbed =
+        src === "pa" && host === "player.phimapi.com";
 
     if (!isSnEmbed && !isPaEmbed) continue;
 
-    // PA có nhiều bản ghi tập: chỉ cho phép đúng tập yêu cầu.
+    // PA: chỉ giữ đúng tập được yêu cầu.
     if (src === "pa") {
         const episodeLabel = String(
             record?.name || record?.slug || ""
@@ -24149,23 +24191,28 @@ for (const record of soraRecords) {
         }
     }
 
+    const audioLabel = onflixGetAudioLabel(record, src);
+    const streamName = `Onflix ${src.toUpperCase()} · ${audioLabel}`;
+    const streamTitle =
+        `${audioLabel} · Tập ${selectedEpisodeForEmbeds}`;
+
     addExternalStream({
         externalUrl: embedUrl,
-        name: src === "pa" ? "Onflix PA Embed" : "Onflix SN Embed",
-        title: src === "pa"
-            ? `Vietsub PA · Tập ${selectedEpisodeForEmbeds}`
-            : `Vietsub SN · Tập ${selectedEpisodeForEmbeds}`
+        name: streamName,
+        title: streamTitle
     });
 
-    console.info("[ONFLIX] EPISODE EMBED FILTER", {
+    console.info("[ONFLIX] LABELED EMBED", {
         src,
-        requestedEpisode: selectedEpisodeForEmbeds,
+        episode: selectedEpisodeForEmbeds,
         recordName: record?.name || "",
-        recordSlug: record?.slug || "",
+        serverName: record?.server_name || "",
+        audioLabel,
         host,
-        added: true
+        streamName
     });
 }
+
 
 console.info("[ONFLIX-DEBUG] AFTER PA FETCH BLOCK", {
     currentWatchUrl,
