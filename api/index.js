@@ -23918,7 +23918,7 @@ async function onflixLinks(input) {
     // ================================================================
 
 
-// 1. Bắt đầu bằng records của tập đang chọn.
+/// 1. Bắt đầu bằng records của tập đang chọn.
 const soraRecords = Array.isArray(payload?.records)
     ? [...payload.records]
     : [];
