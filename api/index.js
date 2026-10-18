@@ -23918,22 +23918,14 @@ async function onflixLinks(input) {
     // ================================================================
 
 
+// 1. Bắt đầu bằng records của tập đang chọn.
 const soraRecords = Array.isArray(payload?.records)
-    ? payload.records
+    ? [...payload.records]
     : [];
 
-// 1. Ưu tiên resolver Sora hiện có với các record thực tế.
-const soraStreams = await onflixResolveSoraRecords(soraRecords);
-
-for (const item of soraStreams) {
-    if (item?.url) {
-        addStream(item);
-    }
-}
-
-// 2. Thử lấy URL stream SoraCDN đã ký trực tiếp từ trang xem phim.
-// Hàm này tự kiểm tra cả SN và PA; không lấy epId của SN giả làm PA.
-const watchUrl = String(
+// 2. Nếu trang hiện tại là SN, tải trang PA tương ứng.
+// Không được lấy epId hoặc embedUrl của SN để giả làm PA.
+const currentWatchUrl = String(
     payload?.watchUrl ||
     (
         typeof input === "string" &&
@@ -23943,77 +23935,77 @@ const watchUrl = String(
     )
 ).trim();
 
-if (watchUrl) {
-    try {
-        const soraCdnStreams =
-            await onflixExtractSoraCdnStreams(watchUrl);
+if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
+    const paWatchUrl = currentWatchUrl.replace(
+        /\/vietsub-sn\//i,
+        "/vietsub-pa/"
+    );
 
-        for (const item of soraCdnStreams) {
-            if (item?.url) {
-                addStream(item);
+    try {
+        const paResponse = await onflixRequest(paWatchUrl);
+        const paHtml = String(
+            paResponse?.data ?? paResponse?.body ?? ""
+        );
+
+        const paExtracted = onflixExtractNextData(paHtml);
+        const paRecords = onflixParseEpisodeRecords(paExtracted);
+
+        const paOnly = paRecords.filter(record =>
+            String(onflixSoraGetSource(record) || "")
+                .trim()
+                .toLowerCase() === "pa"
+        );
+
+        for (const record of paOnly) {
+            const recordKey = [
+                onflixSoraGetEpisodeId(record),
+                onflixSoraGetSource(record),
+                record?.link_embed || "",
+                record?.link_m3u8 || ""
+            ].join("|");
+
+            const alreadyExists = soraRecords.some(existing => {
+                const existingKey = [
+                    onflixSoraGetEpisodeId(existing),
+                    onflixSoraGetSource(existing),
+                    existing?.link_embed || "",
+                    existing?.link_m3u8 || ""
+                ].join("|");
+
+                return existingKey === recordKey;
+            });
+
+            if (!alreadyExists) {
+                soraRecords.push(record);
             }
         }
 
-        console.info("[ONFLIX-SORA-CDN] EXTRACT RESULT", {
-            watchUrl,
-            count: soraCdnStreams.length,
-            streams: soraCdnStreams.map(item => ({
-                name: item.name,
-                type: item.type,
-                hasUrl: Boolean(item.url),
-                source: item.source
-            }))
+        console.info("[ONFLIX] PA PAGE RECORDS", {
+            paWatchUrl,
+            status: paResponse?.status,
+            extractedLength: String(paExtracted || "").length,
+            paRecordsFound: paOnly.length,
+            paRecordsAdded: soraRecords.filter(record =>
+                String(onflixSoraGetSource(record) || "")
+                    .trim()
+                    .toLowerCase() === "pa"
+            ).length
         });
     } catch (error) {
-        console.warn("[ONFLIX-SORA-CDN] EXTRACT FAILED", {
-            watchUrl,
+        console.warn("[ONFLIX] PA PAGE FETCH FAILED", {
+            paWatchUrl,
             error: error?.message || String(error)
         });
     }
 }
 
-// 3. Giữ fallback embed cho SN/PA thực sự có trong records.
-// Nếu chưa lấy được direct link, người dùng vẫn thấy nguồn embed.
-const embedFallbackSeen = new Set();
+// 3. Resolver chạy trên records đã bổ sung PA thật.
+const soraStreams = await onflixResolveSoraRecords(soraRecords);
 
-for (const record of soraRecords) {
-    const src = String(
-        onflixSoraGetSource(record) || ""
-    ).trim().toLowerCase();
-
-    if (src !== "sn" && src !== "pa") {
-        continue;
+for (const item of soraStreams) {
+    if (item?.url) {
+        addStream(item);
     }
-
-    const embedUrl = String(
-        record?.link_embed || ""
-    ).trim();
-
-    if (!/^https?:\/\//i.test(embedUrl)) {
-        continue;
-    }
-
-    if (embedFallbackSeen.has(embedUrl)) {
-        continue;
-    }
-
-    embedFallbackSeen.add(embedUrl);
-
-    streams.push({
-        name: `▶️ Onflix ${src.toUpperCase()} · Embed`,
-        title: String(
-            record?.server_name ||
-            record?.name ||
-            `Onflix ${src.toUpperCase()}`
-        ),
-        externalUrl: embedUrl
-    });
-
-    console.info("[ONFLIX] EMBED FALLBACK ADDED", {
-        src,
-        title: record?.server_name || record?.name || "",
-        embedUrl
-    });
 }
 
     function responseBody(response) {
