@@ -25168,81 +25168,101 @@ try {
             episodeNumber: requestedEpisodeNumber
         });
 
-        
-        const sourceList =
-            linkResult?.normalized ||
-            linkResult?.sources ||
-            linkResult?.streams ||
-            [];
+                
+        // 5. Chuẩn hóa toàn bộ kết quả resolver.
+        // Không dùng || giữa các mảng vì normalized có thể không chứa
+        // đủ stream trong khi sources hoặc streams còn dữ liệu khác.
+        const sourceArrays = [
+            linkResult?.normalized,
+            linkResult?.sources,
+            linkResult?.streams
+        ].filter(Array.isArray);
+
+        const sourceList = [];
+        const sourceKeys = new Set();
+
+        for (const list of sourceArrays) {
+            for (const item of list) {
+                if (!item || typeof item !== "object") continue;
+
+                const url = String(item.url || "").trim();
+                const externalUrl = String(item.externalUrl || "").trim();
+                const key = url
+                    ? `url:${url}`
+                    : externalUrl
+                        ? `external:${externalUrl}`
+                        : "";
+
+                if (!key || sourceKeys.has(key)) continue;
+
+                sourceKeys.add(key);
+                sourceList.push(item);
+            }
+        }
 
         console.info(TAG, "LINKS RESULT:", JSON.stringify({
-            count: Array.isArray(sourceList) ? sourceList.length : 0,
+            count: sourceList.length,
             error: linkResult?.error || null,
-            items: Array.isArray(sourceList)
-                ? sourceList.map(item => ({
-                    name: item?.name || "",
-                    hasUrl: !!item?.url,
-                    hasExternalUrl: !!item?.externalUrl,
-                    urlType: item?.type || ""
-                }))
-                : []
+            items: sourceList.map(item => ({
+                name: item.name || "",
+                hasUrl: Boolean(item.url),
+                hasExternalUrl: Boolean(item.externalUrl),
+                urlType: item.type || "",
+                url: item.url || item.externalUrl || ""
+            }))
         }));
-
-        if (!Array.isArray(sourceList)) {
-            return [];
-        }
 
         const streams = [];
         const seen = new Set();
-        const seenExternal = new Set();
 
         for (const item of sourceList) {
-            const url = String(item?.url || "").trim();
-            const externalUrl = String(
-                item?.externalUrl || ""
-            ).trim();
+            const url = String(item.url || "").trim();
+            const externalUrl = String(item.externalUrl || "").trim();
 
-            // A. Direct media: ưu tiên link video thật.
+            const title = item.title ||
+                (selected
+                    ? `${detail?.title || candidate.title} · ${selected.name}`
+                    : (detail?.title || candidate.title));
+
+            // A. DIRECT: giữ nguyên URL media thật.
             if (/^https?:\/\//i.test(url)) {
-                if (seen.has(url)) {
-                    continue;
-                }
+                const key = `url:${url}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
 
-                seen.add(url);
+                const isHls = /\.m3u8(?:$|[?#])/i.test(url);
+                const isDash = /\.mpd(?:$|[?#])/i.test(url);
 
                 streams.push({
-                    name: item.name || "Onflix",
-                    title: item.title ||
-                        (selected
-                            ? `${detail?.title || candidate.title} · ${selected.name}`
-                            : (detail?.title || candidate.title)),
+                    name: /direct/i.test(String(item.name || ""))
+                        ? String(item.name)
+                        : `${item.name || "Onflix"} · Direct`,
+                    title,
                     url,
-                    type: /\.m3u8(?:$|[?#])|\.mpd(?:$|[?#])/i.test(url)
-                        ? "m3u8"
-                        : "video",
+                    type: isHls || isDash ? "m3u8" : (item.type || "video"),
                     provider: "onflix",
                     source: "onflix",
                     headers: item.headers || {}
                 });
 
+                console.info(TAG, "DIRECT STREAM PRESERVED:", JSON.stringify({
+                    name: streams[streams.length - 1].name,
+                    type: streams[streams.length - 1].type,
+                    url
+                }));
+
                 continue;
             }
 
-            // B. Embed fallback: giữ URL trang embed riêng,
-            // tuyệt đối không giả định đây là direct video.
-            if (
-                /^https?:\/\//i.test(externalUrl) &&
-                (item?.name || "").toLowerCase().includes("onflix") &&
-                !seenExternal.has(externalUrl)
-            ) {
-                seenExternal.add(externalUrl);
+            // B. EMBED: chỉ xuất dưới dạng externalUrl.
+            if (/^https?:\/\//i.test(externalUrl)) {
+                const key = `external:${externalUrl}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
 
                 streams.push({
                     name: item.name || "Onflix · Embed",
-                    title: item.title ||
-                        (selected
-                            ? `${detail?.title || candidate.title} · ${selected.name}`
-                            : (detail?.title || candidate.title)),
+                    title,
                     externalUrl,
                     behaviorHints: {
                         notWebReady: true
@@ -25251,7 +25271,7 @@ try {
                     source: "onflix"
                 });
 
-                console.info(TAG, "EMBED FALLBACK PRESERVED:", JSON.stringify({
+                console.info(TAG, "EMBED STREAM PRESERVED:", JSON.stringify({
                     name: item.name || "Onflix · Embed",
                     externalUrl
                 }));
@@ -25260,11 +25280,12 @@ try {
 
         console.info(TAG, "STREAM COUNT:", JSON.stringify({
             total: streams.length,
-            direct: streams.filter(item => !!item.url).length,
-            external: streams.filter(item => !!item.externalUrl).length
+            direct: streams.filter(item => Boolean(item.url)).length,
+            external: streams.filter(item => Boolean(item.externalUrl)).length
         }));
 
         return streams;
+
 
     } catch (error) {
         console.error(
