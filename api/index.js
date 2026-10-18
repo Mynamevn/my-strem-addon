@@ -23917,16 +23917,64 @@ async function onflixLinks(input) {
     // SORA CDN — Resolve from episode record, not by scraping watch HTML
     // ================================================================
 
-const soraRecords =
-    Array.isArray(payload?.records)
-        ? payload.records
-        : [];
 
-const soraStreams =
-    await onflixResolveSoraRecords(soraRecords);
+const soraRecords = Array.isArray(payload?.records)
+    ? payload.records
+    : [];
+
+// 1. Ưu tiên stream trực tiếp nếu Sora resolver lấy được.
+const soraStreams = await onflixResolveSoraRecords(soraRecords);
 
 for (const item of soraStreams) {
-    addStream(item);
+    if (item?.url) {
+        addStream(item);
+    }
+}
+
+// 2. Fallback: giữ lại embed SN/PA để người dùng vẫn nhìn thấy
+// nguồn trong Stremio khi endpoint trích xuất video trả về 403.
+const embedFallbackSeen = new Set();
+
+for (const record of soraRecords) {
+    const src = String(
+        onflixSoraGetSource(record) || ""
+    ).trim().toLowerCase();
+
+    if (src !== "sn" && src !== "pa") {
+        continue;
+    }
+
+    const embedUrl = String(
+        record?.link_embed || ""
+    ).trim();
+
+    if (!/^https?:\/\//i.test(embedUrl)) {
+        continue;
+    }
+
+    if (embedFallbackSeen.has(embedUrl)) {
+        continue;
+    }
+
+    embedFallbackSeen.add(embedUrl);
+
+    streams.push({
+        name: `▶️ Onflix ${src.toUpperCase()} · Embed`,
+        title: String(
+            record?.server_name ||
+            record?.name ||
+            `Onflix ${src.toUpperCase()}`
+        ),
+        externalUrl: embedUrl
+    });
+
+    console.info("[ONFLIX] EMBED FALLBACK ADDED", {
+        src,
+        title: record?.server_name || record?.name || "",
+        embedUrl
+    });
+}
+
 }
 
     function responseBody(response) {
