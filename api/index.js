@@ -23732,119 +23732,140 @@ async function onflixFetchSoraMaster(epId, src, record = null) {
     return await tryEmbedPage();
 }
 
+
 async function onflixResolveSoraRecords(records) {
     const list = Array.isArray(records) ? records : [];
+
     const ua =
         typeof ONFLIX_USER_AGENT !== "undefined"
             ? ONFLIX_USER_AGENT
             : "Mozilla/5.0";
 
-    const episodeIds = new Set();
+    const streams = [];
+    const attempted = new Set();
 
-    for (const record of list) {
-        const src = onflixSoraGetSource(record);
-
-        if (src !== "sn" && src !== "pa") continue;
+    // Chỉ xử lý record SN/PA thực sự tồn tại.
+    // Tuyệt đối không lấy record SN để giả làm PA hoặc ngược lại.
+    const validRecords = list.filter(record => {
+        const src = String(
+            onflixSoraGetSource(record) || ""
+        ).trim().toLowerCase();
 
         const epId = onflixSoraGetEpisodeId(record);
-        if (epId) episodeIds.add(epId);
-    }
 
-    if (!episodeIds.size) {
-        console.log("[ONFLIX-SORA] NO EPISODE ID", {
+        return (src === "sn" || src === "pa") && Boolean(epId);
+    });
+
+    if (!validRecords.length) {
+        console.info("[ONFLIX-SORA] NO VALID RECORDS", {
             recordCount: list.length,
-            fields: list.slice(0, 3).map(record => ({
-                keys: Object.keys(record || {}),
-                src: onflixSoraGetSource(record)
+            sources: list.map(record => ({
+                src: onflixSoraGetSource(record),
+                epId: onflixSoraGetEpisodeId(record),
+                embedUrl: record?.link_embed || ""
             }))
         });
 
         return [];
     }
 
-    const streams = [];
-    const attempted = new Set();
+    // Mỗi record dùng đúng source, ID và URL của chính nó.
+    for (const record of validRecords) {
+        const src = String(
+            onflixSoraGetSource(record) || ""
+        ).trim().toLowerCase();
 
-    // SN và PA dùng cùng chuỗi giải mã; src được gửi riêng theo server.
-    for (const epId of episodeIds) {
-        for (const src of ["sn", "pa"]) {
-            const key = epId + "|" + src;
-            if (attempted.has(key)) continue;
-            attempted.add(key);
+        const epId = onflixSoraGetEpisodeId(record);
 
-            try {
-                // Lấy record thực tế tương ứng với episode ID và source đang thử.
-// Ưu tiên record đúng source; nếu không có thì dùng record cùng episode
-// để thử source thay thế SN/PA.
-const sourceRecords = Array.isArray(records) ? records : [];
+        const embedUrl = String(
+            record?.link_embed || ""
+        ).trim();
 
-const record =
-    sourceRecords.find((item) =>
-        onflixSoraGetEpisodeId(item) === epId &&
-        onflixSoraGetSource(item) === src
-    ) ||
-    sourceRecords.find((item) =>
-        onflixSoraGetEpisodeId(item) === epId
-    ) ||
-    null;
+        const m3u8Url = String(
+            record?.link_m3u8 || ""
+        ).trim();
 
-if (!record) {
-    console.warn("[ONFLIX-SORA] RECORD NOT FOUND", {
-        src,
-        epId
-    });
-    continue;
-}
+        const key = [
+            src,
+            epId,
+            embedUrl,
+            m3u8Url
+        ].join("|");
 
-console.info("[ONFLIX-SORA] RESOLVE START", {
-    src,
-    epId,
-    hasEmbedUrl: Boolean(record.link_embed),
-    hasM3u8Url: Boolean(record.link_m3u8)
-});
+        if (attempted.has(key)) continue;
+        attempted.add(key);
 
-const resolved = await onflixFetchSoraMaster(epId, src, record);
+        console.info("[ONFLIX-SORA] RESOLVE START", {
+            src,
+            epId,
+            embedUrl,
+            hasEmbedUrl: Boolean(embedUrl),
+            hasM3u8Url: Boolean(m3u8Url)
+        });
 
-if (!resolved || !resolved.url || typeof resolved.url !== "string") {
-    console.warn("[ONFLIX-SORA] NO STREAM", {
-        src,
-        epId,
-        result: resolved || null
-    });
-    continue;
-}
+        try {
+            // Truyền nguyên record để resolver dùng đúng embedUrl.
+            const resolved = await onflixFetchSoraMaster(
+                epId,
+                src,
+                record
+            );
 
-                streams.push({
-                    name: "⚡ Onflix SoraCDN",
-                    title: "Vietsub (" + src.toUpperCase() + ")",
-                    url: resolved.url,
-                    type: "m3u8",
-                    provider: "onflix",
-                    source: src,
-                    headers: {
-                        "User-Agent": ua,
-                        "Referer": "https://onflix.lat/"
-                    },
-                    behaviorHints: {
-                        bingeGroup: "onflix-" + src
-                    }
-                });
-            } catch (error) {
-                console.log("[ONFLIX-SORA] SOURCE FAILED", {
+            if (
+                !resolved ||
+                typeof resolved.url !== "string" ||
+                !resolved.url.trim()
+            ) {
+                console.warn("[ONFLIX-SORA] NO STREAM", {
                     src,
                     epId,
-                    error: error?.response?.status ||
-                        error?.message ||
-                        String(error)
+                    embedUrl,
+                    result: resolved || null
                 });
+
+                continue;
             }
+
+            streams.push({
+                name: "⚡ Onflix SoraCDN",
+                title: "Vietsub (" + src.toUpperCase() + ")",
+                url: resolved.url,
+                type: "m3u8",
+                provider: "onflix",
+                source: src,
+                headers: {
+                    "User-Agent": ua,
+                    "Referer": "https://onflix.lat/"
+                },
+                behaviorHints: {
+                    bingeGroup: "onflix-" + src
+                }
+            });
+        } catch (error) {
+            console.warn("[ONFLIX-SORA] SOURCE FAILED", {
+                src,
+                epId,
+                embedUrl,
+                error:
+                    error?.response?.status ||
+                    error?.message ||
+                    String(error)
+            });
         }
     }
 
-    console.log("[ONFLIX-SORA] FINAL STREAM COUNT", streams.length);
+    console.info("[ONFLIX-SORA] FINAL STREAM COUNT", {
+        count: streams.length,
+        sources: streams.map(stream => ({
+            source: stream.source,
+            title: stream.title,
+            hasUrl: Boolean(stream.url)
+        }))
+    });
 
     return streams;
 }
+
 
 // ============================================================================
 // END ONFLIX SORACDN RESOLVER
