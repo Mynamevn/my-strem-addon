@@ -22324,6 +22324,7 @@ async function onflixSearch(query) {
 }
 
 
+
 async function onflixLoad(url) {
     const detailUrl = onflixAbsoluteUrl(url);
 
@@ -22361,8 +22362,6 @@ async function onflixLoad(url) {
             page.url || detailUrl
         );
 
-        // Giữ lại URL XEM NGAY cho trường hợp phim lẻ
-        // cần tải trang phát phim để tìm server.
         let watchUrl = null;
 
         $('a[href*="/xem-phim/"]').each((_, node) => {
@@ -22386,6 +22385,8 @@ async function onflixLoad(url) {
         const extracted = onflixExtractNextData(html);
         const records = onflixParseEpisodeRecords(extracted);
 
+        // Gom các record theo tên/slug tập, giữ nguyên thứ tự
+        // xuất hiện trong dữ liệu gốc của Onflix.
         const groups = new Map();
 
         for (const record of records) {
@@ -22397,8 +22398,8 @@ async function onflixLoad(url) {
 
             if (!groups.has(key)) {
                 groups.set(key, {
-                    name: record.name || key,
-                    slug: record.slug || key,
+                    name: String(record.name || key).trim(),
+                    slug: String(record.slug || key).trim(),
                     records: []
                 });
             }
@@ -22406,28 +22407,39 @@ async function onflixLoad(url) {
             groups.get(key).records.push(record);
         }
 
-        const episodes = [...groups.values()].map(
-            (group, index) => ({
-                id:
-                    `${detailUrl}#onflix-${encodeURIComponent(group.slug)}`,
+        const episodes = [...groups.values()].map((group, index) => {
+            const rawName = String(group.name || group.slug || "").trim();
+
+            // Chỉ dùng số tập có trong tên nếu tên thực sự chứa
+            // một số tập rõ ràng; nếu không, dùng vị trí trong danh sách.
+            const explicitMatch = rawName.match(
+                /^(?:tập|ep(?:isode)?)\s*0*(\d+)$/i
+            ) || rawName.match(/^0*(\d+)$/);
+
+            const explicitNumber = explicitMatch
+                ? Number(explicitMatch[1])
+                : 0;
+
+            const number = explicitNumber > 0
+                ? explicitNumber
+                : index + 1;
+
+            return {
+                id: `${detailUrl}#onflix-${encodeURIComponent(group.slug)}`,
                 url: detailUrl,
-                name: group.name || `Tập ${index + 1}`,
-                title: group.name || `Tập ${index + 1}`,
-                number: (
-                    Number(
-                        String(group.name).match(
-                            /(?:tập|ep(?:isode)?)\s*(\d+)/i
-                        )?.[1]
-                    ) || index + 1
-                ),
+                name: rawName || `Tập ${number}`,
+                title: rawName || `Tập ${number}`,
+                number,
                 data: JSON.stringify({
-    detailUrl,
-    watchUrl,
-    records: group.records
-}),
+                    detailUrl,
+                    watchUrl,
+                    selectedEpisode: number,
+                    episodeName: rawName || `Tập ${number}`,
+                    records: group.records
+                }),
                 provider: "onflix"
-            })
-        );
+            };
+        });
 
         console.info("[ONFLIX] LOAD PAGE:", JSON.stringify({
             status: page.status,
@@ -22437,6 +22449,17 @@ async function onflixLoad(url) {
             extractedLength: extracted.length,
             recordsFound: records.length,
             episodeGroups: episodes.length,
+            episodeMap: episodes.map(episode => ({
+                name: episode.name,
+                number: episode.number,
+                recordCount: (() => {
+                    try {
+                        return JSON.parse(episode.data).records.length;
+                    } catch {
+                        return 0;
+                    }
+                })()
+            })),
             hasWatchUrl: Boolean(watchUrl),
             watchUrl
         }));
@@ -25115,12 +25138,13 @@ try {
 
         // 4. Giải quyết link.
         
-        // Số tập hiển thị trong MOVINA có thể lệch 1 so với
-        // chỉ số episode được chuyển vào provider Onflix.
-        // Giữ nguyên linkInput đã chọn để không làm mất embed SN.
+        
+        // Truyền nguyên số tập MOVINA yêu cầu.
+        // Không tự trừ 1 vì chưa xác nhận quy tắc lệch tập
+        // áp dụng cho mọi phim Onflix.
         const requestedEpisodeNumber = Math.max(
             1,
-            (Number(episodeNumber) || 1) - 1
+            Number(episodeNumber) || 1
         );
 
         console.info(TAG, "LINKS REQUESTED EPISODE:", JSON.stringify({
