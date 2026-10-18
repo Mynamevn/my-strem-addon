@@ -23940,20 +23940,45 @@ async function onflixLinks(input, requestedEpisodeNumberArg = 0) {
     const failedSoraSources = new Set();
 
     function addStream(item) {
-        const url = String(item?.url || "").trim();
-        if (!/^https?:\/\//i.test(url) || seen.has(url)) return false;
+    const url = String(item?.url || "").trim();
+    if (!/^https?:\/\//i.test(url) || seen.has(url)) return false;
 
-        seen.add(url);
-        streams.push({
-            ...item,
-            url,
-            name: item.name || "Onflix",
-            type: item.type || "m3u8",
-            provider: "onflix",
-            headers: item.headers || {}
-        });
-        return true;
+    seen.add(url);
+    streams.push({
+        ...item,
+        url,
+        name: item.name || "Onflix",
+        type: item.type || "m3u8",
+        provider: "onflix",
+        headers: item.headers || {}
+    });
+    return true;
+}
+
+// Giữ lại link player như một lựa chọn mở ngoài trình phát video.
+// Không giả dạng URL HTML thành M3U8.
+function addExternalStream(item) {
+    const externalUrl = String(item?.externalUrl || "").trim();
+
+    if (!/^https?:\/\//i.test(externalUrl) || seen.has(externalUrl)) {
+        return false;
     }
+
+    seen.add(externalUrl);
+    streams.push({
+        externalUrl,
+        name: item.name || "Onflix Embed",
+        title: item.title || item.name || "Onflix Embed",
+        provider: "onflix"
+    });
+
+    console.info("[ONFLIX] EXTERNAL EMBED ADDED", {
+        name: item.name || "Onflix Embed",
+        externalUrl
+    });
+
+    return true;
+}
 
     // ================================================================
     // SORA CDN — Resolve from episode record, not by scraping watch HTML
@@ -24067,16 +24092,19 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
     }
 }
 
-// 3. Giữ lại embed SN/PA ngay cả khi resolve luồng trực tiếp thất bại.
-// Chỉ giữ embed Sora, không nhận player của provider khác.
+ // 3. Giữ lại các embed SN/PA hợp lệ để không mất lựa chọn nguồn.
 for (const record of soraRecords) {
     const src = String(
-        onflixSoraGetSource(record) || ""
+        onflixSoraGetSource(record) || record?.src || ""
     ).trim().toLowerCase();
 
     if (src !== "sn" && src !== "pa") continue;
 
-    const embedUrl = String(record?.link_embed || "").trim();
+    const embedUrl = onflixAbsoluteUrl(
+        String(record?.link_embed || "").trim(),
+        payload?.detailUrl || ONFLIX_BASE_URL
+    );
+
     if (!embedUrl) continue;
 
     let host = "";
@@ -24086,12 +24114,30 @@ for (const record of soraRecords) {
         continue;
     }
 
-    if (host !== "playembed.vip") continue;
+    // Chỉ khôi phục những embed đã xác định được của SN.
+    // Không đưa các URL không rõ nguồn vào danh sách.
+    if (src === "sn" && host === "playembed.vip") {
+        addExternalStream({
+            externalUrl: embedUrl,
+            name: "Onflix SN Embed",
+            title: "Vietsub SN · Mở player ngoài"
+        });
+    }
+
+    // PA player được giữ riêng; không nhầm URL player với M3U8.
+    if (src === "pa" && host === "player.phimapi.com") {
+        addExternalStream({
+            externalUrl: embedUrl,
+            name: "Onflix PA Embed",
+            title: "Vietsub PA · Mở player ngoài"
+        });
+    }
 
     console.info("[ONFLIX] SORA EMBED CANDIDATE", {
         src,
         epId: onflixSoraGetEpisodeId(record),
-        embedUrl
+        host,
+        externalAdded: seen.has(embedUrl)
     });
 }
 
@@ -24110,15 +24156,20 @@ try {
 
     
     // FALLBACK: chọn đúng tập, ưu tiên URL media trực tiếp.
-    const requestedEpisodeNumber = Math.max(
-        1,
-        Number(
-            payload?.selectedEpisode ||
-            payload?.episodeNumber ||
-            String(currentWatchUrl).match(/\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i)?.[1] ||
-            1
-        )
-    );
+    
+const requestedEpisodeNumber = Math.max(
+    1,
+    Number(
+        requestedEpisodeNumberArg ||
+        payload?.selectedEpisode ||
+        payload?.episodeNumber ||
+        String(currentWatchUrl).match(
+            /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
+        )?.[1] ||
+        1
+    )
+);
+
 
     const fallbackSeen = new Set();
 
