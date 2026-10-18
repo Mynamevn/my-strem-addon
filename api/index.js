@@ -23967,6 +23967,20 @@ const soraRecords = Array.isArray(payload?.records)
 
 // 2. Nếu trang hiện tại là SN, tải trang PA tương ứng.
 // Không được lấy epId hoặc embedUrl của SN để giả làm PA.
+console.info("[ONFLIX-DEBUG] BEFORE PA FETCH", {
+    inputType: typeof input,
+    inputIsString: typeof input === "string",
+    inputPreview: typeof input === "string" ? input.slice(0, 250) : null,
+    payloadKeys: payload && typeof payload === "object"
+        ? Object.keys(payload)
+        : [],
+    watchUrl: payload?.watchUrl || "",
+    detailUrl: payload?.detailUrl || "",
+    recordCount: Array.isArray(payload?.records)
+        ? payload.records.length
+        : 0
+});
+
 const currentWatchUrl = String(
     payload?.watchUrl ||
     (
@@ -24080,6 +24094,11 @@ for (const record of soraRecords) {
         embedUrl
     });
 }
+
+console.info("[ONFLIX-DEBUG] AFTER PA FETCH BLOCK", {
+    currentWatchUrl,
+    soraRecordCount: soraRecords.length
+});
 
 // 4. Thử resolve trực tiếp; lỗi không làm mất embed đã tìm thấy.
 try {
