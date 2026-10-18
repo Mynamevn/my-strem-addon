@@ -23315,6 +23315,409 @@ async function onflixExtractSoraCdnStreams(
     return results;
 }
 
+// ============================================================================
+// ONFLIX SORACDN — SMALI-BASED RESOLVER
+// Flow: player -> initialM3u8(enc_) -> master -> qid -> play_vid -> pacebin
+// ============================================================================
+
+const ONFLIX_SORA_KEY_V2 = "onflix_secure_stream_v2_2026";
+
+function onflixSoraDecodeEnc(encoded) {
+    const value = String(encoded || "").trim();
+
+    if (!value.startsWith("enc_")) {
+        return value.startsWith("http") ? value : null;
+    }
+
+    const hex = value.slice(4);
+
+    if (!hex || hex.length % 2 !== 0 || !/^[a-f0-9]+$/i.test(hex)) {
+        return null;
+    }
+
+    let decoded = "";
+
+    for (let i = 0; i < hex.length; i += 2) {
+        const byte = parseInt(hex.slice(i, i + 2), 16);
+        const keyIndex = (i / 2) % ONFLIX_SORA_KEY_V2.length;
+
+        decoded += String.fromCharCode(
+            byte ^ ONFLIX_SORA_KEY_V2.charCodeAt(keyIndex)
+        );
+    }
+
+    try {
+        decoded = decodeURIComponent(decoded);
+    } catch (_) {
+        // Smali xác nhận URLDecoder fallback về chuỗi chưa decode.
+    }
+
+    return decoded.startsWith("http") ? decoded : null;
+}
+
+function onflixSoraResponseText(response) {
+    const data = response?.data ?? response?.body ?? response;
+
+    if (typeof data === "string") return data;
+    if (data == null) return "";
+
+    try {
+        return JSON.stringify(data);
+    } catch (_) {
+        return String(data);
+    }
+}
+
+function onflixSoraParseJson(response) {
+    const data = response?.data ?? response?.body ?? response;
+
+    if (data && typeof data === "object") return data;
+    if (typeof data !== "string") return null;
+
+    try {
+        return JSON.parse(data);
+    } catch (_) {
+        return null;
+    }
+}
+
+function onflixSoraExtractInitialM3u8(html) {
+    const source = String(html || "");
+
+    const patterns = [
+        /["']initialM3u8\\?["']\s*:\s*\\?["'](enc_[a-f0-9]+)\\?["']/i,
+        /["']initialM3u8["']\s*:\s*["'](enc_[a-f0-9]+)["']/i,
+        /initialM3u8\s*=\s*["'](enc_[a-f0-9]+)["']/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = source.match(pattern);
+        if (match?.[1]) return match[1];
+    }
+
+    return null;
+}
+
+function onflixSoraGetEpisodeId(record) {
+    let value =
+        record?.id ??
+        record?.ep_id ??
+        record?.episode_id ??
+        record?.episodeId ??
+        record?.episodeID;
+
+    if (value && typeof value === "object") {
+        value =
+            value.ep_id ??
+            value.episode_id ??
+            value.id ??
+            value.value ??
+            null;
+    }
+
+    if (value === null || value === undefined) return "";
+
+    const id = String(value).trim();
+
+    if (
+        !id ||
+        id === "null" ||
+        id === "undefined" ||
+        id === "[object Object]"
+    ) {
+        return "";
+    }
+
+    return id;
+}
+
+function onflixSoraGetSource(record) {
+    return String(
+        record?.src ??
+        record?.source ??
+        record?.sourceCode ??
+        record?.serverName ??
+        record?.server_name ??
+        ""
+    ).trim().toLowerCase();
+}
+
+async function onflixFetchSoraMaster(epId, src) {
+    const axiosClient =
+        typeof axios !== "undefined"
+            ? axios
+            : null;
+
+    if (!axiosClient) {
+        throw new Error("Axios không khả dụng");
+    }
+
+    const ua =
+        typeof ONFLIX_USER_AGENT !== "undefined"
+            ? ONFLIX_USER_AGENT
+            : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36";
+
+    const playerUrl =
+        "https://playembed.vip/player?ep_id=" +
+        encodeURIComponent(epId) +
+        "&src=" +
+        encodeURIComponent(src);
+
+    const playerHeaders = {
+        "User-Agent": ua,
+        "Referer": "https://onflix.lat/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    };
+
+    console.log("[ONFLIX-SORA] PLAYER REQUEST", {
+        src,
+        epId,
+        url: playerUrl
+    });
+
+    const playerResponse = await axiosClient.get(playerUrl, {
+        timeout: 12000,
+        headers: playerHeaders,
+        maxRedirects: 5,
+        validateStatus: status => status >= 200 && status < 400,
+        responseType: "text",
+        transformResponse: [data => data]
+    });
+
+    const playerHtml = onflixSoraResponseText(playerResponse);
+
+    console.log("[ONFLIX-SORA] PLAYER RESPONSE", {
+        src,
+        status: playerResponse.status,
+        length: playerHtml.length
+    });
+
+    const encoded = onflixSoraExtractInitialM3u8(playerHtml);
+
+    if (!encoded) {
+        throw new Error(
+            "Không tìm thấy initialM3u8 enc_; HTTP " +
+            playerResponse.status +
+            "; body=" +
+            playerHtml.slice(0, 180).replace(/\s+/g, " ")
+        );
+    }
+
+    const dataVodUrl = onflixSoraDecodeEnc(encoded);
+
+    if (!dataVodUrl) {
+        throw new Error("Giải mã initialM3u8 thất bại");
+    }
+
+    console.log("[ONFLIX-SORA] MASTER REQUEST", {
+        src,
+        host: (() => {
+            try {
+                return new URL(dataVodUrl).host;
+            } catch (_) {
+                return "";
+            }
+        })()
+    });
+
+    const masterResponse = await axiosClient.get(dataVodUrl, {
+        timeout: 12000,
+        headers: {
+            "User-Agent": ua,
+            "Referer": "https://playembed.vip/"
+        },
+        maxRedirects: 5,
+        validateStatus: status => status >= 200 && status < 400
+    });
+
+    const master = onflixSoraParseJson(masterResponse);
+
+    if (!master || typeof master !== "object") {
+        throw new Error(
+            "Master không phải JSON hợp lệ; HTTP " +
+            masterResponse.status
+        );
+    }
+
+    const qualities = Array.isArray(master.qualities)
+        ? master.qualities
+        : [];
+
+    if (!qualities.length) {
+        throw new Error(
+            "Master không có qualities: " +
+            JSON.stringify(Object.keys(master)).slice(0, 300)
+        );
+    }
+
+    // Smali chọn qualities.firstOrNull()?.qid.
+    const qid = qualities[0]?.qid;
+
+    if (qid === undefined || qid === null) {
+        throw new Error("Quality đầu tiên không có qid");
+    }
+
+    const playVidUrl =
+        dataVodUrl +
+        (dataVodUrl.includes("?") ? "&" : "?") +
+        "q=" +
+        encodeURIComponent(String(qid));
+
+    console.log("[ONFLIX-SORA] PLAY_VID REQUEST", {
+        src,
+        qid,
+        qualityCount: qualities.length
+    });
+
+    const playResponse = await axiosClient.get(playVidUrl, {
+        timeout: 12000,
+        headers: {
+            "User-Agent": ua,
+            "Referer": "https://playembed.vip/"
+        },
+        maxRedirects: 5,
+        validateStatus: status => status >= 200 && status < 400
+    });
+
+    const playJson = onflixSoraParseJson(playResponse);
+    const playVid = playJson?.play_vid;
+
+    if (typeof playVid !== "string" || !playVid.trim()) {
+        throw new Error(
+            "Phản hồi play_vid không hợp lệ; HTTP " +
+            playResponse.status
+        );
+    }
+
+    console.log("[ONFLIX-SORA] PACEBIN REQUEST", {
+        src,
+        playVidLength: playVid.length
+    });
+
+    const paceResponse = await axiosClient.post(
+        "https://pacebin.onrender.com/onflix.m3u8",
+        playVid,
+        {
+            timeout: 15000,
+            headers: {
+                "Content-Type": "application/vnd.apple.mpegurl",
+                "User-Agent": ua
+            },
+            responseType: "text",
+            transformResponse: [data => data],
+            validateStatus: status => status >= 200 && status < 400
+        }
+    );
+
+    const rawUrl = onflixSoraResponseText(paceResponse).trim();
+
+    if (!/^https?:\/\//i.test(rawUrl)) {
+        throw new Error(
+            "Pacebin không trả URL HTTP; status=" +
+            paceResponse.status +
+            "; body=" +
+            rawUrl.slice(0, 250)
+        );
+    }
+
+    console.log("[ONFLIX-SORA] RESOLVED", {
+        src,
+        status: paceResponse.status,
+        urlHost: (() => {
+            try {
+                return new URL(rawUrl).host;
+            } catch (_) {
+                return "";
+            }
+        })()
+    });
+
+    return {
+        url: rawUrl,
+        src,
+        qid
+    };
+}
+
+async function onflixResolveSoraRecords(records) {
+    const list = Array.isArray(records) ? records : [];
+    const ua =
+        typeof ONFLIX_USER_AGENT !== "undefined"
+            ? ONFLIX_USER_AGENT
+            : "Mozilla/5.0";
+
+    const episodeIds = new Set();
+
+    for (const record of list) {
+        const src = onflixSoraGetSource(record);
+
+        if (src !== "sn" && src !== "pa") continue;
+
+        const epId = onflixSoraGetEpisodeId(record);
+        if (epId) episodeIds.add(epId);
+    }
+
+    if (!episodeIds.size) {
+        console.log("[ONFLIX-SORA] NO EPISODE ID", {
+            recordCount: list.length,
+            fields: list.slice(0, 3).map(record => ({
+                keys: Object.keys(record || {}),
+                src: onflixSoraGetSource(record)
+            }))
+        });
+
+        return [];
+    }
+
+    const streams = [];
+    const attempted = new Set();
+
+    // SN và PA dùng cùng chuỗi giải mã; src được gửi riêng theo server.
+    for (const epId of episodeIds) {
+        for (const src of ["sn", "pa"]) {
+            const key = epId + "|" + src;
+            if (attempted.has(key)) continue;
+            attempted.add(key);
+
+            try {
+                const resolved = await onflixFetchSoraMaster(epId, src);
+
+                streams.push({
+                    name: "⚡ Onflix SoraCDN",
+                    title: "Vietsub (" + src.toUpperCase() + ")",
+                    url: resolved.url,
+                    type: "m3u8",
+                    provider: "onflix",
+                    source: src,
+                    headers: {
+                        "User-Agent": ua,
+                        "Referer": "https://onflix.lat/"
+                    },
+                    behaviorHints: {
+                        bingeGroup: "onflix-" + src
+                    }
+                });
+            } catch (error) {
+                console.log("[ONFLIX-SORA] SOURCE FAILED", {
+                    src,
+                    epId,
+                    error: error?.response?.status ||
+                        error?.message ||
+                        String(error)
+                });
+            }
+        }
+    }
+
+    console.log("[ONFLIX-SORA] FINAL STREAM COUNT", streams.length);
+
+    return streams;
+}
+
+// ============================================================================
+// END ONFLIX SORACDN RESOLVER
+// ============================================================================
+
 async function onflixLinks(input) {
     const TAG = "[ONFLIX-LINKS]";
     let payload = input;
@@ -23378,23 +23781,21 @@ async function onflixLinks(input) {
         return true;
     }
 
-    // Ưu tiên URL SoraCDN thực tế từ trang phát SN / PA.
-    const soraWatchUrl = String(
-        payload?.watchUrl ||
-        payload?.watch_url ||
-        ""
-    ).trim();
+    // ================================================================
+    // SORA CDN — Resolve from episode record, not by scraping watch HTML
+    // ================================================================
 
-    if (soraWatchUrl) {
-        const soraStreams =
-            await onflixExtractSoraCdnStreams(
-                soraWatchUrl
-            );
+const soraRecords =
+    Array.isArray(payload?.records)
+        ? payload.records
+        : [];
 
-        for (const item of soraStreams) {
-            addStream(item);
-        }
-    }
+const soraStreams =
+    await onflixResolveSoraRecords(soraRecords);
+
+for (const item of soraStreams) {
+    addStream(item);
+}
 
     function responseBody(response) {
         if (typeof response?.body === "string") return response.body;
