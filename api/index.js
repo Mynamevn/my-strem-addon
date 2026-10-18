@@ -24538,10 +24538,38 @@ async function fetchOnflixProvider(
             });
         }
 
-        // 2. Tải trang thông tin phim.
-        const detail = await fetchOnflix(candidate.url, {
-            action: "load"
-        });
+        // 2. Tải trang thông tin phim — chẩn đoán điểm dừng.
+console.info(TAG, "DETAIL REQUEST START:", JSON.stringify({
+    url: candidate.url,
+    action: "load"
+}));
+
+const detailStartedAt = Date.now();
+
+let detail;
+
+try {
+    detail = await fetchOnflix(candidate.url, {
+        action: "load"
+    });
+
+    console.info(TAG, "DETAIL REQUEST FINISHED:", JSON.stringify({
+        elapsedMs: Date.now() - detailStartedAt,
+        title: detail?.title || "",
+        recordsFound: detail?.recordsFound ?? detail?.records?.length ?? 0,
+        episodes: Array.isArray(detail?.episodes)
+            ? detail.episodes.length
+            : 0,
+        error: detail?.error || null
+    }));
+} catch (error) {
+    console.error(TAG, "DETAIL REQUEST THREW:", JSON.stringify({
+        elapsedMs: Date.now() - detailStartedAt,
+        message: error?.message || String(error)
+    }));
+
+    throw error;
+}
 
         const episodes = Array.isArray(detail?.episodes)
             ? detail.episodes
