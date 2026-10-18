@@ -24107,6 +24107,97 @@ try {
     for (const item of soraStreams || []) {
         if (item?.url) addStream(item);
     }
+
+    // FALLBACK: giữ embed SN và stream PA của đúng tập đang chọn.
+    const selectedEpisodeNumber = Number(
+        String(currentWatchUrl).match(/\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i)?.[1] || 1
+    );
+
+    const fallbackSeen = new Set();
+
+    for (const record of soraRecords) {
+        const src = String(
+            onflixSoraGetSource(record) || ""
+        ).trim().toLowerCase();
+
+        if (src !== "sn" && src !== "pa") continue;
+
+        // Trang PA chứa nhiều tập; chỉ xét bản ghi trùng số tập.
+        const episodeLabel = String(
+            record?.name || record?.slug || ""
+        ).trim();
+
+        const episodeMatch = episodeLabel.match(/^\d+$/);
+
+        if (src === "pa" && episodeMatch) {
+            if (Number(episodeLabel) !== selectedEpisodeNumber) continue;
+        } else if (src === "pa" && !episodeMatch) {
+            continue;
+        }
+
+        const embedUrl = String(record?.link_embed || "").trim();
+        const m3u8Url = String(record?.link_m3u8 || "").trim();
+
+        // Ưu tiên URL M3U8 PA trực tiếp nếu có.
+        if (src === "pa" && /^https?:\/\/.+\.m3u8(?:[?#].*)?$/i.test(m3u8Url)) {
+            if (!fallbackSeen.has(m3u8Url)) {
+                fallbackSeen.add(m3u8Url);
+
+                addStream({
+                    url: m3u8Url,
+                    name: "Onflix PA",
+                    title: `Vietsub PA · Tập ${selectedEpisodeNumber}`,
+                    type: "m3u8",
+                    headers: {
+                        Referer: ONFLIX_BASE_URL + "/",
+                        "User-Agent": ONFLIX_USER_AGENT
+                    }
+                });
+
+                console.info("[ONFLIX] PA DIRECT FALLBACK ADDED", {
+                    episode: selectedEpisodeNumber,
+                    url: m3u8Url
+                });
+            }
+        }
+
+        // Giữ lại embed SN/PA khi direct resolver không lấy được luồng.
+        if (!embedUrl) continue;
+
+        let host = "";
+        try {
+            host = new URL(embedUrl).hostname.toLowerCase();
+        } catch (_) {
+            continue;
+        }
+
+        const isSnEmbed = src === "sn" && host === "playembed.vip";
+        const isPaEmbed = src === "pa" &&
+            (host === "player.phimapi.com" || host === "playembed.vip");
+
+        if (!isSnEmbed && !isPaEmbed) continue;
+        if (fallbackSeen.has(embedUrl)) continue;
+
+        fallbackSeen.add(embedUrl);
+
+        addStream({
+            url: embedUrl,
+            name: `Onflix ${src.toUpperCase()} Embed`,
+            title: `Vietsub ${src.toUpperCase()} · Tập ${selectedEpisodeNumber} · Embed fallback`,
+            type: "m3u8",
+            headers: {
+                Referer: ONFLIX_BASE_URL + "/",
+                "User-Agent": ONFLIX_USER_AGENT
+            }
+        });
+
+        console.info("[ONFLIX] EMBED FALLBACK ADDED", {
+            src,
+            episode: selectedEpisodeNumber,
+            host
+        });
+    }
+
 } catch (error) {
     console.warn("[ONFLIX] SORA RESOLVE ERROR", {
         message: error?.message || String(error)
