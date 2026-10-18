@@ -23773,7 +23773,46 @@ async function onflixResolveSoraRecords(records) {
             attempted.add(key);
 
             try {
-                const resolved = await onflixFetchSoraMaster(epId, src, record);
+                // Lấy record thực tế tương ứng với episode ID và source đang thử.
+// Ưu tiên record đúng source; nếu không có thì dùng record cùng episode
+// để thử source thay thế SN/PA.
+const sourceRecords = Array.isArray(records) ? records : [];
+
+const record =
+    sourceRecords.find((item) =>
+        onflixSoraGetEpisodeId(item) === epId &&
+        onflixSoraGetSource(item) === src
+    ) ||
+    sourceRecords.find((item) =>
+        onflixSoraGetEpisodeId(item) === epId
+    ) ||
+    null;
+
+if (!record) {
+    console.warn("[ONFLIX-SORA] RECORD NOT FOUND", {
+        src,
+        epId
+    });
+    continue;
+}
+
+console.info("[ONFLIX-SORA] RESOLVE START", {
+    src,
+    epId,
+    hasEmbedUrl: Boolean(record.link_embed),
+    hasM3u8Url: Boolean(record.link_m3u8)
+});
+
+const resolved = await onflixFetchSoraMaster(epId, src, record);
+
+if (!resolved || !resolved.url || typeof resolved.url !== "string") {
+    console.warn("[ONFLIX-SORA] NO STREAM", {
+        src,
+        epId,
+        result: resolved || null
+    });
+    continue;
+}
 
                 streams.push({
                     name: "⚡ Onflix SoraCDN",
