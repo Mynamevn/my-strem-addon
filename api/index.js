@@ -24119,34 +24119,6 @@ const embedUrl = rawEmbedUrl
             }
         }
 
-        // C. Nếu vẫn chưa có link, thử resolver Sora hiện có.
-        if (streams.length === before && record.id && src) {
-            if (failedSoraSources.has(src)) {
-                console.info(TAG, "SORA SKIPPED", { index: i + 1, src });
-            } else {
-                try {
-                    const result = await onflixResolveSora(record);
-                    for (const item of result || []) addStream(item);
-
-                    console.info(TAG, "SORA RESULT", {
-                        index: i + 1,
-                        src,
-                        count: result?.length || 0
-                    });
-
-                    if (!result?.length) failedSoraSources.add(src);
-                } catch (error) {
-                    failedSoraSources.add(src);
-                    console.warn(TAG, "SORA FAILED", {
-                        index: i + 1,
-                        src,
-                        status: error?.response?.status || 0,
-                        message: error?.message || String(error)
-                    });
-                }
-            }
-        }
-
         console.info(TAG, "RECORD COMPLETE", JSON.stringify({
             index: i + 1,
             server,
