@@ -24230,17 +24230,18 @@ try {
     
     // FALLBACK: chọn đúng tập, ưu tiên URL media trực tiếp.
     
+
 const requestedEpisodeNumber = Math.max(
     1,
+    Number(requestedEpisodeNumberArg) ||
+    Number(payload?.selectedEpisode) ||
+    Number(payload?.episodeNumber) ||
     Number(
-        requestedEpisodeNumberArg ||
-        payload?.selectedEpisode ||
-        payload?.episodeNumber ||
         String(currentWatchUrl).match(
             /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
-        )?.[1] ||
-        1
-    )
+        )?.[1]
+    ) ||
+    1
 );
 
 
@@ -24288,21 +24289,26 @@ const requestedEpisodeNumber = Math.max(
             } catch (_) {}
         }
 
-        if (directUrl && !fallbackSeen.has(directUrl)) {
-            fallbackSeen.add(directUrl);
+        
+if (directUrl && !fallbackSeen.has(directUrl)) {
+    fallbackSeen.add(directUrl);
 
-            addStream({
-                url: directUrl,
-                name: `Onflix ${src.toUpperCase()} Direct`,
-                title: `Vietsub ${src.toUpperCase()} · Tập ${requestedEpisodeNumber}`,
-                type: "m3u8",
-                headers: {
-                    Referer: src === "pa"
-                        ? "https://player.phimapi.com/"
-                        : "https://playembed.vip/",
-                    "User-Agent": ONFLIX_USER_AGENT
-                }
-            });
+    const audioLabel = onflixGetAudioLabel(record, src);
+    const sourceLabel = src.toUpperCase();
+
+    addStream({
+        url: directUrl,
+        name: `Onflix ${sourceLabel} · ${audioLabel} · Direct`,
+        title: `${audioLabel} · Tập ${requestedEpisodeNumber}`,
+        type: "m3u8",
+        headers: {
+            Referer: src === "pa"
+                ? "https://player.phimapi.com/"
+                : "https://playembed.vip/",
+            "User-Agent": ONFLIX_USER_AGENT
+        }
+    });
+}
 
             console.info("[ONFLIX] DIRECT FALLBACK ADDED", {
                 src,
@@ -24583,6 +24589,7 @@ const embedUrl = rawEmbedUrl
 }
 
 
+
 async function fetchOnflix(input, options = {}) {
     const action = String(options.action || "search").toLowerCase();
 
@@ -24603,7 +24610,15 @@ async function fetchOnflix(input, options = {}) {
         }
 
         if (["links", "resolve", "loadlinks"].includes(action)) {
-            const streams = await onflixLinks(input);
+            const requestedEpisodeNumber = Math.max(
+                1,
+                Number(options.episodeNumber) || 1
+            );
+
+            const streams = await onflixLinks(
+                input,
+                requestedEpisodeNumber
+            );
 
             return {
                 provider: "onflix",
@@ -24638,6 +24653,7 @@ async function fetchOnflix(input, options = {}) {
         };
     }
 }
+
 
 /* ============================================================
  * MOVINA — ANIMET PROVIDER ADAPTER
@@ -25098,8 +25114,23 @@ try {
         }));
 
         // 4. Giải quyết link.
+        
+        // Số tập hiển thị trong MOVINA có thể lệch 1 so với
+        // chỉ số episode được chuyển vào provider Onflix.
+        // Giữ nguyên linkInput đã chọn để không làm mất embed SN.
+        const requestedEpisodeNumber = Math.max(
+            1,
+            (Number(episodeNumber) || 1) - 1
+        );
+
+        console.info(TAG, "LINKS REQUESTED EPISODE:", JSON.stringify({
+            incomingEpisodeNumber: episodeNumber,
+            requestedEpisodeNumber
+        }));
+
         const linkResult = await fetchOnflix(linkInput, {
-            action: "links"
+            action: "links",
+            episodeNumber: requestedEpisodeNumber
         });
 
         
