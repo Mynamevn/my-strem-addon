@@ -24960,7 +24960,7 @@ registerMovinaProvider({
     name: "AnimeT",
     category: "cs3",
     kind: "scrape",
-    sourceUrl: "https://anime14.site",
+    sourceUrl: "https://animesub.site",
     enabled: true,
 
     capabilities: {
@@ -24976,7 +24976,7 @@ registerMovinaProvider({
         providerType: "anime",
         streamPipeline: "direct-stream-adapter"
     }
-});
+})
 
 registerMovinaProvider({
     id: "onflix",
