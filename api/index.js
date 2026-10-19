@@ -12532,72 +12532,53 @@ function normalizeVSMovReferer(
 // để HLS player nhận diện đây là media segment.
 // =====================================================
 
+
 function rewriteVSMovSegmentUrl(
     rawUrl,
     baseUrl,
     referer
 ) {
-
     try {
+        const value = String(rawUrl || "").trim();
 
-        const value =
-            String(
-                rawUrl ||
-                ""
-            ).trim();
-
-
-        if (
-            !value
-        ) {
-
+        if (!value) {
             return value;
-
         }
 
+        const absoluteUrl = new URL(value, baseUrl).toString();
+        const parsedUrl = new URL(absoluteUrl);
 
-        const absoluteUrl =
-            new URL(
-                value,
-                baseUrl
-            ).toString();
-
-
-        if (
-            !isValidVSMovStreamUrl(
-                absoluteUrl
-            )
-        ) {
-
+        if (!isValidVSMovStreamUrl(absoluteUrl)) {
             return value;
-
         }
 
+        const encodedUrl = encodeURIComponent(absoluteUrl);
+        const encodedReferer = encodeURIComponent(
+            String(referer || "https://vsmov.com/").trim()
+        );
 
-        const proxyUrl =
+        // Playlist con phải đi qua HLS proxy.
+        if (/\.(m3u8|m3u)(?:$|[?#])/i.test(parsedUrl.href)) {
+            return (
+                VSMOV_PROXY_BASE +
+                "/vsmov-hls-proxy/master.m3u8?url=" +
+                encodedUrl +
+                "&ref=" +
+                encodedReferer
+            );
+        }
+
+        // Các URL media/segment tiếp tục đi qua segment proxy.
+        return (
             VSMOV_PROXY_BASE +
             "/vsmov-segment-proxy/segment.ts?url=" +
-            encodeURIComponent(
-                absoluteUrl
-            ) +
+            encodedUrl +
             "&ref=" +
-            encodeURIComponent(
-                String(
-                    referer ||
-                    "https://vsmov.com/"
-                ).trim()
-            );
-
-
-        return proxyUrl;
-
-
+            encodedReferer
+        );
     } catch (e) {
-
         return rawUrl;
-
     }
-
 }
 
 
@@ -12610,296 +12591,128 @@ function rewriteVSMovM3u8(
     baseUrl,
     referer
 ) {
+    const source = String(playlist || "");
 
-    const source =
-        String(
-            playlist ||
-            ""
-        );
-
-
-    if (
-        !source.trim()
-    ) {
-
+    if (!source.trim()) {
         return source;
-
     }
 
-
-    const lines =
-        source.split(
-            /\r?\n/
-        );
-
-
+    const lines = source.split(/\r?\n/);
     const output = [];
 
+    let rewrittenCount = 0;
+    let urlCount = 0;
 
-    let rewrittenCount =
-        0;
+    for (let i = 0; i < lines.length; i++) {
+        const originalLine = lines[i];
+        const line = String(originalLine || "").trim();
 
-
-    let urlCount =
-        0;
-
-
-    for (
-        let i = 0;
-        i < lines.length;
-        i++
-    ) {
-
-        const originalLine =
-            lines[i];
-
-
-        const line =
-            String(
-                originalLine ||
-                ""
-            ).trim();
-
-
-        // -------------------------------------------------
-        // EMPTY LINE
-        // -------------------------------------------------
-
-        if (
-            !line
-        ) {
-
-            output.push(
-                originalLine
-            );
-
+        if (!line) {
+            output.push(originalLine);
             continue;
-
         }
 
+        // HLS tag/comment: chỉ rewrite URI trỏ đến playlist.
+        if (line.startsWith("#")) {
+            const rewrittenLine = line.replace(
+                /URI="([^"]+)"/gi,
+                (match, rawUri) => {
+                    try {
+                        const absoluteUri = new URL(
+                            String(rawUri).trim(),
+                            baseUrl
+                        ).toString();
 
-        // -------------------------------------------------
-        // HLS TAG / COMMENT
-        // -------------------------------------------------
-
-        if (
-            line.startsWith(
-                "#"
-            )
-        ) {
-
-            const rewrittenLine =
-                line.replace(
-                    /URI="([^"]+)"/gi,
-                    (
-                        match,
-                        rawUri
-                    ) => {
-
-                        try {
-
-                            const absoluteUri =
-                                new URL(
-                                    String(
-                                        rawUri
-                                    ).trim(),
-                                    baseUrl
-                                ).toString();
-
-
-                            if (
-                                !isValidVSMovStreamUrl(
-                                    absoluteUri
-                                )
-                            ) {
-
-                                return match;
-
-                            }
-
-
-                            const proxyUri =
-                                rewriteVSMovSegmentUrl(
-                                    absoluteUri,
-                                    baseUrl,
-                                    referer
-                                );
-
-
-                            if (
-                                !proxyUri ||
-                                proxyUri === absoluteUri
-                            ) {
-
-                                return match;
-
-                            }
-
-
-                            rewrittenCount++;
-
-
-                            console.log(
-                                "[VSMOV HLS PROXY] URI REWRITE:",
-                                absoluteUri,
-                                "=>",
-                                proxyUri
-                            );
-
-
-                            return (
-                                'URI="' +
-                                proxyUri +
-                                '"'
-                            );
-
-
-                        } catch (e) {
-
+                        if (
+                            !isValidVSMovStreamUrl(absoluteUri) ||
+                            !/\.(m3u8|m3u)(?:$|[?#])/i.test(absoluteUri)
+                        ) {
                             return match;
-
                         }
 
+                        const proxyUri = rewriteVSMovSegmentUrl(
+                            absoluteUri,
+                            baseUrl,
+                            referer
+                        );
+
+                        if (!proxyUri || proxyUri === absoluteUri) {
+                            return match;
+                        }
+
+                        rewrittenCount++;
+
+                        console.log(
+                            "[VSMOV HLS PROXY] PLAYLIST URI REWRITE:",
+                            absoluteUri,
+                            "=>",
+                            proxyUri
+                        );
+
+                        return 'URI="' + proxyUri + '"';
+                    } catch (e) {
+                        return match;
                     }
-                );
-
-
-            output.push(
-                rewrittenLine
+                }
             );
 
-
+            output.push(rewrittenLine);
             continue;
-
         }
 
-
-        // -------------------------------------------------
-        // MEDIA URL
-        // -------------------------------------------------
-
+        // URL media hoặc playlist con.
         urlCount++;
 
-
         try {
+            const absoluteUrl = new URL(line, baseUrl).toString();
 
-            const absoluteUrl =
-                new URL(
-                    line,
-                    baseUrl
-                ).toString();
-
-
-            /*
-             * Chỉ rewrite URL thuộc VSMov.
-             */
-
-            if (
-                !isValidVSMovStreamUrl(
-                    absoluteUrl
-                )
-            ) {
-
-                output.push(
-                    originalLine
-                );
-
+            if (!isValidVSMovStreamUrl(absoluteUrl)) {
+                output.push(originalLine);
                 continue;
-
             }
 
+            const proxyUrl = rewriteVSMovSegmentUrl(
+                absoluteUrl,
+                baseUrl,
+                referer
+            );
 
-            const proxyUrl =
-                rewriteVSMovSegmentUrl(
-                    absoluteUrl,
-                    baseUrl,
-                    referer
-                );
-
-
-            if (
-                !proxyUrl ||
-                proxyUrl === absoluteUrl
-            ) {
-
-                output.push(
-                    originalLine
-                );
-
+            if (!proxyUrl || proxyUrl === absoluteUrl) {
+                output.push(originalLine);
                 continue;
-
             }
-
 
             rewrittenCount++;
 
-
-            if (
-                rewrittenCount === 1
-            ) {
-
+            if (rewrittenCount === 1) {
                 console.log(
-                    "[VSMOV HLS PROXY] FIRST SEGMENT:",
+                    "[VSMOV HLS PROXY] FIRST URL:",
                     absoluteUrl
                 );
-
 
                 console.log(
                     "[VSMOV HLS PROXY] FIRST PROXY:",
                     proxyUrl
                 );
-
             }
 
-
-            output.push(
-                proxyUrl
-            );
-
-
+            output.push(proxyUrl);
         } catch (e) {
-
-            output.push(
-                originalLine
-            );
-
+            output.push(originalLine);
         }
-
     }
 
+    const result = output.join("\n");
 
-    const result =
-        output.join(
-            "\n"
-        );
-
-
-    console.log(
-        "[VSMOV HLS PROXY] URL LINES:",
-        urlCount
-    );
-
-
-    console.log(
-        "[VSMOV HLS PROXY] REWRITTEN:",
-        rewrittenCount
-    );
-
+    console.log("[VSMOV HLS PROXY] URL LINES:", urlCount);
+    console.log("[VSMOV HLS PROXY] REWRITTEN:", rewrittenCount);
 
     console.log(
         "[VSMOV HLS PROXY] OUTPUT FIRST LINES:",
-        result
-            .split("\n")
-            .slice(
-                0,
-                14
-            )
-            .join("\n")
+        result.split("\n").slice(0, 14).join("\n")
     );
 
-
     return result;
-
 }
 
 
@@ -12907,502 +12720,186 @@ function rewriteVSMovM3u8(
 // 16.1. VSMOV EMBED RESOLVER
 // =====================================================
 
-async function resolveVSMovEmbed(
-    embedUrl
-) {
+async function resolveVSMovEmbed(embedUrl) {
+    const startedAt = Date.now();
+    const DEFAULT_REFERER = "https://vsmov.com/";
 
-    try {
-
-        if (
-            !embedUrl ||
-            !/^https?:\/\//i.test(
-                String(
-                    embedUrl
-                )
-            )
-        ) {
-
-            return null;
-
+    const isHttpUrl = (value) => {
+        try {
+            const u = new URL(String(value || ""));
+            return u.protocol === "http:" || u.protocol === "https:";
+        } catch (_) {
+            return false;
         }
+    };
 
+    const cleanUrl = (value, base) => {
+        if (!value || typeof value !== "string") return "";
 
-        const url =
-            String(
-                embedUrl
-            ).trim();
+        const cleaned = value.trim()
+            .replace(/\\u0026/g, "&")
+            .replace(/\\\//g, "/")
+            .replace(/&amp;/g, "&")
+            .replace(/&quot;/g, '"')
+            .replace(/&#x2F;/gi, "/");
 
-
-        console.log(
-            "[VSMOV RESOLVE] START:",
-            url
-        );
-
-
-        // -------------------------------------------------
-        // HEADERS GIỐNG CLOUDSTREAM
-        // -------------------------------------------------
-
-        const response =
-    await axios.get(
-        url,
-        {
-            // VSMov có embed fallback nếu không resolve được.
-            // Không chờ 12 giây cho một request bị treo.
-            timeout: 3500,
-
-            headers: {
-                "Referer":
-                    "https://vsmov.com/",
-
-                "User-Agent":
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-
-                "Accept":
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            },
-
-            responseType: "text"
+        try {
+            const absolute = new URL(cleaned, base).href;
+            return isHttpUrl(absolute) ? absolute : "";
+        } catch (_) {
+            return "";
         }
-    );
+    };
 
-
-        const html =
-            String(
-                response?.data ||
-                ""
-            );
-
-
-        if (
-            !html
-        ) {
-
-            console.log(
-                "[VSMOV RESOLVE] Empty HTML"
-            );
-
-            return null;
-
-        }
-
-
-        console.log(
-            "[VSMOV RESOLVE] HTML length:",
-            html.length
-        );
-
-
-        // =================================================
-        // HELPER: EXTRACT JS VARIABLE
-        // =================================================
-
-        const extractJsVar =
-            (
-                source,
-                variableName
-            ) => {
-
-                if (
-                    !source ||
-                    !variableName
-                ) {
-
-                    return "";
-
-                }
-
-
-                const escapedName =
-                    variableName.replace(
-                        /[.*+?^${}()|[\]\\]/g,
-                        "\\$&"
-                    );
-
-
-                const patterns = [
-
-                    new RegExp(
-                        "(?:const|let|var)\\s+" +
-                        escapedName +
-                        "\\s*=\\s*[`'\"]([^`'\"]+)[`'\"]",
-                        "i"
-                    ),
-
-                    new RegExp(
-                        escapedName +
-                        "\\s*:\\s*[`'\"]([^`'\"]+)[`'\"]",
-                        "i"
-                    ),
-
-                    new RegExp(
-                        "[\"']" +
-                        escapedName +
-                        "[\"']\\s*:\\s*[`'\"]([^`'\"]+)[`'\"]",
-                        "i"
-                    )
-
-                ];
-
-
-                for (
-                    const pattern
-                    of patterns
-                ) {
-
-                    const match =
-                        source.match(
-                            pattern
-                        );
-
-
-                    if (
-                        match &&
-                        match[1]
-                    ) {
-
-                        return String(
-                            match[1]
-                        ).trim();
-
-                    }
-
-                }
-
-
-                return "";
-
-            };
-
-
-        // =================================================
-        // 16.1.1. BASE URL
-        // =================================================
-
-        let baseUrl =
-            extractJsVar(
-                html,
-                "baseUrl"
-            );
-
-
-        // =================================================
-        // 16.1.2. VIDEO HASH
-        // =================================================
-
-        let videoHash =
-            extractJsVar(
-                html,
-                "videoHash"
-            );
-
-
-        // =================================================
-        // 16.1.3. VIDEO SRC
-        // =================================================
-
-        let videoSrc =
-            extractJsVar(
-                html,
-                "videoSrc"
-            );
-
-
-        // =================================================
-        // 16.1.4. SIGNED MASTER URL
-        // =================================================
-
-        let signedMasterUrl =
-            extractJsVar(
-                html,
-                "signedMasterUrl"
-            );
-
-
-        // =================================================
-        // 16.1.5. ENABLE SIGNED URL
-        // =================================================
-
-        let enableSignedUrl =
-            extractJsVar(
-                html,
-                "enableSignedUrl"
-            );
-
-
-        const enableSigned =
-            /^(true|1|yes)$/i.test(
-                String(
-                    enableSignedUrl ||
-                    ""
-                ).trim()
-            );
-
-
-        console.log(
-            "[VSMOV RESOLVE] baseUrl:",
-            baseUrl
-        );
-
-        console.log(
-            "[VSMOV RESOLVE] videoHash:",
-            videoHash
-        );
-
-        console.log(
-            "[VSMOV RESOLVE] videoSrc:",
-            videoSrc
-        );
-
-        console.log(
-            "[VSMOV RESOLVE] signedMasterUrl:",
-            signedMasterUrl
-        );
-
-        console.log(
-            "[VSMOV RESOLVE] enableSignedUrl:",
-            enableSigned
-        );
-
-
-        // =================================================
-        // 16.1.6. NORMALIZE BASE URL
-        // =================================================
-
-        baseUrl =
-            String(
-                baseUrl ||
-                ""
-            )
-                .trim()
-                .replace(
-                    /\/+$/,
-                    ""
-                );
-
-
-        // =================================================
-        // 16.1.7. MAIN PLAYER SOURCE
-        // =================================================
-
-        let playerSource =
-            "";
-
-
-        if (
-            enableSigned &&
-            signedMasterUrl
-        ) {
-
-            playerSource =
-                String(
-                    signedMasterUrl
-                ).trim();
-
-
-            console.log(
-                "[VSMOV RESOLVE] SOURCE = SIGNED MASTER"
-            );
-
-        }
-
-
-        if (
-            !playerSource &&
-            baseUrl &&
-            videoHash
-        ) {
-
-            playerSource =
-                baseUrl +
-                "/stream/" +
-                encodeURIComponent(
-                    String(
-                        videoHash
-                    ).trim()
-                ) +
-                "/master.m3u8";
-
-
-            console.log(
-                "[VSMOV RESOLVE] SOURCE = BASE + HASH"
-            );
-
-        }
-
-
-        // =================================================
-        // 16.1.8. VIDEOSRC FALLBACK
-        // =================================================
-
-        if (
-            !playerSource &&
-            videoSrc
-        ) {
-
-            playerSource =
-                String(
-                    videoSrc
-                ).trim();
-
-
-            console.log(
-                "[VSMOV RESOLVE] SOURCE = VIDEOSRC"
-            );
-
-        }
-
-
-        // =================================================
-        // 16.1.9. LEGACY M3U8 FALLBACK
-        // =================================================
-
-        if (
-            !playerSource
-        ) {
-
-            const legacyRegex =
-                /(?:const|let|var)\s+url\s*=\s*[`'"](https?:\/\/[^`'"]+\.m3u8[^`'"]*)[`'"]/i;
-
-
-            const legacyMatch =
-                html.match(
-                    legacyRegex
-                );
-
-
-            if (
-                legacyMatch &&
-                legacyMatch[1]
-            ) {
-
-                playerSource =
-                    String(
-                        legacyMatch[1]
-                    ).trim();
-
-
-                console.log(
-                    "[VSMOV RESOLVE] SOURCE = LEGACY URL"
-                );
-
-            }
-
-        }
-
-
-        // =================================================
-        // 16.1.10. FINAL VALIDATION
-        // =================================================
-
-        if (
-            !playerSource ||
-            !/^https?:\/\//i.test(
-                playerSource
-            )
-        ) {
-
-            console.log(
-                "[VSMOV RESOLVE] NO M3U8 FOUND"
-            );
-
-            return null;
-
-        }
-
-
-        console.log(
-            "[VSMOV RESOLVE] FINAL M3U8:",
-            playerSource
-        );
-
-
-        // =================================================
-        // 16.1.11. QUALITY
-        // =================================================
-
-        let quality =
-            0;
-
-
-        const headEnd =
-            html
-                .toLowerCase()
-                .indexOf(
-                    "</head>"
-                );
-
-
-        const qualitySource =
-            headEnd >= 0
-                ? html.slice(
-                    0,
-                    headEnd
-                )
-                : html;
-
-
-        const qualityMatch =
-            qualitySource.match(
-                /(\d{3,4})p|4k/i
-            );
-
-
-        if (
-            qualityMatch
-        ) {
-
-            if (
-                qualityMatch[1]
-            ) {
-
-                quality =
-                    Number(
-                        qualityMatch[1]
-                    ) || 0;
-
-            } else {
-
-                quality =
-                    2160;
-
-            }
-
-        }
-
-
-        console.log(
-            "[VSMOV RESOLVE] Quality:",
-            quality || "Unknown"
-        );
-
-
-        return {
-
-            url:
-                playerSource,
-
-            referer:
-                url,
-
-            quality
-
-        };
-
-
-    } catch (e) {
-
-        console.log(
-            "[VSMOV RESOLVE ERROR]:",
-            e?.response?.status ||
-            e?.message ||
-            e
-        );
-
+    if (!isHttpUrl(embedUrl)) {
+        console.log("[VSMOV RESOLVE] INVALID EMBED URL");
         return null;
-
     }
 
+    try {
+        console.log("[VSMOV RESOLVE] START:", embedUrl);
+
+        const response = await axios.get(embedUrl, {
+            timeout: 12000,
+            responseType: "text",
+            maxRedirects: 5,
+            headers: {
+                Referer: DEFAULT_REFERER,
+                "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                Accept:
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            validateStatus: status => status >= 200 && status < 400
+        });
+
+        const html = String(response?.data || "");
+        const finalUrl =
+            response?.request?.res?.responseUrl || embedUrl;
+
+        if (!html) {
+            console.log("[VSMOV RESOLVE] EMPTY HTML");
+            return null;
+        }
+
+        const extractValue = (patterns) => {
+            for (const pattern of patterns) {
+                const match = html.match(pattern);
+                if (match && match[1] != null) {
+                    return String(match[1]).trim();
+                }
+            }
+            return "";
+        };
+
+        const extractUrl = (patterns) => {
+            for (const pattern of patterns) {
+                const value = extractValue([pattern]);
+                const url = cleanUrl(value, finalUrl);
+                if (url) return url;
+            }
+            return "";
+        };
+
+        const enableSignedUrl =
+            /["']?enableSignedUrl["']?\s*[:=]\s*(?:true|["']true["'])/i
+                .test(html);
+
+        const signedMasterUrl = extractUrl([
+            /["']signedMasterUrl["']\s*:\s*["']([^"']+)["']/i,
+            /["']signedMasterUrl["']\s*=\s*["']([^"']+)["']/i,
+            /signedMasterUrl\s*[:=]\s*`([^`]+)`/i
+        ]);
+
+        const videoHash = extractValue([
+            /["']videoHash["']\s*:\s*["']([^"']+)["']/i,
+            /["']videoHash["']\s*=\s*["']([^"']+)["']/i
+        ]);
+
+        const baseUrlRaw = extractValue([
+            /["']baseUrl["']\s*:\s*["']([^"']+)["']/i,
+            /["']baseUrl["']\s*=\s*["']([^"']+)["']/i
+        ]);
+
+        const baseUrl = cleanUrl(baseUrlRaw, finalUrl);
+
+        const videoSrc = extractUrl([
+            /["']videoSrc["']\s*:\s*["']([^"']+)["']/i,
+            /["']videoSrc["']\s*=\s*["']([^"']+)["']/i,
+            /["']file["']\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i,
+            /(?:src|file)\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i
+        ]);
+
+        let playerSource = "";
+
+        if (enableSignedUrl && signedMasterUrl) {
+            playerSource = signedMasterUrl;
+        }
+
+        if (!playerSource && baseUrl && videoHash) {
+            playerSource = cleanUrl(
+                `${baseUrl.replace(/\/+$/, "")}/stream/${encodeURIComponent(videoHash)}/master.m3u8`,
+                finalUrl
+            );
+        }
+
+        if (!playerSource && videoSrc) {
+            playerSource = videoSrc;
+        }
+
+        if (!playerSource) {
+            const candidates = html.match(
+                /https?:\\?\/\\?\/[^"'\\\s<>]+?\.m3u8(?:\?[^"'\\\s<>]*)?/gi
+            ) || [];
+
+            for (const candidate of candidates) {
+                playerSource = cleanUrl(candidate, finalUrl);
+                if (playerSource) break;
+            }
+        }
+
+        if (!playerSource || !isHttpUrl(playerSource)) {
+            console.log("[VSMOV RESOLVE] NO PLAYABLE URL:", {
+                hasBaseUrl: !!baseUrl,
+                hasVideoHash: !!videoHash,
+                hasSignedMasterUrl: !!signedMasterUrl,
+                hasVideoSrc: !!videoSrc,
+                elapsedMs: Date.now() - startedAt
+            });
+            return null;
+        }
+
+        const head = html.split(/<\/head>/i)[0] || html;
+        const qualityMatch = head.match(
+            /(?:^|[^0-9])(2160|1440|1080|720|576|480|360)p|4k/i
+        );
+
+        const quality = qualityMatch
+            ? (/4k/i.test(qualityMatch[0])
+                ? "4K"
+                : `${qualityMatch[1]}p`)
+            : "";
+
+        console.log("[VSMOV RESOLVE] SUCCESS:", {
+            elapsedMs: Date.now() - startedAt,
+            signed: !!(enableSignedUrl && signedMasterUrl),
+            hasHash: !!videoHash
+        });
+
+        return {
+            url: playerSource,
+            referer: finalUrl || embedUrl,
+            quality
+        };
+    } catch (error) {
+        console.log("[VSMOV RESOLVE ERROR]:", {
+            message: error?.message || String(error),
+            status: error?.response?.status || 0,
+            elapsedMs: Date.now() - startedAt
+        });
+
+        return null;
+    }
 }
 
 
@@ -36660,78 +36157,72 @@ app.get(
             }
 
 
+            
             // -------------------------------------------------
             // BASIC HLS VALIDATION
+            // Hỗ trợ cả master playlist và media playlist.
             // -------------------------------------------------
 
             const isHls =
+                playlist.startsWith("#EXTM3U");
+
+            const isMasterPlaylist =
+                /#EXT-X-STREAM-INF:/i.test(playlist);
+
+            const isMediaPlaylist =
+                /#EXTINF:/i.test(playlist) ||
+                /#EXT-X-TARGETDURATION:/i.test(playlist) ||
+                /#EXT-X-MEDIA-SEQUENCE:/i.test(playlist);
+
+            const hasPlaylistUrl =
                 playlist
-                    .startsWith(
-                        "#EXTM3U"
-                    );
+                    .split(/\r?\n/)
+                    .some(line => {
+                        const value = String(line || "").trim();
 
+                        if (!value || value.startsWith("#")) {
+                            return false;
+                        }
 
-            const hasExtInf =
-                playlist.includes(
-                    "#EXTINF:"
-                );
-
-
-            const hasSegmentUrl =
-                /https?:\/\/[^\s]+/i
-                    .test(
-                        playlist
-                    );
-
-
-            const hasEndList =
-                playlist.includes(
-                    "#EXT-X-ENDLIST"
-                );
-
+                        try {
+                            const absolute = new URL(value, targetUrl);
+                            return (
+                                absolute.protocol === "http:" ||
+                                absolute.protocol === "https:"
+                            );
+                        } catch (_) {
+                            return false;
+                        }
+                    });
 
             console.log(
                 "[VSMOV HLS PROXY] HLS CHECK:",
                 {
                     isHls,
-                    hasExtInf,
-                    hasSegmentUrl,
-                    hasEndList
+                    isMasterPlaylist,
+                    isMediaPlaylist,
+                    hasPlaylistUrl
                 }
             );
 
-
             if (
                 !isHls ||
-                !hasExtInf ||
-                !hasSegmentUrl
+                (!isMasterPlaylist && !isMediaPlaylist) ||
+                !hasPlaylistUrl
             ) {
-
                 console.log(
                     "[VSMOV HLS PROXY] INVALID HLS PLAYLIST"
                 );
 
-
                 console.log(
                     "[VSMOV HLS PROXY] BODY:",
-                    playlist.slice(
-                        0,
-                        1000
-                    )
+                    playlist.slice(0, 1000)
                 );
 
-
                 return res
-                    .status(
-                        502
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "Invalid VSMov HLS playlist"
-                    );
-
+                    .status(502)
+                    .type("text/plain")
+                    .send("Invalid VSMov HLS playlist");
             }
 
 
@@ -36746,13 +36237,8 @@ app.get(
                     referer
                 );
 
-
             const rewrittenText =
-                String(
-                    rewritten ||
-                    ""
-                ).trim();
-
+                String(rewritten || "").trim();
 
             console.log(
                 "[VSMOV HLS PROXY] PLAYLIST:",
@@ -36763,111 +36249,81 @@ app.get(
 
 
             // -------------------------------------------------
-            // DEBUG FIRST LINES
+            // DEBUG FIRST / LAST LINES
             // -------------------------------------------------
 
             const outputLines =
-                rewrittenText
-                    .split("\n");
-
+                rewrittenText.split("\n");
 
             console.log(
                 "[VSMOV HLS PROXY] OUTPUT:",
-                outputLines
-                    .slice(
-                        0,
-                        14
-                    )
-                    .join("\n")
+                outputLines.slice(0, 14).join("\n")
             );
-
-
-            // -------------------------------------------------
-            // DEBUG LAST LINES
-            // -------------------------------------------------
 
             console.log(
                 "[VSMOV HLS PROXY] OUTPUT TAIL:",
-                outputLines
-                    .slice(
-                        -6
-                    )
-                    .join("\n")
+                outputLines.slice(-6).join("\n")
             );
 
 
             // -------------------------------------------------
             // FINAL VALIDATION
+            // Chấp nhận master hoặc media playlist.
+            // Không bắt buộc mọi playlist phải có segment proxy:
+            // master playlist có thể chỉ chứa các playlist con.
             // -------------------------------------------------
 
             const rewrittenIsHls =
-                rewrittenText
-                    .startsWith(
-                        "#EXTM3U"
-                    );
+                rewrittenText.startsWith("#EXTM3U");
 
+            const rewrittenIsMaster =
+                /#EXT-X-STREAM-INF:/i.test(rewrittenText);
 
-            const rewrittenHasExtInf =
-                rewrittenText.includes(
-                    "#EXTINF:"
-                );
-
+            const rewrittenIsMedia =
+                /#EXTINF:/i.test(rewrittenText) ||
+                /#EXT-X-TARGETDURATION:/i.test(rewrittenText) ||
+                /#EXT-X-MEDIA-SEQUENCE:/i.test(rewrittenText);
 
             const rewrittenHasProxy =
                 rewrittenText.includes(
                     "/vsmov-segment-proxy/segment.ts?"
                 );
 
-
-            const rewrittenHasEndList =
+            const rewrittenHasHlsProxy =
                 rewrittenText.includes(
-                    "#EXT-X-ENDLIST"
+                    "/vsmov-hls-proxy/master.m3u8?"
                 );
-
 
             const rewrittenUrlCount =
                 (
-                    rewrittenText.match(
-                        /https?:\/\/[^\s]+/gi
-                    ) ||
+                    rewrittenText.match(/https?:\/\/[^\s]+/gi) ||
                     []
                 ).length;
-
 
             console.log(
                 "[VSMOV HLS PROXY] FINAL CHECK:",
                 {
                     rewrittenIsHls,
-                    rewrittenHasExtInf,
+                    rewrittenIsMaster,
+                    rewrittenIsMedia,
                     rewrittenHasProxy,
-                    rewrittenHasEndList,
+                    rewrittenHasHlsProxy,
                     rewrittenUrlCount
                 }
             );
 
-
             if (
                 !rewrittenIsHls ||
-                !rewrittenHasExtInf ||
-                !rewrittenHasProxy
+                (!rewrittenIsMaster && !rewrittenIsMedia)
             ) {
-
                 console.log(
                     "[VSMOV HLS PROXY] REWRITE FAILED"
                 );
 
-
                 return res
-                    .status(
-                        502
-                    )
-                    .type(
-                        "text/plain"
-                    )
-                    .send(
-                        "Invalid rewritten VSMov HLS playlist"
-                    );
-
+                    .status(502)
+                    .type("text/plain")
+                    .send("Invalid rewritten VSMov HLS playlist");
             }
 
 
