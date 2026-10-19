@@ -12720,21 +12720,25 @@ function rewriteVSMovM3u8(
 // 16.1. VSMOV EMBED RESOLVER
 // =====================================================
 
+
 async function resolveVSMovEmbed(embedUrl) {
     const startedAt = Date.now();
     const DEFAULT_REFERER = "https://vsmov.com/";
 
-    const isHttpUrl = (value) => {
+    const isHttpUrl = value => {
         try {
-            const u = new URL(String(value || ""));
-            return u.protocol === "http:" || u.protocol === "https:";
+            const parsed = new URL(String(value || ""));
+            return parsed.protocol === "http:" ||
+                parsed.protocol === "https:";
         } catch (_) {
             return false;
         }
     };
 
     const cleanUrl = (value, base) => {
-        if (!value || typeof value !== "string") return "";
+        if (!value || typeof value !== "string") {
+            return "";
+        }
 
         const cleaned = value.trim()
             .replace(/\\u0026/g, "&")
@@ -12744,8 +12748,16 @@ async function resolveVSMovEmbed(embedUrl) {
             .replace(/&#x2F;/gi, "/");
 
         try {
-            const absolute = new URL(cleaned, base).href;
-            return isHttpUrl(absolute) ? absolute : "";
+            const parsed = new URL(cleaned, base);
+
+            if (
+                parsed.protocol !== "http:" &&
+                parsed.protocol !== "https:"
+            ) {
+                return "";
+            }
+
+            return parsed.href;
         } catch (_) {
             return "";
         }
@@ -12756,11 +12768,115 @@ async function resolveVSMovEmbed(embedUrl) {
         return null;
     }
 
+    let parsedEmbed;
+
     try {
-        console.log("[VSMOV RESOLVE] START:", embedUrl);
+        parsedEmbed = new URL(embedUrl);
+    } catch (_) {
+        return null;
+    }
+
+    // Chỉ chấp nhận đúng host streamvsmov đã được kiểm tra.
+    if (!isValidVSMovStreamUrl(embedUrl)) {
+        console.log(
+            "[VSMOV RESOLVE] NOT A VALID VSMOV STREAM URL:",
+            embedUrl
+        );
+        return null;
+    }
+
+    // URL /video/{UUID} có thể tạo URL master theo cấu trúc đã quan sát.
+    const videoMatch = parsedEmbed.pathname.match(
+        /^\/video\/([0-9a-f-]{20,})\/?$/i
+    );
+
+    if (videoMatch) {
+        const videoId = videoMatch[1];
+
+        const masterUrl = new URL(
+            `/stream/${encodeURIComponent(videoId)}/master.m3u8`,
+            parsedEmbed.origin
+        ).href;
+
+        console.log(
+            "[VSMOV RESOLVE] TRY MASTER DIRECT:",
+            masterUrl
+        );
+
+        try {
+            const response = await axios.get(masterUrl, {
+                timeout: 7000,
+                responseType: "text",
+                maxRedirects: 5,
+                headers: {
+                    Referer: DEFAULT_REFERER,
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    Accept:
+                        "application/vnd.apple.mpegurl,application/x-mpegURL,*/*"
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            });
+
+            const body = String(response?.data || "").trim();
+
+            const isMaster =
+                body.startsWith("#EXTM3U") &&
+                /#EXT-X-STREAM-INF:/i.test(body);
+
+            const isMedia =
+                body.startsWith("#EXTM3U") &&
+                (
+                    /#EXTINF:/i.test(body) ||
+                    /#EXT-X-TARGETDURATION:/i.test(body) ||
+                    /#EXT-X-MEDIA-SEQUENCE:/i.test(body)
+                );
+
+            if (isMaster || isMedia) {
+                console.log(
+                    "[VSMOV RESOLVE] MASTER URL RESPONDS WITH HLS:",
+                    {
+                        status: response.status,
+                        type: isMaster ? "master" : "media",
+                        length: body.length,
+                        elapsedMs: Date.now() - startedAt
+                    }
+                );
+
+                return {
+                    url: masterUrl,
+                    referer: DEFAULT_REFERER,
+                    quality: ""
+                };
+            }
+
+            console.log(
+                "[VSMOV RESOLVE] MASTER URL NOT HLS:",
+                {
+                    status: response.status,
+                    length: body.length,
+                    preview: body.slice(0, 160)
+                }
+            );
+        } catch (error) {
+            console.log(
+                "[VSMOV RESOLVE] MASTER DIRECT FAILED:",
+                {
+                    message: error?.message || String(error),
+                    status: error?.response?.status || 0
+                }
+            );
+        }
+    }
+
+    // Direct master failed: retain a short fallback attempt to inspect
+    // the embed page. Do not block provider discovery for 12 seconds.
+    try {
+        console.log("[VSMOV RESOLVE] TRY EMBED:", embedUrl);
 
         const response = await axios.get(embedUrl, {
-            timeout: 12000,
+            timeout: 5000,
             responseType: "text",
             maxRedirects: 5,
             headers: {
@@ -12770,34 +12886,36 @@ async function resolveVSMovEmbed(embedUrl) {
                 Accept:
                     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             },
-            validateStatus: status => status >= 200 && status < 400
+            validateStatus: status =>
+                status >= 200 && status < 400
         });
 
         const html = String(response?.data || "");
         const finalUrl =
             response?.request?.res?.responseUrl || embedUrl;
 
-        if (!html) {
-            console.log("[VSMOV RESOLVE] EMPTY HTML");
-            return null;
-        }
-
-        const extractValue = (patterns) => {
+        const extractValue = patterns => {
             for (const pattern of patterns) {
                 const match = html.match(pattern);
+
                 if (match && match[1] != null) {
                     return String(match[1]).trim();
                 }
             }
+
             return "";
         };
 
-        const extractUrl = (patterns) => {
+        const extractUrl = patterns => {
             for (const pattern of patterns) {
                 const value = extractValue([pattern]);
                 const url = cleanUrl(value, finalUrl);
-                if (url) return url;
+
+                if (url) {
+                    return url;
+                }
             }
+
             return "";
         };
 
@@ -12854,54 +12972,65 @@ async function resolveVSMovEmbed(embedUrl) {
 
             for (const candidate of candidates) {
                 playerSource = cleanUrl(candidate, finalUrl);
-                if (playerSource) break;
+
+                if (playerSource) {
+                    break;
+                }
             }
         }
 
         if (!playerSource || !isHttpUrl(playerSource)) {
-            console.log("[VSMOV RESOLVE] NO PLAYABLE URL:", {
-                hasBaseUrl: !!baseUrl,
-                hasVideoHash: !!videoHash,
-                hasSignedMasterUrl: !!signedMasterUrl,
-                hasVideoSrc: !!videoSrc,
-                elapsedMs: Date.now() - startedAt
-            });
+            console.log(
+                "[VSMOV RESOLVE] NO PLAYABLE URL:",
+                {
+                    hasBaseUrl: !!baseUrl,
+                    hasVideoHash: !!videoHash,
+                    hasSignedMasterUrl: !!signedMasterUrl,
+                    hasVideoSrc: !!videoSrc,
+                    elapsedMs: Date.now() - startedAt
+                }
+            );
+
             return null;
         }
 
-        const head = html.split(/<\/head>/i)[0] || html;
-        const qualityMatch = head.match(
-            /(?:^|[^0-9])(2160|1440|1080|720|576|480|360)p|4k/i
+        // Keep resolved media on an allowed VSMov stream host.
+        if (!isValidVSMovStreamUrl(playerSource)) {
+            console.log(
+                "[VSMOV RESOLVE] REJECT NON-VSMOV MEDIA HOST:",
+                playerSource
+            );
+
+            return null;
+        }
+
+        console.log(
+            "[VSMOV RESOLVE] SUCCESS:",
+            {
+                elapsedMs: Date.now() - startedAt,
+                signed: !!(enableSignedUrl && signedMasterUrl),
+                hasHash: !!videoHash
+            }
         );
-
-        const quality = qualityMatch
-            ? (/4k/i.test(qualityMatch[0])
-                ? "4K"
-                : `${qualityMatch[1]}p`)
-            : "";
-
-        console.log("[VSMOV RESOLVE] SUCCESS:", {
-            elapsedMs: Date.now() - startedAt,
-            signed: !!(enableSignedUrl && signedMasterUrl),
-            hasHash: !!videoHash
-        });
 
         return {
             url: playerSource,
-            referer: finalUrl || embedUrl,
-            quality
+            referer: finalUrl || DEFAULT_REFERER,
+            quality: ""
         };
     } catch (error) {
-        console.log("[VSMOV RESOLVE ERROR]:", {
-            message: error?.message || String(error),
-            status: error?.response?.status || 0,
-            elapsedMs: Date.now() - startedAt
-        });
+        console.log(
+            "[VSMOV RESOLVE ERROR]:",
+            {
+                message: error?.message || String(error),
+                status: error?.response?.status || 0,
+                elapsedMs: Date.now() - startedAt
+            }
+        );
 
         return null;
     }
 }
-
 
 // ============================================================
 // BL-53. VSMOV PROVIDER
