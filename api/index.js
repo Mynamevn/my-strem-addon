@@ -24813,7 +24813,8 @@ async function fetchAnimeTProvider(
             return [];
         }
 
-        // 4. Chuyển URL Hydrax giả thành URL proxy MOVINA.
+                // 4. Chuyển URL Hydrax giả thành proxy MOVINA.
+        //    Nếu không có direct media, giữ lại embed URL hợp lệ.
         const publicBase = String(
             process.env.MOVINA_PUBLIC_BASE_URL ||
             process.env.PUBLIC_URL ||
@@ -24836,8 +24837,10 @@ async function fetchAnimeTProvider(
 
             if (!/^https?:\/\//i.test(url)) continue;
 
+            const isHydraxFake =
+                animetIsFakeHydraxUrl(url);
+
             let outputUrl = url;
-            const isHydraxFake = animetIsFakeHydraxUrl(url);
 
             if (isHydraxFake) {
                 if (!publicBase) {
@@ -24866,14 +24869,18 @@ async function fetchAnimeTProvider(
 
             const type = isHydraxFake
                 ? "video"
-                : (/m3u8|hls/.test(rawType) ? "m3u8" : "video");
+                : (/m3u8|hls/.test(rawType)
+                    ? "m3u8"
+                    : "video");
 
             streams.push({
                 name: item.name ||
                     item.serverName ||
-                    "AnimeT Hydrax",
+                    "AnimeT",
                 title: item.title ||
-                    `${query}${episodeNumber ? ` · Tập ${episodeNumber}` : ""}`,
+                    `${query}${episodeNumber
+                        ? ` · Tập ${episodeNumber}`
+                        : ""}`,
                 url: outputUrl,
                 type,
                 provider: "animet",
@@ -24884,6 +24891,46 @@ async function fetchAnimeTProvider(
                     : (item.headers || {}),
                 subtitles: item.subtitles || []
             });
+        }
+
+        // 5. Embed fallback:
+        // Chỉ dùng khi không có direct/Hydrax source hợp lệ.
+        // externalUrl mở trang player bên ngoài, không giả làm video direct.
+        if (
+            streams.length === 0 &&
+            Array.isArray(linkResult?.players)
+        ) {
+            for (const player of linkResult.players) {
+                const embedUrl = String(
+                    player?.url || ""
+                ).trim();
+
+                if (
+                    !/^https?:\/\//i.test(embedUrl) ||
+                    animetIsFakeHydraxUrl(embedUrl)
+                ) {
+                    continue;
+                }
+
+                if (seen.has(embedUrl)) continue;
+                seen.add(embedUrl);
+
+                streams.push({
+                    name: player.name ||
+                        player.type ||
+                        "AnimeT Embed",
+                    title:
+                        `${query}${episodeNumber
+                            ? ` · Tập ${episodeNumber}`
+                            : ""} · Mở trình phát AnimeT`,
+                    externalUrl: embedUrl,
+                    provider: "animet",
+                    source: "animet",
+                    behaviorHints: {
+                        notWebReady: true
+                    }
+                });
+            }
         }
 
         console.log(TAG, "STREAM COUNT:", streams.length);
