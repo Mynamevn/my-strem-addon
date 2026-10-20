@@ -224,6 +224,7 @@ function decodeMovieName(id) {
    [CORE-002] [PROVIDERS: ALL] POSTER URL HELPERS
    ============================================================ */
 
+// [CORE-002.01] [PROVIDERS: ALL] POSTER URL RESOLUTION
 function makePosterUrl(item) {
     if (!item) return undefined;
 
@@ -261,8 +262,10 @@ function makePosterUrl(item) {
 [CORE-003] [PROVIDERS: ALL] CATALOG NORMALIZATION
 ============================================================ */
 
+// [CORE-003.01] [PROVIDERS: ALL] CATALOG LIMIT
 const CATALOG_TARGET = 50;
 
+// [CORE-003.02] [PROVIDERS: ALL] CATALOG TEXT NORMALIZATION
 function catalogNormalize(value) {
 
 return String(value || "")
@@ -291,6 +294,7 @@ return (
 
 }
 
+// [CORE-003.03] [PROVIDERS: ALL] CATALOG DEDUPLICATION
 function catalogDedupe(items) {
 
 const seen = new Set();
@@ -316,6 +320,7 @@ return result;
    [CORE-004] [PROVIDERS: ALL] CATALOG POSTER HELPERS
    ============================================================ */
 
+// [CORE-004.01] [PROVIDERS: ALL] CATALOG POSTER RESOLUTION
 function catalogPoster(item) {
 
     const raw =
@@ -585,6 +590,7 @@ return countries.some(x =>
    [CORE-005] [PROVIDERS: ALL] MOVIE / SERIES CLASSIFICATION
    ============================================================ */
 
+// [CORE-005.01] [PROVIDERS: ALL] MOVIE / SERIES DETECTION
 function isSeriesItem(item) {
 
     if (!item) {
@@ -851,6 +857,7 @@ try {
 [CORE-006] [PROVIDERS: ALL] MOVIE TRENDING CATALOG
 ============================================================ */
 
+// [CORE-006.01] [PROVIDERS: ALL] MOVIE TRENDING FETCH
 async function fetchMovieTrending() {
 
     const pages = [];
@@ -960,6 +967,7 @@ async function fetchMovieTrending() {
    các phim bộ mới nhất.
 */
 
+// [CORE-007.01] [PROVIDERS: ALL] SERIES TRENDING FETCH
 async function fetchSeriesTrending() {
 
     const pages = [];
@@ -1062,6 +1070,7 @@ async function fetchSeriesTrending() {
    [CORE-008] [PROVIDERS: ALL] TVB CATALOG
    ============================================================ */
 
+// [CORE-008.01] [PROVIDERS: ALL] TVB CATALOG FETCH
 async function fetchTVB() {
 
     const seriesPages = [];
@@ -7229,6 +7238,7 @@ console.log(
 //
 // ============================================================
 
+    // [REG-001.00] [PROVIDERS: ALL] CENTRAL REGISTRY STORAGE
     const MOVINA_PROVIDER_REGISTRY = new Map();
 
     // ============================================================
@@ -7403,7 +7413,7 @@ console.log(
     // [REG-001.04] [PROVIDERS: ALL] GET ALL MOVINA PROVIDERS
     // ============================================================
 
-function getAllMovinaProviders() {
+    function getAllMovinaProviders() {
 
     return Array.from(
         MOVINA_PROVIDER_REGISTRY.values()
@@ -7415,7 +7425,7 @@ function getAllMovinaProviders() {
     // [REG-001.05] [PROVIDERS: ALL] FILTER PROVIDERS BY CATEGORY
     // ============================================================
 
-function getMovinaProvidersByCategory(
+    function getMovinaProvidersByCategory(
     category
 ) {
 
