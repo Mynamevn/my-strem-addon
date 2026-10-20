@@ -148,7 +148,7 @@ const builder =
 
 
 /* ============================================================
-   1.UTILITY
+   [CORE-001] [PROVIDERS: ALL] SHARED UTILITIES
    ============================================================ */
 
 function toSlug(text) {
@@ -194,7 +194,7 @@ function decodeMovieName(id) {
 
 
 /* ============================================================
-   2. POSTER
+   [CORE-002] [PROVIDERS: ALL] POSTER URL HELPERS
    ============================================================ */
 
 function makePosterUrl(item) {
@@ -231,7 +231,7 @@ function makePosterUrl(item) {
 
 
 /* ============================================================
-3. CATALOG
+[CORE-003] [PROVIDERS: ALL] CATALOG NORMALIZATION
 ============================================================ */
 
 const CATALOG_TARGET = 50;
@@ -286,7 +286,7 @@ return result;
 }
 
 /* ============================================================
-   4. CATALOG POSTER
+   [CORE-004] [PROVIDERS: ALL] CATALOG POSTER HELPERS
    ============================================================ */
 
 function catalogPoster(item) {
@@ -555,7 +555,7 @@ return countries.some(x =>
 }
 
 /* ============================================================
-   5. XÁC ĐỊNH MOVIE / SERIES
+   [CORE-005] [PROVIDERS: ALL] MOVIE / SERIES CLASSIFICATION
    ============================================================ */
 
 function isSeriesItem(item) {
@@ -821,7 +821,7 @@ try {
 }
 
 /* ============================================================
-6. MOVIE TRENDING
+[CORE-006] [PROVIDERS: ALL] MOVIE TRENDING CATALOG
 ============================================================ */
 
 async function fetchMovieTrending() {
@@ -923,7 +923,7 @@ async function fetchMovieTrending() {
 }
 
 /* ============================================================
-7. SERIES TRENDING
+[CORE-007] [PROVIDERS: ALL] SERIES TRENDING CATALOG
 ============================================================ */
 
 /*
@@ -1032,7 +1032,7 @@ async function fetchSeriesTrending() {
 }
 
 /* ============================================================
-   8. TVB
+   [CORE-008] [PROVIDERS: ALL] TVB CATALOG
    ============================================================ */
 
 async function fetchTVB() {
@@ -4271,7 +4271,7 @@ if (
 builder.defineMetaHandler(async (args) => {
 
 // ============================================================
-// BL-13.0. VMT TV PROVIDER META
+// [STREMIO-013.00] [PROVIDERS: VMTTV] VMT TV PROVIDER META
 // ============================================================
 //
 // VMT TV là provider thuộc:
@@ -4364,7 +4364,7 @@ const MOVINA_VMTTV_META = {
         }
 
         // =====================================================
-// bn-13.1. MOVINA TV PROVIDER META ROUTER
+// [STREMIO-013.01] [PROVIDERS: VMTTV] MOVINA TV PROVIDER META ROUTER
 // =====================================================
 //
 // Phân biệt:
@@ -4386,7 +4386,7 @@ const MOVINA_VMTTV_META = {
 // =====================================================
 
 // -----------------------------------------------------
-// bn-13.1A. MOVINA TV PROVIDER META
+// [STREMIO-013.02] [PROVIDERS: VMTTV] MOVINA TV PROVIDER META
 // -----------------------------------------------------
 
 if (
@@ -4429,7 +4429,7 @@ if (
     };
 }
 
-// bn-13.2 VMT TV GROUP META
+// [STREMIO-013.03] [PROVIDERS: VMTTV] VMT TV GROUP META
 // ============================================================
 //
 // GROUP META KHÔNG PHẢI LÀ CHANNEL.
@@ -7170,7 +7170,7 @@ console.log(
 
 
 // ============================================================
-// BL-40. MOVINA PROVIDER REGISTRY
+// [REG-001] [PROVIDERS: ALL] MOVINA PROVIDER REGISTRY
 // ============================================================
 //
 // Registry trung tâm của toàn bộ source/provider trong MOVINA.
@@ -7205,7 +7205,7 @@ console.log(
     const MOVINA_PROVIDER_REGISTRY = new Map();
 
     // ============================================================
-    // bn-1. MOVINA PROVIDER CONTRACT
+    // [REG-001.01] [PROVIDERS: ALL] MOVINA PROVIDER CONTRACT
     // ============================================================
 
     function createMovinaProvider(provider) {
@@ -7317,7 +7317,7 @@ console.log(
 
 
     // ============================================================
-    // bn-2. REGISTER MOVINA PROVIDER
+    // [REG-001.02] [PROVIDERS: ALL] REGISTER MOVINA PROVIDER
     // ============================================================
 
     function registerMovinaProvider(provider) {
@@ -7350,7 +7350,7 @@ console.log(
 
 
     // ============================================================
-    // bn-3. GET MOVINA PROVIDER
+    // [REG-001.03] [PROVIDERS: ALL] GET MOVINA PROVIDER
     // ============================================================
 
     function getMovinaProvider(providerId) {
@@ -7373,7 +7373,7 @@ console.log(
 
 
     // ============================================================
-    // bn-4. GET ALL MOVINA PROVIDERS
+    // [REG-001.04] [PROVIDERS: ALL] GET ALL MOVINA PROVIDERS
     // ============================================================
 
 function getAllMovinaProviders() {
@@ -7385,7 +7385,7 @@ function getAllMovinaProviders() {
 
 
     // ============================================================
-    // bn-5. GET PROVIDERS BY CATEGORY
+    // [REG-001.05] [PROVIDERS: ALL] FILTER PROVIDERS BY CATEGORY
     // ============================================================
 
 function getMovinaProvidersByCategory(
@@ -7411,7 +7411,7 @@ function getMovinaProvidersByCategory(
 
 
     // ============================================================
-    // bn-6. ENABLE PROVIDER
+    // [REG-001.06] [PROVIDERS: ALL] ENABLE PROVIDER
     // ============================================================
 
 function enableMovinaProvider(
@@ -7446,7 +7446,7 @@ function enableMovinaProvider(
 
 
     // ============================================================
-    // bn-7. DISABLE PROVIDER
+    // [REG-001.07] [PROVIDERS: ALL] DISABLE PROVIDER
     // ============================================================
 
 function disableMovinaProvider(
@@ -7481,7 +7481,7 @@ function disableMovinaProvider(
 
 
     // ============================================================
-    // bn-8. REMOVE PROVIDER
+    // [REG-001.08] [PROVIDERS: ALL] REMOVE PROVIDER
     // ============================================================
 
 function removeMovinaProvider(
@@ -7526,7 +7526,7 @@ function removeMovinaProvider(
 
 
     // ============================================================
-    // bn-9. PROVIDER STATUS
+    // [REG-001.09] [PROVIDERS: ALL] PROVIDER STATUS
     // ============================================================
 
 function getMovinaProviderInfo(
@@ -7574,7 +7574,7 @@ function getMovinaProviderInfo(
 
 
     // ============================================================
-    // bn-10. DEBUG MOVINA PROVIDER REGISTRY
+    // [REG-001.10] [PROVIDERS: ALL] DEBUG MOVINA PROVIDER REGISTRY
     // ============================================================
 
 function logMovinaProviderRegistry() {
@@ -7608,7 +7608,7 @@ function logMovinaProviderRegistry() {
 }
 
 // ============================================================
-// BL-50. CS3 / CLOUDSTREAM PROVIDER SYSTEM
+// [REG-002] [PROVIDERS: CS3] CS3 / CLOUDSTREAM PROVIDER SYSTEM
 // ============================================================
 //
 // Mục tiêu:
@@ -7645,7 +7645,7 @@ const CS3_PROVIDER_REGISTRY =
 
 
 // ============================================================
-// bn-1. CS3 PROVIDER CONTRACT
+// [REG-002.01] [PROVIDERS: CS3] CS3 PROVIDER CONTRACT
 // ============================================================
 
 function createCs3Provider(
@@ -7742,7 +7742,7 @@ function createCs3Provider(
 
 
 // ============================================================
-// bn-2. REGISTER CS3 PROVIDER
+// [REG-002.02] [PROVIDERS: CS3] REGISTER CS3 PROVIDER
 // ============================================================
 
 function registerCs3Provider(
@@ -7777,7 +7777,7 @@ function registerCs3Provider(
 
 
 // ============================================================
-// bn-3. GET CS3 PROVIDER
+// [REG-002.03] [PROVIDERS: CS3] GET CS3 PROVIDER
 // ============================================================
 
 function getCs3Provider(
@@ -7808,7 +7808,7 @@ function getCs3Provider(
 
 
 // ============================================================
-// bn-4. GET ALL CS3 PROVIDERS
+// [REG-002.04] [PROVIDERS: CS3] GET ALL CS3 PROVIDERS
 // ============================================================
 
 function getAllCs3Providers() {
@@ -7821,7 +7821,7 @@ function getAllCs3Providers() {
 
 
 // ============================================================
-// bn-5. ENABLE / DISABLE CS3 PROVIDER
+// [REG-002.05] [PROVIDERS: CS3] ENABLE / DISABLE CS3 PROVIDER
 // ============================================================
 
 function setCs3ProviderEnabled(
@@ -7866,7 +7866,7 @@ function setCs3ProviderEnabled(
 
 
 // ============================================================
-// bn-6. CS3 CAPABILITY CHECK
+// [REG-002.06] [PROVIDERS: CS3] CS3 CAPABILITY CHECK
 // ============================================================
 
 function cs3ProviderSupports(
@@ -7893,7 +7893,7 @@ function cs3ProviderSupports(
 
 
 // ============================================================
-// bn-7. DEBUG CS3 PROVIDER REGISTRY
+// [REG-002.07] [PROVIDERS: CS3] CS3 REGISTRY DIAGNOSTICS
 // ============================================================
 
 function logCs3ProviderRegistry() {
@@ -7930,7 +7930,7 @@ function logCs3ProviderRegistry() {
 
 
 // ============================================================
-// bn-8. CS3 LINK DATA CONTRACT
+// [REG-002.08] [PROVIDERS: CS3] CS3 LINK DATA CONTRACT
 // ============================================================
 //
 // Đây là contract trung gian giữa CloudStream provider
@@ -8145,7 +8145,7 @@ function cs3LinkDataToNormalizedStream(
 
 
 // ============================================================
-// bn-10. CS3 SYSTEM READY
+// [REG-002.09] [PROVIDERS: CS3] CS3 SYSTEM READY
 // ============================================================
 
 console.log(
@@ -8154,7 +8154,7 @@ console.log(
 
 
 // ============================================================
-// BL-80. LIVE / IPTV PROVIDER SYSTEM
+// [REG-003] [PROVIDERS: VMTTV, LIVE-OTHER] LIVE / IPTV PROVIDER SYSTEM
 // ============================================================
 //
 // Mục tiêu:
@@ -8186,7 +8186,7 @@ console.log(
     const LIVE_PROVIDER_REGISTRY = new Map();
 
     // ============================================================
-    // bn-1. LIVE PROVIDER CONTRACT
+    // [REG-003.01] [PROVIDERS: VMTTV, LIVE-OTHER] LIVE PROVIDER CONTRACT
     // ============================================================
 
 function createLiveProvider(provider) {
@@ -8305,7 +8305,7 @@ function createLiveProvider(provider) {
 
 
     // ============================================================
-    // bn-2. REGISTER LIVE PROVIDER
+    // [REG-003.02] [PROVIDERS: VMTTV, LIVE-OTHER] REGISTER LIVE PROVIDER
     // ============================================================
 
 function registerLiveProvider(provider) {
@@ -8335,7 +8335,7 @@ function registerLiveProvider(provider) {
 
 
     // ============================================================
-    // bn-3. GET LIVE PROVIDER
+    // [REG-003.03] [PROVIDERS: VMTTV, LIVE-OTHER] GET LIVE PROVIDER
     // ============================================================
 
 function getLiveProvider(providerId) {
@@ -8356,7 +8356,7 @@ function getLiveProvider(providerId) {
 
 
     // ============================================================
-    // bn-4. GET ALL LIVE PROVIDERS
+    // [REG-003.04] [PROVIDERS: VMTTV, LIVE-OTHER] GET ALL LIVE PROVIDERS
     // ============================================================
 
 function getAllLiveProviders() {
@@ -8368,7 +8368,7 @@ function getAllLiveProviders() {
 
 
     // ============================================================
-    // bn-5. NORMALIZED LIVE ITEM
+    // [REG-003.05] [PROVIDERS: VMTTV, LIVE-OTHER] NORMALIZED LIVE ITEM CONTRACT
     // ============================================================
     //
     // Mọi provider LIVE cuối cùng nên đưa dữ liệu về dạng này:
@@ -8485,7 +8485,7 @@ function normalizeLiveItem(item, providerId) {
 
 
     // ============================================================
-    // bn-6. NORMALIZED LIVE STREAM
+    // [REG-003.06] [PROVIDERS: VMTTV, LIVE-OTHER] NORMALIZED LIVE STREAM CONTRACT
     // ============================================================
     //
     // Đây là format chung mà Stremio Adapter sẽ nhận.
@@ -8575,7 +8575,7 @@ function normalizeLiveStream(stream, providerId) {
 
 
     // ============================================================
-    // bn-7. LIVE PROVIDER → NORMALIZED ITEMS
+    // [REG-003.07] [PROVIDERS: VMTTV, LIVE-OTHER] NORMALIZE LIVE ITEMS
     // ============================================================
 
 function normalizeLiveItems(items, providerId) {
@@ -8596,7 +8596,7 @@ function normalizeLiveItems(items, providerId) {
 
 
     // ============================================================
-    // bn-8. LIVE PROVIDER → NORMALIZED STREAMS
+    // [REG-003.08] [PROVIDERS: VMTTV, LIVE-OTHER] NORMALIZE LIVE STREAMS
     // ============================================================
 
 function normalizeLiveStreams(streams, providerId) {
@@ -8617,7 +8617,7 @@ function normalizeLiveStreams(streams, providerId) {
 
 
     // ============================================================
-    // bn-9. LIVE PROVIDER STATUS
+    // [REG-003.09] [PROVIDERS: VMTTV, LIVE-OTHER] LIVE PROVIDER STATUS
     // ============================================================
 
 function getLiveProviderInfo(providerId) {
@@ -9595,7 +9595,7 @@ function vmtTvParseYearsResponse() {
 
 
     // ============================================================
-    // bn-11.13. REGISTER VMT TV
+    // [REG-003.10] [PROVIDERS: VMTTV] REGISTER LIVE PROVIDER
     // ============================================================
 
 const VMTTV_PROVIDER =
@@ -9671,7 +9671,7 @@ console.log(
 );
 
     // ============================================================
-    // bn-11. REGISTER VMT TV INTO MOVINA REGISTRY
+    // [BRIDGE-001] [PROVIDERS: VMTTV] LIVE REGISTRY TO MOVINA REGISTRY BRIDGE
     // ============================================================
     //
     // Bridge:
@@ -9748,7 +9748,7 @@ const MOVINA_VMTTV_PROVIDER =
                 "pa_vmttv",
 
             // ------------------------------------------------
-            // VMT TV GROUP / GENRE HUB
+            // [STREMIO-082.01] [PROVIDERS: VMTTV] GROUP / GENRE HUB
             // ------------------------------------------------
             //
             // Các group này sẽ được tạo từ channel.group
@@ -9784,7 +9784,7 @@ console.log(
         logMovinaProviderRegistry();
 
 // ============================================================
-// BL-82. VMT TV → STREMIO ADAPTER
+// [STREMIO-082] [PROVIDERS: VMTTV] VMT TV STREAM ADAPTER
 // ============================================================
 //
 // Adapter riêng của VMT TV.
@@ -9842,7 +9842,7 @@ async function fetchVmtTvChannels() {
 
 
 // ============================================================
-// VMT TV CHANNEL ID
+// [STREMIO-082.02] [PROVIDERS: VMTTV] CHANNEL ID PARSER
 // ============================================================
 //
 // Stremio ID:
@@ -9898,7 +9898,7 @@ function decodeVmtTvStremioId(id) {
 
 
 // ============================================================
-// VMT TV → STREMIO META PREVIEW
+// [STREMIO-082.03] [PROVIDERS: VMTTV] META PREVIEW
 // ============================================================
 
 function makeVmtTvCatalogMeta(channel) {
