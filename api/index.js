@@ -6103,7 +6103,7 @@ if (
 
 
 // ============================================================
-// BL-30. NORMALIZED STREAM CORE + RESOLVER ENGINE
+// [RES-001] [PROVIDERS: ALL] NORMALIZED STREAM CORE AND RESOLVER ENGINE
 // ============================================================
 //
 // Pipeline:
@@ -6132,7 +6132,7 @@ if (
 
 
 // ============================================================
-// 1. NORMALIZED STREAM CONTRACT
+// [RES-001.01] [PROVIDERS: ALL] NORMALIZED STREAM CONTRACT
 // ============================================================
 //
 // Đây là contract chung cho TOÀN BỘ provider MOVINA.
@@ -6520,7 +6520,7 @@ function appendNormalizedStream(
 
 
 // ============================================================
-// 3. RESOLVER REGISTRY
+// [RES-001.02] [PROVIDERS: ALL] RESOLVER REGISTRY
 // ============================================================
 
 const STREAM_RESOLVER_REGISTRY = new Map();
@@ -6619,7 +6619,7 @@ function getAllStreamResolvers() {
 
 
 // ============================================================
-// 4. RESOLVER EXECUTION
+// [RES-001.03] [PROVIDERS: ALL] RESOLVER EXECUTION
 // ============================================================
 
 async function resolveNormalizedStream(stream, context = {}) {
@@ -6720,7 +6720,7 @@ async function resolveNormalizedStream(stream, context = {}) {
 
 
 // ============================================================
-// 5. RESOLVE MANY STREAMS
+// [RES-001.04] [PROVIDERS: ALL] MULTI-STREAM RESOLUTION
 // ============================================================
 
 async function resolveNormalizedStreams(
@@ -6756,7 +6756,7 @@ async function resolveNormalizedStreams(
 
 
 // ============================================================
-// 6. STREAM → STREMIO
+// [RES-001.05] [PROVIDERS: ALL] NORMALIZED STREAM TO STREMIO ADAPTER
 // ============================================================
 
 function normalizedStreamToStremio(stream) {
@@ -6949,7 +6949,7 @@ function normalizedStreamsToStremio(
 
 
 // ============================================================
-// 7. RESOLVER REGISTRY INFO
+// [RES-001.06] [PROVIDERS: ALL] RESOLVER REGISTRY DIAGNOSTICS
 // ============================================================
 
 function getStreamResolverInfo() {
@@ -6975,7 +6975,7 @@ function logStreamResolverRegistry() {
 
 
 // ============================================================
-// 8. BUILT-IN PASSTHROUGH RESOLVER
+// [RES-001.07] [PROVIDERS: ALL] BUILT-IN PASSTHROUGH RESOLVER
 // ============================================================
 //
 // Resolver này không xử lý gì cả.
@@ -7017,15 +7017,13 @@ registerStreamResolver(
 
 
 // ============================================================
-// 9. INITIAL REGISTRY LOG
+// [RES-001.08] [PROVIDERS: ALL] INITIAL RESOLVER REGISTRY LOG
 // ============================================================
 
 logStreamResolverRegistry();
 
 // ============================================================
-// BL-32. RESOLVERS
-// ============================================================
-// VSMOV RESOLVER
+// [RES-002] [PROVIDERS: VSMOV] VSMOV STREAM RESOLVER
 // ============================================================
 //
 // VSMov là resolver đầu tiên được tích hợp vào Resolver Engine.
@@ -7196,7 +7194,7 @@ registerStreamResolver(
 
 
 // ============================================================
-// VSMOV RESOLVER REGISTRY CHECK
+// [RES-002.01] [PROVIDERS: VSMOV] VSMOV RESOLVER REGISTRY CHECK
 // ============================================================
 
 console.log(
@@ -20029,7 +20027,7 @@ async function animetDiscoverActiveBase(options = {}) {
 
 
 // ---------------------------------------------------------------------------
-// ANIMET — DEAN EDWARDS PACKER
+// [PRV-ANIMET.01] [PROVIDERS: ANIMET] DEAN EDWARDS PACKER DECODER
 // ---------------------------------------------------------------------------
 
 function animetUnpackPackedScripts(source) {
@@ -20092,7 +20090,7 @@ function animetUnpackPackedScripts(source) {
 
 
 /*
- * PRV-ANIMET — HYDRAX DATA DECODE / URL COLLECTION
+ * [PRV-ANIMET.02] [PROVIDERS: ANIMET] HYDRAX DATA DECODING AND URL COLLECTION
  *
  * DEX checkpoint:
  *   datas="..."
@@ -20838,7 +20836,7 @@ function animetHydraxFakeUrlCheckpoint(fakeUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// PRV-ANIMET — PROVIDER ADAPTER
+// [PRV-ANIMET.03] [PROVIDERS: ANIMET] PROVIDER ADAPTER
 // API:
 //   fetchAnimeT(query, { action: "search" })
 //   fetchAnimeT(url,   { action: "load" })
@@ -21911,7 +21909,7 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
   }
 
   // -------------------------------------------------------------------------
-  // LOAD — SERIES INFO + EPISODES
+  // [PRV-ANIMET.04] [PROVIDERS: ANIMET] SERIES DETAILS AND EPISODE LOADING
   // -------------------------------------------------------------------------
 
   if (action === "load" || action === "info") {
@@ -22084,13 +22082,9 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
   };
 }
 
-// ============================================================================
-// END PRV-ANIMET
-// ============================================================================
-
 
 /* ============================================================================
- * PRV-ONFLIX — ONFLIX PROVIDER ADAPTER
+ * [PRV-ONFLIX] [PROVIDERS: ONFLIX] ONFLIX PROVIDER ADAPTER
  *
  * Đã xác nhận từ OnflixProvider.smali:
  *   Search API: https://k8s.onflixcdn.com/api/search?q=
