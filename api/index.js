@@ -1,3 +1,29 @@
+/*
+MÃ PHÂN LOẠI BLOCK
+
+CORE    : Hàm và tiện ích dùng chung.
+REG     : Registry, đăng ký và quản lý provider.
+PRV     : Adapter và logic riêng của provider.
+RES     : Resolver lấy hoặc xử lý stream.
+PX      : Proxy, HLS, segment, byte và Range.
+ROUTE   : HTTP routes và endpoints.
+STREMIO : Adapter, catalog, metadata và stream handler.
+LIVE    : Provider LIVE / IPTV.
+BRIDGE  : Cầu nối giữa registry hoặc các lớp kiến trúc.
+
+QUY TẮC ĐẶT TÊN
+
+Ví dụ block lớn: [REG-001] [PROVIDERS: ALL]
+
+Ví dụ block con: [REG-001.01] [PROVIDERS: ANIMET]
+
+Ví dụ nhiều nguồn: [CORE-014.01] [PROVIDERS: ANIMET, ONFLIX]
+
+- Mã block con phải duy nhất trong phạm vi file.
+- PROVIDERS phải ghi các nguồn thực sự sử dụng hoặc phụ thuộc vào block.
+- Không dùng ALL nếu block chỉ phục vụ một nhóm provider cụ thể.
+*/
+
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -151,6 +177,7 @@ const builder =
    [CORE-001] [PROVIDERS: ALL] SHARED UTILITIES
    ============================================================ */
 
+// [CORE-001.01] [PROVIDERS: ALL] SLUG NORMALIZATION
 function toSlug(text) {
     if (!text) return "phim";
 
@@ -164,7 +191,7 @@ function toSlug(text) {
         .replace(/\s+/g, "-");
 }
 
-
+// [CORE-001.02] [PROVIDERS: ALL] MOVIE ID DECODING
 function decodeMovieName(id) {
     try {
         const rawId = String(id || "");
@@ -4265,7 +4292,7 @@ if (
 );
 
 /* ============================================================
-   BL-13. META Handler
+   [STREMIO-013] [PROVIDERS: ALL] STREMIO META HANDLER
    ============================================================ */
 
 builder.defineMetaHandler(async (args) => {
