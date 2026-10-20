@@ -8708,7 +8708,7 @@ function logLiveProviderRegistry() {
 
 
 // ============================================================
-// BL-81. VMT TV PROVIDER
+// [LIVE-001] [PROVIDERS: VMTTV] VMT TV PROVIDER
 // ============================================================
 //
 // VMT TV là LIVE / IPTV provider.
@@ -8761,7 +8761,7 @@ function vmtTvGetManifest() {
 
 
     // ============================================================
-    // bn-11.2. VMT TV - HOME
+    // [LIVE-001.01] [PROVIDERS: VMTTV] VMT TV HOME SECTIONS
     // ============================================================
 
 function vmtTvGetHomeSections() {
@@ -8783,7 +8783,7 @@ function vmtTvGetHomeSections() {
 
 
     // ============================================================
-    // bn-11.3. VMT TV - CATEGORIES
+    // [LIVE-001.02] [PROVIDERS: VMTTV] VMT TV CATEGORIES
     // ============================================================
 
 function vmtTvGetPrimaryCategories() {
@@ -8827,7 +8827,7 @@ function vmtTvGetFilterConfig() {
 
 
     // ============================================================
-    // bn-11.4. VMT TV - CATEGORY MAP
+    // [LIVE-001.03] [PROVIDERS: VMTTV] VMT TV CATEGORY MAP
     // ============================================================
     //
     // IMPORTANT:
@@ -8918,7 +8918,7 @@ const VMTTV_CATEGORY_MAP = {
 
 
     // ============================================================
-    // bn-11.5. VMT TV - URL BUILDERS
+    // [LIVE-001.04] [PROVIDERS: VMTTV] VMT TV URL BUILDERS
     // ============================================================
 
 function vmtTvGetUrlList(slug, filtersJson) {
@@ -8986,7 +8986,7 @@ function vmtTvGetUrlYears() {
 
 
     // ============================================================
-    // bn-11.6. VMT TV - M3U PARSER
+    // [LIVE-001.05] [PROVIDERS: VMTTV] VMT TV M3U PARSER
     // ============================================================
 
 function vmtTvParseM3U(text) {
@@ -9151,7 +9151,7 @@ function vmtTvParseM3U(text) {
 
 
     // ============================================================
-    // bn-11.7. VMT TV - CHANNEL ID
+    // [LIVE-001.06] [PROVIDERS: VMTTV] VMT TV CHANNEL ID
     // ============================================================
 
 function vmtTvMakeChannelId(channel) {
@@ -9203,7 +9203,7 @@ function vmtTvFindChannelById(
 
 
     // ============================================================
-    // bn-11.8. VMT TV - LIST RESPONSE
+    // [LIVE-001.07] [PROVIDERS: VMTTV] VMT TV LIST RESPONSE
     // ============================================================
 
 function vmtTvParseListResponse(
@@ -9329,7 +9329,7 @@ function vmtTvParseListResponse(
 
 
     // ============================================================
-    // bn-11.9. VMT TV - SEARCH RESPONSE
+    // [LIVE-001.08] [PROVIDERS: VMTTV] VMT TV SEARCH RESPONSE
     // ============================================================
 
 function vmtTvParseSearchResponse(
@@ -9345,7 +9345,7 @@ function vmtTvParseSearchResponse(
 
 
     // ============================================================
-    // bn-11.10. VMT TV - DETAIL RESPONSE
+    // [LIVE-001.09] [PROVIDERS: VMTTV] VMT TV DETAIL RESPONSE
     // ============================================================
 
 function vmtTvParseMovieDetail(
@@ -9524,7 +9524,7 @@ function vmtTvParseMovieDetail(
 
 
     // ============================================================
-    // bn-11.11. VMT TV - STREAM DETAIL
+    // [LIVE-001.10] [PROVIDERS: VMTTV] VMT TV STREAM DETAIL
     // ============================================================
 
 function vmtTvParseDetailResponse(
@@ -9602,7 +9602,7 @@ function vmtTvParseDetailResponse(
 
 
     // ============================================================
-    // bn-11.12. VMT TV - OPTIONAL PARSERS
+    // [LIVE-001.11] [PROVIDERS: VMTTV] VMT TV OPTIONAL PARSERS
     // ============================================================
 
 function vmtTvParseCategoriesResponse() {
@@ -9815,7 +9815,7 @@ console.log(
 
 
     // ============================================================
-    // bn-12. DEBUG MOVINA PROVIDER REGISTRY
+    // [REG-001.11] [PROVIDERS: ALL] MOVINA PROVIDER REGISTRY DIAGNOSTICS
     // ============================================================
 
         logMovinaProviderRegistry();
@@ -32803,7 +32803,7 @@ function rewriteNguonCPlaylist(
 
 
 /* ============================================================
-   STREAM HANDLER
+   [STREMIO-001] [PROVIDERS: ALL] STREMIO STREAM HANDLER
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
@@ -34722,7 +34722,7 @@ console.log(
 
 
 /* ============================================================
-   EXPRESS ROUTER
+   [ROUTE-001] [PROVIDERS: ALL] EXPRESS APPLICATION AND ROUTER SETUP
    ============================================================ */
 
 const addonRouter =
@@ -37849,7 +37849,7 @@ async function startVSMovSegmentStream(
 
 
 // =====================================================
-// 16.0.6. VSMOV SEGMENT PROXY ROUTE
+// [PX-001] [PROVIDERS: VSMOV] VSMOV SEGMENT PROXY ROUTE
 // =====================================================
 
 app.get(
@@ -38547,7 +38547,7 @@ app.get(
 );
 
 // =====================================================
-// 16.0.7. ANIMEHAY HLS + SEGMENT PROXY
+// [PX-002] [PROVIDERS: ANIMEHAY] ANIMEHAY HLS AND SEGMENT PROXY
 //
 // AnimeHay:
 //
@@ -38575,7 +38575,7 @@ app.get(
 
 
 // =====================================================
-// ANIMEHAY PROXY CONSTANTS
+// [PX-002.01] [PROVIDERS: ANIMEHAY] ANIMEHAY PROXY CONFIGURATION
 // =====================================================
 
 const ANIMEHAY_PROXY_BASE =
@@ -38669,7 +38669,7 @@ function getAnimeHayProxyHeaders(
 
 
 // =====================================================
-// ANIMEHAY REWRITE HLS PLAYLIST
+// [PX-002.02] [PROVIDERS: ANIMEHAY] ANIMEHAY HLS PLAYLIST REWRITER
 //
 // - URL .m3u8      → animehay-hls-proxy
 // - segment URL    → animehay-segment-proxy
@@ -39391,7 +39391,7 @@ console.log("[ANIMEHAY SEGMENT] BYTE DIAGNOSTIC:", {
 }
 
 // =====================================================
-// ANIMEHAY SEGMENT PROXY ROUTE
+// [PX-002.03] [PROVIDERS: ANIMEHAY] ANIMEHAY SEGMENT PROXY ROUTE
 // =====================================================
 
 app.get(
@@ -39756,7 +39756,7 @@ app.get(
 );
 
 // =====================================================
-// NGUONC CLIENT PLAYER
+// [ROUTE-004] [PROVIDERS: NGUONC] NGUONC CLIENT PLAYER ENDPOINT
 // =====================================================
 // Client-side NguonC resolver.
 //
@@ -41916,7 +41916,7 @@ if (isM3U8) {
 );
 
 // =====================================================
-// STREMIO ADDON ROUTER
+// [ROUTE-002] [PROVIDERS: ALL] STREMIO ADDON ROUTER MOUNT
 // =====================================================
 
 app.use(
@@ -41926,7 +41926,7 @@ app.use(
 
 
 /* ============================================================
-   EXPORT
+   [ROUTE-003] [PROVIDERS: ALL] SERVERLESS HANDLER EXPORT
    ============================================================ */
 
 module.exports =
