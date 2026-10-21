@@ -13790,7 +13790,7 @@ const toStremioStream = stream => {
         }
 
         // =====================================================
-        // 16.1. TITLE VARIANTS
+        // [PRV-VSMOV.07] [PROVIDERS: VSMOV] TITLE VARIANTS
         // =====================================================
 
         const titleVariants = [];
@@ -13816,7 +13816,7 @@ const toStremioStream = stream => {
         );
 
         // =====================================================
-        // 16.2. SEARCH VSMOV
+        // [PRV-VSMOV.08] [PROVIDERS: VSMOV] SEARCH
         // =====================================================
 
         const candidates = [];
@@ -13886,7 +13886,7 @@ const toStremioStream = stream => {
         }
 
         // =====================================================
-        // 16.3. UNIQUE CANDIDATES
+        // [PRV-VSMOV.09] [PROVIDERS: VSMOV] CANDIDATE DEDUPLICATION
         // =====================================================
 
         const uniqueCandidates =
@@ -13905,7 +13905,7 @@ const toStremioStream = stream => {
         );
 
         // =====================================================
-        // 16.4. NORMALIZE HELPER
+        // [PRV-VSMOV.10] [PROVIDERS: VSMOV] TITLE NORMALIZATION
         // =====================================================
 
         const cleanTitle = value => {
@@ -13941,7 +13941,7 @@ const toStremioStream = stream => {
                 .filter(Boolean);
 
         // =====================================================
-        // 16.5. RANK CANDIDATES
+        // [PRV-VSMOV.11] [PROVIDERS: VSMOV] CANDIDATE RANKING
         // =====================================================
 
         const ranked =
@@ -14096,7 +14096,7 @@ const toStremioStream = stream => {
             });
 
         // =====================================================
-        // 16.6. SELECT CANDIDATE
+        // [PRV-VSMOV.12] [PROVIDERS: VSMOV] CANDIDATE SELECTION
         // =====================================================
 
         let selected = null;
@@ -14173,7 +14173,7 @@ const toStremioStream = stream => {
         }
 
         // =====================================================
-        // 16.7. DETAIL
+        // [PRV-VSMOV.13] [PROVIDERS: VSMOV] MOVIE DETAIL FETCH
         // =====================================================
 
         const detailUrl =
@@ -25016,10 +25016,6 @@ async function fetchAnimeTProvider(
         return [];
     }
 }
-
-// ============================================================
-// END MOVINA — ANIMET PROVIDER ADAPTER
-// ============================================================
 
 
 // ============================================================
