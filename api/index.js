@@ -10827,7 +10827,7 @@ async function fetchNguonC(movieName) {
 // ============================================================
 
 /*
- * KKPHIM — GENERIC TITLE VARIANTS
+ * [PRV-KKPHIM.01] [PROVIDERS: KKPHIM] GENERIC TITLE VARIANTS
  *
  * Dùng chung cho movie và series.
  * - Tạo biến thể từ tên đầu vào.
@@ -15043,7 +15043,7 @@ let animeHayDirectoryActiveDomain = null;
 
 
 // ============================================================
-// ANIMEHAY — TEXT NORMALIZE
+// [PRV-ANIMEHAY.01] [PROVIDERS: ANIMEHAY] TEXT NORMALIZATION
 // ============================================================
 
 function animeHayNormalizeText(value = "") {
@@ -15060,7 +15060,7 @@ function animeHayNormalizeText(value = "") {
 
 
 // ============================================================
-// ANIMEHAY — SLUG
+// [PRV-ANIMEHAY.02] [PROVIDERS: ANIMEHAY] SLUG NORMALIZATION
 // ============================================================
 
 function animeHaySlug(value = "") {
@@ -15072,7 +15072,7 @@ function animeHaySlug(value = "") {
 
 
 // ============================================================
-// ANIMEHAY — ABSOLUTE URL
+// [PRV-ANIMEHAY.03] [PROVIDERS: ANIMEHAY] ABSOLUTE URL RESOLUTION
 // ============================================================
 
 function animeHayAbsoluteUrl(
@@ -15097,7 +15097,7 @@ function animeHayAbsoluteUrl(
 
 
 // ============================================================
-// ANIMEHAY — TITLE VARIANTS
+// [PRV-ANIMEHAY.04] [PROVIDERS: ANIMEHAY] TITLE VARIANTS
 //
 // Giống hướng xử lý của KKPhim/VSMov:
 // không phụ thuộc duy nhất vào một chuỗi title.
@@ -38620,7 +38620,7 @@ const ANIMEHAY_STREAM_HOST_REGEX =
 
 
 // =====================================================
-// ANIMEHAY VALIDATE STREAM URL
+// [PX-002.03] [PROVIDERS: ANIMEHAY] STREAM URL VALIDATION
 // =====================================================
 
 function isValidAnimeHayStreamUrl(
@@ -38655,7 +38655,7 @@ function isValidAnimeHayStreamUrl(
 
 
 // =====================================================
-// ANIMEHAY SOURCE HEADERS
+// [PX-002.04] [PROVIDERS: ANIMEHAY] SOURCE REQUEST HEADERS
 // =====================================================
 
 function getAnimeHayProxyHeaders(
@@ -38869,7 +38869,7 @@ function rewriteAnimeHayM3u8(
 
 
 // =====================================================
-// ANIMEHAY M3U8 DETECTION
+// [PX-002.05] [PROVIDERS: ANIMEHAY] M3U8 URL DETECTION
 // =====================================================
 
 function isAnimeHayM3u8Url(
