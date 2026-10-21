@@ -12183,7 +12183,7 @@ const episodes =
 
 
 /* ============================================================
-   16. VSMOV API
+   [PRV-VSMOV.05] [PROVIDERS: VSMOV] VSMOV API AND STREAM EXTRACTION
    SEARCH API
    DETAIL API
    RESOLVE EMBED → M3U8
@@ -12939,7 +12939,7 @@ function rewriteVSMovM3u8(
 
 
 // =====================================================
-// 16.1. VSMOV EMBED RESOLVER
+// [PRV-VSMOV.06] [PROVIDERS: VSMOV] EMBED STREAM RESOLUTION
 // =====================================================
 
 async function resolveVSMovEmbed(
@@ -15180,7 +15180,7 @@ function animeHayBuildTitleVariants(movieName = "") {
 
 
 // ============================================================
-// ANIMEHAY — DOMAIN DISCOVERY
+// [PRV-ANIMEHAY.05] [PROVIDERS: ANIMEHAY] DOMAIN DISCOVERY
 // ============================================================
 
 async function animeHayDiscoverDirectoryDomains() {
@@ -15309,7 +15309,7 @@ async function animeHayDiscoverDirectoryDomains() {
 
 
 // ============================================================
-// ANIMEHAY — RESOLVE ACTIVE DOMAIN
+// [PRV-ANIMEHAY.06] [PROVIDERS: ANIMEHAY] ACTIVE DOMAIN RESOLUTION
 //
 // QUAN TRỌNG:
 // Cloudflare challenge KHÔNG có nghĩa domain chết.
@@ -15475,7 +15475,7 @@ async function animeHayResolveActiveDomain(
 
 
 // ============================================================
-// ANIMEHAY — SEARCH
+// [PRV-ANIMEHAY.07] [PROVIDERS: ANIMEHAY] ANIME SEARCH
 //
 // - Thử URL tìm kiếm dạng slug và query keyword.
 // - Chỉ lấy link trang chi tiết anime.
@@ -15782,7 +15782,7 @@ async function animeHaySearch(domain, title) {
 
 
 // ============================================================
-// ANIMEHAY — FIND BEST TITLE
+// [PRV-ANIMEHAY.08] [PROVIDERS: ANIMEHAY] SEARCH RESULT RANKING
 // Hỗ trợ nhiều tên thay thế, giữ nguyên ưu tiên năm.
 // ============================================================
 
@@ -15957,7 +15957,7 @@ function animeHayFindBestSearchResult(
 
 
 // ============================================================
-// ANIMEHAY — FIND EPISODE
+// [PRV-ANIMEHAY.09] [PROVIDERS: ANIMEHAY] EPISODE RESOLUTION
 //
 // Bám theo selector đã xác nhận từ DEX:
 // .aim-episodes a[href]
@@ -18483,7 +18483,7 @@ async function animeHayLoadLinks(
 }
 
 // ============================================================
-// BL-53A1. ANIMEHAY — ANILIST TITLE FALLBACK
+// [PRV-ANIMEHAY.10] [PROVIDERS: ANIMEHAY] ANILIST TITLE FALLBACK
 // Tra cứu tên anime thay thế; không cần API key.
 // ============================================================
 
@@ -19477,7 +19477,7 @@ async function animetRequest(url, options = {}) {
 }
 
 // ============================================================================
-// ANIMET — LINKBIO DOMAIN DISCOVERY (FAST, FILTERED, CACHED)
+// [PRV-ANIMET.05] [PROVIDERS: ANIMET] LINKBIO DOMAIN DISCOVERY
 //
 // Mục tiêu:
 // - Đọc LinkBio để tìm domain AnimeT.
@@ -32614,7 +32614,7 @@ async function resolveNguonCEmbed(
 
 
 /* ============================================================
-   NGUONC HLS PROXY
+   [PX-005] [PROVIDERS: NGUONC] NGUONC HLS PROXY
    ============================================================ */
 
 function encodeProxyUrl(
@@ -33990,7 +33990,7 @@ console.log(
 );
 
 // =====================================================
-// 11. GỘP STREAM TRỰC TIẾP
+// [STREMIO-089] [PROVIDERS: ALL] STREAM RESULT AGGREGATION
 // =====================================================
 //
 // AnimeHay được chạy riêng ở đây.
@@ -35293,7 +35293,7 @@ app.get(
 );
 
 /* ============================================================
-   VSMOV EMBED INSPECT
+   [ROUTE-005] [PROVIDERS: VSMOV] EMBED INSPECTION ENDPOINT
    ĐỌC HTML PLAYER VÀ TÌM:
    - enableSignedUrl
    - signedMasterUrl
