@@ -12199,7 +12199,7 @@ const episodes =
    ============================================================ */
 
 // =====================================================
-// 16.0. VSMOV HELPERS
+// [PX-001.01] [PROVIDERS: VSMOV] HLS AND SEGMENT PROXY HELPERS
 // =====================================================
 
 // =====================================================
@@ -12359,7 +12359,7 @@ function makeVSMovSegmentProxyUrl(
 
 
 // =====================================================
-// 16.0.1. FIND FAKE PNG PREFIX
+// [PX-001.02] [PROVIDERS: VSMOV] FAKE PNG PREFIX DETECTION
 //
 // GIỐNG LOGIC CloudStream:
 //
@@ -12507,7 +12507,7 @@ function findVSMovPngPrefixLength(
 
 
 // =====================================================
-// 16.0.2. GET VSMOV REFERER
+// [PX-001.03] [PROVIDERS: VSMOV] REFERER NORMALIZATION
 // =====================================================
 
 function normalizeVSMovReferer(
@@ -12552,7 +12552,7 @@ function normalizeVSMovReferer(
 
 
 // =====================================================
-// 16.0.3. REWRITE ONE VSMOV SEGMENT
+// [PX-001.04] [PROVIDERS: VSMOV] SEGMENT URL REWRITING
 //
 // VSMov dùng segment .png nhưng payload thật là MPEG-TS.
 //
@@ -25072,9 +25072,6 @@ registerMovinaProvider({
     }
 });
 
-// ============================================================
-// END MOVINA — ANIMET PROVIDER REGISTRATION
-// ============================================================
 
 // [STREMIO-086] [PROVIDERS: ONFLIX] MOVINA ONFLIX STREAM ADAPTER
 
@@ -36557,7 +36554,7 @@ app.get(
 );
 
 // =====================================================
-// 16.0.5. VSMOV HLS PROXY
+// [PX-001.05] [PROVIDERS: VSMOV] HLS PROXY ROUTE
 //
 // MASTER M3U8
 //      ↓
@@ -37103,7 +37100,7 @@ app.get(
 
 
 // =====================================================
-// 16.0.6. VSMOV SEGMENT PROXY
+// [PX-001.06] [PROVIDERS: VSMOV] MPEG-TS SEGMENT PROXY
 //
 // VSMov trả về file .png giả nhưng payload thật là MPEG-TS.
 //
@@ -38956,7 +38953,7 @@ function makeAnimeHaySegmentProxyUrl(
 
 
 // =====================================================
-// 16.0.7A. ANIMEHAY HLS PROXY
+// [PX-002.06] [PROVIDERS: ANIMEHAY] HLS PROXY ROUTE
 // =====================================================
 
 app.get(
@@ -39266,7 +39263,7 @@ app.get(
 
 
 // =====================================================
-// 16.0.7B. ANIMEHAY MPEG-TS TRANSFORM
+// [PX-002.07] [PROVIDERS: ANIMEHAY] MPEG-TS TRANSFORM
 //
 // Đối chiếu AnimeHay CloudStream:
 // InterceptorUtilKt.skipByteError()
