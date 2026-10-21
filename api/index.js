@@ -6118,7 +6118,7 @@ if (
 //      ↓
 //   STREMIO
 //
-// BL-30 chứa:
+// RES-001 bao gồm:
 //   - NormalizedStream contract
 //   - normalize helpers
 //   - Resolver Registry
@@ -10003,7 +10003,7 @@ function makeVmtTvCatalogMeta(channel) {
 
 
 // ============================================================
-// VMT TV → STREMIO FULL META
+// [STREMIO-083] [PROVIDERS: VMTTV] VMT TV FULL META ADAPTER
 // ============================================================
 
 function makeVmtTvMeta(channel) {
@@ -10099,7 +10099,7 @@ function makeVmtTvMeta(channel) {
 
 
 // ============================================================
-// VMT TV → NORMALIZED STREAM
+// [STREMIO-084] [PROVIDERS: VMTTV] VMT TV NORMALIZED STREAM ADAPTER
 // ============================================================
 
 async function resolveVmtTvChannel(
@@ -10177,7 +10177,7 @@ console.log(
 );
 
 // ============================================================
-// BL-51. NGUONC PROVIDER
+// [PRV-NGUONC] [PROVIDERS: NGUONC] NGUONC PROVIDER
 // ============================================================
 //
 // Provider đặc biệt:
@@ -24761,7 +24761,7 @@ async function fetchOnflix(input, options = {}) {
 
 
 /* ============================================================
- * MOVINA — ANIMET PROVIDER ADAPTER
+ * [STREMIO-085] [PROVIDERS: ANIMET] MOVINA ANIMET STREAM ADAPTER
  * Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
  * ============================================================ */
 
@@ -25076,7 +25076,7 @@ registerMovinaProvider({
 // END MOVINA — ANIMET PROVIDER REGISTRATION
 // ============================================================
 
-
+// [STREMIO-086] [PROVIDERS: ONFLIX] MOVINA ONFLIX STREAM ADAPTER
 
 async function fetchOnflixProvider(
     movieName,
