@@ -10804,7 +10804,7 @@ async function fetchNguonC(movieName) {
 
 
 // ============================================================
-// BL-52. KKPHIM PROVIDER
+// [PRV-KKPHIM] [PROVIDERS: KKPHIM] KKPHIM PROVIDER
 // ============================================================
 //
 // Provider API:
@@ -13442,7 +13442,7 @@ async function resolveVSMovEmbed(
 
 
 // ============================================================
-// BL-53. VSMOV PROVIDER
+// [PRV-VSMOV] [PROVIDERS: VSMOV] VSMOV PROVIDER
 // ============================================================
 //
 // Provider:
@@ -13478,14 +13478,14 @@ async function fetchVSMov(
 ) {
 
     // =====================================================
-    // 16.0. PROVIDER IDENTITY
+    // PROVIDER IDENTITY
     // =====================================================
 
     const providerId = "vsmov";
     const providerName = "VSMov";
 
-    // =====================================================
-// 16.0.A. NORMALIZED STREAM PIPELINE
+// =====================================================
+// [PRV-VSMOV.01] [PROVIDERS: VSMOV] NORMALIZED STREAM PIPELINE
 // =====================================================
 //
 // VSMov sử dụng NormalizedStream Contract chung
@@ -13525,7 +13525,7 @@ const addNormalizedStream = (
 
 
 // =====================================================
-// 16.0.B. NORMALIZED → STREMIO ADAPTER
+// [STREMIO-087] [PROVIDERS: VSMOV] NORMALIZED STREAM TO STREMIO ADAPTER
 // =====================================================
 //
 // Adapter chung cho NormalizedStream.
@@ -15027,7 +15027,7 @@ return streams;
 }
 
 // ============================================================
-// BL-53. ANIMEHAY PROVIDER
+// [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
 // ============================================================
 
 const ANIMEHAY_DIRECTORY =
@@ -25023,7 +25023,7 @@ async function fetchAnimeTProvider(
 
 
 // ============================================================
-// MOVINA — ANIMET PROVIDER REGISTRATION
+// [REG-004] [PROVIDERS: ANIMET, ONFLIX] ANIMET AND ONFLIX PROVIDER REGISTRATION
 // ============================================================
 
 registerMovinaProvider({
@@ -25418,7 +25418,7 @@ try {
 
 
 // ============================================================
-// BL-54. PHIMLONGTIENG PROVIDER
+// [PRV-PHIMLONGTIENG] [PROVIDERS: PHIMLONGTIENG] PHIMLONGTIENG PROVIDER
 // ============================================================
 //
 // Provider:
@@ -29377,7 +29377,7 @@ return finalStreams;
 }
 
 // ============================================================
-// BL-55. PHIMHDCS PROVIDER
+// [PRV-PHIMHDCS] [PROVIDERS: PHIMHDCS] PHIMHDCS PROVIDER
 // ============================================================
 //
 // Provider:
