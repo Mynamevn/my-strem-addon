@@ -4652,7 +4652,7 @@ if (
 }
 
 // -----------------------------------------------------
-// bn-13.1B. VMT TV CHANNEL META
+// [STREMIO-013.04] [PROVIDERS: VMTTV] VMT TV CHANNEL META
 // -----------------------------------------------------
 //
 // Chỉ xử lý channel thật:
@@ -4748,7 +4748,7 @@ if (
 }
 
         // =====================================================
-        // bn-13.1. GIẢI MÃ TÊN PHIM
+        // [STREMIO-013.05] [PROVIDERS: ALL] MOVIE TITLE DECODING
         // =====================================================
 
         let movieName = "";
@@ -4843,7 +4843,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.2. TÌM PHIM TRÊN PHIMAPI
+        // [STREMIO-013.06] [PROVIDERS: ALL] PHIMAPI TITLE SEARCH
         // =====================================================
 
         const searchUrl =
@@ -4885,7 +4885,7 @@ if (
         );
 
         // =====================================================
-        // bn-13.3. CHỌN KẾT QUẢ KHỚP TÊN
+        // [STREMIO-013.07] [PROVIDERS: ALL] MOVIE SEARCH RESULT MATCHING
         // =====================================================
 
         const normalizeTitle =
@@ -5048,7 +5048,7 @@ if (
         );
 
         // =====================================================
-        // bn-13.4. LẤY DETAIL PHIM
+        // [STREMIO-013.08] [PROVIDERS: ALL] MOVIE DETAIL FETCH
         // =====================================================
 
         let detail =
@@ -5106,7 +5106,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.5. XÁC ĐỊNH TYPE THỰC
+        // [STREMIO-013.09] [PROVIDERS: ALL] MOVIE AND SERIES TYPE RESOLUTION
         // =====================================================
 
         const sourceType =
@@ -5127,7 +5127,7 @@ if (
                 : "movie";
 
         // =====================================================
-        // bn-13.6. POSTER
+        // [STREMIO-013.10] [PROVIDERS: ALL] POSTER RESOLUTION
         // =====================================================
 
         const poster =
@@ -5135,7 +5135,7 @@ if (
             makePosterUrl(item);
 
         // =====================================================
-        // bn-13.7. BACKGROUND
+        // [STREMIO-013.11] [PROVIDERS: ALL] BACKGROUND IMAGE RESOLUTION
         // =====================================================
 
         let background = "";
@@ -5157,7 +5157,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.8. NỘI DUNG THẬT
+        // [STREMIO-013.12] [PROVIDERS: ALL] DESCRIPTION EXTRACTION
         // =====================================================
 
         let description =
@@ -5209,7 +5209,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.9. IMDb TỪ PHIMAPI
+        // [STREMIO-013.13] [PROVIDERS: ALL] IMDB ID EXTRACTION
         // =====================================================
 
         if (!imdbId) {
@@ -5241,7 +5241,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.10. NẾU PHIMAPI KHÔNG CÓ IMDb
+        // [STREMIO-013.14] [PROVIDERS: ALL] CINEMETA IMDB FALLBACK
         //         → TÌM IMDb QUA CINEMETA
         //
         // Ưu tiên:
@@ -5601,7 +5601,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.11. IMDb RATING
+        // [STREMIO-013.15] [PROVIDERS: ALL] IMDB RATING EXTRACTION
         // =====================================================
 
         let imdbRating = null;
@@ -5729,7 +5729,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.12. THỂ LOẠI
+        // [STREMIO-013.16] [PROVIDERS: ALL] GENRE EXTRACTION
         // =====================================================
 
         const genres =
@@ -5760,7 +5760,7 @@ if (
                 );
 
         // =====================================================
-        // bn-13.13. VIDEOS CHO SERIES
+        // [STREMIO-013.17] [PROVIDERS: ALL] SERIES VIDEO METADATA
         //
         // Stremio:
         //   video.id = metaId:season:episode
@@ -5999,7 +5999,7 @@ if (
         }
 
         // =====================================================
-        // bn-13.14. META SERIES - THÔNG TIN + VIDEOS
+        // [STREMIO-013.18] [PROVIDERS: ALL] SERIES META AND VIDEOS OUTPUT
         // =====================================================
 
         const meta = {
@@ -6413,7 +6413,7 @@ function createNormalizedStream(input = {}) {
 
 
 // ============================================================
-// 2. NORMALIZE RAW STREAM
+// [RES-001.09] [PROVIDERS: ALL] RAW STREAM NORMALIZATION
 // ============================================================
 
 function normalizeStream(
@@ -6473,7 +6473,7 @@ function normalizeStreams(
 
 
 // ============================================================
-// 2.1. APPEND NORMALIZED STREAM
+// [RES-001.10] [PROVIDERS: ALL] NORMALIZED STREAM APPEND HELPER
 // ============================================================
 //
 // Helper dùng chung cho Provider.
@@ -22098,6 +22098,8 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
  *   fetchOnflix(data,  { action: "links" })
  * ========================================================================== */
 
+// [PRV-ONFLIX.01] [PROVIDERS: ONFLIX] PROVIDER CONSTANTS AND SOURCE PRIORITY
+
 const ONFLIX_BASE_URL = "https://onflix.lat";
 const ONFLIX_API_URL = "https://k8s.onflixcdn.com/api";
 const ONFLIX_USER_AGENT =
@@ -22105,6 +22107,8 @@ const ONFLIX_USER_AGENT =
 
 const ONFLIX_SORA_KEY = "onflix_secure_stream_v2_2026";
 const ONFLIX_SRC_PRIORITY = ["pa", "sn", "nc", "op"];
+
+// [PRV-ONFLIX.02] [PROVIDERS: ONFLIX] ENCRYPTED URL DECODING
 
 function onflixDecodeEnc(value) {
     const input = String(value || "");
@@ -22137,6 +22141,8 @@ function onflixDecodeEnc(value) {
     }
 }
 
+// [PRV-ONFLIX.03] [PROVIDERS: ONFLIX] ABSOLUTE URL NORMALIZATION
+
 function onflixAbsoluteUrl(value, base = ONFLIX_BASE_URL) {
     try {
         const url = new URL(String(value || ""), base);
@@ -22151,6 +22157,8 @@ function onflixAbsoluteUrl(value, base = ONFLIX_BASE_URL) {
     }
 }
 
+// [PRV-ONFLIX.04] [PROVIDERS: ONFLIX] TITLE TEXT NORMALIZATION
+
 function onflixNormalizeText(value) {
     return String(value || "")
         .toLowerCase()
@@ -22161,6 +22169,8 @@ function onflixNormalizeText(value) {
         .trim();
 }
 
+// [PRV-ONFLIX.05] [PROVIDERS: ONFLIX] JSON STRING DECODING
+
 function onflixDecodeJsonString(value) {
     try {
         return JSON.parse('"' + value + '"');
@@ -22168,6 +22178,8 @@ function onflixDecodeJsonString(value) {
         return value;
     }
 }
+
+// [PRV-ONFLIX.06] [PROVIDERS: ONFLIX] NEXT DATA EXTRACTION
 
 function onflixExtractNextData(html) {
     const chunks = [];
@@ -22190,6 +22202,8 @@ function onflixExtractNextData(html) {
         .replace(/\\\//g, "/")
         .replace(/\\n/g, "\n");
 }
+
+// [PRV-ONFLIX.07] [PROVIDERS: ONFLIX] EPISODE RECORD PARSING
 
 function onflixParseEpisodeRecords(source) {
     const text = String(source || "");
@@ -22221,6 +22235,8 @@ function onflixParseEpisodeRecords(source) {
     return records;
 }
 
+// [PRV-ONFLIX.08] [PROVIDERS: ONFLIX] HTTP REQUEST HELPER
+
 async function onflixRequest(url, options = {}) {
     const response = await axios.get(url, {
         timeout: options.timeout || 10000,
@@ -22246,6 +22262,7 @@ async function onflixRequest(url, options = {}) {
     };
 }
 
+// [PRV-ONFLIX.09] [PROVIDERS: ONFLIX] TITLE SEARCH
 
 async function onflixSearch(query) {
     const keyword = String(query || "").trim();
@@ -22354,7 +22371,7 @@ async function onflixSearch(query) {
     }
 }
 
-
+// [PRV-ONFLIX.10] [PROVIDERS: ONFLIX] DETAIL AND EPISODE LOADING
 
 async function onflixLoad(url) {
     const detailUrl = onflixAbsoluteUrl(url);
@@ -22534,6 +22551,7 @@ async function onflixLoad(url) {
     }
 }
 
+// [PRV-ONFLIX.11] [PROVIDERS: ONFLIX] STREAMC EMBED RESOLUTION
 
 async function onflixResolveStreamc(embedUrl) {
     const url = onflixAbsoluteUrl(embedUrl);
@@ -22622,6 +22640,8 @@ async function onflixResolveStreamc(embedUrl) {
  * Nếu HTTP/2 không hoạt động trong runtime, fallback sang Axios.
  * ============================================================================
  */
+
+// [PRV-ONFLIX.12] [PROVIDERS: ONFLIX] SORA HTTP/2 REQUEST
 
 async function onflixSoraHttp2Get(url, options = {}, redirects = 0) {
     const MAX_REDIRECTS = 4;
@@ -22734,6 +22754,7 @@ async function onflixSoraHttp2Get(url, options = {}, redirects = 0) {
     return response;
 }
 
+// [PRV-ONFLIX.13] [PROVIDERS: ONFLIX] SORA HTTP REQUEST WITH FALLBACK
 
 async function onflixSoraGet(url, options = {}) {
     const TAG = "[ONFLIX-SORA-HTTP]";
@@ -23180,6 +23201,8 @@ async function onflixResolveSora(record) {
 // Không tự tạo chữ ký time/exp và không tái sử dụng URL đã hết hạn.
 // ============================================================================
 
+// [PRV-ONFLIX.14] [PROVIDERS: ONFLIX] SORACDN SIGNED STREAM EXTRACTION
+
 async function onflixExtractSoraCdnStreams(
     watchUrl,
     options = {}
@@ -23376,6 +23399,8 @@ async function onflixExtractSoraCdnStreams(
 
 const ONFLIX_SORA_KEY_V2 = "onflix_secure_stream_v2_2026";
 
+// [PRV-ONFLIX.15] [PROVIDERS: ONFLIX] SORA ENCRYPTED URL DECODING
+
 function onflixSoraDecodeEnc(encoded) {
     const value = String(encoded || "").trim();
 
@@ -23409,6 +23434,8 @@ function onflixSoraDecodeEnc(encoded) {
     return decoded.startsWith("http") ? decoded : null;
 }
 
+// [PRV-ONFLIX.16] [PROVIDERS: ONFLIX] SORA RESPONSE TEXT NORMALIZATION
+
 function onflixSoraResponseText(response) {
     const data = response?.data ?? response?.body ?? response;
 
@@ -23422,6 +23449,8 @@ function onflixSoraResponseText(response) {
     }
 }
 
+// [PRV-ONFLIX.17] [PROVIDERS: ONFLIX] SORA JSON RESPONSE PARSING
+
 function onflixSoraParseJson(response) {
     const data = response?.data ?? response?.body ?? response;
 
@@ -23434,6 +23463,8 @@ function onflixSoraParseJson(response) {
         return null;
     }
 }
+
+// [PRV-ONFLIX.18] [PROVIDERS: ONFLIX] SORA INITIAL M3U8 EXTRACTION
 
 function onflixSoraExtractInitialM3u8(html) {
     const source = String(html || "");
@@ -23451,6 +23482,8 @@ function onflixSoraExtractInitialM3u8(html) {
 
     return null;
 }
+
+// [PRV-ONFLIX.19] [PROVIDERS: ONFLIX] EPISODE ID EXTRACTION
 
 function onflixSoraGetEpisodeId(record) {
     let value =
@@ -23485,6 +23518,8 @@ function onflixSoraGetEpisodeId(record) {
     return id;
 }
 
+// [PRV-ONFLIX.20] [PROVIDERS: ONFLIX] SOURCE CODE EXTRACTION
+
 function onflixSoraGetSource(record) {
     return String(
         record?.src ??
@@ -23495,6 +23530,8 @@ function onflixSoraGetSource(record) {
         ""
     ).trim().toLowerCase();
 }
+
+// [PRV-ONFLIX.21] [PROVIDERS: ONFLIX] SORA MASTER AND PLAYBACK RESOLUTION
 
 async function onflixFetchSoraMaster(epId, src, record = null) {
     const logPrefix = "[ONFLIX-SORA]";
@@ -23786,6 +23823,7 @@ async function onflixFetchSoraMaster(epId, src, record = null) {
     return await tryEmbedPage();
 }
 
+// [PRV-ONFLIX.22] [PROVIDERS: ONFLIX] SORA RECORD RESOLUTION
 
 async function onflixResolveSoraRecords(records) {
     const list = Array.isArray(records) ? records : [];
@@ -23945,6 +23983,8 @@ async function onflixResolveSoraRecords(records) {
 // ============================================================================
 // END ONFLIX SORACDN RESOLVER
 // ============================================================================
+
+// [PRV-ONFLIX.23] [PROVIDERS: ONFLIX] EPISODE STREAM COLLECTION
 
 async function onflixLinks(input, requestedEpisodeNumberArg = 0) {
     const TAG = "[ONFLIX-LINKS]";
@@ -24653,7 +24693,7 @@ const embedUrl = rawEmbedUrl
     return streams;
 }
 
-
+// [PRV-ONFLIX.24] [PROVIDERS: ONFLIX] PROVIDER ACTION ADAPTER
 
 async function fetchOnflix(input, options = {}) {
     const action = String(options.action || "search").toLowerCase();
