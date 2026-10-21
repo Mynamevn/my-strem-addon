@@ -14235,7 +14235,7 @@ const toStremioStream = stream => {
         }
 
         // =====================================================
-        // 16.8. EPISODES
+        // [PRV-VSMOV.02] [PROVIDERS: VSMOV] EPISODE SERVER ITERATION
         // =====================================================
 
         for (
@@ -14272,7 +14272,7 @@ const toStremioStream = stream => {
             );
 
             // =================================================
-            // 16.9. SERIES
+            // [PRV-VSMOV.03] [PROVIDERS: VSMOV] SERIES EPISODE MATCHING
             // =================================================
 
             if (
@@ -14595,7 +14595,7 @@ const toStremioStream = stream => {
             }
 
             // =================================================
-            // 16.10. MOVIE
+            // [PRV-VSMOV.04] [PROVIDERS: VSMOV] MOVIE STREAM EXTRACTION
             // =================================================
 
             else {
@@ -14800,8 +14800,8 @@ const toStremioStream = stream => {
             }
         }
 
-        // =====================================================
-// 16.11. NORMALIZED RESULT
+// =====================================================
+// [RES-002.02] [PROVIDERS: VSMOV] NORMALIZED STREAM RESULT
 // =====================================================
 //
 // BƯỚC 2:
@@ -14831,7 +14831,7 @@ console.log(
 
 
 // =====================================================
-// 16.12. ATTACH VSMOV RESOLVER
+// [RES-002.03] [PROVIDERS: VSMOV] ATTACH VSMOV RESOLVER
 // =====================================================
 //
 // Mọi stream VSMov đi vào Resolver Engine đều được đánh dấu:
@@ -14863,7 +14863,7 @@ const resolverInputStreams =
 
 
 // =====================================================
-// 16.13. RESOLVE THROUGH REGISTRY
+// [RES-002.04] [PROVIDERS: VSMOV] RESOLVE THROUGH REGISTRY
 // =====================================================
 
 let resolvedNormalizedStreams = [];
@@ -33931,7 +33931,7 @@ console.log(
 
 
 // =====================================================
-// NGUONC CLIENT WIDGET
+// [STREMIO-088] [PROVIDERS: NGUONC] NGUONC CLIENT WIDGET ADAPTER
 // =====================================================
 // Không gọi NguonC từ Vercel.
 // Browser sẽ mở NguonC Client và tự tìm đúng phim/năm/tập.
@@ -41320,7 +41320,7 @@ startNguonC()
 );
 
 // ============================================================
-// PHIM LONG TIẾNG - HLS VIDEO INTERCEPTOR
+// [PX-004] [PROVIDERS: PHIMLONGTIENG] HLS VIDEO INTERCEPTOR
 //
 // Android Provider:
 //     M3U8
@@ -41339,7 +41339,7 @@ startNguonC()
 // ============================================================
 
 // ============================================================
-// PHIM LONG TIẾNG - HLS HEAD CHECK
+// [PX-004.01] [PROVIDERS: PHIMLONGTIENG] HLS HEAD CHECK
 //
 // Một số web player kiểm tra URL bằng HEAD trước khi GET.
 // Không cần fetch upstream ở đây.
