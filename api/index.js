@@ -22801,35 +22801,31 @@ async function fetchAnimeTProvider(
         }
 
         
+        
         // 5. EMBED FALLBACK
-        // Ưu tiên trang embed AnimeT theo episode ID.
-        // Nếu không xác định được ID, dùng các player đã trích xuất.
-        // Embed được xuất qua externalUrl, không giả làm direct video.
+        // Nếu không có direct/Hydrax stream:
+        // 1. Tạo embed AnimeT từ ID trong URL tập.
+        // 2. Nếu không nhận diện được ID, dùng player URL đã trích xuất.
 
         if (streams.length === 0) {
             const embedCandidates = [];
 
-            // A. Tạo URL embed AnimeT từ URL của tập.
-            // Ví dụ:
-            // /xem-phim/tien-ngich/tap-1-152346.html
-            // -> /embed/tap/152346
+            // A. Tạo embed từ URL tập:
+            // /xem-phim/fx-senshi-kurumi-chan/tap-3-175739.html
+            // -> /embed/tap/175739
             try {
                 const parsedEpisodeUrl = new URL(episodeUrl);
-                const episodePath = parsedEpisodeUrl.pathname;
-
-                const episodeIdMatch = episodePath.match(
-                    /-(\d+)\.html$/i
+                const match = parsedEpisodeUrl.pathname.match(
+                    /\/tap-\d+-(\d+)\.html$/i
                 );
 
                 if (
-                    episodeIdMatch &&
-                    /\/xem-phim\//i.test(episodePath)
+                    match &&
+                    /\/xem-phim\//i.test(parsedEpisodeUrl.pathname)
                 ) {
-                    const episodeId = episodeIdMatch[1];
-
                     embedCandidates.push({
                         url: new URL(
-                            `/embed/tap/${episodeId}`,
+                            `/embed/tap/${match[1]}`,
                             parsedEpisodeUrl.origin
                         ).href,
                         name: "AnimeT · Embed Player"
@@ -22838,16 +22834,29 @@ async function fetchAnimeTProvider(
             } catch (error) {
                 console.warn(
                     TAG,
-                    "CANNOT BUILD EMBED URL:",
+                    "EMBED URL BUILD ERROR:",
                     error?.message || error
                 );
             }
 
-            // B. Bổ sung player URL đã được fetchAnimeT trích xuất.
+            // B. Dùng player URL đã được fetchAnimeT trích xuất,
+            // nếu không tạo được embed từ URL tập.
             if (Array.isArray(linkResult?.players)) {
                 for (const player of linkResult.players) {
+                    const playerUrl = String(
+                        player?.url || ""
+                    ).trim();
+
+                    if (!/^https?:\/\//i.test(playerUrl)) {
+                        continue;
+                    }
+
+                    if (animetIsFakeHydraxUrl(playerUrl)) {
+                        continue;
+                    }
+
                     embedCandidates.push({
-                        url: String(player?.url || "").trim(),
+                        url: playerUrl,
                         name:
                             player?.name ||
                             player?.type ||
@@ -22856,15 +22865,13 @@ async function fetchAnimeTProvider(
                 }
             }
 
-            // C. Kiểm tra và loại URL trùng.
-            for (const player of embedCandidates) {
-                const embedUrl = String(player.url || "").trim();
+            // C. Đưa embed vào danh sách externalUrl.
+            for (const candidate of embedCandidates) {
+                const embedUrl = String(
+                    candidate.url || ""
+                ).trim();
 
                 if (!/^https?:\/\//i.test(embedUrl)) {
-                    continue;
-                }
-
-                if (animetIsFakeHydraxUrl(embedUrl)) {
                     continue;
                 }
 
@@ -22875,7 +22882,7 @@ async function fetchAnimeTProvider(
                 seen.add(embedUrl);
 
                 streams.push({
-                    name: player.name,
+                    name: candidate.name,
                     title:
                         `${query}${episodeNumber
                             ? ` · Tập ${episodeNumber}`
@@ -22891,9 +22898,19 @@ async function fetchAnimeTProvider(
 
             console.info(
                 TAG,
-                "EMBED FALLBACK:",
+                "EMBED FALLBACK RESULT:",
                 JSON.stringify({
                     episodeUrl,
+                    episodeId: (() => {
+                        try {
+                            return new URL(episodeUrl)
+                                .pathname
+                                .match(/\/tap-\d+-(\d+)\.html$/i)?.[1]
+                                || null;
+                        } catch {
+                            return null;
+                        }
+                    })(),
                     candidates: embedCandidates.length,
                     streamsAdded: streams.length
                 })
