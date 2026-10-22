@@ -59,11 +59,12 @@ const manifest = {
     ],
 
     idPrefixes: [
-        "tt",
-        "vnwpsw:",
-        "vmttv:",
-        "movina-tv:",
-        "vmttv-group:"
+    "tt",
+    "vnwpsw:",
+    "vmttv:",
+    "coban:",
+    "movina-tv:",
+    "vmttv-group:"
     ],
 
     catalogs: [
@@ -151,8 +152,9 @@ const manifest = {
                     isRequired: false,
 
                     options: [
-                        "vmttv"
-                    ],
+                            "vmttv",
+                            "coban"
+                         ],
 
                     optionsLimit: 1
                 },
@@ -3523,9 +3525,9 @@ builder.defineCatalogHandler(
 // ============================================================ */
 
 
-// ============================================================
-// 12.0A pa_tv ROOT / PROVIDER / GROUP / CHANNEL
-// ============================================================
+    // ============================================================
+    // 12.0A pa_tv ROOT / PROVIDER / GROUP / CHANNEL
+    // ============================================================
 
 if (
     args.id === "pa_tv"
@@ -3585,8 +3587,67 @@ if (
 
 
         // ====================================================
+        // [STREMIO-012.COBAN] [PROVIDERS: COBAN]
+        // CO BAN TV CATALOG
+        // ====================================================
+
+        if (provider.id === "coban") {
+            const channels = await fetchCobanChannels();
+
+            const filteredChannels = genre
+                ? channels.filter(
+                    channel =>
+                        String(channel.group || "").trim() === genre
+                )
+                : channels;
+
+            const metas = filteredChannels
+                .map(makeCobanCatalogMeta)
+                .filter(Boolean);
+
+            console.log(
+                "[COBAN CATALOG] Channels:",
+                metas.length
+            );
+
+            return { metas };
+        }
+
+        // ====================================================
         // VMT TV
         // ====================================================
+        
+        
+    if (providerId === "coban") {
+        return {
+            meta: {
+                id: "movina-tv:coban",
+                type: "tv",
+                name: "📺 Cơ Bản TV",
+                poster: "",
+                posterShape: "square",
+                description: "Cơ Bản TV • Live TV / IPTV",
+                releaseInfo: "LIVE TV",
+                genres: ["LIVE TV", "IPTV"],
+                behaviorHints: {
+                    isLive: false,
+                    isPlayable: false
+                },
+                links: [
+                    {
+                        name: "▶️ MỞ DANH SÁCH KÊNH CƠ BẢN",
+                        category: "catalog",
+                        url:
+                            "stremio:///discover/" +
+                            encodeURIComponent(
+                                "https://my-strem-addon.vercel.app/manifest.json"
+                            ) +
+                            "/MOVINA/pa_tv?provider=coban"
+                    }
+                ]
+            }
+        };
+    }
 
         if (
             provider.id === "vmttv"
@@ -3596,7 +3657,7 @@ if (
                 await fetchVmtTvChannels();
 
 
-            // ==================================================
+// ==================================================
 // 12.0B.1 GROUP SELECTED
 // ==================================================
 //
@@ -4662,6 +4723,38 @@ if (
         }
     };
 }
+
+
+        // =====================================================
+        // [STREMIO-013.COBAN] [PROVIDERS: COBAN]
+        // CO BAN TV CHANNEL META
+        // =====================================================
+
+        if (
+            rawId.startsWith("coban:") &&
+            String(args.type || "").trim() === "tv"
+        ) {
+            try {
+                const channelId = decodeCobanStremioId(rawId);
+                const channels = await fetchCobanChannels();
+
+                const channel = vmtTvFindChannelById(
+                    channels,
+                    channelId
+                );
+
+                return {
+                    meta: makeCobanCatalogMeta(channel)
+                };
+            } catch (e) {
+                console.error(
+                    "[COBAN META ERROR]:",
+                    e?.message || e
+                );
+
+                return { meta: null };
+            }
+        }
 
 // -----------------------------------------------------
 // [STREMIO-013.04] [PROVIDERS: VMTTV] VMT TV CHANNEL META
@@ -9774,6 +9867,154 @@ async function fetchVmtTvChannels() {
 }
 
 
+/* ============================================================
+   [LIVE-002] [PROVIDERS: COBAN] CO BAN TV PLAYLIST ADAPTER
+   ============================================================ */
+
+const COBAN_M3U_URL =
+    "https://rg.com.vn/coban";
+
+// [LIVE-002.01] [PROVIDERS: COBAN] FETCH M3U PLAYLIST
+async function fetchCobanChannels() {
+    try {
+        const response = await axios.get(
+            COBAN_M3U_URL,
+            {
+                timeout: 20000,
+                responseType: "text",
+                maxRedirects: 5,
+                headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "*/*"
+                }
+            }
+        );
+
+        const playlist = String(
+            response.data || ""
+        );
+
+        if (!playlist.includes("#EXTINF:")) {
+            console.log(
+                "[COBAN] Response is not a valid M3U playlist"
+            );
+            return [];
+        }
+
+        const channels = vmtTvParseM3U(playlist);
+
+        console.log(
+            "[COBAN] Channels loaded:",
+            channels.length
+        );
+
+        return channels;
+    } catch (e) {
+        console.error(
+            "[COBAN] M3U FETCH ERROR:",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+        return [];
+    }
+}
+
+// [LIVE-002.02] [PROVIDERS: COBAN] CHANNEL ID HELPERS
+function makeCobanStremioId(channelId) {
+    return (
+        "coban:" +
+        encodeURIComponent(String(channelId || ""))
+    );
+}
+
+function decodeCobanStremioId(id) {
+    const raw = String(id || "").trim();
+
+    if (!raw.startsWith("coban:")) {
+        return "";
+    }
+
+    try {
+        return decodeURIComponent(
+            raw.substring("coban:".length)
+        );
+    } catch (_) {
+        return raw.substring("coban:".length);
+    }
+}
+
+// [LIVE-002.03] [PROVIDERS: COBAN] CHANNEL META
+function makeCobanCatalogMeta(channel) {
+    if (!channel) {
+        return null;
+    }
+
+    const channelId = vmtTvMakeChannelId(channel);
+    const group = String(
+        channel.group || "LIVE"
+    ).trim();
+
+    return {
+        id: makeCobanStremioId(channelId),
+        type: "tv",
+        name: String(channel.name || "Cơ Bản TV").trim(),
+        poster: String(channel.logo || "").trim(),
+        posterShape: "square",
+        description: "🔴 LIVE • " + group,
+        genres: [group, "LIVE TV", "IPTV"],
+        releaseInfo: "LIVE",
+        behaviorHints: {
+            isLive: true
+        },
+        links: [
+            {
+                name: "↩️ VỀ DANH SÁCH KÊNH CƠ BẢN",
+                category: "catalog",
+                url:
+                    "stremio:///discover/" +
+                    encodeURIComponent(
+                        "https://my-strem-addon.vercel.app/manifest.json"
+                    ) +
+                    "/MOVINA/pa_tv?provider=coban"
+            }
+        ]
+    };
+}
+
+// [LIVE-002.04] [PROVIDERS: COBAN] RESOLVE LIVE CHANNEL
+async function resolveCobanChannel(channelId) {
+    const channels = await fetchCobanChannels();
+
+    const channel = vmtTvFindChannelById(
+        channels,
+        channelId
+    );
+
+    if (!channel || !channel.url) {
+        console.log(
+            "[COBAN] Channel not found or has no URL:",
+            channelId
+        );
+        return [];
+    }
+
+    const normalized = normalizeLiveStream(
+        {
+            url: channel.url,
+            headers: channel.userAgent
+                ? { "User-Agent": channel.userAgent }
+                : {},
+            title: channel.name,
+            type: "LIVE"
+        },
+        "coban"
+    );
+
+    return normalized ? [normalized] : [];
+}
+
 // ============================================================
 // [STREMIO-082.02] [PROVIDERS: VMTTV] CHANNEL ID PARSER
 // ============================================================
@@ -10178,6 +10419,42 @@ console.log(
     "[VMTTV] MOVINA PROVIDER READY:",
     MOVINA_VMTTV_PROVIDER.id,
     MOVINA_VMTTV_PROVIDER.category
+);
+
+
+/* ============================================================
+   [LIVE-003] [PROVIDERS: COBAN] MOVINA PROVIDER REGISTRATION
+   ============================================================ */
+
+const MOVINA_COBAN_PROVIDER =
+    registerMovinaProvider({
+        id: "coban",
+        name: "Cơ Bản TV",
+        category: "tv",
+        kind: "m3u",
+        sourceUrl: COBAN_M3U_URL,
+        enabled: true,
+        iconUrl: "",
+        capabilities: {
+            catalog: true,
+            search: false,
+            genre: true,
+            meta: true,
+            stream: true,
+            live: true
+        },
+        metadata: {
+            catalogId: "pa_tv",
+            groupMode: "flat-m3u",
+            groupFilter: true,
+            groupDeepLink: true
+        }
+    });
+
+console.log(
+    "[COBAN] MOVINA PROVIDER READY:",
+    MOVINA_COBAN_PROVIDER.id,
+    MOVINA_COBAN_PROVIDER.category
 );
 
 // ============================================================
@@ -32884,8 +33161,49 @@ builder.defineStreamHandler(async (args) => {
             streams: []
         };
     }
-    
-            // =====================================================
+        
+        
+        // =====================================================
+        // [STREMIO-001.COBAN] [PROVIDERS: COBAN]
+        // CO BAN TV LIVE STREAM
+        // =====================================================
+
+        if (
+            streamType === "tv" &&
+            rawId.startsWith("coban:")
+        ) {
+            try {
+                const channelId = decodeCobanStremioId(rawId);
+
+                if (!channelId) {
+                    return { streams: [] };
+                }
+
+                const liveStreams =
+                    await resolveCobanChannel(channelId);
+
+                const streams =
+                    normalizedStreamsToStremio(liveStreams);
+
+                console.log(
+                    "[COBAN STREAM] Channel:",
+                    channelId,
+                    "| Streams:",
+                    streams.length
+                );
+
+                return { streams };
+            } catch (e) {
+                console.error(
+                    "[COBAN STREAM ERROR]:",
+                    e?.message || e
+                );
+
+                return { streams: [] };
+            }
+        }
+
+        // =====================================================
         // VMT TV LIVE STREAM
         // =====================================================
 
