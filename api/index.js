@@ -22800,32 +22800,82 @@ async function fetchAnimeTProvider(
             });
         }
 
-        // 5. Embed fallback:
-        // Chỉ dùng khi không có direct/Hydrax source hợp lệ.
-        // externalUrl mở trang player bên ngoài, không giả làm video direct.
-        if (
-            streams.length === 0 &&
-            Array.isArray(linkResult?.players)
-        ) {
-            for (const player of linkResult.players) {
-                const embedUrl = String(
-                    player?.url || ""
-                ).trim();
+        
+        // 5. EMBED FALLBACK
+        // Ưu tiên trang embed AnimeT theo episode ID.
+        // Nếu không xác định được ID, dùng các player đã trích xuất.
+        // Embed được xuất qua externalUrl, không giả làm direct video.
+
+        if (streams.length === 0) {
+            const embedCandidates = [];
+
+            // A. Tạo URL embed AnimeT từ URL của tập.
+            // Ví dụ:
+            // /xem-phim/tien-ngich/tap-1-152346.html
+            // -> /embed/tap/152346
+            try {
+                const parsedEpisodeUrl = new URL(episodeUrl);
+                const episodePath = parsedEpisodeUrl.pathname;
+
+                const episodeIdMatch = episodePath.match(
+                    /-(\d+)\.html$/i
+                );
 
                 if (
-                    !/^https?:\/\//i.test(embedUrl) ||
-                    animetIsFakeHydraxUrl(embedUrl)
+                    episodeIdMatch &&
+                    /\/xem-phim\//i.test(episodePath)
                 ) {
+                    const episodeId = episodeIdMatch[1];
+
+                    embedCandidates.push({
+                        url: new URL(
+                            `/embed/tap/${episodeId}`,
+                            parsedEpisodeUrl.origin
+                        ).href,
+                        name: "AnimeT · Embed Player"
+                    });
+                }
+            } catch (error) {
+                console.warn(
+                    TAG,
+                    "CANNOT BUILD EMBED URL:",
+                    error?.message || error
+                );
+            }
+
+            // B. Bổ sung player URL đã được fetchAnimeT trích xuất.
+            if (Array.isArray(linkResult?.players)) {
+                for (const player of linkResult.players) {
+                    embedCandidates.push({
+                        url: String(player?.url || "").trim(),
+                        name:
+                            player?.name ||
+                            player?.type ||
+                            "AnimeT · Player"
+                    });
+                }
+            }
+
+            // C. Kiểm tra và loại URL trùng.
+            for (const player of embedCandidates) {
+                const embedUrl = String(player.url || "").trim();
+
+                if (!/^https?:\/\//i.test(embedUrl)) {
                     continue;
                 }
 
-                if (seen.has(embedUrl)) continue;
+                if (animetIsFakeHydraxUrl(embedUrl)) {
+                    continue;
+                }
+
+                if (seen.has(embedUrl)) {
+                    continue;
+                }
+
                 seen.add(embedUrl);
 
                 streams.push({
-                    name: player.name ||
-                        player.type ||
-                        "AnimeT Embed",
+                    name: player.name,
                     title:
                         `${query}${episodeNumber
                             ? ` · Tập ${episodeNumber}`
@@ -22838,6 +22888,16 @@ async function fetchAnimeTProvider(
                     }
                 });
             }
+
+            console.info(
+                TAG,
+                "EMBED FALLBACK:",
+                JSON.stringify({
+                    episodeUrl,
+                    candidates: embedCandidates.length,
+                    streamsAdded: streams.length
+                })
+            );
         }
 
         console.log(TAG, "STREAM COUNT:", streams.length);
