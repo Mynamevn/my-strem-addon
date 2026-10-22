@@ -34772,11 +34772,12 @@ const app =
 
 
 /* ============================================================================
- * MOVINA — ANIMET HYDRAX RANGE PROXY
+ * [PX-003] [PROVIDERS: ANIMET] ANIMET HYDRAX RANGE PROXY ROUTE
  *
  * Nhận URL giả đã được adapter mã hóa Base64URL.
  * Chỉ cho phép hostname thuộc allowlist cấu hình.
- * ========================================================================== */
+ * ============================================================================
+ */
 
 app.get(
     "/animet/hydrax/:encoded",
