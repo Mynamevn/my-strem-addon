@@ -6959,33 +6959,6 @@ function normalizedStreamsToStremio(
         );
 }
 
-
-// ============================================================
-// [RES-001.06] [PROVIDERS: ALL] RESOLVER REGISTRY DIAGNOSTICS
-// ============================================================
-
-function getStreamResolverInfo() {
-
-    return getAllStreamResolvers().map(
-        resolver => ({
-            id: resolver.id,
-            name: resolver.name,
-            description: resolver.description,
-            priority: resolver.priority
-        })
-    );
-}
-
-
-function logStreamResolverRegistry() {
-
-    console.log(
-        "[RESOLVER REGISTRY]",
-        getStreamResolverInfo()
-    );
-}
-
-
 // ============================================================
 // [RES-001.07] [PROVIDERS: ALL] BUILT-IN PASSTHROUGH RESOLVER
 // ============================================================
@@ -7027,6 +7000,37 @@ registerStreamResolver(
     })
 );
 
+// ============================================================
+// [RES-001.06] [PROVIDERS: ALL] RESOLVER REGISTRY DIAGNOSTICS
+// ============================================================
+
+function getStreamResolverInfo() {
+
+    return getAllStreamResolvers().map(
+        resolver => ({
+            id: resolver.id,
+            name: resolver.name,
+            description: resolver.description,
+            priority: resolver.priority
+        })
+    );
+}
+
+
+function logStreamResolverRegistry() {
+
+    console.log(
+        "[RESOLVER REGISTRY]",
+        getStreamResolverInfo()
+    );
+}
+
+
+// ============================================================
+// [RES-001.08] [PROVIDERS: ALL] INITIAL RESOLVER REGISTRY LOG
+// ============================================================
+
+logStreamResolverRegistry();
 
 // ============================================================
 // [RES-002] [PROVIDERS: VSMOV] VSMOV STREAM RESOLVER
@@ -7208,11 +7212,6 @@ console.log(
     !!getStreamResolver("vsmov")
 );
 
-// ============================================================
-// [RES-001.08] [PROVIDERS: ALL] INITIAL RESOLVER REGISTRY LOG
-// ============================================================
-
-logStreamResolverRegistry();
 
 // ============================================================
 // [REG-001] [PROVIDERS: ALL] MOVINA PROVIDER REGISTRY
