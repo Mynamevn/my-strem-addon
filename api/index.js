@@ -63,6 +63,7 @@ const manifest = {
     "vnwpsw:",
     "vmttv:",
     "coban:",
+    "coban-group:",
     "movina-tv:",
     "vmttv-group:"
     ],
@@ -3586,32 +3587,134 @@ if (
         }
 
 
+        
         // ====================================================
         // [STREMIO-012.COBAN] [PROVIDERS: COBAN]
-        // CO BAN TV CATALOG
+        // CO BAN TV GROUP HUB AND CHANNEL CATALOG
         // ====================================================
 
         if (provider.id === "coban") {
             const channels = await fetchCobanChannels();
 
-            const filteredChannels = genre
-                ? channels.filter(
+            // -----------------------------------------------
+            // GROUP SELECTED → CHANNEL LIST
+            // -----------------------------------------------
+
+            if (
+                genre &&
+                genre !== "__COBAN_HUB__"
+            ) {
+                const filteredChannels = channels.filter(
                     channel =>
                         String(channel.group || "").trim() === genre
-                )
-                : channels;
+                );
 
-            const metas = filteredChannels
-                .map(makeCobanCatalogMeta)
-                .filter(Boolean);
+                const metas = filteredChannels
+                    .map(makeCobanCatalogMeta)
+                    .filter(Boolean);
+
+                const backToGroupsUrl =
+                    "stremio:///discover/" +
+                    encodeURIComponent(
+                        "https://my-strem-addon.vercel.app/manifest.json"
+                    ) +
+                    "/MOVINA/pa_tv?provider=coban";
+
+                for (const meta of metas) {
+                    meta.links = [
+                        ...(Array.isArray(meta.links) ? meta.links : []),
+                        {
+                            name: "↩️ VỀ DANH SÁCH NHÓM",
+                            category: "catalog",
+                            url: backToGroupsUrl
+                        }
+                    ];
+                }
+
+                console.log(
+                    "[COBAN GROUP]",
+                    genre,
+                    "Channels:",
+                    metas.length
+                );
+
+                return { metas };
+            }
+
+            // -----------------------------------------------
+            // GROUP HUB → BUILD GROUP CARDS DYNAMICALLY
+            // -----------------------------------------------
+
+            const groups = Array.from(
+                new Set(
+                    channels
+                        .map(channel =>
+                            String(channel.group || "").trim()
+                        )
+                        .filter(Boolean)
+                )
+            );
+
+            const metas = groups.map(group => {
+                const groupChannels = channels.filter(
+                    channel =>
+                        String(channel.group || "").trim() === group
+                );
+
+                const firstChannel = groupChannels[0];
+
+                return {
+                    id:
+                        "coban-group:" +
+                        encodeURIComponent(group),
+
+                    type: "tv",
+
+                    name: "📺 " + group,
+
+                    poster: String(firstChannel?.logo || "").trim(),
+
+                    posterShape: "square",
+
+                    description:
+                        `${groupChannels.length} kênh • Cơ Bản TV`,
+
+                    genres: [group, "LIVE TV", "IPTV"],
+
+                    releaseInfo: "LIVE",
+
+                    behaviorHints: {
+                        isLive: false,
+                        isPlayable: false
+                    },
+
+                    links: [
+                        {
+                            name: "▶️ MỞ " + group,
+                            category: "catalog",
+                            url:
+                                "stremio:///discover/" +
+                                encodeURIComponent(
+                                    "https://my-strem-addon.vercel.app/manifest.json"
+                                ) +
+                                "/MOVINA/pa_tv?" +
+                                "provider=coban&genre=" +
+                                encodeURIComponent(group)
+                        }
+                    ]
+                };
+            });
 
             console.log(
-                "[COBAN CATALOG] Channels:",
-                metas.length
+                "[COBAN GROUP HUB] Groups:",
+                groups.length,
+                "| Channels:",
+                channels.length
             );
 
             return { metas };
         }
+
 
         // ====================================================
         // VMT TV
@@ -4456,6 +4559,34 @@ const MOVINA_VMTTV_META = {
     ]
 };
 
+
+const MOVINA_COBAN_META = {
+    id: "movina-tv:coban",
+    type: "tv",
+    name: "📺 Cơ Bản TV",
+    poster: MOVINA_COBAN_PROVIDER.iconUrl || "",
+    posterShape: "square",
+    description: "Cơ Bản TV • Live TV / IPTV\n\nChọn nhóm kênh để xem.",
+    releaseInfo: "LIVE TV",
+    genres: ["LIVE TV", "IPTV"],
+    behaviorHints: {
+        isLive: false,
+        isPlayable: false
+    },
+    links: [
+        {
+            name: "▶️ MỞ CƠ BẢN TV — CHỌN NHÓM KÊNH",
+            category: "catalog",
+            url:
+                "stremio:///discover/" +
+                encodeURIComponent(
+                    "https://my-strem-addon.vercel.app/manifest.json"
+                ) +
+                "/MOVINA/pa_tv?provider=coban"
+        }
+    ]
+};
+
     console.log(
         "[META] type:",
         args.type,
@@ -4528,6 +4659,15 @@ if (
 
     }
 
+    
+    if (providerId === "coban") {
+        console.log("[META] COBAN TV PROVIDER META");
+
+        return {
+            meta: MOVINA_COBAN_META
+        };
+    }
+
     console.log(
         "[META] Unknown MOVINA TV provider:",
         providerId
@@ -4537,6 +4677,99 @@ if (
         meta: null
     };
 }
+
+
+        // ====================================================
+        // [STREMIO-013.COBAN] [PROVIDERS: COBAN]
+        // CO BAN GROUP META
+        // ====================================================
+
+        if (
+            rawId.startsWith("coban-group:") &&
+            String(args.type || "").trim() === "tv"
+        ) {
+            let groupName = "";
+
+            try {
+                groupName = decodeURIComponent(
+                    rawId.substring("coban-group:".length)
+                ).trim();
+            } catch (_) {
+                groupName = rawId.substring(
+                    "coban-group:".length
+                ).trim();
+            }
+
+            if (!groupName) {
+                return { meta: null };
+            }
+
+            let groupCount = 0;
+            let poster = "";
+
+            try {
+                const channels = await fetchCobanChannels();
+
+                const groupChannels = channels.filter(
+                    channel =>
+                        String(channel.group || "").trim() === groupName
+                );
+
+                groupCount = groupChannels.length;
+                poster = String(
+                    groupChannels[0]?.logo || ""
+                ).trim();
+            } catch (e) {
+                console.error(
+                    "[COBAN GROUP META ERROR]",
+                    e?.message || e
+                );
+            }
+
+            const catalogUrl =
+                "stremio:///discover/" +
+                encodeURIComponent(
+                    "https://my-strem-addon.vercel.app/manifest.json"
+                ) +
+                "/MOVINA/pa_tv?provider=coban&genre=" +
+                encodeURIComponent(groupName);
+
+            const backToGroupsUrl =
+                "stremio:///discover/" +
+                encodeURIComponent(
+                    "https://my-strem-addon.vercel.app/manifest.json"
+                ) +
+                "/MOVINA/pa_tv?provider=coban";
+
+            return {
+                meta: {
+                    id: rawId,
+                    type: "tv",
+                    name: "📺 " + groupName,
+                    poster,
+                    posterShape: "square",
+                    description: `${groupCount} kênh • Cơ Bản TV`,
+                    genres: [groupName, "LIVE TV", "IPTV"],
+                    releaseInfo: "LIVE",
+                    behaviorHints: {
+                        isLive: false,
+                        isPlayable: false
+                    },
+                    links: [
+                        {
+                            name: "▶️ MỞ " + groupName,
+                            category: "catalog",
+                            url: catalogUrl
+                        },
+                        {
+                            name: "↩️ VỀ DANH SÁCH NHÓM",
+                            category: "catalog",
+                            url: backToGroupsUrl
+                        }
+                    ]
+                }
+            };
+        }
 
 // [STREMIO-013.03] [PROVIDERS: VMTTV] VMT TV GROUP META
 // ============================================================
