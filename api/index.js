@@ -34920,7 +34920,7 @@ app.use(
 
 
 /* ============================================================
-   NGUONC PLAYLIST
+   [ROUTE-006] [PROVIDERS: NGUONC] NGUONC PLAYLIST PROXY ENDPOINT
    ============================================================ */
 
 app.get(
@@ -35097,7 +35097,7 @@ app.get(
 
 
 /* ============================================================
-   NGUONC HLS SEGMENT / KEY / PLAYLIST
+   [ROUTE-007] [PROVIDERS: NGUONC] NGUONC HLS SEGMENT / KEY / PLAYLIST PROXY
    ============================================================ */
 
 app.get(
@@ -37195,7 +37195,7 @@ app.get(
 );
 
 /* ============================================================
-   VSMOV ORIGIN.JS INSPECT
+   [ROUTE-008] [PROVIDERS: VSMOV] VSMOV ORIGIN.JS INSPECTION ENDPOINT
    ============================================================ */
 
 app.get(
@@ -37456,7 +37456,7 @@ app.get(
 );
 
 /* ============================================================
-   VSMOV MASTER PLAYLIST INSPECT
+   [ROUTE-009] [PROVIDERS: VSMOV] VSMOV MASTER PLAYLIST INSPECTION ENDPOINT
    KIỂM TRA:
    - EXT-X-MEDIA
    - AUDIO
@@ -37769,7 +37769,7 @@ app.get(
    ============================================================ */
 
 // =====================================================
-// VSMOV PLAYER
+// [ROUTE-010] [PROVIDERS: VSMOV] VSMOV PLAYER ENDPOINT
 // =====================================================
 
 app.get(
