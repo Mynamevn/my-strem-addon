@@ -7017,12 +7017,6 @@ registerStreamResolver(
 
 
 // ============================================================
-// [RES-001.08] [PROVIDERS: ALL] INITIAL RESOLVER REGISTRY LOG
-// ============================================================
-
-logStreamResolverRegistry();
-
-// ============================================================
 // [RES-002] [PROVIDERS: VSMOV] VSMOV STREAM RESOLVER
 // ============================================================
 //
@@ -7202,6 +7196,11 @@ console.log(
     !!getStreamResolver("vsmov")
 );
 
+// ============================================================
+// [RES-001.08] [PROVIDERS: ALL] INITIAL RESOLVER REGISTRY LOG
+// ============================================================
+
+logStreamResolverRegistry();
 
 // ============================================================
 // [REG-001] [PROVIDERS: ALL] MOVINA PROVIDER REGISTRY
