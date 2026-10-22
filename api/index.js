@@ -833,6 +833,8 @@ function isSeriesItem(item) {
     return false;
 }
 
+// [CORE-005.02] [PROVIDERS: ALL] RELEASE YEAR AND DECADE HELPERS
+
 function itemYear(item) {
 
 const y =
