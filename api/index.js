@@ -373,6 +373,49 @@ try {
 
 }
 
+// [CORE-003.05] [PROVIDERS: ALL] STABLE CATALOG HASH AND SHUFFLE
+
+function stableHash(text) {
+
+const str =
+    String(text || "");
+
+let hash = 2166136261;
+
+for (let i = 0; i < str.length; i++) {
+
+    hash ^= str.charCodeAt(i);
+
+    hash =
+        Math.imul(
+            hash,
+            16777619
+        );
+}
+
+return hash >>> 0;
+
+}
+
+function stableShuffle(items, seed) {
+
+return [...items]
+    .sort(
+        (a, b) =>
+            stableHash(
+                seed +
+                "|" +
+                catalogKey(a)
+            ) -
+            stableHash(
+                seed +
+                "|" +
+                catalogKey(b)
+            )
+    );
+
+}
+
 /* ============================================================
    [CORE-004] [PROVIDERS: ALL] CATALOG POSTER HELPERS
    ============================================================ */
@@ -816,47 +859,6 @@ if (!year) {
 }
 
 return Math.floor(year / 10) * 10;
-
-}
-
-function stableHash(text) {
-
-const str =
-    String(text || "");
-
-let hash = 2166136261;
-
-for (let i = 0; i < str.length; i++) {
-
-    hash ^= str.charCodeAt(i);
-
-    hash =
-        Math.imul(
-            hash,
-            16777619
-        );
-}
-
-return hash >>> 0;
-
-}
-
-function stableShuffle(items, seed) {
-
-return [...items]
-    .sort(
-        (a, b) =>
-            stableHash(
-                seed +
-                "|" +
-                catalogKey(a)
-            ) -
-            stableHash(
-                seed +
-                "|" +
-                catalogKey(b)
-            )
-    );
 
 }
 
