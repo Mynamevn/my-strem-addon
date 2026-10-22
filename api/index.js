@@ -9811,12 +9811,6 @@ console.log(
 );
 
 
-    // ============================================================
-    // [REG-001.11] [PROVIDERS: ALL] MOVINA PROVIDER REGISTRY DIAGNOSTICS
-    // ============================================================
-
-        logMovinaProviderRegistry();
-
 // ============================================================
 // [STREMIO-082] [PROVIDERS: VMTTV] VMT TV STREAM ADAPTER
 // ============================================================
@@ -25408,6 +25402,12 @@ registerMovinaProvider({
         streamPipeline: "direct-stream-adapter"
     }
 });
+
+    // ============================================================
+    // [REG-001.11] [PROVIDERS: ALL] MOVINA PROVIDER REGISTRY DIAGNOSTICS
+    // ============================================================
+
+        logMovinaProviderRegistry();
 
 // ============================================================
 // [PRV-PHIMLONGTIENG] [PROVIDERS: PHIMLONGTIENG] PHIMLONGTIENG PROVIDER
