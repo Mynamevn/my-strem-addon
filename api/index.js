@@ -316,6 +316,63 @@ return result;
 
 }
 
+// [CORE-003.04] [PROVIDERS: ALL] CATALOG API FETCH
+
+async function catalogFetch(url) {
+
+console.log(
+    "[CATALOG API] Request:",
+    url
+);
+
+try {
+
+    const res =
+        await axios.get(
+            url,
+            {
+                timeout: 10000,
+
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0",
+                    "Accept":
+                        "application/json"
+                }
+            }
+        );
+
+    const items =
+        res.data?.data?.items ||
+        res.data?.items ||
+        [];
+
+    console.log(
+        "[CATALOG API] Items:",
+        Array.isArray(items)
+            ? items.length
+            : 0
+    );
+
+    return Array.isArray(items)
+        ? items
+        : [];
+
+} catch (e) {
+
+    console.error(
+        "[CATALOG API ERROR]",
+        url,
+        e?.response?.status ||
+        e?.message ||
+        e
+    );
+
+    return [];
+}
+
+}
+
 /* ============================================================
    [CORE-004] [PROVIDERS: ALL] CATALOG POSTER HELPERS
    ============================================================ */
@@ -803,60 +860,6 @@ return [...items]
 
 }
 
-async function catalogFetch(url) {
-
-console.log(
-    "[CATALOG API] Request:",
-    url
-);
-
-try {
-
-    const res =
-        await axios.get(
-            url,
-            {
-                timeout: 10000,
-
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0",
-                    "Accept":
-                        "application/json"
-                }
-            }
-        );
-
-    const items =
-        res.data?.data?.items ||
-        res.data?.items ||
-        [];
-
-    console.log(
-        "[CATALOG API] Items:",
-        Array.isArray(items)
-            ? items.length
-            : 0
-    );
-
-    return Array.isArray(items)
-        ? items
-        : [];
-
-} catch (e) {
-
-    console.error(
-        "[CATALOG API ERROR]",
-        url,
-        e?.response?.status ||
-        e?.message ||
-        e
-    );
-
-    return [];
-}
-
-}
 
 /* ============================================================
 [CORE-006] [PROVIDERS: ALL] MOVIE TRENDING CATALOG
