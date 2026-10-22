@@ -22082,6 +22082,289 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
   };
 }
 
+/* ============================================================
+ * [STREMIO-085] [PROVIDERS: ANIMET] MOVINA ANIMET STREAM ADAPTER
+ * Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
+ * ============================================================ */
+
+async function fetchAnimeTProvider(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 1,
+    streamType = "series"
+) {
+    const TAG = "[MOVINA-ANIMET]";
+
+    try {
+        const query = String(movieName || "").trim();
+        if (!query) return [];
+
+        // 1. Tìm anime
+        const searchResult = await fetchAnimeT(query, {
+            action: "search"
+        });
+
+        const candidates = Array.isArray(searchResult)
+            ? searchResult
+            : (
+                searchResult?.results ||
+                searchResult?.items ||
+                []
+            );
+
+        if (!Array.isArray(candidates) || !candidates.length) {
+            console.log(TAG, "SEARCH EMPTY:", query);
+            return [];
+        }
+
+        // Ưu tiên kết quả có tiêu đề khớp truy vấn.
+        const norm = value => String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim();
+
+        const wanted = norm(query);
+
+        const detailCandidate =
+            candidates.find(item =>
+                norm(item.title || item.name) === wanted
+            ) ||
+            candidates.find(item => {
+                const title = norm(item.title || item.name);
+                return title && (
+                    title.includes(wanted) ||
+                    wanted.includes(title)
+                );
+            }) ||
+            candidates[0];
+
+        const detailUrl = detailCandidate?.url;
+
+        if (!detailUrl) {
+            console.log(TAG, "DETAIL URL MISSING:", query);
+            return [];
+        }
+
+        // 2. Tải trang thông tin và danh sách tập
+        const detail = await fetchAnimeT(detailUrl, {
+            action: "load"
+        });
+
+        const episodes = Array.isArray(detail?.episodes)
+            ? detail.episodes
+            : [];
+
+        let episodeUrl = detailUrl;
+
+        if (streamType !== "movie" && episodes.length) {
+            const wantedEpisode = Math.max(
+                1,
+                Number(episodeNumber) || 1
+            );
+
+            const episode = episodes.find(item => {
+                const label = String(
+                    item.name || item.title || ""
+                );
+
+                const match = label.match(
+                    /(?:tập|episode|ep)\s*\.?\s*(\d+)/i
+                );
+
+                return match &&
+                    Number(match[1]) === wantedEpisode;
+            }) || episodes[wantedEpisode - 1];
+
+            if (episode?.url) {
+                episodeUrl = episode.url;
+            } else {
+                console.log(
+                    TAG,
+                    "EPISODE URL MISSING:",
+                    wantedEpisode
+                );
+                return [];
+            }
+        }
+
+        // 3. Lấy link từ trang tập
+        const linkResult = await fetchAnimeT(episodeUrl, {
+            action: "links"
+        });
+
+        const candidatesStreams =
+            linkResult?.normalized ||
+            linkResult?.sources ||
+            linkResult?.streams ||
+            [];
+
+        if (!Array.isArray(candidatesStreams)) {
+            console.log(TAG, "INVALID LINK RESULT");
+            return [];
+        }
+
+                // 4. Chuyển URL Hydrax giả thành proxy MOVINA.
+        //    Nếu không có direct media, giữ lại embed URL hợp lệ.
+        const publicBase = String(
+            process.env.MOVINA_PUBLIC_BASE_URL ||
+            process.env.PUBLIC_URL ||
+            (
+                process.env.VERCEL_URL
+                    ? `https://${process.env.VERCEL_URL}`
+                    : ""
+            )
+        ).replace(/\/+$/, "");
+
+        const seen = new Set();
+        const streams = [];
+
+        for (const item of candidatesStreams) {
+            if (!item || typeof item !== "object") continue;
+
+            const url = String(
+                item.url || item.link || ""
+            ).trim();
+
+            if (!/^https?:\/\//i.test(url)) continue;
+
+            const isHydraxFake =
+                animetIsFakeHydraxUrl(url);
+
+            let outputUrl = url;
+
+            if (isHydraxFake) {
+                if (!publicBase) {
+                    console.warn(
+                        TAG,
+                        "Bỏ Hydrax proxy source: thiếu " +
+                        "MOVINA_PUBLIC_BASE_URL hoặc VERCEL_URL."
+                    );
+                    continue;
+                }
+
+                const encoded = Buffer
+                    .from(url, "utf8")
+                    .toString("base64url");
+
+                outputUrl =
+                    `${publicBase}/animet/hydrax/${encoded}`;
+            }
+
+            if (seen.has(outputUrl)) continue;
+            seen.add(outputUrl);
+
+            const rawType = String(
+                item.type || ""
+            ).toLowerCase();
+
+            const type = isHydraxFake
+                ? "video"
+                : (/m3u8|hls/.test(rawType)
+                    ? "m3u8"
+                    : "video");
+
+            streams.push({
+                name: item.name ||
+                    item.serverName ||
+                    "AnimeT",
+                title: item.title ||
+                    `${query}${episodeNumber
+                        ? ` · Tập ${episodeNumber}`
+                        : ""}`,
+                url: outputUrl,
+                type,
+                provider: "animet",
+                source: "animet",
+                behaviorHints: item.behaviorHints,
+                headers: isHydraxFake
+                    ? {}
+                    : (item.headers || {}),
+                subtitles: item.subtitles || []
+            });
+        }
+
+        // 5. Embed fallback:
+        // Chỉ dùng khi không có direct/Hydrax source hợp lệ.
+        // externalUrl mở trang player bên ngoài, không giả làm video direct.
+        if (
+            streams.length === 0 &&
+            Array.isArray(linkResult?.players)
+        ) {
+            for (const player of linkResult.players) {
+                const embedUrl = String(
+                    player?.url || ""
+                ).trim();
+
+                if (
+                    !/^https?:\/\//i.test(embedUrl) ||
+                    animetIsFakeHydraxUrl(embedUrl)
+                ) {
+                    continue;
+                }
+
+                if (seen.has(embedUrl)) continue;
+                seen.add(embedUrl);
+
+                streams.push({
+                    name: player.name ||
+                        player.type ||
+                        "AnimeT Embed",
+                    title:
+                        `${query}${episodeNumber
+                            ? ` · Tập ${episodeNumber}`
+                            : ""} · Mở trình phát AnimeT`,
+                    externalUrl: embedUrl,
+                    provider: "animet",
+                    source: "animet",
+                    behaviorHints: {
+                        notWebReady: true
+                    }
+                });
+            }
+        }
+
+        console.log(TAG, "STREAM COUNT:", streams.length);
+        return streams;
+
+    } catch (error) {
+        console.error(
+            TAG,
+            "PROVIDER ADAPTER ERROR:",
+            error?.stack || error
+        );
+        return [];
+    }
+}
+
+// ============================================================
+// [REG-004] [PROVIDERS: ANIMET] ANIMET PROVIDER REGISTRATION
+// ============================================================
+
+registerMovinaProvider({
+    id: "animet",
+    name: "AnimeT",
+    category: "cs3",
+    kind: "scrape",
+    sourceUrl: "https://animesub.site",
+    enabled: true,
+
+    capabilities: {
+        search: true,
+        load: true,
+        episodes: true,
+        links: true
+    },
+
+    adapter: fetchAnimeTProvider,
+
+    metadata: {
+        providerType: "anime",
+        streamPipeline: "direct-stream-adapter"
+    }
+})
 
 /* ============================================================================
  * [PRV-ONFLIX] [PROVIDERS: ONFLIX] ONFLIX PROVIDER ADAPTER
@@ -24760,315 +25043,6 @@ async function fetchOnflix(input, options = {}) {
 }
 
 
-/* ============================================================
- * [STREMIO-085] [PROVIDERS: ANIMET] MOVINA ANIMET STREAM ADAPTER
- * Chuyển kết quả fetchAnimeT() sang stream cho MOVINA.
- * ============================================================ */
-
-async function fetchAnimeTProvider(
-    movieName,
-    movieYear = 0,
-    seasonNumber = 0,
-    episodeNumber = 1,
-    streamType = "series"
-) {
-    const TAG = "[MOVINA-ANIMET]";
-
-    try {
-        const query = String(movieName || "").trim();
-        if (!query) return [];
-
-        // 1. Tìm anime
-        const searchResult = await fetchAnimeT(query, {
-            action: "search"
-        });
-
-        const candidates = Array.isArray(searchResult)
-            ? searchResult
-            : (
-                searchResult?.results ||
-                searchResult?.items ||
-                []
-            );
-
-        if (!Array.isArray(candidates) || !candidates.length) {
-            console.log(TAG, "SEARCH EMPTY:", query);
-            return [];
-        }
-
-        // Ưu tiên kết quả có tiêu đề khớp truy vấn.
-        const norm = value => String(value || "")
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim();
-
-        const wanted = norm(query);
-
-        const detailCandidate =
-            candidates.find(item =>
-                norm(item.title || item.name) === wanted
-            ) ||
-            candidates.find(item => {
-                const title = norm(item.title || item.name);
-                return title && (
-                    title.includes(wanted) ||
-                    wanted.includes(title)
-                );
-            }) ||
-            candidates[0];
-
-        const detailUrl = detailCandidate?.url;
-
-        if (!detailUrl) {
-            console.log(TAG, "DETAIL URL MISSING:", query);
-            return [];
-        }
-
-        // 2. Tải trang thông tin và danh sách tập
-        const detail = await fetchAnimeT(detailUrl, {
-            action: "load"
-        });
-
-        const episodes = Array.isArray(detail?.episodes)
-            ? detail.episodes
-            : [];
-
-        let episodeUrl = detailUrl;
-
-        if (streamType !== "movie" && episodes.length) {
-            const wantedEpisode = Math.max(
-                1,
-                Number(episodeNumber) || 1
-            );
-
-            const episode = episodes.find(item => {
-                const label = String(
-                    item.name || item.title || ""
-                );
-
-                const match = label.match(
-                    /(?:tập|episode|ep)\s*\.?\s*(\d+)/i
-                );
-
-                return match &&
-                    Number(match[1]) === wantedEpisode;
-            }) || episodes[wantedEpisode - 1];
-
-            if (episode?.url) {
-                episodeUrl = episode.url;
-            } else {
-                console.log(
-                    TAG,
-                    "EPISODE URL MISSING:",
-                    wantedEpisode
-                );
-                return [];
-            }
-        }
-
-        // 3. Lấy link từ trang tập
-        const linkResult = await fetchAnimeT(episodeUrl, {
-            action: "links"
-        });
-
-        const candidatesStreams =
-            linkResult?.normalized ||
-            linkResult?.sources ||
-            linkResult?.streams ||
-            [];
-
-        if (!Array.isArray(candidatesStreams)) {
-            console.log(TAG, "INVALID LINK RESULT");
-            return [];
-        }
-
-                // 4. Chuyển URL Hydrax giả thành proxy MOVINA.
-        //    Nếu không có direct media, giữ lại embed URL hợp lệ.
-        const publicBase = String(
-            process.env.MOVINA_PUBLIC_BASE_URL ||
-            process.env.PUBLIC_URL ||
-            (
-                process.env.VERCEL_URL
-                    ? `https://${process.env.VERCEL_URL}`
-                    : ""
-            )
-        ).replace(/\/+$/, "");
-
-        const seen = new Set();
-        const streams = [];
-
-        for (const item of candidatesStreams) {
-            if (!item || typeof item !== "object") continue;
-
-            const url = String(
-                item.url || item.link || ""
-            ).trim();
-
-            if (!/^https?:\/\//i.test(url)) continue;
-
-            const isHydraxFake =
-                animetIsFakeHydraxUrl(url);
-
-            let outputUrl = url;
-
-            if (isHydraxFake) {
-                if (!publicBase) {
-                    console.warn(
-                        TAG,
-                        "Bỏ Hydrax proxy source: thiếu " +
-                        "MOVINA_PUBLIC_BASE_URL hoặc VERCEL_URL."
-                    );
-                    continue;
-                }
-
-                const encoded = Buffer
-                    .from(url, "utf8")
-                    .toString("base64url");
-
-                outputUrl =
-                    `${publicBase}/animet/hydrax/${encoded}`;
-            }
-
-            if (seen.has(outputUrl)) continue;
-            seen.add(outputUrl);
-
-            const rawType = String(
-                item.type || ""
-            ).toLowerCase();
-
-            const type = isHydraxFake
-                ? "video"
-                : (/m3u8|hls/.test(rawType)
-                    ? "m3u8"
-                    : "video");
-
-            streams.push({
-                name: item.name ||
-                    item.serverName ||
-                    "AnimeT",
-                title: item.title ||
-                    `${query}${episodeNumber
-                        ? ` · Tập ${episodeNumber}`
-                        : ""}`,
-                url: outputUrl,
-                type,
-                provider: "animet",
-                source: "animet",
-                behaviorHints: item.behaviorHints,
-                headers: isHydraxFake
-                    ? {}
-                    : (item.headers || {}),
-                subtitles: item.subtitles || []
-            });
-        }
-
-        // 5. Embed fallback:
-        // Chỉ dùng khi không có direct/Hydrax source hợp lệ.
-        // externalUrl mở trang player bên ngoài, không giả làm video direct.
-        if (
-            streams.length === 0 &&
-            Array.isArray(linkResult?.players)
-        ) {
-            for (const player of linkResult.players) {
-                const embedUrl = String(
-                    player?.url || ""
-                ).trim();
-
-                if (
-                    !/^https?:\/\//i.test(embedUrl) ||
-                    animetIsFakeHydraxUrl(embedUrl)
-                ) {
-                    continue;
-                }
-
-                if (seen.has(embedUrl)) continue;
-                seen.add(embedUrl);
-
-                streams.push({
-                    name: player.name ||
-                        player.type ||
-                        "AnimeT Embed",
-                    title:
-                        `${query}${episodeNumber
-                            ? ` · Tập ${episodeNumber}`
-                            : ""} · Mở trình phát AnimeT`,
-                    externalUrl: embedUrl,
-                    provider: "animet",
-                    source: "animet",
-                    behaviorHints: {
-                        notWebReady: true
-                    }
-                });
-            }
-        }
-
-        console.log(TAG, "STREAM COUNT:", streams.length);
-        return streams;
-
-    } catch (error) {
-        console.error(
-            TAG,
-            "PROVIDER ADAPTER ERROR:",
-            error?.stack || error
-        );
-        return [];
-    }
-}
-
-
-// ============================================================
-// [REG-004] [PROVIDERS: ANIMET, ONFLIX] ANIMET AND ONFLIX PROVIDER REGISTRATION
-// ============================================================
-
-registerMovinaProvider({
-    id: "animet",
-    name: "AnimeT",
-    category: "cs3",
-    kind: "scrape",
-    sourceUrl: "https://animesub.site",
-    enabled: true,
-
-    capabilities: {
-        search: true,
-        load: true,
-        episodes: true,
-        links: true
-    },
-
-    adapter: fetchAnimeTProvider,
-
-    metadata: {
-        providerType: "anime",
-        streamPipeline: "direct-stream-adapter"
-    }
-})
-
-registerMovinaProvider({
-    id: "onflix",
-    name: "Onflix",
-    category: "cs3",
-    kind: "scrape",
-    sourceUrl: "https://onflix.lat",
-    enabled: true,
-
-    capabilities: {
-        search: true,
-        load: true,
-        episodes: true,
-        links: true
-    },
-
-    adapter: fetchOnflixProvider,
-
-    metadata: {
-        providerType: "vod",
-        streamPipeline: "direct-stream-adapter"
-    }
-});
-
-
 // [STREMIO-086] [PROVIDERS: ONFLIX] MOVINA ONFLIX STREAM ADAPTER
 
 async function fetchOnflixProvider(
@@ -25409,6 +25383,32 @@ try {
     }
 }
 
+// ============================================================
+// [REG-005] [PROVIDERS: ONFLIX] ONFLIX PROVIDER REGISTRATION
+// ============================================================
+
+registerMovinaProvider({
+    id: "onflix",
+    name: "Onflix",
+    category: "cs3",
+    kind: "scrape",
+    sourceUrl: "https://onflix.lat",
+    enabled: true,
+
+    capabilities: {
+        search: true,
+        load: true,
+        episodes: true,
+        links: true
+    },
+
+    adapter: fetchOnflixProvider,
+
+    metadata: {
+        providerType: "vod",
+        streamPipeline: "direct-stream-adapter"
+    }
+});
 
 // ============================================================
 // [PRV-PHIMLONGTIENG] [PROVIDERS: PHIMLONGTIENG] PHIMLONGTIENG PROVIDER
