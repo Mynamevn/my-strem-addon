@@ -40146,89 +40146,6 @@ const ANIMEHAY_STREAM_HOST_REGEX =
 
 
 // =====================================================
-// [PX-002.03] [PROVIDERS: ANIMEHAY] STREAM URL VALIDATION
-// =====================================================
-
-function isValidAnimeHayStreamUrl(
-    targetUrl
-) {
-
-    try {
-
-        const parsed =
-            new URL(
-                String(
-                    targetUrl ||
-                    ""
-                ).trim()
-            );
-
-
-        return (
-            parsed.protocol ===
-                "https:" &&
-
-            ANIMEHAY_STREAM_HOST_REGEX.test(
-                parsed.hostname
-            )
-        );
-
-    } catch (_) {
-
-        return false;
-    }
-}
-
-
-// =====================================================
-// [PX-002.04] [PROVIDERS: ANIMEHAY] SOURCE REQUEST HEADERS
-// =====================================================
-
-function getAnimeHayProxyHeaders(
-    referer
-) {
-
-    const safeReferer =
-        String(
-            referer ||
-            "https://main.vipah06.xyz/"
-        ).trim();
-
-
-    let origin =
-        "https://main.vipah06.xyz";
-
-
-    try {
-
-        origin =
-            new URL(
-                safeReferer
-            ).origin;
-
-    } catch (_) {}
-
-
-    return {
-
-        "Referer":
-            safeReferer,
-
-        "Origin":
-            origin,
-
-        "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
-
-        "Accept":
-            "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*"
-
-    };
-}
-
-
-// =====================================================
 // [PX-002.02] [PROVIDERS: ANIMEHAY] ANIMEHAY HLS PLAYLIST REWRITER
 //
 // - URL .m3u8      → animehay-hls-proxy
@@ -40393,6 +40310,86 @@ function rewriteAnimeHayM3u8(
     );
 }
 
+// =====================================================
+// [PX-002.03] [PROVIDERS: ANIMEHAY] STREAM URL VALIDATION
+// =====================================================
+
+function isValidAnimeHayStreamUrl(
+    targetUrl
+) {
+
+    try {
+
+        const parsed =
+            new URL(
+                String(
+                    targetUrl ||
+                    ""
+                ).trim()
+            );
+
+
+        return (
+            parsed.protocol ===
+                "https:" &&
+
+            ANIMEHAY_STREAM_HOST_REGEX.test(
+                parsed.hostname
+            )
+        );
+
+    } catch (_) {
+
+        return false;
+    }
+}
+
+// =====================================================
+// [PX-002.04] [PROVIDERS: ANIMEHAY] SOURCE REQUEST HEADERS
+// =====================================================
+
+function getAnimeHayProxyHeaders(
+    referer
+) {
+
+    const safeReferer =
+        String(
+            referer ||
+            "https://main.vipah06.xyz/"
+        ).trim();
+
+
+    let origin =
+        "https://main.vipah06.xyz";
+
+
+    try {
+
+        origin =
+            new URL(
+                safeReferer
+            ).origin;
+
+    } catch (_) {}
+
+
+    return {
+
+        "Referer":
+            safeReferer,
+
+        "Origin":
+            origin,
+
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+
+        "Accept":
+            "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*"
+
+    };
+}
 
 // =====================================================
 // [PX-002.05] [PROVIDERS: ANIMEHAY] M3U8 URL DETECTION
@@ -40951,7 +40948,7 @@ console.log("[ANIMEHAY SEGMENT] BYTE DIAGNOSTIC:", {
 }
 
 // =====================================================
-// [PX-002.03] [PROVIDERS: ANIMEHAY] ANIMEHAY SEGMENT PROXY ROUTE
+// [PX-002.08] [PROVIDERS: ANIMEHAY] ANIMEHAY SEGMENT PROXY ROUTE
 // =====================================================
 
 app.get(
