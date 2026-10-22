@@ -398,6 +398,15 @@ function catalogPoster(item) {
     );
 }
 
+
+/* ============================================================
+   [CORE-005] [PROVIDERS: ALL] MOVIE / SERIES CLASSIFICATION
+   ============================================================ */
+
+// ============================================================
+// [CORE-005.02] [PROVIDERS: ALL] CATALOG COUNTRY AND CATEGORY CLASSIFICATION
+// ============================================================
+
 function catalogCountryNames(item) {
 
 if (!Array.isArray(item?.country)) {
@@ -585,10 +594,6 @@ return countries.some(x =>
 );
 
 }
-
-/* ============================================================
-   [CORE-005] [PROVIDERS: ALL] MOVIE / SERIES CLASSIFICATION
-   ============================================================ */
 
 // [CORE-005.01] [PROVIDERS: ALL] MOVIE / SERIES DETECTION
 function isSeriesItem(item) {
