@@ -9704,112 +9704,6 @@ console.log(
     VMTTV_PROVIDER.name
 );
 
-    // ============================================================
-    // [BRIDGE-001] [PROVIDERS: VMTTV] LIVE REGISTRY TO MOVINA REGISTRY BRIDGE
-    // ============================================================
-    //
-    // Bridge:
-    //
-    //     VMTTV_PROVIDER
-    //            ↓
-    //     MOVINA_PROVIDER_REGISTRY
-    //
-    // VMT TV vẫn giữ LIVE_PROVIDER_REGISTRY riêng.
-    //
-    // MOVINA Registry bổ sung metadata cho:
-    //
-    //     TV / IPTV Hub
-    //          ↓
-    //       VMT TV
-    //          ↓
-    //       Genre Hub
-    //          ↓
-    //       Channel list
-    //
-    // ============================================================
-
-const MOVINA_VMTTV_PROVIDER =
-    registerMovinaProvider({
-
-        id:
-            "vmttv",
-
-        name:
-            "VMT TV",
-
-        category:
-            "tv",
-
-        kind:
-            "m3u",
-
-        sourceUrl:
-            VMTTV_M3U_URL,
-
-        enabled:
-            true,
-
-        iconUrl:
-            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/Logo.png",
-
-        capabilities: {
-
-            catalog:
-                true,
-
-            search:
-                true,
-
-            genre:
-                true,
-
-            meta:
-                true,
-
-            stream:
-                true,
-
-            live:
-                true
-        },
-
-        adapter:
-            VMTTV_PROVIDER,
-
-        metadata: {
-
-            catalogId:
-                "pa_vmttv",
-
-            // ------------------------------------------------
-            // [STREMIO-082.01] [PROVIDERS: VMTTV] GROUP / GENRE HUB
-            // ------------------------------------------------
-            //
-            // Các group này sẽ được tạo từ channel.group
-            // thực tế trong M3U.
-            //
-            // Không hard-code danh sách ở đây.
-            //
-            // ------------------------------------------------
-
-            groupMode:
-                "dynamic-m3u",
-
-            groupFilter:
-                true,
-
-            groupDeepLink:
-                true
-        }
-    });
-
-
-console.log(
-    "[VMTTV] MOVINA PROVIDER READY:",
-    MOVINA_VMTTV_PROVIDER.id,
-    MOVINA_VMTTV_PROVIDER.category
-);
-
 
 // ============================================================
 // [STREMIO-082] [PROVIDERS: VMTTV] VMT TV STREAM ADAPTER
@@ -10167,6 +10061,112 @@ async function resolveVmtTvChannel(
 
 console.log(
     "[VMTTV STREMIO ADAPTER] READY"
+);
+
+    // ============================================================
+    // [BRIDGE-001] [PROVIDERS: VMTTV] LIVE REGISTRY TO MOVINA REGISTRY BRIDGE
+    // ============================================================
+    //
+    // Bridge:
+    //
+    //     VMTTV_PROVIDER
+    //            ↓
+    //     MOVINA_PROVIDER_REGISTRY
+    //
+    // VMT TV vẫn giữ LIVE_PROVIDER_REGISTRY riêng.
+    //
+    // MOVINA Registry bổ sung metadata cho:
+    //
+    //     TV / IPTV Hub
+    //          ↓
+    //       VMT TV
+    //          ↓
+    //       Genre Hub
+    //          ↓
+    //       Channel list
+    //
+    // ============================================================
+
+const MOVINA_VMTTV_PROVIDER =
+    registerMovinaProvider({
+
+        id:
+            "vmttv",
+
+        name:
+            "VMT TV",
+
+        category:
+            "tv",
+
+        kind:
+            "m3u",
+
+        sourceUrl:
+            VMTTV_M3U_URL,
+
+        enabled:
+            true,
+
+        iconUrl:
+            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/Logo.png",
+
+        capabilities: {
+
+            catalog:
+                true,
+
+            search:
+                true,
+
+            genre:
+                true,
+
+            meta:
+                true,
+
+            stream:
+                true,
+
+            live:
+                true
+        },
+
+        adapter:
+            VMTTV_PROVIDER,
+
+        metadata: {
+
+            catalogId:
+                "pa_vmttv",
+
+            // ------------------------------------------------
+            // [STREMIO-082.01] [PROVIDERS: VMTTV] GROUP / GENRE HUB
+            // ------------------------------------------------
+            //
+            // Các group này sẽ được tạo từ channel.group
+            // thực tế trong M3U.
+            //
+            // Không hard-code danh sách ở đây.
+            //
+            // ------------------------------------------------
+
+            groupMode:
+                "dynamic-m3u",
+
+            groupFilter:
+                true,
+
+            groupDeepLink:
+                true
+        }
+    });
+
+
+console.log(
+    "[VMTTV] MOVINA PROVIDER READY:",
+    MOVINA_VMTTV_PROVIDER.id,
+    MOVINA_VMTTV_PROVIDER.category
 );
 
 // ============================================================
