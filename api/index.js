@@ -32,9 +32,6 @@ const crypto = require('crypto');
 const http2 = require('http2');
 const express = require('express');
 
-console.log("[DEBUG] Express version:", require("express/package.json").version);
-console.log("[DEBUG] Node version:", process.version);
-
 const manifest = {
 
     id:
