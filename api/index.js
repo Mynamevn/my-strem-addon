@@ -175,6 +175,29 @@ const manifest = {
     ]
         },
 
+        // =====================================================
+        // MOVINA TV — CATALOG RIÊNG CHO TỪNG NGUỒN
+        // Giữ type MOVINA để nằm trong mục MOVINA.
+        // =====================================================
+
+        {
+            type: "MOVINA",
+            id: "pa_tv_vmttv",
+            name: "📺 VMTTV — Nhóm kênh"
+        },
+
+        {
+            type: "MOVINA",
+            id: "pa_tv_coban",
+            name: "📺 Cơ Bản TV — Nhóm kênh"
+        },
+
+        {
+            type: "MOVINA",
+            id: "pa_tv_sportsiptv",
+            name: "📺 Sports IPTV — Nhóm kênh"
+        },
+
     ]
 
 };
