@@ -3663,7 +3663,7 @@ if (provider.id === "sportsiptv") {
 
             return {
                 id: "sportsiptv-group:" + encodeURIComponent(group),
-                type: "tv",
+                type: "series",
                 name: group,
                 poster: first?.logo || "",
                 posterShape: "square",
@@ -3773,7 +3773,7 @@ if (provider.id === "sportsiptv") {
                         "coban-group:" +
                         encodeURIComponent(group),
 
-                    type: "tv",
+                    type: "series",
 
                     name: "📺 " + group,
 
@@ -4038,7 +4038,7 @@ if (
                                 ),
 
                             type:
-                                "tv",
+                                "series",
 
                             name:
                                 "📺 " +
@@ -4738,84 +4738,85 @@ const MOVINA_SPORTSIPTV_META = {
             return { meta: null };
         }
 
+const makeMovinaGroupVideos = (channels, makeChannelMeta) => {
+    return (Array.isArray(channels) ? channels : [])
+        .map(channel => {
+            const channelMeta = makeChannelMeta(channel);
+            if (!channelMeta?.id || !channelMeta?.name) return null;
+
+            return {
+                id: channelMeta.id,
+                title: channelMeta.name,
+                released: "2020-01-01T00:00:00.000Z",
+                ...(channelMeta.poster
+                    ? { thumbnail: channelMeta.poster }
+                    : {})
+            };
+        })
+        .filter(Boolean);
+};
+
 if (
-    String(args.type || "") === "tv" &&
+    String(args.type || "").trim() === "series" &&
     rawId.startsWith("sportsiptv-group:")
 ) {
-    let group = "";
+    let groupName = "";
 
     try {
-        group = decodeURIComponent(
-            rawId.slice("sportsiptv-group:".length)
-        );
-    } catch (error) {
-        console.error(
-            "[SPORTSIPTV META] Invalid group ID:",
-            rawId
-        );
+        groupName = decodeURIComponent(
+            rawId.substring("sportsiptv-group:".length)
+        ).trim();
+    } catch (_) {
+        groupName = rawId.substring("sportsiptv-group:".length).trim();
+    }
+
+    if (!groupName) {
         return { meta: null };
     }
 
-    const channels = await fetchSportsIptvChannels();
+    try {
+        const channels = await fetchSportsIptvChannels();
 
-    const groupChannels = channels.filter(
-        channel =>
-            String(channel.group || "").trim() === group.trim()
-    );
+        const groupChannels = channels.filter(
+            channel =>
+                String(channel.group || "").trim() === groupName
+        );
 
-    const first = groupChannels[0];
+        const videos = makeMovinaGroupVideos(
+            groupChannels,
+            makeSportsIptvChannelMeta
+        );
 
-    const catalogUrl =
-        "stremio:///discover/" +
-        encodeURIComponent(
-            "https://my-strem-addon.vercel.app/manifest.json"
-        ) +
-        "/MOVINA/pa_tv?provider=sportsiptv&genre=" +
-        encodeURIComponent(group);
+        console.log("[SPORTS IPTV GROUP META]", {
+            group: groupName,
+            channels: channels.length,
+            matched: videos.length
+        });
 
-    console.log(
-        "[SPORTSIPTV META GROUP]",
-        JSON.stringify({
-            group,
-            matchedChannels: groupChannels.length
-        })
-    );
-
-    return {
-        meta: {
-            id: rawId,
-            type: "tv",
-            name: group,
-            poster: first?.logo || "",
-            posterShape: "square",
-            description: groupChannels.length + " kênh",
-            genres: ["LIVE TV", group],
-            releaseInfo: "LIVE",
-            behaviorHints: {
-                isLive: false,
-                isPlayable: false
-            },
-            links: [
-                {
-                    name: "▶️ MỞ DANH SÁCH KÊNH — " + group,
-                    category: "catalog",
-                    url: catalogUrl
-                },
-                {
-                    name: "↩️ VỀ DANH SÁCH NHÓM",
-                    category: "catalog",
-                    url:
-                        "stremio:///discover/" +
-                        encodeURIComponent(
-                            "https://my-strem-addon.vercel.app/manifest.json"
-                        ) +
-                        "/MOVINA/pa_tv?provider=sportsiptv"
+        return {
+            meta: {
+                id: rawId,
+                type: "series",
+                name: groupName,
+                poster: String(groupChannels[0]?.logo || "").trim(),
+                posterShape: "square",
+                description: `${videos.length} kênh • Sports IPTV`,
+                genres: ["LIVE TV", groupName, "IPTV"],
+                releaseInfo: "LIVE",
+                videos,
+                behaviorHints: {
+                    isPlayable: false
                 }
-            ]
-        }
-    };
+            }
+        };
+    } catch (error) {
+        console.error(
+            "[SPORTS IPTV GROUP META ERROR]",
+            error?.message || error
+        );
+        return { meta: null };
+    }
 }
-
 
 if (
     String(args.type || "") === "tv" &&
@@ -4922,93 +4923,65 @@ if (
         // [STREMIO-013.COBAN] [PROVIDERS: COBAN]
         // CO BAN GROUP META
         // ====================================================
+      
+if (
+    rawId.startsWith("coban-group:") &&
+    String(args.type || "").trim() === "series"
+) {
+    let groupName = "";
 
-        if (
-            rawId.startsWith("coban-group:") &&
-            String(args.type || "").trim() === "tv"
-        ) {
-            let groupName = "";
+    try {
+        groupName = decodeURIComponent(
+            rawId.substring("coban-group:".length)
+        ).trim();
+    } catch (_) {
+        groupName = rawId.substring("coban-group:".length).trim();
+    }
 
-            try {
-                groupName = decodeURIComponent(
-                    rawId.substring("coban-group:".length)
-                ).trim();
-            } catch (_) {
-                groupName = rawId.substring(
-                    "coban-group:".length
-                ).trim();
-            }
+    if (!groupName) return { meta: null };
 
-            if (!groupName) {
-                return { meta: null };
-            }
+    try {
+        const channels = await fetchCobanChannels();
+        const groupChannels = channels.filter(
+            channel =>
+                String(channel.group || "").trim() === groupName
+        );
 
-            let groupCount = 0;
-            let poster = "";
+        const videos = makeMovinaGroupVideos(
+            groupChannels,
+            makeCobanCatalogMeta
+        );
 
-            try {
-                const channels = await fetchCobanChannels();
+        console.log("[COBAN GROUP META]", {
+            group: groupName,
+            channels: channels.length,
+            matched: videos.length
+        });
 
-                const groupChannels = channels.filter(
-                    channel =>
-                        String(channel.group || "").trim() === groupName
-                );
-
-                groupCount = groupChannels.length;
-                poster = String(
-                    groupChannels[0]?.logo || ""
-                ).trim();
-            } catch (e) {
-                console.error(
-                    "[COBAN GROUP META ERROR]",
-                    e?.message || e
-                );
-            }
-
-            const catalogUrl =
-                "stremio:///discover/" +
-                encodeURIComponent(
-                    "https://my-strem-addon.vercel.app/manifest.json"
-                ) +
-                "/MOVINA/pa_tv?provider=coban&genre=" +
-                encodeURIComponent(groupName);
-
-            const backToGroupsUrl =
-                "stremio:///discover/" +
-                encodeURIComponent(
-                    "https://my-strem-addon.vercel.app/manifest.json"
-                ) +
-                "/MOVINA/pa_tv?provider=coban";
-
-            return {
-                meta: {
-                    id: rawId,
-                    type: "tv",
-                    name: "📺 " + groupName,
-                    poster,
-                    posterShape: "square",
-                    description: `${groupCount} kênh • Cơ Bản TV`,
-                    genres: [groupName, "LIVE TV", "IPTV"],
-                    releaseInfo: "LIVE",
-                    behaviorHints: {
-                        isLive: false,
-                        isPlayable: false
-                    },
-                    links: [
-                        {
-                            name: "▶️ MỞ " + groupName,
-                            category: "catalog",
-                            url: catalogUrl
-                        },
-                        {
-                            name: "↩️ VỀ DANH SÁCH NHÓM",
-                            category: "catalog",
-                            url: backToGroupsUrl
-                        }
-                    ]
+        return {
+            meta: {
+                id: rawId,
+                type: "series",
+                name: "📺 " + groupName,
+                poster: String(groupChannels[0]?.logo || "").trim(),
+                posterShape: "square",
+                description: `${videos.length} kênh • Cơ Bản TV`,
+                genres: [groupName, "LIVE TV", "IPTV"],
+                releaseInfo: "LIVE",
+                videos,
+                behaviorHints: {
+                    isPlayable: false
                 }
-            };
-        }
+            }
+        };
+    } catch (error) {
+        console.error(
+            "[COBAN GROUP META ERROR]",
+            error?.message || error
+        );
+        return { meta: null };
+    }
+}
 
 // [STREMIO-013.03] [PROVIDERS: IPTV ALL] IPTV ALL GROUP META
 // ============================================================
@@ -5030,172 +5003,66 @@ if (
 
 if (
     rawId.startsWith("vmttv-group:") &&
-    String(args.type || "").trim() === "tv"
+    String(args.type || "").trim() === "series"
 ) {
-    const groupName =
-        decodeURIComponent(
-            rawId.substring(
-                "vmttv-group:".length
-            )
-        ).trim();
-
-    console.log(
-        "[VMTTV GROUP META]:",
-        groupName
-    );
-
-    if (!groupName) {
-        console.log(
-            "[VMTTV GROUP META] Empty group"
-        );
-
-        return {
-            meta: null
-        };
-    }
-
-    let groupCount = 0;
-    let poster = "";
+    let groupName = "";
 
     try {
-        const channels =
-            await fetchVmtTvChannels();
+        groupName = decodeURIComponent(
+            rawId.substring("vmttv-group:".length)
+        ).trim();
+    } catch (_) {
+        groupName = rawId.substring("vmttv-group:".length).trim();
+    }
 
-        const groupChannels =
-            channels.filter(
-                channel =>
-                    String(
-                        channel.group ||
-                        ""
-                    ).trim() ===
-                    groupName
-            );
+    if (!groupName) return { meta: null };
 
-        groupCount =
-            groupChannels.length;
-
-        const firstChannel =
-            groupChannels[0];
-
-        poster =
-            String(
-                firstChannel?.logo ||
-                MOVINA_VMTTV_PROVIDER.iconUrl ||
-                ""
-            ).trim();
-
-        console.log(
-            "[VMTTV GROUP META] Channels:",
-            groupCount
+    try {
+        const channels = await fetchVmtTvChannels();
+        const groupChannels = channels.filter(
+            channel =>
+                String(channel.group || "").trim() === groupName
         );
-    } catch (e) {
-        console.log(
+
+        const videos = makeMovinaGroupVideos(
+            groupChannels,
+            makeVmtTvCatalogMeta
+        );
+
+        console.log("[VMTTV GROUP META]", {
+            group: groupName,
+            channels: channels.length,
+            matched: videos.length
+        });
+
+        return {
+            meta: {
+                id: rawId,
+                type: "series",
+                name: "📺 " + groupName,
+                poster: String(
+                    groupChannels[0]?.logo ||
+                    MOVINA_VMTTV_PROVIDER.iconUrl ||
+                    ""
+                ).trim(),
+                posterShape: "square",
+                description: `${videos.length} kênh • VMTTV`,
+                genres: [groupName, "LIVE TV", "IPTV"],
+                releaseInfo: "LIVE",
+                videos,
+                behaviorHints: {
+                    isPlayable: false
+                }
+            }
+        };
+    } catch (error) {
+        console.error(
             "[VMTTV GROUP META ERROR]",
-            e?.message ||
-            e
+            error?.message || error
         );
+        return { meta: null };
     }
-
-    return {
-        meta: {
-
-            id:
-                rawId,
-
-            type:
-                "tv",
-
-            name:
-                "📺 " +
-                groupName,
-
-            poster:
-                poster,
-
-            posterShape:
-                "square",
-
-            description:
-                groupCount > 0
-                    ? `${groupCount} kênh`
-                    : "Nhóm kênh VMT TV",
-
-            genres: [
-                groupName,
-                "LIVE TV",
-                "IPTV"
-            ],
-
-            releaseInfo:
-                "LIVE",
-
-            // ====================================================
-            // QUAN TRỌNG:
-            //
-            // GROUP KHÔNG ĐƯỢC ĐÁNH DẤU isLive.
-            //
-            // Nếu có isLive:true, Stremio coi group như một
-            // channel thật và gọi Stream Handler.
-            //
-            // ====================================================
-
-            behaviorHints: {
-                isPlayable: false
-            },
-
-            links: [
-
-    // ========================================================
-    // MỞ DANH SÁCH KÊNH CỦA GROUP
-    // ========================================================
-
-    {
-        name:
-            "▶️ MỞ " +
-            groupName,
-
-        category:
-            "catalog",
-
-        url:
-            "stremio:///discover/" +
-            encodeURIComponent(
-                "https://my-strem-addon.vercel.app/manifest.json"
-            ) +
-            "/MOVINA/pa_tv?" +
-            "provider=vmttv" +
-            "&genre=" +
-            encodeURIComponent(
-                groupName
-            )
-    },
-
-
-    // ========================================================
-    // QUAY LẠI DANH SÁCH GROUP
-    // ========================================================
-
-    {
-        name:
-            "↩️ VỀ DANH SÁCH NHÓM",
-
-        category:
-            "catalog",
-
-        url:
-            "stremio:///discover/" +
-            encodeURIComponent(
-                "https://my-strem-addon.vercel.app/manifest.json"
-            ) +
-            "/MOVINA/pa_tv?" +
-            "provider=vmttv"
-    }
-
-]
-        }
-    };
 }
-
 
         // =====================================================
         // [STREMIO-013.COBAN] [PROVIDERS: COBAN]
@@ -10556,48 +10423,103 @@ const COBAN_M3U_URL =
     "https://rg.com.vn/coban";
 
 // [LIVE-002.01] [PROVIDERS: COBAN] FETCH M3U PLAYLIST
+
 async function fetchCobanChannels() {
-    try {
-        const response = await axios.get(
-            COBAN_M3U_URL,
-            {
-                timeout: 20000,
-                responseType: "text",
-                maxRedirects: 5,
-                headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "*/*"
-                }
+    const TAG = "[COBAN]";
+    const isM3U = value =>
+        /#EXTINF\s*:/i.test(
+            String(value || "").replace(/^\uFEFF/, "")
+        );
+
+    const parsePlaylist = body => {
+        const text = String(body || "").replace(/^\uFEFF/, "");
+        if (!isM3U(text)) return null;
+
+        const channels = vmtTvParseM3U(text);
+        return Array.isArray(channels) && channels.length
+            ? channels
+            : null;
+    };
+
+    const getText = async url => {
+        const response = await axios.get(url, {
+            timeout: 25000,
+            responseType: "text",
+            maxRedirects: 5,
+            headers: {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "*/*"
             }
-        );
+        });
 
-        const playlist = String(
-            response.data || ""
-        );
+        return {
+            body: response.data,
+            finalUrl:
+                response.request?.res?.responseUrl ||
+                response.config?.url ||
+                url,
+            status: response.status
+        };
+    };
 
-        if (!playlist.includes("#EXTINF:")) {
-            console.log(
-                "[COBAN] Response is not a valid M3U playlist"
-            );
-            return [];
+    try {
+        // Thử URL gốc trước để tự nhận chuyển hướng mới nhất.
+        const first = await getText(COBAN_M3U_URL);
+        let channels = parsePlaylist(first.body);
+
+        if (channels) {
+            console.log(TAG, "Channels loaded:", channels.length);
+            return channels;
         }
 
-        const channels = vmtTvParseM3U(playlist);
+        console.warn(TAG, "URL gốc không trả M3U; thử link tải Dropbox.");
 
-        console.log(
-            "[COBAN] Channels loaded:",
-            channels.length
-        );
+        // Dropbox có thể trả trang xem trước thay vì nội dung playlist.
+        const candidates = [];
 
-        return channels;
-    } catch (e) {
+        try {
+            const redirected = new URL(first.finalUrl);
+            redirected.searchParams.set("dl", "1");
+            candidates.push(redirected.toString());
+
+            if (redirected.hostname.includes("dropboxusercontent.com")) {
+                const shareUrl = new URL(redirected.toString());
+                shareUrl.hostname = "www.dropbox.com";
+                shareUrl.searchParams.set("dl", "1");
+                candidates.push(shareUrl.toString());
+            }
+        } catch (_) {
+            // Giữ nguyên lỗi dữ liệu bên dưới nếu URL chuyển hướng không hợp lệ.
+        }
+
+        for (const url of [...new Set(candidates)]) {
+            try {
+                const result = await getText(url);
+                channels = parsePlaylist(result.body);
+
+                if (channels) {
+                    console.log(TAG, "Channels loaded via download URL:", channels.length);
+                    return channels;
+                }
+
+                console.warn(TAG, "Link vẫn không phải M3U:", {
+                    status: result.status,
+                    url: result.finalUrl,
+                    preview: String(result.body || "").slice(0, 100)
+                });
+            } catch (error) {
+                console.warn(TAG, "Download URL failed:", error?.message || error);
+            }
+        }
+
+        console.error(TAG, "Không lấy được playlist M3U hợp lệ từ URL nguồn.");
+        return [];
+    } catch (error) {
         console.error(
-            "[COBAN] M3U FETCH ERROR:",
-            e?.response?.status ||
-            e?.message ||
-            e
+            TAG,
+            "M3U FETCH ERROR:",
+            error?.response?.status || error?.message || error
         );
-
         return [];
     }
 }
@@ -30649,7 +30571,7 @@ if (
 }
 
 if (
-    streamType === "tv" &&
+    ["tv", "series"].includes(streamType) &&
     rawId.startsWith("sportsiptv:")
 ) {
     try {
@@ -30686,7 +30608,7 @@ if (
         // =====================================================
 
         if (
-            streamType === "tv" &&
+            ["tv", "series"].includes(streamType) &&
             rawId.startsWith("coban:")
         ) {
             try {
@@ -30725,7 +30647,7 @@ if (
         // =====================================================
 
         if (
-            streamType === "tv" &&
+            ["tv", "series"].includes(streamType) &&
             rawId.startsWith("vmttv:")
         ) {
 
