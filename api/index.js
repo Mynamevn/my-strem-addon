@@ -4600,9 +4600,9 @@ const MOVINA_VMTTV_META = {
     ],
 
     behaviorHints: {
-        isLive: true
-    },
-
+    isLive: false,
+    isPlayable: false
+},
     links: [
 
         {
@@ -30568,34 +30568,36 @@ builder.defineStreamHandler(async (args) => {
     return { streams: [] };
 }
 
-// Nhóm kênh chỉ dùng để mở catalog,
-// tuyệt đối không chạy qua các provider VOD.
+// ============================================================
+// MOVINA IPTV HUB / GROUP GUARD
+//
+// Hub và group chỉ dùng để điều hướng catalog.
+// Không cho chạy qua VOD handler và trả fallback phim.
+// ============================================================
+
+const isMovinaTvHub = [
+    "movina-tv:vmttv",
+    "movina-tv:coban",
+    "movina-tv:sportsiptv"
+].includes(rawId);
+
+const isMovinaTvGroup =
+    rawId.startsWith("vmttv-group:") ||
+    rawId.startsWith("coban-group:") ||
+    rawId.startsWith("sportsiptv-group:");
+
 if (
     streamType === "tv" &&
-    (
-        rawId.startsWith("vmttv-group:") ||
-        rawId.startsWith("coban-group:") ||
-        rawId.startsWith("sportsiptv-group:")
-    )
+    (isMovinaTvHub || isMovinaTvGroup)
 ) {
     console.log(
-        "[LIVE GROUP] Bỏ qua stream request cho ID nhóm:",
-        rawId
-    );
-    return { streams: [] };
-}
-
-
-if (
-    streamType === "tv" &&
-    rawId === "movina-tv:sportsiptv"
-) {
-    console.log(
-        "[SPORTSIPTV] Provider hub không phải channel stream:",
+        "[MOVINA IPTV] Bỏ qua stream request cho hub/group:",
         rawId
     );
 
-    return { streams: [] };
+    return {
+        streams: []
+    };
 }
         
         // =====================================================
