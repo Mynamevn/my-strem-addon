@@ -65,7 +65,7 @@ const manifest = {
     "coban:",
     "coban-group:",
     "movina-tv:",
-    "vmttv-group:"
+    "vmttv-group:",
     "sportsiptv:",
     "sportsiptv-group:"
                 ],
