@@ -4510,7 +4510,7 @@ const MOVINA_VMTTV_META = {
         "tv",
 
     name:
-        "🔴 VMT TV",
+        "📺 IPTV ALL",
 
     poster:
         MOVINA_VMTTV_PROVIDER.iconUrl || "",
@@ -4519,7 +4519,7 @@ const MOVINA_VMTTV_META = {
         "square",
 
     description:
-        "📺 VMT TV • Live TV / IPTV\n\n" +
+        "📺 IPTV ALL • Live TV / IPTV\n\n" +
         "Chọn nhóm kênh để xem.",
 
     releaseInfo:
@@ -9064,14 +9064,14 @@ function logLiveProviderRegistry() {
 // ============================================================
 
 const VMTTV_M3U_URL =
-    "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/vmttv";
+    "https://raw.githubusercontent.com/mranhtu/viettv/master/IPTV_ALL.m3u";
 
 
 function vmtTvGetManifest() {
 
     return JSON.stringify({
 
-        id: "vmttv",
+        id: "IPTV ALL",
 
         name: "VMT TV",
 
@@ -9974,7 +9974,7 @@ const VMTTV_PROVIDER =
 
         id: "vmttv",
 
-        name: "VMT TV",
+        name: "IPTV ALL",
 
         iconUrl:
             "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/refs/heads/main/Logo.png",
@@ -10579,7 +10579,7 @@ const MOVINA_VMTTV_PROVIDER =
             "vmttv",
 
         name:
-            "VMT TV",
+            "IPTV ALL",
 
         category:
             "tv",
