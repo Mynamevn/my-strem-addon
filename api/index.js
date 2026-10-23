@@ -4647,6 +4647,36 @@ const MOVINA_COBAN_META = {
     ]
 };
 
+
+const MOVINA_SPORTSIPTV_META = {
+    id: "movina-tv:sportsiptv",
+    type: "tv",
+    name: "🏆 Sports IPTV",
+    poster: MOVINA_SPORTSIPTV_PROVIDER.iconUrl || "",
+    posterShape: "square",
+    description:
+        "Sports IPTV • Live TV\n\n" +
+        "Chọn nhóm thể thao để xem các kênh.",
+    releaseInfo: "LIVE TV",
+    genres: ["LIVE TV", "Sports IPTV"],
+    behaviorHints: {
+        isLive: false,
+        isPlayable: false
+    },
+    links: [
+        {
+            name: "▶️ MỞ SPORTS IPTV — CHỌN NHÓM KÊNH",
+            category: "catalog",
+            url:
+                "stremio:///discover/" +
+                encodeURIComponent(
+                    "https://my-strem-addon.vercel.app/manifest.json"
+                ) +
+                "/MOVINA/pa_tv?provider=sportsiptv"
+        }
+    ]
+};
+
     console.log(
         "[META] type:",
         args.type,
@@ -4775,6 +4805,15 @@ if (
         return {
             meta: MOVINA_COBAN_META
         };
+    }
+    
+   
+    if (providerId === "sportsiptv") {
+    console.log("[META] SPORTSIPTV PROVIDER META");
+
+    return {
+        meta: MOVINA_SPORTSIPTV_META
+            };
     }
 
     console.log(
@@ -30480,11 +30519,24 @@ if (
     streamType === "tv" &&
     (
         rawId.startsWith("vmttv-group:") ||
-        rawId.startsWith("coban-group:")
+        rawId.startsWith("coban-group:") ||
+        rawId.startsWith("sportsiptv-group:")
     )
 ) {
     console.log(
         "[LIVE GROUP] Bỏ qua stream request cho ID nhóm:",
+        rawId
+    );
+    return { streams: [] };
+}
+
+
+if (
+    streamType === "tv" &&
+    rawId === "movina-tv:sportsiptv"
+) {
+    console.log(
+        "[SPORTSIPTV] Provider hub không phải channel stream:",
         rawId
     );
 
