@@ -3717,7 +3717,7 @@ if (
 
 
         // ====================================================
-        // VMT TV
+        // IPTV ALL
         // ====================================================
         
         
@@ -4483,10 +4483,10 @@ if (
 builder.defineMetaHandler(async (args) => {
 
 // ============================================================
-// [STREMIO-013.00] [PROVIDERS: VMTTV] VMT TV PROVIDER META
+// [STREMIO-013.00] [PROVIDERS: IPTV ALL] IPTV ALL PROVIDER META
 // ============================================================
 //
-// VMT TV là provider thuộc:
+// IPTV ALL là provider thuộc:
 //     MOVINA_PROVIDER_REGISTRY
 //
 // Provider Meta ID:
@@ -4538,7 +4538,7 @@ const MOVINA_VMTTV_META = {
 
         {
             name:
-                "▶️ MỞ VMT TV — CHỌN NHÓM KÊNH",
+                "▶️ MỞ IPTV ALL — CHỌN NHÓM KÊNH",
 
             category:
                 "catalog",
@@ -4603,19 +4603,19 @@ const MOVINA_COBAN_META = {
             return { meta: null };
         }
 
-        // =====================================================
-// [STREMIO-013.01] [PROVIDERS: VMTTV] MOVINA TV PROVIDER META ROUTER
+// =====================================================
+// [STREMIO-013.01] [PROVIDERS: IPTV ALL] MOVINA TV PROVIDER META ROUTER
 // =====================================================
 //
 // Phân biệt:
 //
 //     movina-tv:vmttv
 //          ↓
-//     VMT TV PROVIDER META
+//     IPTV ALL PROVIDER META
 //
 //     vmttv:<channelId>
 //          ↓
-//     VMT TV CHANNEL META
+//     IPTV ALL CHANNEL META
 //
 // Không được để:
 //     movina-tv:vmttv
@@ -4626,7 +4626,7 @@ const MOVINA_COBAN_META = {
 // =====================================================
 
 // -----------------------------------------------------
-// [STREMIO-013.02] [PROVIDERS: VMTTV] MOVINA TV PROVIDER META
+// [STREMIO-013.02] [PROVIDERS: IPTV ALL] MOVINA TV PROVIDER META
 // -----------------------------------------------------
 
 if (
@@ -4771,7 +4771,7 @@ if (
             };
         }
 
-// [STREMIO-013.03] [PROVIDERS: VMTTV] VMT TV GROUP META
+// [STREMIO-013.03] [PROVIDERS: IPTV ALL] IPTV ALL GROUP META
 // ============================================================
 //
 // GROUP META KHÔNG PHẢI LÀ CHANNEL.
@@ -4990,7 +4990,7 @@ if (
         }
 
 // -----------------------------------------------------
-// [STREMIO-013.04] [PROVIDERS: VMTTV] VMT TV CHANNEL META
+// [STREMIO-013.04] [PROVIDERS: IPTV ALL] IPTV ALL CHANNEL META
 // -----------------------------------------------------
 //
 // Chỉ xử lý channel thật:
@@ -8547,7 +8547,7 @@ console.log(
 //        ↓
 //   STREMIO
 //
-// VMT TV là provider LIVE đầu tiên.
+// IPTV ALL là provider LIVE đầu tiên.
 //
 // Sau này provider TV/IPTV khác có thể được
 // đăng ký mà không phải viết lại Stream Handler.
@@ -9042,20 +9042,20 @@ function logLiveProviderRegistry() {
 
 
 // ============================================================
-// [LIVE-001] [PROVIDERS: VMTTV] VMT TV PROVIDER
+// [LIVE-001] [PROVIDERS: VMTTV] IPTV ALL PROVIDER
 // ============================================================
 //
-// VMT TV là LIVE / IPTV provider.
+// IPTV ALL là LIVE / IPTV provider.
 //
 // Pipeline:
 //
-//   VMT TV Provider
+//   IPTV ALL Provider
 //        ↓
 //   LIVE_PROVIDER_REGISTRY
 //        ↓
 //   MOVINA_PROVIDER_REGISTRY
 //        ↓
-//   VMT TV Adapter
+//   IPTV ALL Adapter
 //        ↓
 //   Normalized LIVE Stream
 //        ↓
@@ -9073,7 +9073,7 @@ function vmtTvGetManifest() {
 
         id: "IPTV ALL",
 
-        name: "VMT TV",
+        name: "IPTV ALL",
 
         version: "1.0.2",
 
@@ -9095,7 +9095,7 @@ function vmtTvGetManifest() {
 
 
     // ============================================================
-    // [LIVE-001.01] [PROVIDERS: VMTTV] VMT TV HOME SECTIONS
+    // [LIVE-001.01] [PROVIDERS: IPTV ALL] IPTV ALL HOME SECTIONS
     // ============================================================
 
 function vmtTvGetHomeSections() {
@@ -9117,7 +9117,7 @@ function vmtTvGetHomeSections() {
 
 
     // ============================================================
-    // [LIVE-001.02] [PROVIDERS: VMTTV] VMT TV CATEGORIES
+    // [LIVE-001.02] [PROVIDERS: IPTV ALL] IPTV ALL CATEGORIES
     // ============================================================
 
 function vmtTvGetPrimaryCategories() {
@@ -9161,7 +9161,7 @@ function vmtTvGetFilterConfig() {
 
 
     // ============================================================
-    // [LIVE-001.03] [PROVIDERS: VMTTV] VMT TV CATEGORY MAP
+    // [LIVE-001.03] [PROVIDERS: IPTV ALL] IPTV ALL CATEGORY MAP
     // ============================================================
     //
     // IMPORTANT:
@@ -9252,7 +9252,7 @@ const VMTTV_CATEGORY_MAP = {
 
 
     // ============================================================
-    // [LIVE-001.04] [PROVIDERS: VMTTV] VMT TV URL BUILDERS
+    // [LIVE-001.04] [PROVIDERS: IPTV ALL] IPTV ALL URL BUILDERS
     // ============================================================
 
 function vmtTvGetUrlList(slug, filtersJson) {
@@ -9320,7 +9320,7 @@ function vmtTvGetUrlYears() {
 
 
     // ============================================================
-    // [LIVE-001.05] [PROVIDERS: VMTTV] VMT TV M3U PARSER
+    // [LIVE-001.05] [PROVIDERS: IPTV ALL] IPTV ALL M3U PARSER
     // ============================================================
 
 function vmtTvParseM3U(text) {
@@ -9485,7 +9485,7 @@ function vmtTvParseM3U(text) {
 
 
     // ============================================================
-    // [LIVE-001.06] [PROVIDERS: VMTTV] VMT TV CHANNEL ID
+    // [LIVE-001.06] [PROVIDERS: IPTV ALL] IPTV ALL CHANNEL ID
     // ============================================================
 
 function vmtTvMakeChannelId(channel) {
@@ -9508,36 +9508,89 @@ function vmtTvMakeChannelId(channel) {
 }
 
 
+
 function vmtTvFindChannelById(
     channels,
     channelId
 ) {
-
     if (!Array.isArray(channels)) {
         return null;
     }
 
-    for (
-        let i = 0;
-        i < channels.length;
-        i++
-    ) {
+    const id = String(channelId || "").trim();
 
+    if (!id) {
+        return null;
+    }
+
+    // 1. Giữ nguyên cơ chế tìm ID chính xác.
+    const exact = channels.find(
+        channel =>
+            vmtTvMakeChannelId(channel) === id
+    );
+
+    if (exact) {
+        return exact;
+    }
+
+    // 2. Fallback cho ID dạng group::name::index.
+    const parts = id.split("::");
+
+    if (parts.length >= 3) {
+        const expectedIndex = Number(parts[parts.length - 1]);
+        const expectedName = parts[parts.length - 2];
+        const expectedGroup = parts.slice(0, -2).join("::");
+
+        // Tìm theo cả nhóm và tên trước, không phụ thuộc index.
+        const sameGroupAndName = channels.filter(
+            channel =>
+                String(channel.group || "").trim() === expectedGroup &&
+                String(channel.name || "").trim() === expectedName
+        );
+
+        if (sameGroupAndName.length === 1) {
+            return sameGroupAndName[0];
+        }
+
+        // Nếu có nhiều kênh trùng tên trong cùng nhóm,
+        // ưu tiên index nếu index đó vẫn còn chính xác.
         if (
-            vmtTvMakeChannelId(channels[i]) ===
-            channelId
+            Number.isInteger(expectedIndex) &&
+            expectedIndex >= 0
         ) {
+            const byIndex = channels[expectedIndex];
 
-            return channels[i];
+            if (
+                byIndex &&
+                String(byIndex.group || "").trim() === expectedGroup &&
+                String(byIndex.name || "").trim() === expectedName
+            ) {
+                return byIndex;
+            }
+        }
+
+        // Không chọn tùy tiện nếu có nhiều kết quả trùng.
+        if (sameGroupAndName.length > 1) {
+            console.log(
+                "[VMTTV] Ambiguous channel ID:",
+                id,
+                "| Matches:",
+                sameGroupAndName.length
+            );
+
+            return null;
         }
     }
 
+    // 3. Không tự chọn kênh chỉ vì trùng tên,
+    // tránh phát nhầm một kênh khác.
     return null;
 }
 
 
+
     // ============================================================
-    // [LIVE-001.07] [PROVIDERS: VMTTV] VMT TV LIST RESPONSE
+    // [LIVE-001.07] [PROVIDERS: IPTV ALL] IPTV ALL LIST RESPONSE
     // ============================================================
 
 function vmtTvParseListResponse(
@@ -9663,7 +9716,7 @@ function vmtTvParseListResponse(
 
 
     // ============================================================
-    // [LIVE-001.08] [PROVIDERS: VMTTV] VMT TV SEARCH RESPONSE
+    // [LIVE-001.08] [PROVIDERS: IPTV ALL] IPTV ALL SEARCH RESPONSE
     // ============================================================
 
 function vmtTvParseSearchResponse(
@@ -9679,7 +9732,7 @@ function vmtTvParseSearchResponse(
 
 
     // ============================================================
-    // [LIVE-001.09] [PROVIDERS: VMTTV] VMT TV DETAIL RESPONSE
+    // [LIVE-001.09] [PROVIDERS: IPTV ALL] IPTV ALL DETAIL RESPONSE
     // ============================================================
 
 function vmtTvParseMovieDetail(
@@ -9858,7 +9911,7 @@ function vmtTvParseMovieDetail(
 
 
     // ============================================================
-    // [LIVE-001.10] [PROVIDERS: VMTTV] VMT TV STREAM DETAIL
+    // [LIVE-001.10] [PROVIDERS: IPTV ALL] IPTV ALL STREAM DETAIL
     // ============================================================
 
 function vmtTvParseDetailResponse(
@@ -9936,7 +9989,7 @@ function vmtTvParseDetailResponse(
 
 
     // ============================================================
-    // [LIVE-001.11] [PROVIDERS: VMTTV] VMT TV OPTIONAL PARSERS
+    // [LIVE-001.11] [PROVIDERS: IPTV ALL] IPTV ALL OPTIONAL PARSERS
     // ============================================================
 
 function vmtTvParseCategoriesResponse() {
@@ -9966,7 +10019,7 @@ function vmtTvParseYearsResponse() {
 
 
     // ============================================================
-    // [REG-003.10] [PROVIDERS: VMTTV] REGISTER LIVE PROVIDER
+    // [REG-003.10] [PROVIDERS: IPTV ALL] REGISTER LIVE PROVIDER
     // ============================================================
 
 const VMTTV_PROVIDER =
@@ -10043,17 +10096,17 @@ console.log(
 
 
 // ============================================================
-// [STREMIO-082] [PROVIDERS: VMTTV] VMT TV STREAM ADAPTER
+// [STREMIO-082] [PROVIDERS: IPTV ALL] IPTV ALL STREAM ADAPTER
 // ============================================================
 //
-// Adapter riêng của VMT TV.
+// Adapter riêng của IPTV ALL.
 //
 // Không chứa logic tìm provider.
 // Không chứa logic registry.
 //
 // Nhiệm vụ:
 //
-//   VMT TV channel
+//   IPTV ALL channel
 //        ↓
 //   Normalized LIVE Stream
 //        ↓
@@ -10249,7 +10302,7 @@ async function resolveCobanChannel(channelId) {
 }
 
 // ============================================================
-// [STREMIO-082.02] [PROVIDERS: VMTTV] CHANNEL ID PARSER
+// [STREMIO-082.02] [PROVIDERS: IPTV ALL] CHANNEL ID PARSER
 // ============================================================
 //
 // Stremio ID:
@@ -10305,7 +10358,7 @@ function decodeVmtTvStremioId(id) {
 
 
 // ============================================================
-// [STREMIO-082.03] [PROVIDERS: VMTTV] META PREVIEW
+// [STREMIO-082.03] [PROVIDERS: IPTV ALL] META PREVIEW
 // ============================================================
 
 function makeVmtTvCatalogMeta(channel) {
@@ -10375,7 +10428,7 @@ function makeVmtTvCatalogMeta(channel) {
 
 
 // ============================================================
-// [STREMIO-083] [PROVIDERS: VMTTV] VMT TV FULL META ADAPTER
+// [STREMIO-083] [PROVIDERS: IPTV ALL] IPTV ALL FULL META ADAPTER
 // ============================================================
 
 function makeVmtTvMeta(channel) {
@@ -10471,7 +10524,7 @@ function makeVmtTvMeta(channel) {
 
 
 // ============================================================
-// [STREMIO-084] [PROVIDERS: VMTTV] VMT TV NORMALIZED STREAM ADAPTER
+// [STREMIO-084] [PROVIDERS: IPTV ALL] IPTV ALL NORMALIZED STREAM ADAPTER
 // ============================================================
 
 async function resolveVmtTvChannel(
@@ -10549,22 +10602,22 @@ console.log(
 );
 
     // ============================================================
-    // [BRIDGE-001] [PROVIDERS: VMTTV] LIVE REGISTRY TO MOVINA REGISTRY BRIDGE
+    // [BRIDGE-001] [PROVIDERS: IPTV ALL] LIVE REGISTRY TO MOVINA REGISTRY BRIDGE
     // ============================================================
     //
     // Bridge:
     //
-    //     VMTTV_PROVIDER
+    //     IPTV ALL_PROVIDER
     //            ↓
     //     MOVINA_PROVIDER_REGISTRY
     //
-    // VMT TV vẫn giữ LIVE_PROVIDER_REGISTRY riêng.
+    // IPTV ALL vẫn giữ LIVE_PROVIDER_REGISTRY riêng.
     //
     // MOVINA Registry bổ sung metadata cho:
     //
     //     TV / IPTV Hub
     //          ↓
-    //       VMT TV
+    //       IPTV ALL
     //          ↓
     //       Genre Hub
     //          ↓
@@ -10626,7 +10679,7 @@ const MOVINA_VMTTV_PROVIDER =
                 "pa_vmttv",
 
             // ------------------------------------------------
-            // [STREMIO-082.01] [PROVIDERS: VMTTV] GROUP / GENRE HUB
+            // [STREMIO-082.01] [PROVIDERS: IPTV ALL] GROUP / GENRE HUB
             // ------------------------------------------------
             //
             // Các group này sẽ được tạo từ channel.group
@@ -30169,7 +30222,7 @@ builder.defineStreamHandler(async (args) => {
         }
 
         // =====================================================
-        // VMT TV LIVE STREAM
+        // IPTV ALL LIVE STREAM
         // =====================================================
 
         if (
