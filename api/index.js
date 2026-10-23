@@ -4708,6 +4708,50 @@ if (
 
     const first = groupChannels[0];
 
+
+if (
+    String(args.type || "") === "tv" &&
+    rawId.startsWith("sportsiptv-group:")
+) {
+    let group = "";
+
+    try {
+        group = decodeURIComponent(
+            rawId.slice("sportsiptv-group:".length)
+        );
+    } catch (error) {
+        console.error(
+            "[SPORTSIPTV META] Invalid group ID:",
+            rawId
+        );
+        return { meta: null };
+    }
+
+    const channels = await fetchSportsIptvChannels();
+
+    const groupChannels = channels.filter(
+        channel =>
+            String(channel.group || "").trim() === group.trim()
+    );
+
+    const first = groupChannels[0];
+
+    const catalogUrl =
+        "stremio:///discover/" +
+        encodeURIComponent(
+            "https://my-strem-addon.vercel.app/manifest.json"
+        ) +
+        "/MOVINA/pa_tv?provider=sportsiptv&genre=" +
+        encodeURIComponent(group);
+
+    console.log(
+        "[SPORTSIPTV META GROUP]",
+        JSON.stringify({
+            group,
+            matchedChannels: groupChannels.length
+        })
+    );
+
     return {
         meta: {
             id: rawId,
@@ -4721,10 +4765,28 @@ if (
             behaviorHints: {
                 isLive: false,
                 isPlayable: false
-            }
+            },
+            links: [
+                {
+                    name: "▶️ MỞ DANH SÁCH KÊNH — " + group,
+                    category: "catalog",
+                    url: catalogUrl
+                },
+                {
+                    name: "↩️ VỀ DANH SÁCH NHÓM",
+                    category: "catalog",
+                    url:
+                        "stremio:///discover/" +
+                        encodeURIComponent(
+                            "https://my-strem-addon.vercel.app/manifest.json"
+                        ) +
+                        "/MOVINA/pa_tv?provider=sportsiptv"
+                }
+            ]
         }
     };
 }
+
 
 if (
     String(args.type || "") === "tv" &&
