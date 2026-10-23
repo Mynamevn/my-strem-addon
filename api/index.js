@@ -22499,7 +22499,107 @@ async function resolvePageTree(pageUrl, referer, state, depth = 0) {
       };
     }
 
-    const episodePage = await request(inputUrl);
+    
+    // Ưu tiên gọi embed trực tiếp bằng EpisodeId.
+    // Nếu embed bị xác minh hoặc không có dữ liệu player hữu ích,
+    // quay lại cách tải trang tập phim hiện tại.
+
+    let episodePage = null;
+    let embedAttempt = null;
+    let embedFailure = "";
+
+    const episodeUrl = String(inputUrl || "").trim();
+
+    const episodeIdMatch =
+      /\/embed\/tap\/(\d+)|\/tap-\d+-(\d+)(?:\.html)?(?:[?#]|$)|[?&](?:ep|episode|episode_id)=(\d+)/i
+        .exec(episodeUrl);
+
+    const episodeId = String(
+      episodeIdMatch?.[1] ||
+      episodeIdMatch?.[2] ||
+      episodeIdMatch?.[3] ||
+      ""
+    ).trim();
+
+    if (episodeId) {
+      const embedUrl = `${BASE}/embed/tap/${episodeId}`;
+
+      try {
+        embedAttempt = await request(embedUrl, episodeUrl);
+
+        const embedHtml = String(embedAttempt.body || "");
+
+        const embedIsVerification =
+          /xac-minh\.php|xác minh truy cập|verify you are human|checking your browser|captcha/i
+            .test(embedHtml) ||
+          /\/xac-minh\.php(?:[?#]|$)/i.test(
+            String(embedAttempt.url || "")
+          );
+
+        const embedHasPlayer =
+          /<iframe\b|ApiOk\.php|playhydrax\.com|abysscdn\.com|abyss\.to|core\.bundle\.js|SoTrym|md5_id|data-link|data-src/i
+            .test(embedHtml);
+
+        console.log("[PRV-ANIMET] DIRECT EMBED:", JSON.stringify({
+          episodeId,
+          embedUrl,
+          finalUrl: embedAttempt.url || embedUrl,
+          verification: embedIsVerification,
+          playerMarkup: embedHasPlayer,
+          bodyLength: embedHtml.length,
+        }));
+
+        if (!embedIsVerification && embedHasPlayer) {
+          episodePage = {
+            ...embedAttempt,
+            url: embedAttempt.url || embedUrl,
+          };
+        }
+      } catch (error) {
+        embedFailure = String(error?.message || error);
+
+        console.warn(
+          "[PRV-ANIMET] DIRECT EMBED FAILED:",
+          episodeId,
+          embedFailure
+        );
+      }
+    } else {
+      console.log(
+        "[PRV-ANIMET] NO EPISODE ID IN INPUT URL:",
+        episodeUrl
+      );
+    }
+
+    // Fallback: giữ nguyên đường xử lý trang tập phim cũ.
+    if (!episodePage) {
+      try {
+        episodePage = await request(episodeUrl);
+      } catch (error) {
+        const fallbackError = String(error?.message || error);
+
+        console.warn(
+          "[PRV-ANIMET] EPISODE PAGE FALLBACK FAILED:",
+          fallbackError
+        );
+
+        throw new Error(
+          `AnimeT: cả embed trực tiếp và trang tập đều thất bại. ` +
+          `Embed: ${embedFailure || "không có dữ liệu player hữu ích"}; ` +
+          `Trang tập: ${fallbackError}`
+        );
+      }
+    }
+
+    console.log("[PRV-ANIMET] INITIAL PLAYER PAGE:", JSON.stringify({
+      url: episodePage.url,
+      usedDirectEmbed: Boolean(
+        embedAttempt &&
+        episodePage.url === (embedAttempt.url || `${BASE}/embed/tap/${episodeId}`)
+      ),
+      episodeId: episodeId || null,
+    }));
+
     const state = {
       depth: 0,
       pages: 0,
