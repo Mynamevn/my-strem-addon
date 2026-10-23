@@ -3560,15 +3560,28 @@ builder.defineCatalogHandler(
     // 12.0A pa_tv ROOT / PROVIDER / GROUP / CHANNEL
     // ============================================================
 
+
+const fixedTvProviderByCatalogId = {
+    pa_tv_vmttv: "vmttv",
+    pa_tv_coban: "coban",
+    pa_tv_sportsiptv: "sportsiptv"
+};
+
 if (
-    args.id === "pa_tv"
+    args.id === "pa_tv" ||
+    Object.prototype.hasOwnProperty.call(
+        fixedTvProviderByCatalogId,
+        args.id
+    )
 ) {
 
     const providerId =
+        fixedTvProviderByCatalogId[args.id] ||
         String(
             args.extra?.provider ||
             ""
         ).trim();
+
 
     const genre =
         String(
