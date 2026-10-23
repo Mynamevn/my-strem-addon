@@ -141,7 +141,7 @@ const manifest = {
         // =====================================================
 
         {
-            type: "MOVINA",
+            type: "tv",
 
             id: "pa_tv",
 
@@ -3644,7 +3644,7 @@ if (provider.id === "sportsiptv") {
                         encodeURIComponent(
                             "https://my-strem-addon.vercel.app/manifest.json"
                         ) +
-                        "/MOVINA/pa_tv?provider=sportsiptv&genre=" +
+                        "/tv/pa_tv?provider=sportsiptv&genre=" +
                         encodeURIComponent(group)
                 }]
             };
@@ -3682,7 +3682,7 @@ if (provider.id === "sportsiptv") {
                     encodeURIComponent(
                         "https://my-strem-addon.vercel.app/manifest.json"
                     ) +
-                    "/MOVINA/pa_tv?provider=coban";
+                    "/tv/pa_tv?provider=coban";
 
                 for (const meta of metas) {
                     meta.links = [
@@ -3761,7 +3761,7 @@ if (provider.id === "sportsiptv") {
                                 encodeURIComponent(
                                     "https://my-strem-addon.vercel.app/manifest.json"
                                 ) +
-                                "/MOVINA/pa_tv?" +
+                                "/tv/pa_tv?" +
                                 "provider=coban&genre=" +
                                 encodeURIComponent(group)
                         }
@@ -3809,7 +3809,7 @@ if (provider.id === "sportsiptv") {
                             encodeURIComponent(
                                 "https://my-strem-addon.vercel.app/manifest.json"
                             ) +
-                            "/MOVINA/pa_tv?provider=coban"
+                            "/tv/pa_tv?provider=coban"
                     }
                 ]
             }
@@ -3872,7 +3872,7 @@ if (
         encodeURIComponent(
             "https://my-strem-addon.vercel.app/manifest.json"
         ) +
-        "/MOVINA/pa_tv?" +
+        "/tv/pa_tv?" +
         "provider=vmttv";
 
 
@@ -4038,7 +4038,7 @@ if (
                                         encodeURIComponent(
                                             "https://my-strem-addon.vercel.app/manifest.json"
                                         ) +
-                                        "/MOVINA/pa_tv?" +
+                                        "/tv/pa_tv?" +
                                         "provider=vmttv" +
                                         "&genre=" +
                                         encodeURIComponent(
@@ -4612,7 +4612,7 @@ const MOVINA_VMTTV_META = {
                 encodeURIComponent(
                     "https://my-strem-addon.vercel.app/manifest.json"
                 ) +
-                "/MOVINA/pa_tv?" +
+                "/tv/pa_tv?" +
                 "provider=vmttv" +
                 "&genre=" +
                 encodeURIComponent(
@@ -4646,7 +4646,7 @@ const MOVINA_COBAN_META = {
                 encodeURIComponent(
                     "https://my-strem-addon.vercel.app/manifest.json"
                 ) +
-                "/MOVINA/pa_tv?provider=coban"
+                "/tv/pa_tv?provider=coban"
         }
     ]
 };
@@ -4676,7 +4676,7 @@ const MOVINA_SPORTSIPTV_META = {
                 encodeURIComponent(
                     "https://my-strem-addon.vercel.app/manifest.json"
                 ) +
-                "/MOVINA/pa_tv?provider=sportsiptv"
+                "/tv/pa_tv?provider=sportsiptv"
         }
     ]
 };
@@ -4729,7 +4729,7 @@ if (
         encodeURIComponent(
             "https://my-strem-addon.vercel.app/manifest.json"
         ) +
-        "/MOVINA/pa_tv?provider=sportsiptv&genre=" +
+        "/tv/pa_tv?provider=sportsiptv&genre=" +
         encodeURIComponent(group);
 
     console.log(
@@ -4768,7 +4768,7 @@ if (
                         encodeURIComponent(
                             "https://my-strem-addon.vercel.app/manifest.json"
                         ) +
-                        "/MOVINA/pa_tv?provider=sportsiptv"
+                        "/tv/pa_tv?provider=sportsiptv"
                 }
             ]
         }
@@ -4929,7 +4929,7 @@ if (
                 encodeURIComponent(
                     "https://my-strem-addon.vercel.app/manifest.json"
                 ) +
-                "/MOVINA/pa_tv?provider=coban&genre=" +
+                "/tv/pa_tv?provider=coban&genre=" +
                 encodeURIComponent(groupName);
 
             const backToGroupsUrl =
@@ -4937,7 +4937,7 @@ if (
                 encodeURIComponent(
                     "https://my-strem-addon.vercel.app/manifest.json"
                 ) +
-                "/MOVINA/pa_tv?provider=coban";
+                "/tv/pa_tv?provider=coban";
 
             return {
                 meta: {
@@ -5121,7 +5121,7 @@ if (
             encodeURIComponent(
                 "https://my-strem-addon.vercel.app/manifest.json"
             ) +
-            "/MOVINA/pa_tv?" +
+            "/tv/pa_tv?" +
             "provider=vmttv" +
             "&genre=" +
             encodeURIComponent(
@@ -5146,7 +5146,7 @@ if (
             encodeURIComponent(
                 "https://my-strem-addon.vercel.app/manifest.json"
             ) +
-            "/MOVINA/pa_tv?" +
+            "/tv/pa_tv?" +
             "provider=vmttv"
     }
 
@@ -10617,7 +10617,7 @@ function makeCobanCatalogMeta(channel) {
                     encodeURIComponent(
                         "https://my-strem-addon.vercel.app/manifest.json"
                     ) +
-                    "/MOVINA/pa_tv?provider=coban"
+                    "/tv/pa_tv?provider=coban"
             }
         ]
     };
@@ -10843,7 +10843,7 @@ function makeVmtTvMeta(channel) {
                     encodeURIComponent(
                         "https://my-strem-addon.vercel.app/manifest.json"
                     ) +
-                    "/MOVINA/pa_tv?" +
+                    "/tv/pa_tv?" +
                     "provider=vmttv"
             }
         ],
