@@ -30170,15 +30170,26 @@ builder.defineStreamHandler(async (args) => {
     );
 
     if (!rawId) {
+    console.log("[STREAM] Không có ID");
+    return { streams: [] };
+}
 
-        console.log(
-            "[STREAM] Không có ID"
-        );
+// Nhóm kênh chỉ dùng để mở catalog,
+// tuyệt đối không chạy qua các provider VOD.
+if (
+    streamType === "tv" &&
+    (
+        rawId.startsWith("vmttv-group:") ||
+        rawId.startsWith("coban-group:")
+    )
+) {
+    console.log(
+        "[LIVE GROUP] Bỏ qua stream request cho ID nhóm:",
+        rawId
+    );
 
-        return {
-            streams: []
-        };
-    }
+    return { streams: [] };
+}
         
         
         // =====================================================
