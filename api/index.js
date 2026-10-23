@@ -167,8 +167,12 @@ const manifest = {
                     name: "search",
 
                     isRequired: false
-                }
-            ]
+                },
+        {
+            name: "genre",
+            isRequired: false
+        }
+    ]
         },
 
     ]
