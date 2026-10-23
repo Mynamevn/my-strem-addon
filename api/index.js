@@ -66,7 +66,9 @@ const manifest = {
     "coban-group:",
     "movina-tv:",
     "vmttv-group:"
-    ],
+    "sportsiptv:",
+    "sportsiptv-group:"
+                ],
 
     catalogs: [
 
@@ -153,9 +155,10 @@ const manifest = {
                     isRequired: false,
 
                     options: [
-                            "vmttv",
-                            "coban"
-                         ],
+                        "vmttv",
+                        "coban",
+                        "sportsiptv"
+                            ],
 
                     optionsLimit: 1
                 },
@@ -3586,13 +3589,70 @@ if (
             };
         }
 
+        // ====================================================
+        // [STREMIO-012C.sportsiptv] [PROVIDERS: sportsiptv]
+        // sportsiptv GROUP HUB AND CHANNEL CATALOG
+        // ====================================================
+       
+if (provider.id === "sportsiptv") {
+    const channels = await fetchSportsIptvChannels();
 
+    if (genre && genre !== "__SPORTSIPTV_HUB__") {
+        const filtered = channels.filter(
+            channel => channel.group === genre
+        );
+
+        return {
+            metas: filtered.map(makeSportsIptvChannelMeta)
+        };
+    }
+
+    const groups = [...new Set(
+        channels.map(channel => channel.group).filter(Boolean)
+    )];
+
+    return {
+        metas: groups.map(group => {
+            const first = channels.find(
+                channel => channel.group === group
+            );
+
+            return {
+                id: "sportsiptv-group:" + encodeURIComponent(group),
+                type: "tv",
+                name: group,
+                poster: first?.logo || "",
+                posterShape: "square",
+                description:
+                    channels.filter(channel => channel.group === group).length +
+                    " kênh",
+                genres: ["LIVE TV", group],
+                releaseInfo: "LIVE",
+                behaviorHints: {
+                    isLive: false,
+                    isPlayable: false
+                },
+                links: [{
+                    name: "▶️ MỞ NHÓM " + group,
+                    category: "catalog",
+                    url:
+                        "stremio:///discover/" +
+                        encodeURIComponent(
+                            "https://my-strem-addon.vercel.app/manifest.json"
+                        ) +
+                        "/MOVINA/pa_tv?provider=sportsiptv&genre=" +
+                        encodeURIComponent(group)
+                }]
+            };
+        })
+    };
+}
         
         // ====================================================
         // [STREMIO-012.COBAN] [PROVIDERS: COBAN]
         // CO BAN TV GROUP HUB AND CHANNEL CATALOG
         // ====================================================
-
+        
         if (provider.id === "coban") {
             const channels = await fetchCobanChannels();
 
@@ -4602,6 +4662,55 @@ const MOVINA_COBAN_META = {
         if (!rawId) {
             return { meta: null };
         }
+
+if (
+    String(args.type || "") === "tv" &&
+    rawId.startsWith("sportsiptv-group:")
+) {
+    const group = decodeURIComponent(
+        rawId.slice("sportsiptv-group:".length)
+    );
+
+    const channels = await fetchSportsIptvChannels();
+    const groupChannels = channels.filter(
+        channel => channel.group === group
+    );
+
+    const first = groupChannels[0];
+
+    return {
+        meta: {
+            id: rawId,
+            type: "tv",
+            name: group,
+            poster: first?.logo || "",
+            posterShape: "square",
+            description: groupChannels.length + " kênh",
+            genres: ["LIVE TV", group],
+            releaseInfo: "LIVE",
+            behaviorHints: {
+                isLive: false,
+                isPlayable: false
+            }
+        }
+    };
+}
+
+if (
+    String(args.type || "") === "tv" &&
+    rawId.startsWith("sportsiptv:")
+) {
+    const channelId = rawId.slice("sportsiptv:".length);
+    const channels = await fetchSportsIptvChannels();
+    const index = Number(channelId);
+    const channel = channels.find(item => item.index === index);
+
+    return {
+        meta: channel
+            ? makeSportsIptvChannelMeta(channel)
+            : null
+    };
+}
 
 // =====================================================
 // [STREMIO-013.01] [PROVIDERS: IPTV ALL] MOVINA TV PROVIDER META ROUTER
@@ -9041,6 +9150,162 @@ function logLiveProviderRegistry() {
 }
 
 
+/* ============================================================
+   [LIVE-004] [PROVIDERS: SPORTSIPTV]
+   GENERIC AUTHORIZED M3U PROVIDER
+   ============================================================ */
+
+// Điền URL playlist M3U mà bạn có quyền sử dụng.
+const SPORTSIPTV_M3U_URL = "https://gist.github.com/farhat7/9eea9b0a32c580dbf06346cddff7184e/raw/b33500b83f91ad0e858aa06470a468b1acd3230f/line_zux_sports.m3u";
+
+async function fetchSportsIptvChannels() {
+    if (
+        !SPORTSIPTV_M3U_URL ||
+        SPORTSIPTV_M3U_URL.includes("PASTE_YOUR_")
+    ) {
+        return [];
+    }
+
+    try {
+        const response = await axios.get(
+            SPORTSIPTV_M3U_URL,
+            {
+                timeout: 15000,
+                responseType: "text",
+                headers: {
+                    "User-Agent": "MOVINA/1.0",
+                    "Accept": "*/*"
+                }
+            }
+        );
+
+        const text = String(response.data || "");
+        if (!text.includes("#EXTINF")) {
+            console.log("[SPORTSIPTV] Invalid M3U response");
+            return [];
+        }
+
+        const lines = text.split(/\r?\n/);
+        const channels = [];
+        let current = null;
+
+        for (const rawLine of lines) {
+            const line = String(rawLine || "").trim();
+            if (!line) continue;
+
+            if (line.startsWith("#EXTINF:")) {
+                const comma = line.lastIndexOf(",");
+                const attributes = comma >= 0
+                    ? line.slice(0, comma)
+                    : line;
+                const name = comma >= 0
+                    ? line.slice(comma + 1).trim()
+                    : "Live channel";
+
+                const groupMatch = attributes.match(
+                    /group-title="([^"]*)"/i
+                );
+                const logoMatch = attributes.match(
+                    /tvg-logo="([^"]*)"/i
+                );
+                const idMatch = attributes.match(
+                    /tvg-id="([^"]*)"/i
+                );
+
+                current = {
+                    index: channels.length,
+                    name,
+                    group: groupMatch?.[1] || "Sports",
+                    logo: logoMatch?.[1] || "",
+                    tvgId: idMatch?.[1] || "",
+                    url: "",
+                    userAgent: ""
+                };
+                continue;
+            }
+
+            if (line.startsWith("#EXTVLCOPT:http-user-agent=")) {
+                if (current) {
+                    current.userAgent = line.slice(
+                        "#EXTVLCOPT:http-user-agent=".length
+                    ).trim();
+                }
+                continue;
+            }
+
+            if (line.startsWith("#")) continue;
+
+            if (/^https?:\/\//i.test(line) && current) {
+                current.url = line;
+                channels.push(current);
+                current = null;
+            }
+        }
+
+        console.log(
+            "[SPORTSIPTV] Channels loaded:",
+            channels.length
+        );
+
+        return channels;
+    } catch (error) {
+        console.error(
+            "[SPORTSIPTV] Playlist error:",
+            error?.response?.status || error?.message || error
+        );
+        return [];
+    }
+}
+
+function makeSportsIptvChannelId(channel) {
+    return "sportsiptv:" + String(channel.index);
+}
+
+function makeSportsIptvChannelMeta(channel) {
+    return {
+        id: makeSportsIptvChannelId(channel),
+        type: "tv",
+        name: channel.name,
+        poster: channel.logo || "",
+        posterShape: "square",
+        description: "LIVE • " + channel.group,
+        genres: [channel.group, "LIVE TV"],
+        releaseInfo: "LIVE",
+        behaviorHints: { isLive: true }
+    };
+}
+
+function resolveSportsIptvChannel(channelId, channels) {
+    const index = Number(channelId);
+
+    if (
+        !Number.isInteger(index) ||
+        index < 0
+    ) {
+        return [];
+    }
+
+    const channel = channels.find(
+        item => item.index === index
+    );
+
+    if (!channel?.url) return [];
+
+    const stream = normalizeLiveStream(
+        {
+            url: channel.url,
+            title: channel.name,
+            type: "LIVE",
+            headers: channel.userAgent
+                ? { "User-Agent": channel.userAgent }
+                : {}
+        },
+        "sportsiptv"
+    );
+
+    return stream ? [stream] : [];
+}
+
 // ============================================================
 // [LIVE-001] [PROVIDERS: VMTTV] IPTV ALL PROVIDER
 // ============================================================
@@ -10741,6 +11006,41 @@ console.log(
     "[COBAN] MOVINA PROVIDER READY:",
     MOVINA_COBAN_PROVIDER.id,
     MOVINA_COBAN_PROVIDER.category
+);
+
+
+/* ============================================================
+   [LIVE-004.01] [PROVIDERS: SPORTSIPTV]
+   MOVINA PROVIDER REGISTRATION
+   ============================================================ */
+
+const MOVINA_SPORTSIPTV_PROVIDER = registerMovinaProvider({
+    id: "sportsiptv",
+    name: "Sports IPTV",
+    category: "tv",
+    kind: "m3u",
+    sourceUrl: SPORTSIPTV_M3U_URL,
+    enabled: true,
+    iconUrl: "",
+    capabilities: {
+        catalog: true,
+        search: false,
+        genre: true,
+        meta: true,
+        stream: true,
+        live: true
+    },
+    metadata: {
+        catalogId: "pa_tv",
+        groupMode: "dynamic-m3u",
+        groupFilter: true,
+        groupDeepLink: true
+    }
+});
+
+console.log(
+    "[SPORTSIPTV] MOVINA PROVIDER READY:",
+    MOVINA_SPORTSIPTV_PROVIDER.id
 );
 
 // ============================================================
@@ -30191,9 +30491,52 @@ if (
     return { streams: [] };
 }
         
-        
         // =====================================================
-        // [STREMIO-001.COBAN] [PROVIDERS: COBAN]
+        // [STREMIO-001A.sportsiptv] [PROVIDERS: sportsiptv]
+        // sportsiptv LIVE STREAM
+        // =====================================================      
+
+if (
+    streamType === "tv" &&
+    rawId.startsWith("sportsiptv-group:")
+) {
+    return { streams: [] };
+}
+
+if (
+    streamType === "tv" &&
+    rawId.startsWith("sportsiptv:")
+) {
+    try {
+        const channelId = rawId.slice("sportsiptv:".length);
+        const channels = await fetchSportsIptvChannels();
+
+        const liveStreams = resolveSportsIptvChannel(
+            channelId,
+            channels
+        );
+
+        const streams = normalizedStreamsToStremio(liveStreams);
+
+        console.log(
+            "[SPORTSIPTV STREAM]",
+            channelId,
+            "| Streams:",
+            streams.length
+        );
+
+        return { streams };
+    } catch (error) {
+        console.error(
+            "[SPORTSIPTV STREAM ERROR]",
+            error?.message || error
+        );
+        return { streams: [] };
+    }
+}
+
+        // =====================================================
+        // [STREMIO-001B.COBAN] [PROVIDERS: COBAN]
         // CO BAN TV LIVE STREAM
         // =====================================================
 
