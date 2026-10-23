@@ -4697,22 +4697,6 @@ if (
     String(args.type || "") === "tv" &&
     rawId.startsWith("sportsiptv-group:")
 ) {
-    const group = decodeURIComponent(
-        rawId.slice("sportsiptv-group:".length)
-    );
-
-    const channels = await fetchSportsIptvChannels();
-    const groupChannels = channels.filter(
-        channel => channel.group === group
-    );
-
-    const first = groupChannels[0];
-
-
-if (
-    String(args.type || "") === "tv" &&
-    rawId.startsWith("sportsiptv-group:")
-) {
     let group = "";
 
     try {
