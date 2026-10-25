@@ -7212,22 +7212,51 @@ function normalizedStreamToStremio(stream) {
         return null;
     }
 
-    const url =
-        String(
-            stream.url ||
-            ""
-        ).trim();
+    let url = String(
+        stream.url || ""
+    ).trim();
 
-    const externalUrl =
-        String(
-            stream.externalUrl ||
-            ""
-        ).trim();
+    let externalUrl = String(
+        stream.externalUrl || ""
+    ).trim();
 
-    if (
-        !url &&
-        !externalUrl
-    ) {
+    const playerUrl = String(
+        stream.playerUrl || ""
+    ).trim();
+
+    const streamKind = String(
+        stream.type || ""
+    ).trim().toLowerCase();
+
+    // Những nguồn được đánh dấu rõ là trang embed/player
+    // không được gửi nhầm vào player như một URL media.
+    const isExplicitEmbed =
+        /(?:embed|iframe|player|webpage|external)/i.test(
+            streamKind
+        );
+
+    if (isExplicitEmbed) {
+        externalUrl =
+            externalUrl ||
+            playerUrl ||
+            url;
+
+        url = "";
+    } else if (!url && !externalUrl && playerUrl) {
+        // Fallback: nguồn chỉ có playerUrl.
+        externalUrl = playerUrl;
+    }
+
+    if (!url && !externalUrl) {
+        console.warn(
+            "[STREAM ADAPTER] Bỏ qua stream không có URL:",
+            JSON.stringify({
+                provider: stream.provider || "",
+                name: stream.name || "",
+                type: streamKind
+            })
+        );
+
         return null;
     }
 
