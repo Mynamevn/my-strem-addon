@@ -1499,31 +1499,22 @@ async function fetchMovinaTrendingByGenre(
 
     let items = catalogDedupe(groups.flat());
 
+    
     // Phân loại movie/series trước khi lọc thể loại.
-    // Nguồn hoạt hình có thể chứa cả phim lẻ lẫn phim bộ.
     items = items.filter(item =>
         type === "series"
             ? isSeriesItem(item)
             : !isSeriesItem(item)
     );
 
-        // Chỉ áp dụng IMDb >= 8.0 cho mục Kinh điển.
+    // Kinh điển được xác định bằng IMDb >= 8.0,
+    // không yêu cầu metadata phải có thể loại "Kinh điển".
     if (normalizedGenre === "kinh dien") {
         items = items.filter(item =>
             movinaTrendingIMDb(item) >= 8.0
         );
-    }
-
-    // Kinh điển: chỉ nhận phim có điểm IMDb từ 8.0 trở lên.
-    // Các thể loại khác không bị áp dụng ngưỡng IMDb này.
-    if (normalizedGenre === "kinh dien") {
-        items = items.filter(item =>
-            movinaTrendingIMDb(item) >= 8.0
-        );
-    }
-
-    // "Mới nhất" là bộ lọc thời gian, không phải thể loại.
-    if (!isLatest) {
+    } else if (!isLatest) {
+        // Các thể loại khác vẫn phải khớp metadata thể loại.
         items = items.filter(item =>
             movinaTrendingGenreMatches(item, genre)
         );
