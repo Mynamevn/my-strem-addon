@@ -1177,6 +1177,31 @@ async function fetchSeriesTrending() {
    [CORE-007.02] MOVINA DAILY DECADE SELECTION
    ============================================================ */
 
+// Lấy điểm IMDb từ dữ liệu phim.
+// Không dùng điểm TMDB thay thế cho IMDb.
+function movinaTrendingIMDb(item) {
+    const raw =
+        item?.imdb?.vote_average ??
+        item?.imdb?.rating ??
+        item?.imdb_rating ??
+        item?.imdbRating ??
+        null;
+
+    if (
+        raw === null ||
+        raw === undefined ||
+        raw === ""
+    ) {
+        return 0;
+    }
+
+    const rating = Number(raw);
+
+    return Number.isFinite(rating)
+        ? rating
+        : 0;
+}
+
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
     return new Date(
@@ -1481,6 +1506,13 @@ async function fetchMovinaTrendingByGenre(
             ? isSeriesItem(item)
             : !isSeriesItem(item)
     );
+
+        // Chỉ áp dụng IMDb >= 8.0 cho mục Kinh điển.
+    if (normalizedGenre === "kinh dien") {
+        items = items.filter(item =>
+            movinaTrendingIMDb(item) >= 8.0
+        );
+    }
 
     // Kinh điển: chỉ nhận phim có điểm IMDb từ 8.0 trở lên.
     // Các thể loại khác không bị áp dụng ngưỡng IMDb này.
