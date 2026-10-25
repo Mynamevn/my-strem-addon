@@ -30668,16 +30668,27 @@ const detailUrl =
         url: detailUrl
     });
 
+    const webDetailUrl =
+        "https://web.stremio.com/#/detail/series/" +
+        encodeURIComponent(rawId);
+
     return {
         streams: [
             {
-                name: "📺 Mở nhóm kênh: " + groupName,
+                name: "📺 Mở nhóm trong Stremio",
                 description:
-                    "Mở danh sách kênh của nhóm này",
+                    "Dùng deep link của ứng dụng Stremio",
                 externalUrl: detailUrl
+            },
+            {
+                name: "🌐 Mở nhóm bằng Stremio Web",
+                description:
+                    "Phương án thay thế cho Desktop và điện thoại",
+                externalUrl: webDetailUrl
             }
         ]
     };
+
 }
 
 // ============================================================
