@@ -4847,9 +4847,14 @@ if (
 //
 // =====================================================
 
-// -----------------------------------------------------
-// [STREMIO-013.02] [PROVIDERS: IPTV ALL] MOVINA TV PROVIDER META
-// -----------------------------------------------------
+// ============================================================
+// [STREMIO-013.02] [PROVIDERS: IPTV ALL] MOVINA TV — PROVIDER → DIRECT GROUP CATALOG LINK
+//
+// Đường mới:
+// Provider detail → Catalog nhóm → Group detail → Channels
+//
+// Giữ videos hiện có làm đường dự phòng.
+// ============================================================
 
 if (
     rawId.startsWith("movina-tv:") &&
@@ -4859,111 +4864,74 @@ if (
         .substring("movina-tv:".length)
         .trim();
 
-    const providerConfig = {
+    const providerCatalogs = {
         vmttv: {
-            label: "VMTTV",
-            prefix: "vmttv-group:",
-            poster: MOVINA_VMTTV_PROVIDER.iconUrl || "",
-            fetch: fetchVmtTvChannels
+            meta: MOVINA_VMTTV_META,
+            catalogId: "pa_tv_vmttv",
+            label: "VMTTV"
         },
 
         coban: {
-            label: "Cơ Bản TV",
-            prefix: "coban-group:",
-            poster: MOVINA_COBAN_PROVIDER.iconUrl || "",
-            fetch: fetchCobanChannels
+            meta: MOVINA_COBAN_META,
+            catalogId: "pa_tv_coban",
+            label: "Cơ Bản TV"
         },
 
         sportsiptv: {
-            label: "Sports IPTV",
-            prefix: "sportsiptv-group:",
-            poster: MOVINA_SPORTSIPTV_PROVIDER.iconUrl || "",
-            fetch: fetchSportsIptvChannels
+            meta: MOVINA_SPORTSIPTV_META,
+            catalogId: "pa_tv_sportsiptv",
+            label: "Sports IPTV"
         }
     };
 
-    const config = providerConfig[providerId];
+    const config = providerCatalogs[providerId];
 
-    if (!config) {
+    if (!config || !config.meta) {
         console.log(
-            "[MOVINA TV SERIES] Unknown provider:",
+            "[MOVINA TV CATALOG LINK] Unknown provider:",
             providerId
         );
 
         return { meta: null };
     }
 
-    try {
-        const channels = await config.fetch();
+    const manifestUrl =
+        "https://my-strem-addon.vercel.app/manifest.json";
 
-        const groups = [
-            ...new Set(
-                (Array.isArray(channels) ? channels : [])
-                    .map(channel =>
-                        String(channel.group || "").trim()
-                    )
-                    .filter(Boolean)
-            )
-        ];
+    const catalogLink =
+        "stremio:///discover/" +
+        encodeURIComponent(manifestUrl) +
+        "/MOVINA/" +
+        config.catalogId;
 
-        const videos = groups.map(group => {
-            const first = channels.find(
-                channel =>
-                    String(channel.group || "").trim() === group
-            );
+    const existingMeta = config.meta;
 
-            return {
-                id:
-                    config.prefix +
-                    encodeURIComponent(group),
+    const meta = {
+        ...existingMeta,
 
-                title: group,
+        // Giữ nguyên danh sách videos đang chạy
+        // để có đường dự phòng nếu client không hiển thị links.
+        videos: existingMeta.videos,
 
-                released: "2020-01-01T00:00:00.000Z",
-
-                ...(first?.logo
-                    ? { thumbnail: first.logo }
-                    : config.poster
-                        ? { thumbnail: config.poster }
-                        : {})
-            };
-        });
-
-        console.log("[MOVINA TV SERIES]", {
-            provider: providerId,
-            channels: channels.length,
-            groups: videos.length
-        });
-
-        return {
-            meta: {
-                id: rawId,
-                type: "series",
-                name: config.label,
-                poster: config.poster,
-                posterShape: "square",
-
-                description:
-                    `${videos.length} nhóm kênh • ${config.label}`,
-
-                genres: ["LIVE TV", "IPTV"],
-                releaseInfo: "LIVE",
-                videos,
-
-                behaviorHints: {
-                    isPlayable: false
-                }
+        links: [
+            {
+                name:
+                    "📂 MỞ DANH SÁCH NHÓM KÊNH — " +
+                    config.label,
+                category: "catalog",
+                url: catalogLink
             }
-        };
-    } catch (error) {
-        console.error(
-            "[MOVINA TV SERIES ERROR]",
-            providerId,
-            error?.message || error
-        );
+        ]
+    };
 
-        return { meta: null };
-    }
+    console.log(
+        "[MOVINA TV CATALOG LINK]",
+        providerId,
+        "→",
+        config.catalogId
+    );
+
+    return { meta };
 }
 
         // ====================================================
