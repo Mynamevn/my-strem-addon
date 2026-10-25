@@ -147,32 +147,24 @@ const manifest = {
 
             name: "📺 TV / IPTV",
 
-            extra: [
+            
+extra: [
+    {
+        name: "genre",
+        isRequired: false,
+        options: [
+            "VMTTV",
+            "Cơ Bản TV",
+            "Sports IPTV"
+        ],
+        optionsLimit: 1
+    },
+    {
+        name: "search",
+        isRequired: false
+    }
+]
 
-                {
-                    name: "provider",
-
-                    isRequired: false,
-
-                    options: [
-                        "vmttv",
-                        "coban",
-                        "sportsiptv"
-                            ],
-
-                    optionsLimit: 1
-                },
-
-                {
-                    name: "search",
-
-                    isRequired: false
-                },
-        {
-            name: "genre",
-            isRequired: false
-        }
-    ]
         },
 
         // =====================================================
@@ -3574,21 +3566,33 @@ if (
         args.id
     )
 ) {
+    
+const rawGenre = String(
+    args.extra?.genre || ""
+).trim();
 
-    const providerId =
-        fixedTvProviderByCatalogId[args.id] ||
-        String(
-            args.extra?.provider ||
-            ""
-        ).trim();
+const providerAliases = {
+    "vmttv": "vmttv",
+    "cơ bản tv": "coban",
+    "co ban tv": "coban",
+    "coban": "coban",
+    "sports iptv": "sportsiptv",
+    "sportsiptv": "sportsiptv"
+};
 
+const selectedGenreProvider =
+    providerAliases[rawGenre.toLowerCase()] || "";
 
-    const genre =
-        String(
-            args.extra?.genre ||
-            ""
-        ).trim();
+const providerId =
+    fixedTvProviderByCatalogId[args.id] ||
+    String(args.extra?.provider || "").trim() ||
+    selectedGenreProvider;
 
+// Nếu genre là tên nguồn TV, dùng nó để chọn provider,
+// không dùng nhầm tên nguồn làm tên nhóm kênh.
+const genre = selectedGenreProvider
+    ? ""
+    : rawGenre;
 
     console.log(
         "[MOVINA TV]",
