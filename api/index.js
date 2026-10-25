@@ -1181,6 +1181,7 @@ async function fetchSeriesTrending() {
 // Không dùng điểm TMDB thay thế cho IMDb.
 function movinaTrendingIMDb(item) {
     const raw =
+        item?.__movinaIMDbRating ??
         item?.imdb?.vote_average ??
         item?.imdb?.rating ??
         item?.imdb_rating ??
@@ -1200,6 +1201,118 @@ function movinaTrendingIMDb(item) {
     return Number.isFinite(rating)
         ? rating
         : 0;
+}
+
+// Cache điểm IMDb lấy từ API chi tiết phim.
+const MOVINA_TRENDING_IMDB_CACHE = new Map();
+
+// Bổ sung điểm IMDb từ API chi tiết khi danh sách
+// không có trường IMDb. Xử lý theo nhóm nhỏ để hạn chế tải.
+async function movinaTrendingLoadIMDb(items) {
+    const result = [...(items || [])];
+    const MAX_DETAILS = 120;
+    const CONCURRENCY = 8;
+
+    const candidates = result
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) =>
+            movinaTrendingIMDb(item) <= 0 &&
+            item?.slug
+        )
+        .slice(0, MAX_DETAILS);
+
+    let cursor = 0;
+
+    async function worker() {
+        while (cursor < candidates.length) {
+            const current = candidates[cursor++];
+
+            const item = current.item;
+            const slug = String(item.slug);
+
+            if (MOVINA_TRENDING_IMDB_CACHE.has(slug)) {
+                result[current.index] = {
+                    ...item,
+                    __movinaIMDbRating:
+                        MOVINA_TRENDING_IMDB_CACHE.get(slug)
+                };
+                continue;
+            }
+
+            try {
+                const response = await axios.get(
+                    "https://phimapi.com/v1/api/phim/" +
+                    encodeURIComponent(slug),
+                    {
+                        timeout: 6000,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
+                        }
+                    }
+                );
+
+                const root = response.data;
+                const payload = root?.data ?? root;
+
+                const detail =
+                    payload?.movie ||
+                    payload?.item ||
+                    payload?.data?.movie ||
+                    payload?.data?.item ||
+                    payload;
+
+                const raw =
+                    detail?.imdb?.vote_average ??
+                    detail?.imdb?.rating ??
+                    detail?.imdb_rating ??
+                    detail?.imdbRating ??
+                    null;
+
+                if (
+                    raw !== null &&
+                    raw !== undefined &&
+                    raw !== ""
+                ) {
+                    const rating = Number(raw);
+
+                    if (Number.isFinite(rating)) {
+                        MOVINA_TRENDING_IMDB_CACHE.set(
+                            slug,
+                            rating
+                        );
+
+                        result[current.index] = {
+                            ...item,
+                            __movinaIMDbRating: rating
+                        };
+                    }
+                }
+            } catch (error) {
+                console.warn(
+                    "[MOVINA IMDb DETAIL ERROR]",
+                    slug,
+                    error?.response?.status ||
+                    error?.message ||
+                    error
+                );
+            }
+        }
+    }
+
+    await Promise.all(
+        Array.from(
+            {
+                length: Math.min(
+                    CONCURRENCY,
+                    candidates.length
+                )
+            },
+            () => worker()
+        )
+    );
+
+    return result;
 }
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
@@ -1500,21 +1613,24 @@ async function fetchMovinaTrendingByGenre(
     let items = catalogDedupe(groups.flat());
 
     
-    // Phân loại movie/series trước khi lọc thể loại.
+        // Phân loại movie/series trước khi lọc thể loại.
     items = items.filter(item =>
         type === "series"
             ? isSeriesItem(item)
             : !isSeriesItem(item)
     );
 
-    // Kinh điển được xác định bằng IMDb >= 8.0,
-    // không yêu cầu metadata phải có thể loại "Kinh điển".
     if (normalizedGenre === "kinh dien") {
+        // Lấy thêm điểm IMDb từ API chi tiết phim.
+        items = await movinaTrendingLoadIMDb(items);
+
+        // Chỉ áp dụng ngưỡng IMDb >= 8.0 cho Kinh điển.
+        // Không yêu cầu metadata phải gắn nhãn "Kinh điển".
         items = items.filter(item =>
             movinaTrendingIMDb(item) >= 8.0
         );
     } else if (!isLatest) {
-        // Các thể loại khác vẫn phải khớp metadata thể loại.
+        // Các thể loại khác vẫn phải khớp metadata.
         items = items.filter(item =>
             movinaTrendingGenreMatches(item, genre)
         );
