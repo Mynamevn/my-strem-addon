@@ -1178,42 +1178,62 @@ async function fetchSeriesTrending() {
    ============================================================ */
 
 
- // Lấy điểm IMDb từ dữ liệu phim.
- // Không dùng điểm TMDB thay thế cho IMDb.
+ 
+ // Điểm phim dùng cho bộ lọc Kinh điển.
+// Ưu tiên IMDb; nếu không có mới dùng TMDB làm dự phòng.
 function movinaTrendingIMDb(item) {
-    const raw =
+    const imdbRaw =
         item?.__movinaIMDbRating ??
         item?.imdb?.vote_average ??
         item?.imdb?.rating ??
         item?.imdb_rating ??
         item?.imdbRating ??
+        item?.imdb?.score ??
         null;
 
+    const imdbRating = Number(imdbRaw);
+
     if (
-        raw === null ||
-        raw === undefined ||
-        raw === ""
+        imdbRaw !== null &&
+        imdbRaw !== undefined &&
+        imdbRaw !== "" &&
+        Number.isFinite(imdbRating) &&
+        imdbRating > 0
     ) {
-        return 0;
+        return imdbRating;
     }
 
-    const rating = Number(raw);
+    const tmdbRaw =
+        item?.tmdb?.vote_average ??
+        item?.tmdb?.rating ??
+        item?.tmdb_vote_average ??
+        item?.vote_average ??
+        null;
 
-    return Number.isFinite(rating)
-        ? rating
-        : 0;
+    const tmdbRating = Number(tmdbRaw);
+
+    if (
+        tmdbRaw !== null &&
+        tmdbRaw !== undefined &&
+        tmdbRaw !== "" &&
+        Number.isFinite(tmdbRating) &&
+        tmdbRating > 0
+    ) {
+        return tmdbRating;
+    }
+
+    return 0;
 }
 
-// Cache điểm IMDb đã lấy từ API chi tiết phim.
 const MOVINA_TRENDING_IMDB_CACHE = new Map();
 
-// Bổ sung IMDb cho phim chưa có điểm trong dữ liệu danh sách.
-// Chỉ chạy khi người dùng mở mục Kinh điển.
+// Bổ sung điểm từ API chi tiết cho những phim
+// danh sách không có cả điểm IMDb lẫn điểm TMDB.
 async function movinaTrendingLoadIMDb(items) {
     const result = [...(items || [])];
     const MAX_DETAILS = 120;
     const CONCURRENCY = 12;
-    const TIMEOUT_MS = 4000;
+    const TIMEOUT_MS = 6000;
 
     const candidates = result
         .map((item, index) => ({ item, index }))
@@ -1224,6 +1244,10 @@ async function movinaTrendingLoadIMDb(items) {
         .slice(0, MAX_DETAILS);
 
     let cursor = 0;
+    let detailSuccess = 0;
+    let detailErrors = 0;
+    let imdbCount = 0;
+    let tmdbCount = 0;
 
     async function worker() {
         while (cursor < candidates.length) {
@@ -1235,10 +1259,17 @@ async function movinaTrendingLoadIMDb(items) {
                 const cached =
                     MOVINA_TRENDING_IMDB_CACHE.get(slug);
 
-                if (cached > 0) {
+                if (cached?.rating > 0) {
                     result[current.index] = {
                         ...item,
-                        __movinaIMDbRating: cached
+                        __movinaIMDbRating:
+                            cached.source === "imdb"
+                                ? cached.rating
+                                : undefined,
+                        __movinaTMDBRating:
+                            cached.source === "tmdb"
+                                ? cached.rating
+                                : undefined
                     };
                 }
 
@@ -1259,48 +1290,92 @@ async function movinaTrendingLoadIMDb(items) {
                 );
 
                 const root = response.data || {};
-
                 const detail =
-                    root?.movie ||
-                    root?.data?.movie ||
                     root?.data?.item ||
+                    root?.data?.movie ||
+                    root?.data?.data?.item ||
+                    root?.data?.data?.movie ||
                     root?.item ||
+                    root?.movie ||
                     root?.data ||
                     root;
 
-                const raw =
+                const imdbRaw =
                     detail?.imdb?.vote_average ??
                     detail?.imdb?.rating ??
                     detail?.imdb_rating ??
                     detail?.imdbRating ??
+                    detail?.imdb?.score ??
                     null;
 
-                let rating = 0;
+                const tmdbRaw =
+                    detail?.tmdb?.vote_average ??
+                    detail?.tmdb?.rating ??
+                    detail?.tmdb_vote_average ??
+                    detail?.vote_average ??
+                    null;
+
+                let rating = Number(imdbRaw);
+                let source = "imdb";
 
                 if (
-                    raw !== null &&
-                    raw !== undefined &&
-                    raw !== ""
+                    imdbRaw === null ||
+                    imdbRaw === undefined ||
+                    imdbRaw === "" ||
+                    !Number.isFinite(rating) ||
+                    rating <= 0
                 ) {
-                    const parsed = Number(raw);
+                    rating = Number(tmdbRaw);
+                    source = "tmdb";
+                }
 
-                    if (Number.isFinite(parsed)) {
-                        rating = parsed;
-                    }
+                if (
+                    tmdbRaw === null &&
+                    (
+                        imdbRaw === null ||
+                        imdbRaw === undefined ||
+                        imdbRaw === ""
+                    )
+                ) {
+                    rating = 0;
+                }
+
+                if (
+                    !Number.isFinite(rating) ||
+                    rating <= 0
+                ) {
+                    rating = 0;
                 }
 
                 MOVINA_TRENDING_IMDB_CACHE.set(
                     slug,
-                    rating
+                    { rating, source }
                 );
+
+                detailSuccess++;
 
                 if (rating > 0) {
                     result[current.index] = {
                         ...item,
-                        __movinaIMDbRating: rating
+                        __movinaIMDbRating:
+                            source === "imdb"
+                                ? rating
+                                : undefined,
+                        __movinaTMDBRating:
+                            source === "tmdb"
+                                ? rating
+                                : undefined
                     };
+
+                    if (source === "imdb") {
+                        imdbCount++;
+                    } else {
+                        tmdbCount++;
+                    }
                 }
             } catch (error) {
+                detailErrors++;
+
                 console.warn(
                     "[MOVINA IMDb DETAIL ERROR]",
                     slug,
@@ -1325,12 +1400,19 @@ async function movinaTrendingLoadIMDb(items) {
     );
 
     console.log(
-        "[MOVINA IMDb DETAIL SUMMARY]",
+        "[MOVINA CLASSIC SCORE SUMMARY]",
         JSON.stringify({
-            candidates: candidates.length,
-            cached: MOVINA_TRENDING_IMDB_CACHE.size,
-            withIMDb: result.filter(
+            input: result.length,
+            detailCandidates: candidates.length,
+            detailSuccess,
+            detailErrors,
+            imdbLoaded: imdbCount,
+            tmdbLoaded: tmdbCount,
+            scored: result.filter(
                 item => movinaTrendingIMDb(item) > 0
+            ).length,
+            qualified: result.filter(
+                item => movinaTrendingIMDb(item) >= 8.0
             ).length
         })
     );
