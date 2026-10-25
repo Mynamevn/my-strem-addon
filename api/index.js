@@ -1482,6 +1482,14 @@ async function fetchMovinaTrendingByGenre(
             : !isSeriesItem(item)
     );
 
+    // Kinh điển: chỉ nhận phim có điểm IMDb từ 8.0 trở lên.
+    // Các thể loại khác không bị áp dụng ngưỡng IMDb này.
+    if (normalizedGenre === "kinh dien") {
+        items = items.filter(item =>
+            movinaTrendingIMDb(item) >= 8.0
+        );
+    }
+
     // "Mới nhất" là bộ lọc thời gian, không phải thể loại.
     if (!isLatest) {
         items = items.filter(item =>
