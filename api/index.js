@@ -1492,15 +1492,15 @@ async function fetchMovinaTrendingByGenre(
     const candidateCount = items.length;
     let result = [];
 
-    if (isLatest) {
+        if (isLatest) {
+        // Mới nhất: giữ thứ tự từ phim mới đến phim cũ.
+        // Không shuffle vì sẽ làm phim cũ chen lên trước.
         items.sort(movinaTrendingNewestSort);
 
-        // Giữ pool lớn hơn 50 để thay đổi lựa chọn theo ngày.
-        result = stableShuffle(
-            items,
-            type + "|" + genre + "|" + day
-        ).slice(0, CATALOG_TARGET);
+        result = items.slice(0, CATALOG_TARGET);
     } else {
+        // Thể loại thông thường: chia tương đối đều theo thập niên.
+        // Nếu một thập niên hết phim, lấy tiếp từ các thập niên khác.
         result = movinaTrendingBalancedDecades(
             items,
             type + "|" + genre + "|" + day,
