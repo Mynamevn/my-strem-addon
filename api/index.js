@@ -30657,8 +30657,8 @@ if (
     }
 
     const detailUrl =
-        "stremio:///detail/series/" +
-        rawId;
+    "stremio:///detail/series/" +
+    encodeURIComponent(rawId);
 
     console.log("[MOVINA TV GROUP DEEPLINK]", {
         provider: matched.provider,
