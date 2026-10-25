@@ -4122,53 +4122,40 @@ if (
         );
 
 
-    const metas =
-        tvProviders.map(
-            provider => ({
+    const metas = tvProviders.map(provider => ({
+    id:
+        "movina-tv:" +
+        encodeURIComponent(provider.id),
 
-                id:
-                    "movina-tv:" +
-                    encodeURIComponent(
-                        provider.id
-                    ),
+    // Logo nguồn phải mở trang chi tiết,
+    // không yêu cầu stream trực tiếp như type "tv".
+    type: "series",
 
-                type:
-                    "tv",
+    name: "🔴 " + provider.name,
 
-                name:
-                    "🔴 " +
-                    provider.name,
+    poster: provider.iconUrl || "",
+    posterShape: "square",
 
-                poster:
-                    provider.iconUrl ||
-                    "",
+    description:
+        "MOVINA TV / IPTV Provider: " +
+        provider.name +
+        "\nChọn nhóm kênh để xem.",
 
-                posterShape:
-                    "square",
+    releaseInfo: "LIVE TV",
 
-                description:
-                    "MOVINA TV / IPTV Provider: " +
-                    provider.name,
+    genres: [
+        "LIVE TV",
+        "IPTV"
+    ],
 
-                releaseInfo:
-                    "LIVE TV",
+    behaviorHints: {
+        isPlayable: false
+    }
+}));
 
-                genres: [
-                    "LIVE TV",
-                    "IPTV"
-                ],
-
-                behaviorHints: {
-                    isLive: false,
-                    isPlayable: false
-                }
-            })
-        );
-
-
-    return {
-        metas
-    };
+return {
+    metas
+};
 }
 
 /* ========================================================
@@ -4866,62 +4853,118 @@ if (
 
 if (
     rawId.startsWith("movina-tv:") &&
-    String(args.type || "").trim() === "tv"
+    String(args.type || "").trim() === "series"
 ) {
+    const providerId = rawId
+        .substring("movina-tv:".length)
+        .trim();
 
-    console.log(
-        "[META] MOVINA TV PROVIDER:",
-        rawId
-    );
+    const providerConfig = {
+        vmttv: {
+            label: "VMTTV",
+            prefix: "vmttv-group:",
+            poster: MOVINA_VMTTV_PROVIDER.iconUrl || "",
+            fetch: fetchVmtTvChannels
+        },
 
-    const providerId =
-        rawId.substring(
-            "movina-tv:".length
-        ).trim();
+        coban: {
+            label: "Cơ Bản TV",
+            prefix: "coban-group:",
+            poster: MOVINA_COBAN_PROVIDER.iconUrl || "",
+            fetch: fetchCobanChannels
+        },
 
-    if (
-        providerId === "vmttv"
-    ) {
+        sportsiptv: {
+            label: "Sports IPTV",
+            prefix: "sportsiptv-group:",
+            poster: MOVINA_SPORTSIPTV_PROVIDER.iconUrl || "",
+            fetch: fetchSportsIptvChannels
+        }
+    };
 
+    const config = providerConfig[providerId];
+
+    if (!config) {
         console.log(
-            "[META] VMT TV PROVIDER META"
+            "[MOVINA TV SERIES] Unknown provider:",
+            providerId
         );
 
-        return {
-            meta:
-                MOVINA_VMTTV_META
-        };
-
+        return { meta: null };
     }
 
-    
-    if (providerId === "coban") {
-        console.log("[META] COBAN TV PROVIDER META");
+    try {
+        const channels = await config.fetch();
 
-        return {
-            meta: MOVINA_COBAN_META
-        };
-    }
-    
-   
-    if (providerId === "sportsiptv") {
-    console.log("[META] SPORTSIPTV PROVIDER META");
+        const groups = [
+            ...new Set(
+                (Array.isArray(channels) ? channels : [])
+                    .map(channel =>
+                        String(channel.group || "").trim()
+                    )
+                    .filter(Boolean)
+            )
+        ];
 
-    return {
-        meta: MOVINA_SPORTSIPTV_META
+        const videos = groups.map(group => {
+            const first = channels.find(
+                channel =>
+                    String(channel.group || "").trim() === group
+            );
+
+            return {
+                id:
+                    config.prefix +
+                    encodeURIComponent(group),
+
+                title: group,
+
+                released: "2020-01-01T00:00:00.000Z",
+
+                ...(first?.logo
+                    ? { thumbnail: first.logo }
+                    : config.poster
+                        ? { thumbnail: config.poster }
+                        : {})
             };
+        });
+
+        console.log("[MOVINA TV SERIES]", {
+            provider: providerId,
+            channels: channels.length,
+            groups: videos.length
+        });
+
+        return {
+            meta: {
+                id: rawId,
+                type: "series",
+                name: config.label,
+                poster: config.poster,
+                posterShape: "square",
+
+                description:
+                    `${videos.length} nhóm kênh • ${config.label}`,
+
+                genres: ["LIVE TV", "IPTV"],
+                releaseInfo: "LIVE",
+                videos,
+
+                behaviorHints: {
+                    isPlayable: false
+                }
+            }
+        };
+    } catch (error) {
+        console.error(
+            "[MOVINA TV SERIES ERROR]",
+            providerId,
+            error?.message || error
+        );
+
+        return { meta: null };
     }
-
-    console.log(
-        "[META] Unknown MOVINA TV provider:",
-        providerId
-    );
-
-    return {
-        meta: null
-    };
 }
-
 
         // ====================================================
         // [STREMIO-013.COBAN] [PROVIDERS: COBAN]
@@ -30557,6 +30600,82 @@ builder.defineStreamHandler(async (args) => {
     if (!rawId) {
     console.log("[STREAM] Không có ID");
     return { streams: [] };
+}
+
+// ============================================================
+// MOVINA TV — GROUP VIDEO DEEP LINK
+//
+// Khi chọn một nhóm trong trang series của nguồn TV,
+// mở trang chi tiết series của chính nhóm đó.
+// ============================================================
+
+if (
+    streamType === "series" &&
+    (
+        rawId.startsWith("vmttv-group:") ||
+        rawId.startsWith("coban-group:") ||
+        rawId.startsWith("sportsiptv-group:")
+    )
+) {
+    const groupPrefixes = [
+        {
+            prefix: "vmttv-group:",
+            provider: "vmttv"
+        },
+        {
+            prefix: "coban-group:",
+            provider: "coban"
+        },
+        {
+            prefix: "sportsiptv-group:",
+            provider: "sportsiptv"
+        }
+    ];
+
+    const matched = groupPrefixes.find(
+        item => rawId.startsWith(item.prefix)
+    );
+
+    if (!matched) {
+        return { streams: [] };
+    }
+
+    let groupName = "";
+
+    try {
+        groupName = decodeURIComponent(
+            rawId.substring(matched.prefix.length)
+        ).trim();
+    } catch (_) {
+        groupName = rawId
+            .substring(matched.prefix.length)
+            .trim();
+    }
+
+    if (!groupName) {
+        return { streams: [] };
+    }
+
+    const detailUrl =
+        "stremio:///detail/series/" +
+        rawId;
+
+    console.log("[MOVINA TV GROUP DEEPLINK]", {
+        provider: matched.provider,
+        group: groupName,
+        url: detailUrl
+    });
+
+    return {
+        streams: [
+            {
+                name: "📺 Mở nhóm kênh: " + groupName,
+                description:
+                    "Mở danh sách kênh của nhóm này",
+                externalUrl: detailUrl
+            }
+        ]
+    };
 }
 
 // ============================================================
