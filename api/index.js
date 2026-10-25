@@ -1171,45 +1171,57 @@ async function fetchSeriesTrending() {
 }
 
 
+
 /* ============================================================
    [CORE-006.02] MOVINA TRENDING GENRE FILTER
-   [CORE-007.02] MOVINA DAILY IMDb / DECADE SELECTION
+   [CORE-007.02] MOVINA DAILY DECADE SELECTION
    ============================================================ */
 
-// Ngày Việt Nam: thay đổi lựa chọn sau mỗi ngày.
+// Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
     return new Date(
         Date.now() + 7 * 60 * 60 * 1000
     ).toISOString().slice(0, 10);
 }
 
-// Chỉ dùng điểm IMDb thực sự có trong dữ liệu.
-// Không lấy điểm TMDB thay thế cho IMDb.
-function movinaTrendingIMDb(item) {
-    const raw =
-        item?.imdb?.vote_average ??
-        item?.imdb?.rating ??
-        null;
+// Ánh xạ tên thể loại giao diện sang slug PhimAPI.
+// Các slug không được API hỗ trợ có thể trả về rỗng;
+// khi đó hàm sẽ thử bổ sung từ danh sách phim theo loại.
+const MOVINA_TRENDING_GENRE_SLUGS = {
+    "kinh dien": ["kinh-dien"],
+    "kinh di": ["kinh-di"],
+    "hai": ["hai-huoc"],
+    "hanh dong": ["hanh-dong"],
+    "giat gan": ["giat-gan"],
+    "hinh su": ["hinh-su"],
+    "co trang": ["co-trang"],
+    "than thoai": ["than-thoai"],
+    "vo thuat": ["vo-thuat"],
+    "gia dinh": ["gia-dinh"],
+    "gia tuong": ["gia-tuong", "fantasy"],
+    "bi an": ["bi-an"],
+    "khoa hoc": ["khoa-hoc"],
+    "vien tuong": ["vien-tuong"],
+    "phieu luu": ["phieu-luu"],
+    "tam ly": ["tam-ly", "chinh-kich"],
+    "tinh cam": ["tinh-cam"],
+    "lang man": ["lang-man", "romance"],
+    "the thao": ["the-thao"],
+    "chien tranh": ["chien-tranh"],
+    "hoc duong": ["hoc-duong"],
+    "am nhac": ["am-nhac"],
+    "lich su": ["lich-su"],
+    "tai lieu": ["tai-lieu"],
+    "hoat hinh": ["hoat-hinh"]
+};
 
-    if (
-        raw === null ||
-        raw === undefined ||
-        raw === ""
-    ) {
-        return 0;
-    }
-
-    const rating = Number(raw);
-
-    return Number.isFinite(rating)
-        ? rating
-        : 0;
-}
-
+// Từ khóa phải khớp chính xác sau chuẩn hóa.
+// Không dùng "drama" làm bí danh chung cho Tâm lý,
+// tránh lấy hàng loạt phim không đúng thể loại.
 const MOVINA_TRENDING_GENRE_ALIASES = {
     "kinh dien": ["kinh dien", "classic"],
-    "kinh di": ["kinh di", "horror"], 
-    "hai": ["hai", "comedy"],
+    "kinh di": ["kinh di", "horror"],
+    "hai": ["hai", "hai huoc", "comedy"],
     "hanh dong": ["hanh dong", "action"],
     "giat gan": ["giat gan", "thriller"],
     "hinh su": ["hinh su", "crime"],
@@ -1222,15 +1234,14 @@ const MOVINA_TRENDING_GENRE_ALIASES = {
     "khoa hoc": ["khoa hoc", "science"],
     "vien tuong": [
         "vien tuong",
-        "khoa hoc vien tuong",
-        "sci fi",
-        "science fiction"
+        "science fiction",
+        "sci fi"
     ],
     "phieu luu": ["phieu luu", "adventure"],
-    "tam ly": ["tam ly", "psychological", "drama"],
+    "tam ly": ["tam ly", "psychological", "chinh kich"],
     "tinh cam": ["tinh cam", "romance"],
     "lang man": ["lang man", "romantic"],
-    "the thao": ["the thao", "sport"],
+    "the thao": ["the thao", "sport", "sports"],
     "chien tranh": ["chien tranh", "war"],
     "hoc duong": ["hoc duong", "school"],
     "am nhac": ["am nhac", "music"],
@@ -1242,11 +1253,7 @@ const MOVINA_TRENDING_GENRE_ALIASES = {
 function movinaTrendingGenreMatches(item, selectedGenre) {
     const genre = catalogNormalize(selectedGenre);
 
-    // Mới nhất là bộ lọc thời gian, không phải thể loại.
-    if (
-        !genre ||
-        genre === "moi nhat"
-    ) {
+    if (!genre || genre === "moi nhat") {
         return true;
     }
 
@@ -1260,20 +1267,17 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
     }
 
     const aliases =
-        MOVINA_TRENDING_GENRE_ALIASES[genre] ||
-        [genre];
+        MOVINA_TRENDING_GENRE_ALIASES[genre] || [genre];
 
+    // So khớp tên thể loại chính xác, không dùng includes()
+    // để tránh lấy nhầm thể loại có tên gần giống.
     return categories.some(category =>
-        aliases.some(alias =>
-            category === alias ||
-            category.includes(alias)
-        )
+        aliases.includes(category)
     );
 }
 
 function movinaTrendingNewestSort(a, b) {
-    const yearDifference =
-        itemYear(b) - itemYear(a);
+    const yearDifference = itemYear(b) - itemYear(a);
 
     if (yearDifference !== 0) {
         return yearDifference;
@@ -1296,20 +1300,22 @@ function movinaTrendingNewestSort(a, b) {
     return modifiedB - modifiedA;
 }
 
-// Chọn 50 phim từ các thập niên theo vòng tròn.
-// Mỗi thập niên được xáo trộn riêng theo ngày.
+// Chọn phim luân phiên theo thập niên.
+// Nếu một thập niên hết phim, tiếp tục lấy ở thập niên khác.
+// Phim thiếu năm vẫn được giữ lại để bổ sung đủ 50.
 function movinaTrendingBalancedDecades(
     items,
     seed,
     limit = CATALOG_TARGET
 ) {
     const pools = new Map();
+    const unknownYear = [];
 
-    for (const item of items) {
+    for (const item of items || []) {
         const decade = decadeOf(item);
 
-        // Không đoán thập niên khi thiếu năm phát hành.
         if (!decade) {
+            unknownYear.push(item);
             continue;
         }
 
@@ -1320,14 +1326,8 @@ function movinaTrendingBalancedDecades(
         pools.get(decade).push(item);
     }
 
-    const decades =
-        Array.from(pools.keys()).sort(
-            (a, b) => b - a
-        );
-
-    if (!decades.length) {
-        return [];
-    }
+    const decades = Array.from(pools.keys())
+        .sort((a, b) => b - a);
 
     const shuffledPools = new Map();
 
@@ -1341,19 +1341,24 @@ function movinaTrendingBalancedDecades(
         );
     }
 
+    const unknownPool = stableShuffle(
+        unknownYear,
+        seed + "|unknown-year"
+    );
+
     const positions = new Map(
         decades.map(decade => [decade, 0])
     );
 
+    let unknownPosition = 0;
     const result = [];
 
-    // Xoay điểm bắt đầu theo ngày để thay đổi phân bổ
-    // phần dư khi số phim không chia hết cho số thập niên.
-    let offset =
-        stableHash(seed) % decades.length;
+    let offset = decades.length
+        ? stableHash(seed) % decades.length
+        : 0;
 
     while (result.length < limit) {
-        let addedThisRound = false;
+        let added = false;
 
         for (let step = 0; step < decades.length; step++) {
             const decade =
@@ -1367,23 +1372,30 @@ function movinaTrendingBalancedDecades(
             }
 
             result.push(pool[position]);
-
             positions.set(decade, position + 1);
-            addedThisRound = true;
+            added = true;
 
             if (result.length >= limit) {
                 break;
             }
         }
 
-        if (!addedThisRound) {
+        offset = decades.length
+            ? (offset + 1) % decades.length
+            : 0;
+
+        // Chỉ lấy phim thiếu năm khi đã vét hết các
+        // lượt phim có năm, để ưu tiên cân bằng thập niên.
+        if (!added) {
+            if (unknownPosition < unknownPool.length) {
+                result.push(unknownPool[unknownPosition++]);
+                continue;
+            }
+
             break;
         }
-
-        offset = (offset + 1) % decades.length;
     }
 
-    // Trộn thứ tự hiển thị, không gom phim theo thập niên.
     return stableShuffle(
         result,
         seed + "|display"
@@ -1395,98 +1407,100 @@ async function fetchMovinaTrendingByGenre(
     selectedGenre
 ) {
     const type =
-        contentType === "series"
-            ? "series"
-            : "movie";
+        contentType === "series" ? "series" : "movie";
 
-    const genre =
-        String(selectedGenre || "").trim();
+    const genre = String(selectedGenre || "").trim();
+    const normalizedGenre = catalogNormalize(genre);
+    const day = movinaTrendingDaySeed();
 
-    const normalizedGenre =
-        catalogNormalize(genre);
+    const isLatest = normalizedGenre === "moi nhat";
+    const isAnimationGenre = normalizedGenre === "hoat hinh";
 
-    const day =
-        movinaTrendingDaySeed();
-
-    const isLatest =
-        normalizedGenre === "moi nhat";
-
-    // Hoạt hình có endpoint riêng.
-    const endpoint =
-        normalizedGenre === "hoat hinh"
+    const listEndpoint =
+        isAnimationGenre
             ? "hoat-hinh"
             : type === "series"
                 ? "phim-bo"
                 : "phim-le";
 
-    const pageRequests = [];
+    const requests = [];
 
-    // Đọc 12 trang để tăng pool phim đủ điểm,
-    // có nhiều thể loại và nhiều thập niên hơn.
+    // 1. Ưu tiên API theo đúng slug thể loại.
+    // Tải nhiều trang để có cơ hội đạt 50 kết quả.
+    if (!isLatest) {
+        const slugs =
+            MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
+
+        for (const slug of slugs) {
+            for (let page = 1; page <= 12; page++) {
+                requests.push(
+                    catalogFetch(
+                        "https://phimapi.com/v1/api/the-loai/" +
+                        encodeURIComponent(slug) +
+                        "?page=" + page +
+                        "&limit=24"
+                    ).then(items =>
+                        items.map(item => ({
+                            ...item,
+                            __genreApiSlug: slug
+                        }))
+                    )
+                );
+            }
+        }
+    }
+
+    // 2. Bổ sung ứng viên từ danh sách theo loại phim.
+    // Đây là nguồn bổ sung, vẫn phải lọc thể loại ở dưới.
     for (let page = 1; page <= 12; page++) {
-        pageRequests.push(
+        requests.push(
             catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/" +
-                endpoint +
-                "?page=" +
-                page +
+                "https://phimapi.com/v1/api/danh-sach/" +
+                listEndpoint +
+                "?page=" + page +
                 "&limit=24"
             ).then(items =>
-                items.map(item => {
-                    if (endpoint === "hoat-hinh") {
-                        return {
-                            ...item,
-                            __isAnimation: true
-                        };
-                    }
-
-                    return {
-                        ...item,
-                        __catalogType: type
-                    };
-                })
+                items.map(item => ({
+                    ...item,
+                    ...(isAnimationGenre
+                        ? { __isAnimation: true }
+                        : { __catalogType: type })
+                }))
             )
         );
     }
 
-    const pages =
-        await Promise.all(pageRequests);
+    const groups = await Promise.all(requests);
 
-    let items =
-        catalogDedupe(pages.flat());
+    let items = catalogDedupe(groups.flat());
 
-    // Phân loại nội dung trước khi lọc thể loại.
+    // Phân loại movie/series trước khi lọc thể loại.
+    // Nguồn hoạt hình có thể chứa cả phim lẻ lẫn phim bộ.
     items = items.filter(item =>
         type === "series"
             ? isSeriesItem(item)
             : !isSeriesItem(item)
     );
 
-    // Lọc thể loại được chọn.
-    items = items.filter(
-        item => movinaTrendingGenreMatches(item, genre)
-    );
+    // "Mới nhất" là bộ lọc thời gian, không phải thể loại.
+    if (!isLatest) {
+        items = items.filter(item =>
+            movinaTrendingGenreMatches(item, genre)
+        );
+    }
 
+    const candidateCount = items.length;
     let result = [];
 
     if (isLatest) {
-        // "Mới nhất": lấy pool đầu bảng theo năm/ngày cập nhật,
-        // sau đó random ổn định theo ngày để thay đổi kết quả.
         items.sort(movinaTrendingNewestSort);
 
-        const recentPool = items.slice(
-            0,
-            Math.min(180, items.length)
-        );
-
+        // Giữ pool lớn hơn 50 để thay đổi lựa chọn theo ngày.
         result = stableShuffle(
-            recentPool,
+            items,
             type + "|" + genre + "|" + day
         ).slice(0, CATALOG_TARGET);
     } else {
-        // Các thể loại thông thường: chia tương đối đều
-        // theo các thập niên có dữ liệu đạt điều kiện.
         result = movinaTrendingBalancedDecades(
             items,
             type + "|" + genre + "|" + day,
@@ -1500,8 +1514,8 @@ async function fetchMovinaTrendingByGenre(
             type,
             genre,
             day,
-            endpoint,
-            candidatesAfterFilters: items.length,
+            isLatest,
+            candidatesAfterFilters: candidateCount,
             returned: result.length,
             decades: Array.from(
                 new Set(
@@ -1509,12 +1523,16 @@ async function fetchMovinaTrendingByGenre(
                         .map(decadeOf)
                         .filter(Boolean)
                 )
-            ).sort((a, b) => b - a)
+            ).sort((a, b) => b - a),
+            missingYear: result.filter(
+                item => !itemYear(item)
+            ).length
         })
     );
 
     return result;
 }
+
 
 /* ============================================================
    [CORE-008] [PROVIDERS: ALL] TVB CATALOG
