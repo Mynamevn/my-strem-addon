@@ -30656,9 +30656,11 @@ if (
         return { streams: [] };
     }
 
-    const detailUrl =
+    // rawId đã có phần tên nhóm được encodeURIComponent
+    // khi tạo ID nhóm. Không mã hóa toàn bộ ID lần nữa.
+const detailUrl =
     "stremio:///detail/series/" +
-    encodeURIComponent(rawId);
+    rawId;
 
     console.log("[MOVINA TV GROUP DEEPLINK]", {
         provider: matched.provider,
