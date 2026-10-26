@@ -1747,6 +1747,311 @@ async function movinaTrendingLoadIMDb(items) {
     return result;
 }
 
+
+/* ============================================================
+ * MOVINA — TMDB FALLBACK FOR CLASSIC CATALOG
+ *
+ * IMDb luôn được ưu tiên.
+ * TMDB chỉ dùng khi ứng viên chưa có điểm IMDb.
+ * TMDB score vẫn được lưu riêng, không giả làm IMDb.
+ *
+ * Vercel Environment Variable:
+ * TMDB_READ_ACCESS_TOKEN = TMDB API Read Access Token
+ * ============================================================ */
+
+const MOVINA_CLASSIC_TMDB_CACHE = new Map();
+
+function movinaTrendingTMDB(item) {
+    const rating = Number(item?.__movinaTMDBRating);
+    const votes = Number(item?.__movinaTMDBVotes || 0);
+
+    if (
+        Number.isFinite(rating) &&
+        rating >= 8.0 &&
+        rating <= 10 &&
+        votes >= 500
+    ) {
+        return rating;
+    }
+
+    // Chỉ dùng dữ liệu TMDB có sẵn nếu có đủ điểm và số lượt vote.
+    const embeddedRating = Number(item?.tmdb?.vote_average);
+    const embeddedVotes = Number(
+        item?.tmdb?.vote_count ??
+        item?.tmdb?.voteCount ??
+        0
+    );
+
+    if (
+        Number.isFinite(embeddedRating) &&
+        embeddedRating >= 8.0 &&
+        embeddedRating <= 10 &&
+        embeddedVotes >= 500
+    ) {
+        return embeddedRating;
+    }
+
+    return 0;
+}
+
+async function movinaTrendingLoadTMDB(items, contentType) {
+    const result = [...(items || [])];
+
+    if (!result.length) {
+        return result;
+    }
+
+    const type = contentType === "series" ? "series" : "movie";
+    const CACHE_TTL = 6 * 60 * 60 * 1000;
+    const MAX_PAGES = 8;
+    const MIN_VOTES = 500;
+    const TIMEOUT_MS = 6000;
+
+    const token = String(
+        process.env.TMDB_READ_ACCESS_TOKEN || ""
+    ).trim();
+
+    const apiKey = String(
+        process.env.TMDB_API_KEY || ""
+    ).trim();
+
+    function normalizeTitle(value) {
+        return String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function itemNames(item) {
+        return [
+            item?.origin_name,
+            item?.original_name,
+            item?.name,
+            item?.title
+        ].map(normalizeTitle).filter(Boolean);
+    }
+
+    function itemYearValue(item) {
+        return Number(itemYear(item) || 0);
+    }
+
+    function tmdbTitleNames(row) {
+        return [
+            row?.title,
+            row?.original_title,
+            row?.name,
+            row?.original_name
+        ].map(normalizeTitle).filter(Boolean);
+    }
+
+    function tmdbYearValue(row) {
+        const date = String(
+            type === "series"
+                ? row?.first_air_date || ""
+                : row?.release_date || ""
+        );
+
+        const parsed = Number(date.slice(0, 4));
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    let cache = MOVINA_CLASSIC_TMDB_CACHE.get(type);
+
+    if (
+        !cache ||
+        Date.now() - cache.updatedAt > CACHE_TTL
+    ) {
+        cache = {
+            rows: [],
+            updatedAt: 0,
+            error: false
+        };
+
+        if (!token && !apiKey) {
+            console.warn(
+                "[MOVINA TMDB FALLBACK]",
+                "Missing TMDB_READ_ACCESS_TOKEN / TMDB_API_KEY"
+            );
+            cache.error = true;
+        } else {
+            const rowsById = new Map();
+
+            for (let page = 1; page <= MAX_PAGES; page++) {
+                try {
+                    const params = {
+                        page,
+                        sort_by: "vote_count.desc",
+                        "vote_average.gte": 8.0,
+                        "vote_count.gte": MIN_VOTES,
+                        include_adult: false
+                    };
+
+                    if (!token && apiKey) {
+                        params.api_key = apiKey;
+                    }
+
+                    const endpoint =
+                        type === "series"
+                            ? "https://api.themoviedb.org/3/discover/tv"
+                            : "https://api.themoviedb.org/3/discover/movie";
+
+                    const response = await axios.get(endpoint, {
+                        params,
+                        timeout: TIMEOUT_MS,
+                        headers: {
+                            Accept: "application/json",
+                            ...(token
+                                ? { Authorization: "Bearer " + token }
+                                : {})
+                        }
+                    });
+
+                    const rows = Array.isArray(response.data?.results)
+                        ? response.data.results
+                        : [];
+
+                    for (const row of rows) {
+                        const id = String(row?.id || "");
+                        if (id) rowsById.set(id, row);
+                    }
+
+                    const totalPages = Number(
+                        response.data?.total_pages || page
+                    );
+
+                    if (page >= totalPages || !rows.length) {
+                        break;
+                    }
+                } catch (error) {
+                    cache.error = true;
+
+                    console.warn(
+                        "[MOVINA TMDB API ERROR]",
+                        type,
+                        error?.response?.status ||
+                            error?.message ||
+                            error
+                    );
+
+                    break;
+                }
+            }
+
+            cache.rows = [...rowsById.values()];
+            cache.updatedAt = Date.now();
+            MOVINA_CLASSIC_TMDB_CACHE.set(type, cache);
+        }
+
+        if (!cache.updatedAt) {
+            cache.updatedAt = Date.now();
+            MOVINA_CLASSIC_TMDB_CACHE.set(type, cache);
+        }
+    }
+
+    let matched = 0;
+
+    for (let index = 0; index < result.length; index++) {
+        const item = result[index];
+
+        // Không thay thế điểm IMDb đã có bằng điểm TMDB.
+        if (movinaTrendingIMDb(item) > 0) {
+            continue;
+        }
+
+        // Nếu metadata nguồn đã có TMDB rating hợp lệ thì giữ lại.
+        if (movinaTrendingTMDB(item) >= 8.0) {
+            continue;
+        }
+
+        const names = itemNames(item);
+        if (!names.length) continue;
+
+        const year = itemYearValue(item);
+        let best = null;
+
+        for (const row of cache.rows || []) {
+            const rating = Number(row?.vote_average || 0);
+            const votes = Number(row?.vote_count || 0);
+
+            if (
+                !Number.isFinite(rating) ||
+                rating < 8.0 ||
+                rating > 10 ||
+                votes < MIN_VOTES
+            ) {
+                continue;
+            }
+
+            const namesFromTMDB = tmdbTitleNames(row);
+
+            // Chỉ khớp tên chính xác đã chuẩn hóa, không khớp gần đúng.
+            if (!namesFromTMDB.some(name => names.includes(name))) {
+                continue;
+            }
+
+            const tmdbYear = tmdbYearValue(row);
+
+            if (
+                year &&
+                tmdbYear &&
+                Math.abs(year - tmdbYear) > 1
+            ) {
+                continue;
+            }
+
+            const yearDifference =
+                year && tmdbYear ? Math.abs(year - tmdbYear) : 99;
+
+            if (
+                !best ||
+                yearDifference < best.yearDifference ||
+                (
+                    yearDifference === best.yearDifference &&
+                    votes > best.votes
+                )
+            ) {
+                best = {
+                    rating,
+                    votes,
+                    yearDifference
+                };
+            }
+        }
+
+        if (best) {
+            result[index] = {
+                ...item,
+                __movinaTMDBRating: best.rating,
+                __movinaTMDBVotes: best.votes,
+                __movinaRatingSource: "TMDB"
+            };
+
+            matched++;
+        }
+    }
+
+    console.log(
+        "[MOVINA TMDB FALLBACK SUMMARY]",
+        JSON.stringify({
+            type,
+            input: result.length,
+            tmdbRowsCached: (cache.rows || []).length,
+            matched,
+            qualifiedTMDB: result.filter(item =>
+                movinaTrendingIMDb(item) === 0 &&
+                movinaTrendingTMDB(item) >= 8.0
+            ).length,
+            apiError: !!cache.error
+        })
+    );
+
+    return result;
+}
+
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
     return new Date(
@@ -2022,11 +2327,15 @@ async function fetchMovinaTrendingByGenre(
 
     const requests = [];
 
-    // 1. Lấy ứng viên từ API thể loại.
-    // Bao gồm cả hoạt hình để không bỏ sót anime/phim hoạt hình bộ.
+    // 1. Lấy ứng viên từ API thể loại và yêu cầu đúng loại nội dung.
+    // Phim bộ dùng type=series; phim lẻ dùng type=single.
+    // Không tự gắn nhãn phim bộ cho dữ liệu hoạt hình chưa phân loại.
     if (!isLatest) {
         const slugs =
             MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
+
+        const apiType =
+            type === "series" ? "series" : "single";
 
         for (const slug of slugs) {
             for (let page = 1; page <= 20; page++) {
@@ -2035,11 +2344,13 @@ async function fetchMovinaTrendingByGenre(
                         "https://phimapi.com/v1/api/the-loai/" +
                         encodeURIComponent(slug) +
                         "?page=" + page +
-                        "&limit=24"
+                        "&limit=24" +
+                        "&type=" + encodeURIComponent(apiType)
                     ).then(items =>
                         items.map(item => ({
                             ...item,
                             __genreApiSlug: slug,
+                            __catalogType: type,
                             ...(isAnimationGenre
                                 ? { __isAnimation: true }
                                 : {})
@@ -2048,24 +2359,6 @@ async function fetchMovinaTrendingByGenre(
                 );
             }
         }
-    }
-
-    // 2. Bổ sung ứng viên từ đúng danh sách phim lẻ/phim bộ.
-    // Nhãn __catalogType giúp phân loại chính xác khi gộp dữ liệu.
-    for (let page = 1; page <= 20; page++) {
-        requests.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/danh-sach/" +
-                listEndpoint +
-                "?page=" + page +
-                "&limit=24"
-            ).then(items =>
-                items.map(item => ({
-                    ...item,
-                    __catalogType: type
-                }))
-            )
-        );
     }
 
     const groups = await Promise.all(requests);
@@ -2102,14 +2395,40 @@ async function fetchMovinaTrendingByGenre(
             : !isSeriesItem(item)
     );
 
+    
     if (normalizedGenre === "kinh dien") {
-        // Bổ sung điểm IMDb từ API chi tiết nếu danh sách thiếu.
+        // 1. Ưu tiên xác minh IMDb.
         items = await movinaTrendingLoadIMDb(items);
 
-        // Kinh điển chỉ dựa vào IMDb >= 8.0.
-        // Không bắt buộc metadata phải ghi thể loại Kinh điển.
-        items = items.filter(item =>
-            movinaTrendingIMDb(item) >= 8.0
+        // 2. Chỉ gọi TMDB bổ sung khi IMDb không có điểm.
+        items = await movinaTrendingLoadTMDB(items, type);
+
+        // IMDb >= 8 luôn được ưu tiên.
+        // Nếu IMDb chưa có điểm, chấp nhận TMDB >= 8
+        // nhưng chỉ khi có ít nhất 500 lượt bình chọn.
+        items = items.filter(item => {
+            const imdbRating = movinaTrendingIMDb(item);
+
+            if (imdbRating > 0) {
+                return imdbRating >= 8.0;
+            }
+
+            return movinaTrendingTMDB(item) >= 8.0;
+        });
+
+        // Ghi rõ nguồn điểm trong log để dễ kiểm tra.
+        console.log(
+            "[MOVINA CLASSIC RATING SOURCES]",
+            JSON.stringify({
+                type,
+                imdb: items.filter(item =>
+                    movinaTrendingIMDb(item) >= 8.0
+                ).length,
+                tmdbFallback: items.filter(item =>
+                    movinaTrendingIMDb(item) === 0 &&
+                    movinaTrendingTMDB(item) >= 8.0
+                ).length
+            })
         );
     } else if (!isLatest) {
         // Những thể loại còn lại vẫn lọc theo metadata.
