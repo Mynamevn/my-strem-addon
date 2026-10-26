@@ -1479,15 +1479,232 @@ async function movinaTrendingLoadIMDb(items) {
         }
     }
 
+    
     let matched = 0;
     let alreadyRated = 0;
+    let directMatched = 0;
+    let fallbackErrors = 0;
+    let directIdCandidates = 0;
+
+    /*
+     * FALLBACK 1:
+     * Lấy điểm IMDb theo IMDb ID, không phụ thuộc vào tên phim.
+     *
+     * API tài liệu:
+     * https://agregarr.org/docs/imdb-ratings/
+     *
+     * Tối đa 100 IMDb ID / request.
+     */
+
+    if (!(cache.directRatings instanceof Map)) {
+        cache.directRatings = new Map();
+    }
+
+    function imdbIdOf(item) {
+        const candidates = [
+            item?.imdb?.id,
+            item?.imdb_id,
+            item?.imdbId,
+            item?.imdb?.imdb_id
+        ];
+
+        for (const value of candidates) {
+            const id = String(value || "").trim();
+
+            if (/^tt\d+$/i.test(id)) {
+                return id;
+            }
+        }
+
+        return "";
+    }
+
+    // Đếm những phim đã có điểm IMDb hợp lệ trước fallback.
+    alreadyRated = result.filter(item =>
+        movinaTrendingIMDb(item) >= 8.0
+    ).length;
+
+    const idToItems = new Map();
+
+    for (const item of result) {
+        // Chỉ tra cứu khi chưa có điểm IMDb.
+        if (movinaTrendingIMDb(item) > 0) {
+            continue;
+        }
+
+        const imdbId = imdbIdOf(item);
+
+        if (!imdbId) {
+            continue;
+        }
+
+        if (!idToItems.has(imdbId)) {
+            idToItems.set(imdbId, []);
+        }
+
+        idToItems.get(imdbId).push(item);
+    }
+
+    directIdCandidates = idToItems.size;
+
+    const missingIds = [...idToItems.keys()].filter(
+        id => !cache.directRatings.has(id)
+    );
+
+    // API cho phép tối đa 100 ID mỗi request.
+    const batches = [];
+
+    for (let i = 0; i < missingIds.length; i += 100) {
+        batches.push(missingIds.slice(i, i + 100));
+    }
+
+    // Chạy tối đa 4 batch đồng thời để tránh gây tải quá lớn.
+    for (let i = 0; i < batches.length; i += 4) {
+        const group = batches.slice(i, i + 4);
+
+        const responses = await Promise.all(
+            group.map(async ids => {
+                try {
+                    const params = new URLSearchParams();
+
+                    for (const id of ids) {
+                        params.append("id", id);
+                    }
+
+                    const response = await axios.get(
+                        "https://api.agregarr.org/api/ratings?" +
+                            params.toString(),
+                        {
+                            timeout: TIMEOUT_MS,
+                            headers: {
+                                "Accept": "application/json",
+                                "User-Agent": "MOVINA/1.0"
+                            }
+                        }
+                    );
+
+                    const rows = Array.isArray(response.data)
+                        ? response.data
+                        : Array.isArray(response.data?.ratings)
+                            ? response.data.ratings
+                            : [];
+
+                    return { rows, requested: ids, error: false };
+
+                } catch (error) {
+                    fallbackErrors++;
+
+                    console.warn(
+                        "[MOVINA IMDb ID FALLBACK ERROR]",
+                        error?.response?.status ||
+                            error?.message ||
+                            error
+                    );
+
+                    return {
+                        rows: [],
+                        requested: ids,
+                        error: true
+                    };
+                }
+            })
+        );
+
+        for (const batch of responses) {
+            if (batch.error) {
+                continue;
+            }
+
+            const returnedIds = new Set();
+
+            for (const row of batch.rows) {
+                const imdbId = String(
+                    row?.imdbId ||
+                    row?.imdb_id ||
+                    row?.id ||
+                    ""
+                ).trim();
+
+                if (!/^tt\d+$/i.test(imdbId)) {
+                    continue;
+                }
+
+                const rawRating = row?.rating;
+                const rating =
+                    rawRating === null ||
+                    rawRating === undefined ||
+                    rawRating === ""
+                        ? 0
+                        : Number(rawRating);
+
+                if (
+                    Number.isFinite(rating) &&
+                    rating > 0 &&
+                    rating <= 10
+                ) {
+                    cache.directRatings.set(imdbId, rating);
+                    returnedIds.add(imdbId);
+                } else {
+                    cache.directRatings.set(imdbId, 0);
+                    returnedIds.add(imdbId);
+                }
+            }
+
+            // Những ID API không trả về được đánh dấu chưa có điểm.
+            // Không giả định chúng đạt 8.0.
+            for (const id of batch.requested) {
+                if (!returnedIds.has(id)) {
+                    cache.directRatings.set(id, 0);
+                }
+            }
+        }
+    }
+
+    // Gắn điểm đã xác minh theo IMDb ID vào ứng viên.
+    for (let index = 0; index < result.length; index++) {
+        const item = result[index];
+
+        if (movinaTrendingIMDb(item) > 0) {
+            continue;
+        }
+
+        const imdbId = imdbIdOf(item);
+
+        if (!imdbId || !cache.directRatings.has(imdbId)) {
+            continue;
+        }
+
+        const rating = Number(
+            cache.directRatings.get(imdbId) || 0
+        );
+
+        if (
+            Number.isFinite(rating) &&
+            rating > 0 &&
+            rating <= 10
+        ) {
+            result[index] = {
+                ...item,
+                __movinaIMDbRating: rating
+            };
+
+            if (rating >= 8.0) {
+                directMatched++;
+            }
+        }
+    }
+
+    /*
+     * FALLBACK 2:
+     * Tiếp tục ghép tên + năm từ danh sách bulk nếu có.
+     * Không ghi đè điểm đã lấy theo IMDb ID.
+     */
 
     for (let index = 0; index < result.length; index++) {
         const item = result[index];
         const existingRating = movinaTrendingIMDb(item);
 
-        if (existingRating >= 8.0) {
-            alreadyRated++;
+        if (existingRating > 0) {
             continue;
         }
 
