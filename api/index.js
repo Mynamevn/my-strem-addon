@@ -2325,16 +2325,13 @@ async function fetchMovinaTrendingByGenre(
             ? "phim-bo"
             : "phim-le";
 
+    
     const requests = [];
 
-    // 1. Lấy ứng viên từ API thể loại.
-    // Yêu cầu API trả đúng loại nội dung ngay từ nguồn.
+    // 1. Ứng viên từ API thể loại.
     if (!isLatest) {
         const slugs =
             MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
-
-        const apiType =
-            type === "series" ? "series" : "single";
 
         for (const slug of slugs) {
             for (let page = 1; page <= 20; page++) {
@@ -2343,8 +2340,7 @@ async function fetchMovinaTrendingByGenre(
                         "https://phimapi.com/v1/api/the-loai/" +
                         encodeURIComponent(slug) +
                         "?page=" + page +
-                        "&limit=24" +
-                        "&type=" + apiType
+                        "&limit=24"
                     ).then(items =>
                         items.map(item => ({
                             ...item,
@@ -2355,6 +2351,34 @@ async function fetchMovinaTrendingByGenre(
             }
         }
     }
+
+    // 2. BẮT BUỘC bổ sung từ danh sách đúng loại nội dung.
+    // Đây là phần bị thiếu trong code hiện tại.
+    for (let page = 1; page <= 20; page++) {
+        requests.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/danh-sach/" +
+                listEndpoint +
+                "?page=" + page +
+                "&limit=24"
+            ).then(items =>
+                items.map(item => ({
+                    ...item,
+                    __catalogType: type
+                }))
+            )
+        );
+    }
+
+    console.log(
+        "[MOVINA TRENDING REQUEST PLAN]",
+        JSON.stringify({
+            type,
+            genre,
+            listEndpoint,
+            requestCount: requests.length
+        })
+    );
 
     const groups = await Promise.all(requests);
 
@@ -2392,35 +2416,25 @@ async function fetchMovinaTrendingByGenre(
 
     
     
+    
     if (normalizedGenre === "kinh dien") {
-        // IMDb vẫn là nguồn ưu tiên.
+        // Ưu tiên điểm IMDb.
         items = await movinaTrendingLoadIMDb(items);
 
-        // Chỉ dùng điểm TMDB có sẵn trong metadata PhimAPI
-        // khi ứng viên chưa có điểm IMDb.
+        // Gọi bộ nạp TMDB đã có trong file để bổ sung
+        // điểm cho các ứng viên chưa xác minh được IMDb.
+        items = await movinaTrendingLoadTMDB(items, type);
+
         items = items.filter(item => {
             const imdbRating = movinaTrendingIMDb(item);
 
+            // Nếu đã có điểm IMDb, chỉ dùng tiêu chuẩn IMDb.
             if (imdbRating > 0) {
                 return imdbRating >= 8.0;
             }
 
-            const tmdbRating = Number(
-                item?.tmdb?.vote_average
-            );
-
-            const tmdbVotes = Number(
-                item?.tmdb?.vote_count ??
-                item?.tmdb?.voteCount ??
-                0
-            );
-
-            return (
-                Number.isFinite(tmdbRating) &&
-                tmdbRating >= 8.0 &&
-                tmdbRating <= 10 &&
-                tmdbVotes >= 100
-            );
+            // Chỉ dùng TMDB khi chưa có điểm IMDb.
+            return movinaTrendingTMDB(item) >= 8.0;
         });
 
         console.log(
@@ -2431,17 +2445,13 @@ async function fetchMovinaTrendingByGenre(
                 imdb: items.filter(item =>
                     movinaTrendingIMDb(item) >= 8.0
                 ).length,
-                tmdb: items.filter(item =>
+                tmdbFallback: items.filter(item =>
                     movinaTrendingIMDb(item) === 0 &&
-                    Number(item?.tmdb?.vote_average) >= 8.0 &&
-                    Number(
-                        item?.tmdb?.vote_count ??
-                        item?.tmdb?.voteCount ??
-                        0
-                    ) >= 100
+                    movinaTrendingTMDB(item) >= 8.0
                 ).length
             })
         );
+
     } else if (!isLatest) {
         items = items.filter(item =>
             movinaTrendingGenreMatches(item, genre)
