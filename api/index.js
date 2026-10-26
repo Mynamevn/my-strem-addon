@@ -1612,6 +1612,7 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
 
     const categories = catalogCategoryNames(item);
 
+    // Hoạt hình vẫn dùng bộ nhận diện riêng.
     if (
         genre === "hoat hinh" &&
         isAnimation(item)
@@ -1622,10 +1623,35 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
     const aliases =
         MOVINA_TRENDING_GENRE_ALIASES[genre] || [genre];
 
-    // So khớp tên thể loại chính xác, không dùng includes()
-    // để tránh lấy nhầm thể loại có tên gần giống.
+    /*
+     * Cho phép khớp thể loại ghép, ví dụ:
+     * - "tam ly - tinh cam" khớp "tinh cam"
+     * - "khoa hoc vien tuong" khớp "vien tuong"
+     * - "vo thuat - kiem hiep" khớp "vo thuat"
+     *
+     * So khớp theo ranh giới từ để tránh những kết quả
+     * khớp nhầm chỉ vì có một chuỗi ký tự ngắn.
+     */
+    function matchesAlias(category, alias) {
+        if (!category || !alias) {
+            return false;
+        }
+
+        return (
+            category === alias ||
+            category.startsWith(alias + " ") ||
+            category.endsWith(" " + alias) ||
+            category.includes(" " + alias + " ")
+        );
+    }
+
     return categories.some(category =>
-        aliases.includes(category)
+        aliases.some(alias =>
+            matchesAlias(
+                catalogNormalize(category),
+                catalogNormalize(alias)
+            )
+        )
     );
 }
 
@@ -1770,17 +1796,15 @@ async function fetchMovinaTrendingByGenre(
     const isAnimationGenre = normalizedGenre === "hoat hinh";
 
     const listEndpoint =
-        isAnimationGenre
-            ? "hoat-hinh"
-            : type === "series"
-                ? "phim-bo"
-                : "phim-le";
+    type === "series"
+        ? "phim-bo"
+        : "phim-le";
 
     const requests = [];
 
     // 1. Ưu tiên API theo đúng slug thể loại.
     // Tải nhiều trang để có cơ hội đạt 50 kết quả.
-    if (!isLatest) {
+    if (!isLatest && !isAnimationGenre) {
         const slugs =
             MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
@@ -1814,11 +1838,9 @@ async function fetchMovinaTrendingByGenre(
                 "&limit=24"
             ).then(items =>
                 items.map(item => ({
-                    ...item,
-                    ...(isAnimationGenre
-                        ? { __isAnimation: true }
-                        : { __catalogType: type })
-                }))
+    ...item,
+    __catalogType: type
+}))
             )
         );
     }
