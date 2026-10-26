@@ -1178,53 +1178,72 @@ async function fetchSeriesTrending() {
    ============================================================ */
  
 
-// Điểm IMDb thực sự, không dùng TMDB hoặc Rotten Tomatoes thay thế.
-function movinaTrendingIMDb(item) {
-    const raw =
-        item?.__movinaIMDbRating ??
-        item?.imdb?.vote_average ??
-        item?.imdb?.rating ??
-        item?.imdb_rating ??
-        item?.imdbRating ??
-        item?.imdb?.score ??
-        null;
 
-    if (
-        raw === null ||
-        raw === undefined ||
-        raw === ""
-    ) {
-        return 0;
+// MOVINA — CLASSIC IMDb LOADER
+// Chỉ dùng điểm IMDb thật, không dùng TMDB thay thế.
+
+function movinaTrendingIMDb(item) {
+    const values = [
+        item?.__movinaIMDbRating,
+        item?.imdb?.vote_average,
+        item?.imdb?.rating,
+        item?.imdb_rating,
+        item?.imdbRating,
+        item?.imdb?.score
+    ];
+
+    for (const raw of values) {
+        if (
+            raw === null ||
+            raw === undefined ||
+            raw === ""
+        ) {
+            continue;
+        }
+
+        const rating = Number(raw);
+
+        if (
+            Number.isFinite(rating) &&
+            rating > 0 &&
+            rating <= 10
+        ) {
+            return rating;
+        }
     }
 
-    const rating = Number(raw);
-
-    return Number.isFinite(rating) &&
-        rating > 0 &&
-        rating <= 10
-        ? rating
-        : 0;
+    return 0;
 }
 
-// Cache IMDb theo slug phim.
 const MOVINA_TRENDING_IMDB_CACHE = new Map();
 
-// Đọc IMDb từ API chi tiết dạng /phim/{slug}.
-// Đây là endpoint có cấu trúc movie.imdb.vote_average
-// theo tài liệu PhimAPI.
 async function movinaTrendingLoadIMDb(items) {
     const result = [...(items || [])];
 
-    const MAX_DETAILS = 300;
+    const MAX_DETAILS = 500;
     const CONCURRENCY = 10;
     const TIMEOUT_MS = 6000;
 
+    // Ưu tiên kiểm tra phim cũ trước để tránh 300 phim
+    // đầu tiên đều là phim mới được cập nhật gần đây.
     const candidates = result
         .map((item, index) => ({ item, index }))
         .filter(({ item }) =>
-            movinaTrendingIMDb(item) <= 0 &&
+            movinaTrendingIMDb(item) < 8 &&
             item?.slug
         )
+        .sort((a, b) => {
+            const yearA = itemYear(a.item) || 9999;
+            const yearB = itemYear(b.item) || 9999;
+
+            if (yearA !== yearB) {
+                return yearA - yearB;
+            }
+
+            return String(a.item.slug).localeCompare(
+                String(b.item.slug)
+            );
+        })
         .slice(0, MAX_DETAILS);
 
     let cursor = 0;
@@ -1232,6 +1251,7 @@ async function movinaTrendingLoadIMDb(items) {
     let detailErrors = 0;
     let imdbLoaded = 0;
     let missingIMDb = 0;
+    let cacheHits = 0;
 
     async function worker() {
         while (cursor < candidates.length) {
@@ -1239,17 +1259,18 @@ async function movinaTrendingLoadIMDb(items) {
             const item = current.item;
             const slug = String(item.slug);
 
+            // Chỉ dùng cache cho điểm IMDb hợp lệ.
+            // Không cache điểm 0 vì lần sau có thể lấy được dữ liệu.
             if (MOVINA_TRENDING_IMDB_CACHE.has(slug)) {
                 const cached =
                     MOVINA_TRENDING_IMDB_CACHE.get(slug);
 
-                if (cached > 0) {
-                    result[current.index] = {
-                        ...item,
-                        __movinaIMDbRating: cached
-                    };
-                }
+                result[current.index] = {
+                    ...item,
+                    __movinaIMDbRating: cached
+                };
 
+                cacheHits++;
                 continue;
             }
 
@@ -1268,7 +1289,6 @@ async function movinaTrendingLoadIMDb(items) {
 
                 const root = response.data || {};
 
-                // Hỗ trợ cả cấu trúc API cũ và cấu trúc bọc data.
                 const detail =
                     root?.movie ||
                     root?.data?.item ||
@@ -1277,35 +1297,50 @@ async function movinaTrendingLoadIMDb(items) {
                     root?.data ||
                     root;
 
-                const imdbRaw =
-                    detail?.imdb?.vote_average ??
-                    detail?.imdb?.rating ??
-                    detail?.imdb_rating ??
-                    detail?.imdbRating ??
-                    detail?.imdb?.score ??
-                    null;
+                // Không dùng ?? ở đây vì giá trị 0 của trường
+                // đầu tiên có thể che mất điểm ở trường tiếp theo.
+                const ratingSources = [
+                    detail?.imdb?.vote_average,
+                    detail?.imdb?.rating,
+                    detail?.imdb_rating,
+                    detail?.imdbRating,
+                    detail?.imdb?.score,
+                    item?.imdb?.rating,
+                    item?.imdb_rating,
+                    item?.imdbRating
+                ];
 
-                let rating = Number(imdbRaw);
+                let rating = 0;
 
-                if (
-                    imdbRaw === null ||
-                    imdbRaw === undefined ||
-                    imdbRaw === "" ||
-                    !Number.isFinite(rating) ||
-                    rating <= 0 ||
-                    rating > 10
-                ) {
-                    rating = 0;
+                for (const raw of ratingSources) {
+                    if (
+                        raw === null ||
+                        raw === undefined ||
+                        raw === ""
+                    ) {
+                        continue;
+                    }
+
+                    const parsed = Number(raw);
+
+                    if (
+                        Number.isFinite(parsed) &&
+                        parsed > 0 &&
+                        parsed <= 10
+                    ) {
+                        rating = parsed;
+                        break;
+                    }
                 }
-
-                MOVINA_TRENDING_IMDB_CACHE.set(
-                    slug,
-                    rating
-                );
 
                 detailSuccess++;
 
                 if (rating > 0) {
+                    MOVINA_TRENDING_IMDB_CACHE.set(
+                        slug,
+                        rating
+                    );
+
                     result[current.index] = {
                         ...item,
                         __movinaIMDbRating: rating
@@ -1313,6 +1348,8 @@ async function movinaTrendingLoadIMDb(items) {
 
                     imdbLoaded++;
                 } else {
+                    // Không cache điểm 0.
+                    // Phim chưa có điểm sẽ được thử lại ở request sau.
                     missingIMDb++;
                 }
             } catch (error) {
@@ -1350,7 +1387,9 @@ async function movinaTrendingLoadIMDb(items) {
             detailErrors,
             imdbLoaded,
             missingIMDb,
-            cachedTitles: MOVINA_TRENDING_IMDB_CACHE.size,
+            cacheHits,
+            cachedValidRatings:
+                MOVINA_TRENDING_IMDB_CACHE.size,
             qualified: result.filter(
                 item => movinaTrendingIMDb(item) >= 8.0
             ).length
@@ -1359,7 +1398,6 @@ async function movinaTrendingLoadIMDb(items) {
 
     return result;
 }
-
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
@@ -1616,7 +1654,7 @@ async function fetchMovinaTrendingByGenre(
             MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
         for (const slug of slugs) {
-            for (let page = 1; page <= 12; page++) {
+            for (let page = 1; page <= 30; page++) {
                 requests.push(
                     catalogFetch(
                         "https://phimapi.com/v1/api/the-loai/" +
@@ -1636,7 +1674,7 @@ async function fetchMovinaTrendingByGenre(
 
     // 2. Bổ sung ứng viên từ danh sách theo loại phim.
     // Đây là nguồn bổ sung, vẫn phải lọc thể loại ở dưới.
-    for (let page = 1; page <= 12; page++) {
+    for (let page = 1; page <= 30; page++) {
         requests.push(
             catalogFetch(
                 "https://phimapi.com/v1/api/danh-sach/" +
