@@ -1217,15 +1217,15 @@ function movinaTrendingIMDb(item) {
 
 const MOVINA_TRENDING_IMDB_CACHE = new Map();
 
+
 async function movinaTrendingLoadIMDb(items) {
     const result = [...(items || [])];
 
     const MAX_DETAILS = 500;
-    const CONCURRENCY = 10;
-    const TIMEOUT_MS = 6000;
+    const MAX_TITLE_SEARCHES = 300;
+    const CONCURRENCY = 6;
+    const TIMEOUT_MS = 7000;
 
-    // Ưu tiên kiểm tra phim cũ trước để tránh 300 phim
-    // đầu tiên đều là phim mới được cập nhật gần đây.
     const candidates = result
         .map((item, index) => ({ item, index }))
         .filter(({ item }) =>
@@ -1247,11 +1247,256 @@ async function movinaTrendingLoadIMDb(items) {
         .slice(0, MAX_DETAILS);
 
     let cursor = 0;
+    let titleSearches = 0;
     let detailSuccess = 0;
     let detailErrors = 0;
     let imdbLoaded = 0;
     let missingIMDb = 0;
     let cacheHits = 0;
+    let imdbApiSuccess = 0;
+    let imdbApiErrors = 0;
+
+    function parseRating(source) {
+        const objects = [
+            source,
+            source?.title,
+            source?.movie,
+            source?.data,
+            source?.data?.title,
+            source?.data?.movie
+        ].filter(Boolean);
+
+        for (const object of objects) {
+            const values = [
+                object?.rating?.aggregateRating,
+                object?.rating?.aggregate_rating,
+                object?.rating?.averageRating,
+                object?.rating?.average_rating,
+                object?.ratings?.aggregateRating,
+                object?.ratings?.aggregate_rating,
+                object?.aggregateRating,
+                object?.aggregate_rating,
+                object?.imdb?.vote_average,
+                object?.imdb?.rating,
+                object?.imdbRating,
+                object?.imdb_rating
+            ];
+
+            for (const raw of values) {
+                if (
+                    raw === null ||
+                    raw === undefined ||
+                    raw === ""
+                ) {
+                    continue;
+                }
+
+                const value = Number(raw);
+
+                if (
+                    Number.isFinite(value) &&
+                    value > 0 &&
+                    value <= 10
+                ) {
+                    return value;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    function normalizeTitle(value) {
+        return String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function getImdbId(source) {
+        const objects = [
+            source,
+            source?.movie,
+            source?.item,
+            source?.data,
+            source?.data?.item,
+            source?.data?.movie
+        ].filter(Boolean);
+
+        for (const object of objects) {
+            const id = String(
+                object?.imdb?.id ||
+                object?.imdb_id ||
+                object?.imdbId ||
+                ""
+            ).trim();
+
+            if (/^tt\d+$/i.test(id)) {
+                return id;
+            }
+        }
+
+        return "";
+    }
+
+    function getSearchResults(payload) {
+        const candidates = [
+            payload?.titles,
+            payload?.results,
+            payload?.data?.titles,
+            payload?.data?.results,
+            payload?.data,
+            payload
+        ];
+
+        return candidates.find(Array.isArray) || [];
+    }
+
+    function matchSearchResult(payload, item) {
+        const expectedNames = [
+            item?.origin_name,
+            item?.original_name,
+            item?.name,
+            item?.title
+        ]
+            .map(normalizeTitle)
+            .filter(Boolean);
+
+        const expectedYear = itemYear(item) || 0;
+
+        const matches = getSearchResults(payload)
+            .map(entry => {
+                const names = [
+                    entry?.primaryTitle,
+                    entry?.primary_title,
+                    entry?.originalTitle,
+                    entry?.original_title,
+                    entry?.title,
+                    entry?.name
+                ]
+                    .map(normalizeTitle)
+                    .filter(Boolean);
+
+                const exactName = names.some(name =>
+                    expectedNames.includes(name)
+                );
+
+                if (!exactName) {
+                    return null;
+                }
+
+                const rawYear =
+                    entry?.startYear ??
+                    entry?.start_year ??
+                    entry?.year ??
+                    0;
+
+                const resultYear = Number(rawYear) || 0;
+
+                // Không ghép nếu năm chênh quá 1 năm.
+                if (
+                    expectedYear &&
+                    resultYear &&
+                    Math.abs(expectedYear - resultYear) > 1
+                ) {
+                    return null;
+                }
+
+                const type = String(
+                    entry?.type ||
+                    entry?.titleType ||
+                    entry?.title_type ||
+                    ""
+                ).toLowerCase();
+
+                if (
+                    type &&
+                    (
+                        type.includes("episode") ||
+                        type.includes("short") ||
+                        type.includes("video game")
+                    )
+                ) {
+                    return null;
+                }
+
+                const rating = parseRating(entry);
+
+                if (rating <= 0) {
+                    return null;
+                }
+
+                return {
+                    rating,
+                    yearDifference:
+                        expectedYear && resultYear
+                            ? Math.abs(expectedYear - resultYear)
+                            : 99,
+                    id: String(entry?.id || entry?.titleId || "")
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) =>
+                a.yearDifference - b.yearDifference
+            );
+
+        return matches[0] || null;
+    }
+
+    async function lookupIMDbById(id) {
+        if (!/^tt\d+$/i.test(id)) {
+            return 0;
+        }
+
+        const response = await axios.get(
+            "https://api.imdbapi.dev/titles/" +
+                encodeURIComponent(id),
+            {
+                timeout: TIMEOUT_MS,
+                headers: {
+                    "Accept": "application/json",
+                    "User-Agent": "MOVINA/1.0"
+                }
+            }
+        );
+
+        return parseRating(response.data);
+    }
+
+    async function lookupIMDbByTitle(item) {
+        const query =
+            String(item?.origin_name || "").trim() ||
+            String(item?.name || "").trim();
+
+        if (!query) {
+            return 0;
+        }
+
+        const response = await axios.get(
+            "https://api.imdbapi.dev/search/titles",
+            {
+                timeout: TIMEOUT_MS,
+                params: {
+                    query
+                },
+                headers: {
+                    "Accept": "application/json",
+                    "User-Agent": "MOVINA/1.0"
+                }
+            }
+        );
+
+        const match = matchSearchResult(
+            response.data,
+            item
+        );
+
+        return match?.rating || 0;
+    }
 
     async function worker() {
         while (cursor < candidates.length) {
@@ -1259,25 +1504,25 @@ async function movinaTrendingLoadIMDb(items) {
             const item = current.item;
             const slug = String(item.slug);
 
-            // Chỉ dùng cache cho điểm IMDb hợp lệ.
-            // Không cache điểm 0 vì lần sau có thể lấy được dữ liệu.
             if (MOVINA_TRENDING_IMDB_CACHE.has(slug)) {
-                const cached =
-                    MOVINA_TRENDING_IMDB_CACHE.get(slug);
-
                 result[current.index] = {
                     ...item,
-                    __movinaIMDbRating: cached
+                    __movinaIMDbRating:
+                        MOVINA_TRENDING_IMDB_CACHE.get(slug)
                 };
 
                 cacheHits++;
                 continue;
             }
 
+            let rating = movinaTrendingIMDb(item);
+            let imdbId = getImdbId(item);
+
+            // Bước 1: lấy IMDb ID và điểm từ chi tiết PhimAPI.
             try {
                 const response = await axios.get(
                     "https://phimapi.com/phim/" +
-                    encodeURIComponent(slug),
+                        encodeURIComponent(slug),
                     {
                         timeout: TIMEOUT_MS,
                         headers: {
@@ -1297,61 +1542,10 @@ async function movinaTrendingLoadIMDb(items) {
                     root?.data ||
                     root;
 
-                // Không dùng ?? ở đây vì giá trị 0 của trường
-                // đầu tiên có thể che mất điểm ở trường tiếp theo.
-                const ratingSources = [
-                    detail?.imdb?.vote_average,
-                    detail?.imdb?.rating,
-                    detail?.imdb_rating,
-                    detail?.imdbRating,
-                    detail?.imdb?.score,
-                    item?.imdb?.rating,
-                    item?.imdb_rating,
-                    item?.imdbRating
-                ];
-
-                let rating = 0;
-
-                for (const raw of ratingSources) {
-                    if (
-                        raw === null ||
-                        raw === undefined ||
-                        raw === ""
-                    ) {
-                        continue;
-                    }
-
-                    const parsed = Number(raw);
-
-                    if (
-                        Number.isFinite(parsed) &&
-                        parsed > 0 &&
-                        parsed <= 10
-                    ) {
-                        rating = parsed;
-                        break;
-                    }
-                }
-
                 detailSuccess++;
 
-                if (rating > 0) {
-                    MOVINA_TRENDING_IMDB_CACHE.set(
-                        slug,
-                        rating
-                    );
-
-                    result[current.index] = {
-                        ...item,
-                        __movinaIMDbRating: rating
-                    };
-
-                    imdbLoaded++;
-                } else {
-                    // Không cache điểm 0.
-                    // Phim chưa có điểm sẽ được thử lại ở request sau.
-                    missingIMDb++;
-                }
+                imdbId = imdbId || getImdbId(detail);
+                rating = rating || parseRating(detail);
             } catch (error) {
                 detailErrors++;
 
@@ -1359,9 +1553,81 @@ async function movinaTrendingLoadIMDb(items) {
                     "[MOVINA IMDb DETAIL ERROR]",
                     slug,
                     error?.response?.status ||
-                    error?.message ||
-                    error
+                        error?.message ||
+                        error
                 );
+            }
+
+            // Bước 2: nếu có IMDb ID nhưng thiếu điểm,
+            // tra cứu trực tiếp trên IMDbAPI.dev.
+            if (rating <= 0 && imdbId) {
+                try {
+                    rating = await lookupIMDbById(imdbId);
+
+                    if (rating > 0) {
+                        imdbApiSuccess++;
+                    }
+                } catch (error) {
+                    imdbApiErrors++;
+
+                    console.warn(
+                        "[MOVINA IMDb ID LOOKUP ERROR]",
+                        imdbId,
+                        error?.response?.status ||
+                            error?.message ||
+                            error
+                    );
+                }
+            }
+
+            // Bước 3: nếu không có IMDb ID hoặc vẫn thiếu điểm,
+            // tìm theo tên phim và đối chiếu tên + năm.
+            if (
+                rating <= 0 &&
+                titleSearches < MAX_TITLE_SEARCHES
+            ) {
+                titleSearches++;
+
+                try {
+                    rating = await lookupIMDbByTitle(item);
+
+                    if (rating > 0) {
+                        imdbApiSuccess++;
+                    }
+                } catch (error) {
+                    imdbApiErrors++;
+
+                    console.warn(
+                        "[MOVINA IMDb TITLE SEARCH ERROR]",
+                        item?.name || slug,
+                        error?.response?.status ||
+                            error?.message ||
+                            error
+                    );
+                }
+            }
+
+            if (
+                Number.isFinite(rating) &&
+                rating > 0 &&
+                rating <= 10
+            ) {
+                MOVINA_TRENDING_IMDB_CACHE.set(
+                    slug,
+                    rating
+                );
+
+                result[current.index] = {
+                    ...item,
+                    __movinaIMDbRating: rating,
+                    ...(imdbId
+                        ? { __movinaIMDbId: imdbId }
+                        : {})
+                };
+
+                imdbLoaded++;
+            } else {
+                missingIMDb++;
             }
         }
     }
@@ -1388,6 +1654,9 @@ async function movinaTrendingLoadIMDb(items) {
             imdbLoaded,
             missingIMDb,
             cacheHits,
+            titleSearches,
+            imdbApiSuccess,
+            imdbApiErrors,
             cachedValidRatings:
                 MOVINA_TRENDING_IMDB_CACHE.size,
             qualified: result.filter(
