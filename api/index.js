@@ -1177,8 +1177,8 @@ async function fetchSeriesTrending() {
    [CORE-007.02] MOVINA DAILY DECADE SELECTION
    ============================================================ */
  
-// Điểm IMDb dùng cho bộ lọc Kinh điển.
-// Tuyệt đối không dùng điểm TMDB hoặc vote_average chung.
+
+// Điểm IMDb thực sự, không dùng TMDB hoặc Rotten Tomatoes thay thế.
 function movinaTrendingIMDb(item) {
     const raw =
         item?.__movinaIMDbRating ??
@@ -1206,15 +1206,17 @@ function movinaTrendingIMDb(item) {
         : 0;
 }
 
-
+// Cache IMDb theo slug phim.
 const MOVINA_TRENDING_IMDB_CACHE = new Map();
 
-// Bổ sung điểm từ API chi tiết cho những phim
-// danh sách không có cả điểm IMDb lẫn điểm TMDB.
+// Đọc IMDb từ API chi tiết dạng /phim/{slug}.
+// Đây là endpoint có cấu trúc movie.imdb.vote_average
+// theo tài liệu PhimAPI.
 async function movinaTrendingLoadIMDb(items) {
     const result = [...(items || [])];
-    const MAX_DETAILS = 120;
-    const CONCURRENCY = 12;
+
+    const MAX_DETAILS = 300;
+    const CONCURRENCY = 10;
     const TIMEOUT_MS = 6000;
 
     const candidates = result
@@ -1228,8 +1230,8 @@ async function movinaTrendingLoadIMDb(items) {
     let cursor = 0;
     let detailSuccess = 0;
     let detailErrors = 0;
-    let imdbCount = 0;
-    let tmdbCount = 0;
+    let imdbLoaded = 0;
+    let missingIMDb = 0;
 
     async function worker() {
         while (cursor < candidates.length) {
@@ -1241,17 +1243,10 @@ async function movinaTrendingLoadIMDb(items) {
                 const cached =
                     MOVINA_TRENDING_IMDB_CACHE.get(slug);
 
-                if (cached?.rating > 0) {
+                if (cached > 0) {
                     result[current.index] = {
                         ...item,
-                        __movinaIMDbRating:
-                            cached.source === "imdb"
-                                ? cached.rating
-                                : undefined,
-                        __movinaTMDBRating:
-                            cached.source === "tmdb"
-                                ? cached.rating
-                                : undefined
+                        __movinaIMDbRating: cached
                     };
                 }
 
@@ -1260,7 +1255,7 @@ async function movinaTrendingLoadIMDb(items) {
 
             try {
                 const response = await axios.get(
-                    "https://phimapi.com/v1/api/phim/" +
+                    "https://phimapi.com/phim/" +
                     encodeURIComponent(slug),
                     {
                         timeout: TIMEOUT_MS,
@@ -1272,13 +1267,13 @@ async function movinaTrendingLoadIMDb(items) {
                 );
 
                 const root = response.data || {};
+
+                // Hỗ trợ cả cấu trúc API cũ và cấu trúc bọc data.
                 const detail =
+                    root?.movie ||
                     root?.data?.item ||
                     root?.data?.movie ||
-                    root?.data?.data?.item ||
-                    root?.data?.data?.movie ||
                     root?.item ||
-                    root?.movie ||
                     root?.data ||
                     root;
 
@@ -1290,48 +1285,22 @@ async function movinaTrendingLoadIMDb(items) {
                     detail?.imdb?.score ??
                     null;
 
-                const tmdbRaw =
-                    detail?.tmdb?.vote_average ??
-                    detail?.tmdb?.rating ??
-                    detail?.tmdb_vote_average ??
-                    detail?.vote_average ??
-                    null;
-
                 let rating = Number(imdbRaw);
-                let source = "imdb";
 
                 if (
                     imdbRaw === null ||
                     imdbRaw === undefined ||
                     imdbRaw === "" ||
                     !Number.isFinite(rating) ||
-                    rating <= 0
-                ) {
-                    rating = Number(tmdbRaw);
-                    source = "tmdb";
-                }
-
-                if (
-                    tmdbRaw === null &&
-                    (
-                        imdbRaw === null ||
-                        imdbRaw === undefined ||
-                        imdbRaw === ""
-                    )
-                ) {
-                    rating = 0;
-                }
-
-                if (
-                    !Number.isFinite(rating) ||
-                    rating <= 0
+                    rating <= 0 ||
+                    rating > 10
                 ) {
                     rating = 0;
                 }
 
                 MOVINA_TRENDING_IMDB_CACHE.set(
                     slug,
-                    { rating, source }
+                    rating
                 );
 
                 detailSuccess++;
@@ -1339,21 +1308,12 @@ async function movinaTrendingLoadIMDb(items) {
                 if (rating > 0) {
                     result[current.index] = {
                         ...item,
-                        __movinaIMDbRating:
-                            source === "imdb"
-                                ? rating
-                                : undefined,
-                        __movinaTMDBRating:
-                            source === "tmdb"
-                                ? rating
-                                : undefined
+                        __movinaIMDbRating: rating
                     };
 
-                    if (source === "imdb") {
-                        imdbCount++;
-                    } else {
-                        tmdbCount++;
-                    }
+                    imdbLoaded++;
+                } else {
+                    missingIMDb++;
                 }
             } catch (error) {
                 detailErrors++;
@@ -1388,11 +1348,9 @@ async function movinaTrendingLoadIMDb(items) {
             detailCandidates: candidates.length,
             detailSuccess,
             detailErrors,
-            imdbLoaded: imdbCount,
-            tmdbLoaded: tmdbCount,
-            scored: result.filter(
-                item => movinaTrendingIMDb(item) > 0
-            ).length,
+            imdbLoaded,
+            missingIMDb,
+            cachedTitles: MOVINA_TRENDING_IMDB_CACHE.size,
             qualified: result.filter(
                 item => movinaTrendingIMDb(item) >= 8.0
             ).length
