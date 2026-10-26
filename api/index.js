@@ -2012,16 +2012,19 @@ async function fetchMovinaTrendingByGenre(
     const isLatest = normalizedGenre === "moi nhat";
     const isAnimationGenre = normalizedGenre === "hoat hinh";
 
+    
+    // Luôn lấy danh sách theo đúng loại nội dung.
+    // Không dùng endpoint hoạt hình làm danh sách phim bộ.
     const listEndpoint =
-    type === "series"
-        ? "phim-bo"
-        : "phim-le";
+        type === "series"
+            ? "phim-bo"
+            : "phim-le";
 
     const requests = [];
 
-    // 1. Ưu tiên API theo đúng slug thể loại.
-    // Tải nhiều trang để có cơ hội đạt 50 kết quả.
-    if (!isLatest && !isAnimationGenre) {
+    // 1. Lấy ứng viên từ API thể loại.
+    // Bao gồm cả hoạt hình để không bỏ sót anime/phim hoạt hình bộ.
+    if (!isLatest) {
         const slugs =
             MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
@@ -2036,7 +2039,10 @@ async function fetchMovinaTrendingByGenre(
                     ).then(items =>
                         items.map(item => ({
                             ...item,
-                            __genreApiSlug: slug
+                            __genreApiSlug: slug,
+                            ...(isAnimationGenre
+                                ? { __isAnimation: true }
+                                : {})
                         }))
                     )
                 );
@@ -2044,8 +2050,8 @@ async function fetchMovinaTrendingByGenre(
         }
     }
 
-    // 2. Bổ sung ứng viên từ danh sách theo loại phim.
-    // Đây là nguồn bổ sung, vẫn phải lọc thể loại ở dưới.
+    // 2. Bổ sung ứng viên từ đúng danh sách phim lẻ/phim bộ.
+    // Nhãn __catalogType giúp phân loại chính xác khi gộp dữ liệu.
     for (let page = 1; page <= 20; page++) {
         requests.push(
             catalogFetch(
@@ -2055,9 +2061,9 @@ async function fetchMovinaTrendingByGenre(
                 "&limit=24"
             ).then(items =>
                 items.map(item => ({
-    ...item,
-    __catalogType: type
-}))
+                    ...item,
+                    __catalogType: type
+                }))
             )
         );
     }
