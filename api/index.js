@@ -2332,7 +2332,6 @@ async function fetchMovinaTrendingByGenre(
         MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
     const isClassic = normalizedGenre === "kinh dien";
-    const isAnimationGenre = normalizedGenre === "hoat hinh";
 
     const PAGE_SIZE = 64;
     const MAX_PAGES = 8;
