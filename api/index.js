@@ -2327,71 +2327,67 @@ async function fetchMovinaTrendingByGenre(
 
     
     
+    
     const requests = [];
 
     const genreSlugs =
         MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
-    // Phân trang theo đúng loại nội dung.
-    // Kinh điển phải lấy tập ứng viên rộng, không chỉ lấy
-    // những phim đã được API gắn thể loại "kinh-dien".
     const isClassic = normalizedGenre === "kinh dien";
 
-    const MAX_PAGES = 20;
+    // Giảm số trang API thể loại, tránh gọi 20 trang
+    // cho từng slug trong mọi lần mở catalog.
+    const GENRE_PAGES = 6;
+
+    // Kinh điển cần tập ứng viên rộng hơn để tra điểm.
+    // Hoạt hình phim bộ cần nhiều ứng viên để phân loại.
+    const LIST_PAGES =
+        isClassic ? 12 :
+        (isAnimationGenre && type === "series" ? 12 : 6);
+
     const PAGE_SIZE = 24;
 
-    for (const slug of (isClassic ? [""] : (isLatest ? [""] : genreSlugs))) {
-        for (let page = 1; page <= MAX_PAGES; page++) {
-            const params = new URLSearchParams({
-                page: String(page),
-                limit: String(PAGE_SIZE)
-            });
+    // 1. Lấy ứng viên theo thể loại.
+    // Kinh điển dùng danh sách rộng bên dưới, không phụ thuộc
+    // riêng vào slug "kinh-dien".
+    if (!isLatest && !isClassic) {
+        for (const slug of genreSlugs) {
+            for (let page = 1; page <= GENRE_PAGES; page++) {
+                const url =
+                    "https://phimapi.com/v1/api/the-loai/" +
+                    encodeURIComponent(slug) +
+                    "?page=" + page +
+                    "&limit=" + PAGE_SIZE;
 
-            // Lọc thể loại ngay trên API danh sách.
-            // Riêng Kinh điển lấy danh sách rộng để bộ lọc điểm
-            // IMDb/TMDB có đủ ứng viên đối chiếu.
-            if (slug && !isClassic) {
-                params.set("category", slug);
+                requests.push(
+                    catalogFetch(url).then(items =>
+                        items.map(item => ({
+                            ...item,
+                            __genreApiSlug: slug
+                        }))
+                    )
+                );
             }
-
-            const url =
-                "https://phimapi.com/v1/api/danh-sach/" +
-                listEndpoint +
-                "?" + params.toString();
-
-            requests.push(
-                catalogFetch(url).then(items =>
-                    items.map(item => ({
-                        ...item,
-                        __catalogType: type,
-                        ...(isAnimationGenre
-                            ? { __isAnimation: true }
-                            : {})
-                    }))
-                )
-            );
         }
     }
 
-    // Endpoint hoạt hình riêng có thể chứa thêm anime/phim hoạt hình
-    // không xuất hiện trong danh sách phim bộ thông thường.
-    // Không ép tất cả thành phim bộ: vẫn phân loại từng bản ghi.
-    if (isAnimationGenre && type === "series") {
-        for (let page = 1; page <= MAX_PAGES; page++) {
-            const url =
-                "https://phimapi.com/v1/api/danh-sach/hoat-hinh" +
-                "?page=" + page +
-                "&limit=" + PAGE_SIZE;
+    // 2. Luôn lấy danh sách đúng loại nội dung.
+    // Đây là nguồn bổ sung bị thiếu trong phiên bản hiện tại.
+    for (let page = 1; page <= LIST_PAGES; page++) {
+        const url =
+            "https://phimapi.com/v1/api/danh-sach/" +
+            listEndpoint +
+            "?page=" + page +
+            "&limit=" + PAGE_SIZE;
 
-            requests.push(
-                catalogFetch(url).then(items =>
-                    items.map(item => ({
-                        ...item,
-                        __isAnimation: true
-                    }))
-                )
-            );
-        }
+        requests.push(
+            catalogFetch(url).then(items =>
+                items.map(item => ({
+                    ...item,
+                    __catalogType: type
+                }))
+            )
+        );
     }
 
     console.log(
@@ -2402,11 +2398,15 @@ async function fetchMovinaTrendingByGenre(
             listEndpoint,
             isClassic,
             isAnimationGenre,
+            genrePagesPerSlug:
+                !isLatest && !isClassic ? GENRE_PAGES : 0,
+            listPages: LIST_PAGES,
             requestCount: requests.length
         })
     );
 
     const groups = await Promise.all(requests);
+
 
         // Gộp các bản ghi trùng slug thay vì bỏ bản ghi xuất hiện sau.
     // Nhờ vậy, __catalogType từ API phim-le/phim-bo được giữ lại
@@ -2442,11 +2442,11 @@ async function fetchMovinaTrendingByGenre(
 
         
     if (normalizedGenre === "kinh dien") {
-        // IMDb trước.
+        
+        // Ưu tiên điểm IMDb.
         items = await movinaTrendingLoadIMDb(items);
 
-        // TMDB dự phòng: hàm này ưu tiên dữ liệu TMDB nhúng
-        // và chỉ truy vấn API trực tiếp khi đã có cấu hình xác thực.
+        // Đối chiếu TMDB nếu bộ nạp TMDB được cấu hình.
         items = await movinaTrendingLoadTMDB(items, type);
 
         items = items.filter(item => {
@@ -2463,16 +2463,17 @@ async function fetchMovinaTrendingByGenre(
             "[MOVINA CLASSIC RATING SOURCES]",
             JSON.stringify({
                 type,
-                candidates: items.length,
-                imdbQualified: items.filter(item =>
+                total: items.length,
+                imdb: items.filter(item =>
                     movinaTrendingIMDb(item) >= 8.0
                 ).length,
-                tmdbQualified: items.filter(item =>
+                tmdbFallback: items.filter(item =>
                     movinaTrendingIMDb(item) === 0 &&
                     movinaTrendingTMDB(item) >= 8.0
                 ).length
             })
         );
+
     } else if (!isLatest) {
         items = items.filter(item =>
             movinaTrendingGenreMatches(item, genre)
