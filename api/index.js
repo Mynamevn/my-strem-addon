@@ -1176,13 +1176,11 @@ async function fetchSeriesTrending() {
    [CORE-006.02] MOVINA TRENDING GENRE FILTER
    [CORE-007.02] MOVINA DAILY DECADE SELECTION
    ============================================================ */
-
-
  
- // Điểm phim dùng cho bộ lọc Kinh điển.
-// Ưu tiên IMDb; nếu không có mới dùng TMDB làm dự phòng.
+// Điểm IMDb dùng cho bộ lọc Kinh điển.
+// Tuyệt đối không dùng điểm TMDB hoặc vote_average chung.
 function movinaTrendingIMDb(item) {
-    const imdbRaw =
+    const raw =
         item?.__movinaIMDbRating ??
         item?.imdb?.vote_average ??
         item?.imdb?.rating ??
@@ -1191,39 +1189,23 @@ function movinaTrendingIMDb(item) {
         item?.imdb?.score ??
         null;
 
-    const imdbRating = Number(imdbRaw);
-
     if (
-        imdbRaw !== null &&
-        imdbRaw !== undefined &&
-        imdbRaw !== "" &&
-        Number.isFinite(imdbRating) &&
-        imdbRating > 0
+        raw === null ||
+        raw === undefined ||
+        raw === ""
     ) {
-        return imdbRating;
+        return 0;
     }
 
-    const tmdbRaw =
-        item?.tmdb?.vote_average ??
-        item?.tmdb?.rating ??
-        item?.tmdb_vote_average ??
-        item?.vote_average ??
-        null;
+    const rating = Number(raw);
 
-    const tmdbRating = Number(tmdbRaw);
-
-    if (
-        tmdbRaw !== null &&
-        tmdbRaw !== undefined &&
-        tmdbRaw !== "" &&
-        Number.isFinite(tmdbRating) &&
-        tmdbRating > 0
-    ) {
-        return tmdbRating;
-    }
-
-    return 0;
+    return Number.isFinite(rating) &&
+        rating > 0 &&
+        rating <= 10
+        ? rating
+        : 0;
 }
+
 
 const MOVINA_TRENDING_IMDB_CACHE = new Map();
 
