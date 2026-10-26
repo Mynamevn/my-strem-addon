@@ -1761,38 +1761,63 @@ async function movinaTrendingLoadIMDb(items) {
 
 const MOVINA_CLASSIC_TMDB_CACHE = new Map();
 
+
 function movinaTrendingTMDB(item) {
-    const rating = Number(item?.__movinaTMDBRating);
-    const votes = Number(item?.__movinaTMDBVotes || 0);
+    const ratingValues = [
+        item?.__movinaTMDBRating,
+        item?.tmdb?.vote_average,
+        item?.tmdb?.rating,
+        item?.tmdb_rating,
+        item?.tmdbRating
+    ];
 
-    if (
-        Number.isFinite(rating) &&
-        rating >= 8.0 &&
-        rating <= 10 &&
-        votes >= 500
-    ) {
-        return rating;
+    let rating = 0;
+
+    for (const raw of ratingValues) {
+        if (raw === null || raw === undefined || raw === "") {
+            continue;
+        }
+
+        const value = Number(raw);
+
+        if (Number.isFinite(value) && value > 0 && value <= 10) {
+            rating = value;
+            break;
+        }
     }
 
-    // Chỉ dùng dữ liệu TMDB có sẵn nếu có đủ điểm và số lượt vote.
-    const embeddedRating = Number(item?.tmdb?.vote_average);
-    const embeddedVotes = Number(
-        item?.tmdb?.vote_count ??
-        item?.tmdb?.voteCount ??
-        0
-    );
-
-    if (
-        Number.isFinite(embeddedRating) &&
-        embeddedRating >= 8.0 &&
-        embeddedRating <= 10 &&
-        embeddedVotes >= 500
-    ) {
-        return embeddedRating;
+    if (rating < 8.0) {
+        return 0;
     }
 
-    return 0;
+    const voteValues = [
+        item?.__movinaTMDBVotes,
+        item?.tmdb?.vote_count,
+        item?.tmdb?.voteCount,
+        item?.tmdb_vote_count,
+        item?.tmdbVoteCount
+    ];
+
+    let votes = 0;
+
+    for (const raw of voteValues) {
+        if (raw === null || raw === undefined || raw === "") {
+            continue;
+        }
+
+        const value = Number(raw);
+
+        if (Number.isFinite(value) && value >= 0) {
+            votes = value;
+            break;
+        }
+    }
+
+    // Chỉ dùng điểm TMDB khi metadata có thông tin vote
+    // và đạt ngưỡng tối thiểu 100 lượt bình chọn.
+    return votes >= 100 ? rating : 0;
 }
+
 
 async function movinaTrendingLoadTMDB(items, contentType) {
     const result = [...(items || [])];
@@ -2502,9 +2527,6 @@ async function fetchMovinaTrendingByGenre(
         
         // Ưu tiên điểm IMDb.
         items = await movinaTrendingLoadIMDb(items);
-
-        // Đối chiếu TMDB nếu bộ nạp TMDB được cấu hình.
-        items = await movinaTrendingLoadTMDB(items, type);
 
         items = items.filter(item => {
             const imdbRating = movinaTrendingIMDb(item);
