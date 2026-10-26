@@ -2375,27 +2375,29 @@ async function fetchMovinaTrendingByGenre(
                 )
             );
         }
-    } else if (isAnimationGenre) {
-        // Quan trọng: endpoint đã giới hạn đúng phim lẻ/phim bộ
-        // và lọc hoạt hình từ phía API.
-        for (let page = 1; page <= MAX_PAGES; page++) {
-            const url =
-                "https://phimapi.com/v1/api/danh-sach/" +
-                listEndpoint +
-                "?category=hoat-hinh" +
-                "&page=" + page +
-                "&limit=" + PAGE_SIZE;
+    
+} else if (isAnimationGenre) {
+    // Dùng endpoint hoạt hình chuyên biệt của PhimAPI.
+    // Endpoint này có thể chứa cả phim lẻ và phim bộ,
+    // nên không gán __catalogType tại bước lấy dữ liệu.
+    const animationPages = 12;
 
-            requests.push(
-                catalogFetch(url).then(items =>
-                    items.map(item => ({
-                        ...item,
-                        __catalogType: type,
-                        __isAnimation: true
-                    }))
-                )
-            );
-        }
+    for (let page = 1; page <= animationPages; page++) {
+        const url =
+            "https://phimapi.com/v1/api/danh-sach/hoat-hinh" +
+            "?page=" + page +
+            "&limit=" + PAGE_SIZE;
+
+        requests.push(
+            catalogFetch(url).then(items =>
+                items.map(item => ({
+                    ...item,
+                    __isAnimation: true
+                }))
+            )
+        );
+    }
+
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
         for (const slug of genreSlugs) {
