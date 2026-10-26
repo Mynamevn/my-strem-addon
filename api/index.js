@@ -1654,7 +1654,7 @@ async function fetchMovinaTrendingByGenre(
             MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
         for (const slug of slugs) {
-            for (let page = 1; page <= 30; page++) {
+            for (let page = 1; page <= 20; page++) {
                 requests.push(
                     catalogFetch(
                         "https://phimapi.com/v1/api/the-loai/" +
@@ -1674,7 +1674,7 @@ async function fetchMovinaTrendingByGenre(
 
     // 2. Bổ sung ứng viên từ danh sách theo loại phim.
     // Đây là nguồn bổ sung, vẫn phải lọc thể loại ở dưới.
-    for (let page = 1; page <= 30; page++) {
+    for (let page = 1; page <= 20; page++) {
         requests.push(
             catalogFetch(
                 "https://phimapi.com/v1/api/danh-sach/" +
@@ -1694,9 +1694,29 @@ async function fetchMovinaTrendingByGenre(
 
     const groups = await Promise.all(requests);
 
-    let items = catalogDedupe(groups.flat());
+        // Gộp các bản ghi trùng slug thay vì bỏ bản ghi xuất hiện sau.
+    // Nhờ vậy, __catalogType từ API phim-le/phim-bo được giữ lại
+    // kể cả khi phim đã xuất hiện ở kết quả API thể loại.
+    const mergedByKey = new Map();
 
-    
+    for (const item of groups.flat()) {
+        const key = catalogKey(item);
+
+        if (!key) {
+            continue;
+        }
+
+        if (mergedByKey.has(key)) {
+            mergedByKey.set(key, {
+                ...mergedByKey.get(key),
+                ...item
+            });
+        } else {
+            mergedByKey.set(key, item);
+        }
+    }
+
+    let items = Array.from(mergedByKey.values());    
         
     // Phân loại movie/series trước khi lọc thể loại.
     // Nguồn hoạt hình có thể chứa cả phim lẻ lẫn phim bộ.
