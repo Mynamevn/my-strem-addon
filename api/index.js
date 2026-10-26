@@ -1218,93 +1218,35 @@ function movinaTrendingIMDb(item) {
 const MOVINA_TRENDING_IMDB_CACHE = new Map();
 
 
+
+/* ============================================================
+   MOVINA — CLASSIC IMDb BULK LOADER
+   Không tra cứu riêng từng phim.
+   Lấy danh sách IMDb 8+, đối chiếu tên + năm, cache theo loại.
+   ============================================================ */
+
+const MOVINA_CLASSIC_IMDB_BULK_CACHE = new Map();
+
 async function movinaTrendingLoadIMDb(items) {
     const result = [...(items || [])];
 
-    const MAX_DETAILS = 500;
-    const MAX_TITLE_SEARCHES = 300;
-    const CONCURRENCY = 6;
-    const TIMEOUT_MS = 7000;
-
-    const candidates = result
-        .map((item, index) => ({ item, index }))
-        .filter(({ item }) =>
-            movinaTrendingIMDb(item) < 8 &&
-            item?.slug
-        )
-        .sort((a, b) => {
-            const yearA = itemYear(a.item) || 9999;
-            const yearB = itemYear(b.item) || 9999;
-
-            if (yearA !== yearB) {
-                return yearA - yearB;
-            }
-
-            return String(a.item.slug).localeCompare(
-                String(b.item.slug)
-            );
-        })
-        .slice(0, MAX_DETAILS);
-
-    let cursor = 0;
-    let titleSearches = 0;
-    let detailSuccess = 0;
-    let detailErrors = 0;
-    let imdbLoaded = 0;
-    let missingIMDb = 0;
-    let cacheHits = 0;
-    let imdbApiSuccess = 0;
-    let imdbApiErrors = 0;
-
-    function parseRating(source) {
-        const objects = [
-            source,
-            source?.title,
-            source?.movie,
-            source?.data,
-            source?.data?.title,
-            source?.data?.movie
-        ].filter(Boolean);
-
-        for (const object of objects) {
-            const values = [
-                object?.rating?.aggregateRating,
-                object?.rating?.aggregate_rating,
-                object?.rating?.averageRating,
-                object?.rating?.average_rating,
-                object?.ratings?.aggregateRating,
-                object?.ratings?.aggregate_rating,
-                object?.aggregateRating,
-                object?.aggregate_rating,
-                object?.imdb?.vote_average,
-                object?.imdb?.rating,
-                object?.imdbRating,
-                object?.imdb_rating
-            ];
-
-            for (const raw of values) {
-                if (
-                    raw === null ||
-                    raw === undefined ||
-                    raw === ""
-                ) {
-                    continue;
-                }
-
-                const value = Number(raw);
-
-                if (
-                    Number.isFinite(value) &&
-                    value > 0 &&
-                    value <= 10
-                ) {
-                    return value;
-                }
-            }
-        }
-
-        return 0;
+    if (!result.length) {
+        return result;
     }
+
+    const CACHE_TTL = 6 * 60 * 60 * 1000;
+    const PAGE_SIZE = 50;
+    const MAX_PAGES_PER_LOAD = 8;
+    const MIN_VOTES = 500;
+    const TIMEOUT_MS = 4500;
+    const TARGET = 50;
+
+    const isSeries = result.some(item =>
+        item?.__catalogType === "series" ||
+        isSeriesItem(item)
+    );
+
+    const cacheKey = isSeries ? "series" : "movie";
 
     function normalizeTitle(value) {
         return String(value || "")
@@ -1317,47 +1259,36 @@ async function movinaTrendingLoadIMDb(items) {
             .trim();
     }
 
-    function getImdbId(source) {
-        const objects = [
-            source,
-            source?.movie,
-            source?.item,
-            source?.data,
-            source?.data?.item,
-            source?.data?.movie
-        ].filter(Boolean);
+    function ratingOf(title) {
+        const rating = Number(
+            title?.rating?.aggregateRating ??
+            title?.rating?.aggregate_rating ??
+            title?.rating?.averageRating ??
+            title?.aggregateRating ??
+            0
+        );
 
-        for (const object of objects) {
-            const id = String(
-                object?.imdb?.id ||
-                object?.imdb_id ||
-                object?.imdbId ||
-                ""
-            ).trim();
+        const votes = Number(
+            title?.rating?.voteCount ??
+            title?.rating?.votes_count ??
+            title?.rating?.vote_count ??
+            0
+        );
 
-            if (/^tt\d+$/i.test(id)) {
-                return id;
-            }
+        if (
+            Number.isFinite(rating) &&
+            rating >= 8.0 &&
+            rating <= 10 &&
+            votes >= MIN_VOTES
+        ) {
+            return rating;
         }
 
-        return "";
+        return 0;
     }
 
-    function getSearchResults(payload) {
-        const candidates = [
-            payload?.titles,
-            payload?.results,
-            payload?.data?.titles,
-            payload?.data?.results,
-            payload?.data,
-            payload
-        ];
-
-        return candidates.find(Array.isArray) || [];
-    }
-
-    function matchSearchResult(payload, item) {
-        const expectedNames = [
+    function titleNames(item) {
+        return [
             item?.origin_name,
             item?.original_name,
             item?.name,
@@ -1365,303 +1296,234 @@ async function movinaTrendingLoadIMDb(items) {
         ]
             .map(normalizeTitle)
             .filter(Boolean);
-
-        const expectedYear = itemYear(item) || 0;
-
-        const matches = getSearchResults(payload)
-            .map(entry => {
-                const names = [
-                    entry?.primaryTitle,
-                    entry?.primary_title,
-                    entry?.originalTitle,
-                    entry?.original_title,
-                    entry?.title,
-                    entry?.name
-                ]
-                    .map(normalizeTitle)
-                    .filter(Boolean);
-
-                const exactName = names.some(name =>
-                    expectedNames.includes(name)
-                );
-
-                if (!exactName) {
-                    return null;
-                }
-
-                const rawYear =
-                    entry?.startYear ??
-                    entry?.start_year ??
-                    entry?.year ??
-                    0;
-
-                const resultYear = Number(rawYear) || 0;
-
-                // Không ghép nếu năm chênh quá 1 năm.
-                if (
-                    expectedYear &&
-                    resultYear &&
-                    Math.abs(expectedYear - resultYear) > 1
-                ) {
-                    return null;
-                }
-
-                const type = String(
-                    entry?.type ||
-                    entry?.titleType ||
-                    entry?.title_type ||
-                    ""
-                ).toLowerCase();
-
-                if (
-                    type &&
-                    (
-                        type.includes("episode") ||
-                        type.includes("short") ||
-                        type.includes("video game")
-                    )
-                ) {
-                    return null;
-                }
-
-                const rating = parseRating(entry);
-
-                if (rating <= 0) {
-                    return null;
-                }
-
-                return {
-                    rating,
-                    yearDifference:
-                        expectedYear && resultYear
-                            ? Math.abs(expectedYear - resultYear)
-                            : 99,
-                    id: String(entry?.id || entry?.titleId || "")
-                };
-            })
-            .filter(Boolean)
-            .sort((a, b) =>
-                a.yearDifference - b.yearDifference
-            );
-
-        return matches[0] || null;
     }
 
-    async function lookupIMDbById(id) {
-        if (!/^tt\d+$/i.test(id)) {
+    function yearOf(item) {
+        return itemYear(item) || 0;
+    }
+
+    function findRating(item, imdbTitles) {
+        const names = titleNames(item);
+
+        if (!names.length) {
             return 0;
         }
 
-        const response = await axios.get(
-            "https://api.imdbapi.dev/titles/" +
-                encodeURIComponent(id),
-            {
-                timeout: TIMEOUT_MS,
-                headers: {
-                    "Accept": "application/json",
-                    "User-Agent": "MOVINA/1.0"
-                }
-            }
-        );
+        const year = yearOf(item);
+        let best = null;
 
-        return parseRating(response.data);
-    }
+        for (const title of imdbTitles) {
+            const rating = ratingOf(title);
 
-    async function lookupIMDbByTitle(item) {
-        const query =
-            String(item?.origin_name || "").trim() ||
-            String(item?.name || "").trim();
-
-        if (!query) {
-            return 0;
-        }
-
-        const response = await axios.get(
-            "https://api.imdbapi.dev/search/titles",
-            {
-                timeout: TIMEOUT_MS,
-                params: {
-                    query
-                },
-                headers: {
-                    "Accept": "application/json",
-                    "User-Agent": "MOVINA/1.0"
-                }
-            }
-        );
-
-        const match = matchSearchResult(
-            response.data,
-            item
-        );
-
-        return match?.rating || 0;
-    }
-
-    async function worker() {
-        while (cursor < candidates.length) {
-            const current = candidates[cursor++];
-            const item = current.item;
-            const slug = String(item.slug);
-
-            if (MOVINA_TRENDING_IMDB_CACHE.has(slug)) {
-                result[current.index] = {
-                    ...item,
-                    __movinaIMDbRating:
-                        MOVINA_TRENDING_IMDB_CACHE.get(slug)
-                };
-
-                cacheHits++;
+            if (!rating) {
                 continue;
             }
 
-            let rating = movinaTrendingIMDb(item);
-            let imdbId = getImdbId(item);
+            const imdbNames = [
+                title?.primaryTitle,
+                title?.originalTitle,
+                title?.primary_title,
+                title?.original_title
+            ]
+                .map(normalizeTitle)
+                .filter(Boolean);
 
-            // Bước 1: lấy IMDb ID và điểm từ chi tiết PhimAPI.
-            try {
-                const response = await axios.get(
-                    "https://phimapi.com/phim/" +
-                        encodeURIComponent(slug),
-                    {
-                        timeout: TIMEOUT_MS,
-                        headers: {
-                            "User-Agent": "Mozilla/5.0",
-                            "Accept": "application/json"
-                        }
-                    }
-                );
-
-                const root = response.data || {};
-
-                const detail =
-                    root?.movie ||
-                    root?.data?.item ||
-                    root?.data?.movie ||
-                    root?.item ||
-                    root?.data ||
-                    root;
-
-                detailSuccess++;
-
-                imdbId = imdbId || getImdbId(detail);
-                rating = rating || parseRating(detail);
-            } catch (error) {
-                detailErrors++;
-
-                console.warn(
-                    "[MOVINA IMDb DETAIL ERROR]",
-                    slug,
-                    error?.response?.status ||
-                        error?.message ||
-                        error
-                );
+            if (!imdbNames.some(name => names.includes(name))) {
+                continue;
             }
 
-            // Bước 2: nếu có IMDb ID nhưng thiếu điểm,
-            // tra cứu trực tiếp trên IMDbAPI.dev.
-            if (rating <= 0 && imdbId) {
-                try {
-                    rating = await lookupIMDbById(imdbId);
-
-                    if (rating > 0) {
-                        imdbApiSuccess++;
-                    }
-                } catch (error) {
-                    imdbApiErrors++;
-
-                    console.warn(
-                        "[MOVINA IMDb ID LOOKUP ERROR]",
-                        imdbId,
-                        error?.response?.status ||
-                            error?.message ||
-                            error
-                    );
-                }
-            }
-
-            // Bước 3: nếu không có IMDb ID hoặc vẫn thiếu điểm,
-            // tìm theo tên phim và đối chiếu tên + năm.
-            if (
-                rating <= 0 &&
-                titleSearches < MAX_TITLE_SEARCHES
-            ) {
-                titleSearches++;
-
-                try {
-                    rating = await lookupIMDbByTitle(item);
-
-                    if (rating > 0) {
-                        imdbApiSuccess++;
-                    }
-                } catch (error) {
-                    imdbApiErrors++;
-
-                    console.warn(
-                        "[MOVINA IMDb TITLE SEARCH ERROR]",
-                        item?.name || slug,
-                        error?.response?.status ||
-                            error?.message ||
-                            error
-                    );
-                }
-            }
+            const imdbYear = Number(
+                title?.startYear ??
+                title?.start_year ??
+                0
+            ) || 0;
 
             if (
-                Number.isFinite(rating) &&
-                rating > 0 &&
-                rating <= 10
+                year &&
+                imdbYear &&
+                Math.abs(year - imdbYear) > 1
             ) {
-                MOVINA_TRENDING_IMDB_CACHE.set(
-                    slug,
-                    rating
-                );
+                continue;
+            }
 
-                result[current.index] = {
-                    ...item,
-                    __movinaIMDbRating: rating,
-                    ...(imdbId
-                        ? { __movinaIMDbId: imdbId }
-                        : {})
+            const difference =
+                year && imdbYear
+                    ? Math.abs(year - imdbYear)
+                    : 99;
+
+            if (
+                !best ||
+                difference < best.yearDifference
+            ) {
+                best = {
+                    rating,
+                    yearDifference: difference
                 };
-
-                imdbLoaded++;
-            } else {
-                missingIMDb++;
             }
+        }
+
+        return best?.rating || 0;
+    }
+
+    let cache = MOVINA_CLASSIC_IMDB_BULK_CACHE.get(cacheKey);
+
+    if (
+        !cache ||
+        Date.now() - cache.updatedAt > CACHE_TTL
+    ) {
+        cache = {
+            titles: [],
+            nextPageToken: "",
+            exhausted: false,
+            updatedAt: Date.now()
+        };
+
+        MOVINA_CLASSIC_IMDB_BULK_CACHE.set(
+            cacheKey,
+            cache
+        );
+    }
+
+    let pagesFetched = 0;
+    let apiErrors = 0;
+
+    function countMatched() {
+        return result.filter(item =>
+            movinaTrendingIMDb(item) >= 8.0 ||
+            findRating(item, cache.titles) >= 8.0
+        ).length;
+    }
+
+    while (
+        countMatched() < TARGET &&
+        pagesFetched < MAX_PAGES_PER_LOAD &&
+        !cache.exhausted
+    ) {
+        try {
+            const params = new URLSearchParams();
+
+            if (isSeries) {
+                params.append("types", "TV_SERIES");
+                params.append("types", "TV_MINI_SERIES");
+            } else {
+                params.append("types", "MOVIE");
+            }
+
+            params.set("minAggregateRating", "8");
+            params.set("minVoteCount", String(MIN_VOTES));
+            params.set("sortBy", "SORT_BY_USER_RATING_COUNT");
+            params.set("sortOrder", "DESC");
+            params.set("limit", String(PAGE_SIZE));
+
+            if (cache.nextPageToken) {
+                params.set("pageToken", cache.nextPageToken);
+            }
+
+            const response = await axios.get(
+                "https://api.imdbapi.dev/titles",
+                {
+                    params,
+                    timeout: TIMEOUT_MS,
+                    headers: {
+                        "Accept": "application/json",
+                        "User-Agent": "MOVINA/1.0"
+                    }
+                }
+            );
+
+            const payload = response.data || {};
+
+            const titles = Array.isArray(payload.titles)
+                ? payload.titles
+                : Array.isArray(payload.results)
+                    ? payload.results
+                    : [];
+
+            const seenIds = new Set(
+                cache.titles.map(title => title?.id).filter(Boolean)
+            );
+
+            for (const title of titles) {
+                const id = String(title?.id || "");
+
+                if (!id || !seenIds.has(id)) {
+                    cache.titles.push(title);
+
+                    if (id) {
+                        seenIds.add(id);
+                    }
+                }
+            }
+
+            cache.nextPageToken =
+                payload.nextPageToken ||
+                payload.next_page_token ||
+                "";
+
+            cache.exhausted = !cache.nextPageToken;
+            cache.updatedAt = Date.now();
+            pagesFetched++;
+        } catch (error) {
+            apiErrors++;
+
+            console.warn(
+                "[MOVINA IMDb BULK ERROR]",
+                cacheKey,
+                error?.response?.status ||
+                    error?.message ||
+                    error
+            );
+
+            // Không lặp vô hạn nếu API đang lỗi.
+            break;
         }
     }
 
-    await Promise.all(
-        Array.from(
-            {
-                length: Math.min(
-                    CONCURRENCY,
-                    candidates.length
-                )
-            },
-            () => worker()
-        )
-    );
+    let matched = 0;
+    let alreadyRated = 0;
+
+    for (let index = 0; index < result.length; index++) {
+        const item = result[index];
+        const existingRating = movinaTrendingIMDb(item);
+
+        if (existingRating >= 8.0) {
+            alreadyRated++;
+            continue;
+        }
+
+        const rating = findRating(item, cache.titles);
+
+        if (rating >= 8.0) {
+            result[index] = {
+                ...item,
+                __movinaIMDbRating: rating
+            };
+
+            if (item?.slug) {
+                MOVINA_TRENDING_IMDB_CACHE.set(
+                    String(item.slug),
+                    rating
+                );
+            }
+
+            matched++;
+        }
+    }
 
     console.log(
-        "[MOVINA CLASSIC SCORE SUMMARY]",
+        "[MOVINA CLASSIC BULK SUMMARY]",
         JSON.stringify({
+            type: cacheKey,
             input: result.length,
-            detailCandidates: candidates.length,
-            detailSuccess,
-            detailErrors,
-            imdbLoaded,
-            missingIMDb,
-            cacheHits,
-            titleSearches,
-            imdbApiSuccess,
-            imdbApiErrors,
-            cachedValidRatings:
-                MOVINA_TRENDING_IMDB_CACHE.size,
-            qualified: result.filter(
-                item => movinaTrendingIMDb(item) >= 8.0
-            ).length
+            imdbTitlesCached: cache.titles.length,
+            pagesFetched,
+            alreadyRated,
+            matched,
+            qualified: result.filter(item =>
+                movinaTrendingIMDb(item) >= 8.0
+            ).length,
+            hasNextPage: !cache.exhausted,
+            apiErrors
         })
     );
 
