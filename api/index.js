@@ -2326,33 +2326,81 @@ async function fetchMovinaTrendingByGenre(
             : "phim-le";
 
     
-    
-    
     const requests = [];
 
     const genreSlugs =
         MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
     const isClassic = normalizedGenre === "kinh dien";
+    const isAnimationGenre = normalizedGenre === "hoat hinh";
 
-    // Giảm số trang API thể loại, tránh gọi 20 trang
-    // cho từng slug trong mọi lần mở catalog.
-    const GENRE_PAGES = 6;
+    const PAGE_SIZE = 64;
+    const MAX_PAGES = 8;
 
-    // Kinh điển cần tập ứng viên rộng hơn để tra điểm.
-    // Hoạt hình phim bộ cần nhiều ứng viên để phân loại.
-    const LIST_PAGES =
-        isClassic ? 12 :
-        (isAnimationGenre && type === "series" ? 12 : 6);
+    // Kinh điển: lấy cả danh sách rộng lẫn danh sách đã lọc
+    // theo category để không bỏ sót phim cũ.
+    // Hoạt hình: lọc category trực tiếp trên endpoint đúng loại.
+    if (isClassic) {
+        for (let page = 1; page <= MAX_PAGES; page++) {
+            const url =
+                "https://phimapi.com/v1/api/danh-sach/" +
+                listEndpoint +
+                "?page=" + page +
+                "&limit=" + PAGE_SIZE;
 
-    const PAGE_SIZE = 24;
+            requests.push(
+                catalogFetch(url).then(items =>
+                    items.map(item => ({
+                        ...item,
+                        __catalogType: type
+                    }))
+                )
+            );
+        }
 
-    // 1. Lấy ứng viên theo thể loại.
-    // Kinh điển dùng danh sách rộng bên dưới, không phụ thuộc
-    // riêng vào slug "kinh-dien".
-    if (!isLatest && !isClassic) {
+        for (let page = 1; page <= MAX_PAGES; page++) {
+            const url =
+                "https://phimapi.com/v1/api/danh-sach/" +
+                listEndpoint +
+                "?category=kinh-dien" +
+                "&page=" + page +
+                "&limit=" + PAGE_SIZE;
+
+            requests.push(
+                catalogFetch(url).then(items =>
+                    items.map(item => ({
+                        ...item,
+                        __catalogType: type,
+                        __classicCategorySource: true
+                    }))
+                )
+            );
+        }
+    } else if (isAnimationGenre) {
+        // Quan trọng: endpoint đã giới hạn đúng phim lẻ/phim bộ
+        // và lọc hoạt hình từ phía API.
+        for (let page = 1; page <= MAX_PAGES; page++) {
+            const url =
+                "https://phimapi.com/v1/api/danh-sach/" +
+                listEndpoint +
+                "?category=hoat-hinh" +
+                "&page=" + page +
+                "&limit=" + PAGE_SIZE;
+
+            requests.push(
+                catalogFetch(url).then(items =>
+                    items.map(item => ({
+                        ...item,
+                        __catalogType: type,
+                        __isAnimation: true
+                    }))
+                )
+            );
+        }
+    } else {
+        // Các thể loại khác: giữ nguồn thể loại hiện có.
         for (const slug of genreSlugs) {
-            for (let page = 1; page <= GENRE_PAGES; page++) {
+            for (let page = 1; page <= 6; page++) {
                 const url =
                     "https://phimapi.com/v1/api/the-loai/" +
                     encodeURIComponent(slug) +
@@ -2369,25 +2417,24 @@ async function fetchMovinaTrendingByGenre(
                 );
             }
         }
-    }
 
-    // 2. Luôn lấy danh sách đúng loại nội dung.
-    // Đây là nguồn bổ sung bị thiếu trong phiên bản hiện tại.
-    for (let page = 1; page <= LIST_PAGES; page++) {
-        const url =
-            "https://phimapi.com/v1/api/danh-sach/" +
-            listEndpoint +
-            "?page=" + page +
-            "&limit=" + PAGE_SIZE;
+        // Luôn có nguồn danh sách đúng loại để bổ sung.
+        for (let page = 1; page <= 6; page++) {
+            const url =
+                "https://phimapi.com/v1/api/danh-sach/" +
+                listEndpoint +
+                "?page=" + page +
+                "&limit=" + PAGE_SIZE;
 
-        requests.push(
-            catalogFetch(url).then(items =>
-                items.map(item => ({
-                    ...item,
-                    __catalogType: type
-                }))
-            )
-        );
+            requests.push(
+                catalogFetch(url).then(items =>
+                    items.map(item => ({
+                        ...item,
+                        __catalogType: type
+                    }))
+                )
+            );
+        }
     }
 
     console.log(
@@ -2398,15 +2445,12 @@ async function fetchMovinaTrendingByGenre(
             listEndpoint,
             isClassic,
             isAnimationGenre,
-            genrePagesPerSlug:
-                !isLatest && !isClassic ? GENRE_PAGES : 0,
-            listPages: LIST_PAGES,
+            pageSize: PAGE_SIZE,
             requestCount: requests.length
         })
     );
 
     const groups = await Promise.all(requests);
-
 
         // Gộp các bản ghi trùng slug thay vì bỏ bản ghi xuất hiện sau.
     // Nhờ vậy, __catalogType từ API phim-le/phim-bo được giữ lại
@@ -2434,12 +2478,24 @@ async function fetchMovinaTrendingByGenre(
         
     // Phân loại movie/series trước khi lọc thể loại.
     // Nguồn hoạt hình có thể chứa cả phim lẻ lẫn phim bộ.
-    items = items.filter(item =>
-        type === "series"
-            ? isSeriesItem(item)
-            : !isSeriesItem(item)
-    );
+    
+    items = items.filter(item => {
+        // Những bản ghi lấy từ endpoint phim-le/phim-bo
+        // đã được xác định loại ngay tại nguồn.
+        if (item.__catalogType === "series") {
+            return type === "series";
+        }
 
+        if (item.__catalogType === "movie") {
+            return type === "movie";
+        }
+
+        // Bản ghi từ API thể loại không có nhãn nội bộ:
+        // dùng bộ phân loại dựa trên metadata thực tế.
+        return type === "series"
+            ? isSeriesItem(item)
+            : !isSeriesItem(item);
+    });
         
     if (normalizedGenre === "kinh dien") {
         
