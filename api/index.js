@@ -2327,9 +2327,8 @@ async function fetchMovinaTrendingByGenre(
 
     const requests = [];
 
-    // 1. Lấy ứng viên từ API thể loại và yêu cầu đúng loại nội dung.
-    // Phim bộ dùng type=series; phim lẻ dùng type=single.
-    // Không tự gắn nhãn phim bộ cho dữ liệu hoạt hình chưa phân loại.
+    // 1. Lấy ứng viên từ API thể loại.
+    // Yêu cầu API trả đúng loại nội dung ngay từ nguồn.
     if (!isLatest) {
         const slugs =
             MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
@@ -2345,15 +2344,11 @@ async function fetchMovinaTrendingByGenre(
                         encodeURIComponent(slug) +
                         "?page=" + page +
                         "&limit=24" +
-                        "&type=" + encodeURIComponent(apiType)
+                        "&type=" + apiType
                     ).then(items =>
                         items.map(item => ({
                             ...item,
-                            __genreApiSlug: slug,
-                            __catalogType: type,
-                            ...(isAnimationGenre
-                                ? { __isAnimation: true }
-                                : {})
+                            __genreApiSlug: slug
                         }))
                     )
                 );
@@ -2396,16 +2391,13 @@ async function fetchMovinaTrendingByGenre(
     );
 
     
+    
     if (normalizedGenre === "kinh dien") {
-        // 1. Ưu tiên xác minh IMDb.
+        // IMDb vẫn là nguồn ưu tiên.
         items = await movinaTrendingLoadIMDb(items);
 
-        // 2. Chỉ gọi TMDB bổ sung khi IMDb không có điểm.
-        items = await movinaTrendingLoadTMDB(items, type);
-
-        // IMDb >= 8 luôn được ưu tiên.
-        // Nếu IMDb chưa có điểm, chấp nhận TMDB >= 8
-        // nhưng chỉ khi có ít nhất 500 lượt bình chọn.
+        // Chỉ dùng điểm TMDB có sẵn trong metadata PhimAPI
+        // khi ứng viên chưa có điểm IMDb.
         items = items.filter(item => {
             const imdbRating = movinaTrendingIMDb(item);
 
@@ -2413,25 +2405,44 @@ async function fetchMovinaTrendingByGenre(
                 return imdbRating >= 8.0;
             }
 
-            return movinaTrendingTMDB(item) >= 8.0;
+            const tmdbRating = Number(
+                item?.tmdb?.vote_average
+            );
+
+            const tmdbVotes = Number(
+                item?.tmdb?.vote_count ??
+                item?.tmdb?.voteCount ??
+                0
+            );
+
+            return (
+                Number.isFinite(tmdbRating) &&
+                tmdbRating >= 8.0 &&
+                tmdbRating <= 10 &&
+                tmdbVotes >= 100
+            );
         });
 
-        // Ghi rõ nguồn điểm trong log để dễ kiểm tra.
         console.log(
             "[MOVINA CLASSIC RATING SOURCES]",
             JSON.stringify({
                 type,
+                total: items.length,
                 imdb: items.filter(item =>
                     movinaTrendingIMDb(item) >= 8.0
                 ).length,
-                tmdbFallback: items.filter(item =>
+                tmdb: items.filter(item =>
                     movinaTrendingIMDb(item) === 0 &&
-                    movinaTrendingTMDB(item) >= 8.0
+                    Number(item?.tmdb?.vote_average) >= 8.0 &&
+                    Number(
+                        item?.tmdb?.vote_count ??
+                        item?.tmdb?.voteCount ??
+                        0
+                    ) >= 100
                 ).length
             })
         );
     } else if (!isLatest) {
-        // Những thể loại còn lại vẫn lọc theo metadata.
         items = items.filter(item =>
             movinaTrendingGenreMatches(item, genre)
         );
@@ -13883,136 +13894,93 @@ if (!movie) {
     // 15.3 RANK CÁC KẾT QUẢ
     // =================================================
 
-    const ranked =
-        items.map(
-            (item, index) => {
+    
+    const ranked = items.map((item, index) => {
+        const name = normalizeTitle(item?.name);
+        const origin = normalizeTitle(item?.origin_name);
+        const year = Number(item?.year) || 0;
+        const type = String(item?.type || "").toLowerCase();
 
-                const name =
-                    normalizeTitle(
-                        item?.name
-                    );
+        const exactOriginMatch =
+            normalizedSearchTerms.some(term => origin === term);
 
-                const origin =
-                    normalizeTitle(
-                        item?.origin_name
-                    );
+        const exactNameMatch =
+            normalizedSearchTerms.some(term => name === term);
 
-                const year =
-                    Number(
-                        item?.year
-                    ) || 0;
+        const partialOriginMatch =
+            normalizedSearchTerms.some(term =>
+                term.length >= 8 && origin.includes(term)
+            );
 
-                const type =
-                    String(
-                        item?.type ||
-                        ""
-                    ).toLowerCase();
+        const partialNameMatch =
+            normalizedSearchTerms.some(term =>
+                term.length >= 8 && name.includes(term)
+            );
 
-                let score = 0;
+        const titleMatched =
+            exactOriginMatch ||
+            exactNameMatch ||
+            partialOriginMatch ||
+            partialNameMatch;
 
-                // -------------------------------------
-                // TITLE — GỐC VÀ TÊN THAY THẾ
-                // -------------------------------------
+        let score = 0;
 
-                const exactOriginMatch =
-                    normalizedSearchTerms.some(
-                        term => origin === term
-                    );
+        if (exactOriginMatch) {
+            score += 1000;
+        } else if (exactNameMatch) {
+            score += 900;
+        } else if (partialOriginMatch) {
+            score += 300;
+        } else if (partialNameMatch) {
+            score += 200;
+        }
 
-                const exactNameMatch =
-                    normalizedSearchTerms.some(
-                        term => name === term
-                    );
+        if (movieYear && year === movieYear) {
+            score += 3000;
+        } else if (movieYear && year && year !== movieYear) {
+            score -= 1500;
+        }
 
-                const partialOriginMatch =
-                    normalizedSearchTerms.some(
-                        term =>
-                            term.length >= 8 &&
-                            origin.includes(term)
-                    );
+        if (streamType === "series" && type === "series") {
+            score += 500;
+        }
 
-                const partialNameMatch =
-                    normalizedSearchTerms.some(
-                        term =>
-                            term.length >= 8 &&
-                            name.includes(term)
-                    );
+        return {
+            item,
+            score,
+            index,
+            titleMatched
+        };
+    }).filter(candidate => {
+        // Không bao giờ chọn phim chỉ vì trùng năm.
+        if (!candidate.titleMatched) {
+            return false;
+        }
 
-                if (exactOriginMatch) {
-                    score += 1000;
-                } else if (exactNameMatch) {
-                    score += 900;
-                } else if (partialOriginMatch) {
-                    score += 300;
-                } else if (partialNameMatch) {
-                    score += 200;
-                }
+        return true;
+    });
 
-                // -------------------------------------
-                // YEAR
-                // -------------------------------------
+    ranked.sort((a, b) => {
+        if (b.score !== a.score) {
+            return b.score - a.score;
+        }
 
-                if (
-                    movieYear &&
-                    year === movieYear
-                ) {
+        return a.index - b.index;
+    });
 
-                    score += 3000;
-
-                } else if (
-                    movieYear &&
-                    year &&
-                    year !== movieYear
-                ) {
-
-                    score -= 1500;
-
-                }
-
-                // -------------------------------------
-                // TYPE
-                // -------------------------------------
-
-                if (
-                    streamType === "series" &&
-                    type === "series"
-                ) {
-
-                    score += 500;
-
-                }
-
-                return {
-                    item,
-                    score,
-                    index
-                };
-
+    if (!ranked.length) {
+        console.log(
+            "[KKPHIM] NO RELEVANT TITLE MATCH; REFUSING WRONG MOVIE",
+            {
+                movieName,
+                movieYear,
+                streamType
             }
         );
 
-    ranked.sort(
-        (a, b) => {
+        return streams;
+    }
 
-            if (
-                b.score !==
-                a.score
-            ) {
-
-                return (
-                    b.score -
-                    a.score
-                );
-
-            }
-
-            return (
-                a.index -
-                b.index
-            );
-
-        }
-    );
 
     console.log(
         "[KKPHIM] Ranked candidates:",
