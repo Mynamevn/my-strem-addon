@@ -200,11 +200,46 @@ const manifest = {
             ]
         },
 
-        {
+                {
             type: "MOVINA",
             id: "pa_animation_new",
             name: "🐼 Hoạt hình - New",
             extra: [
+                {
+                    name: "genre",
+                    isRequired: false,
+                    options: [
+                        "Mới nhất - HH lẻ",
+                        "Mới nhất - HH bộ",
+                        "Gia đình – Thiếu nhi - HH lẻ",
+                        "Gia đình – Thiếu nhi - HH bộ",
+                        "Hài hước - HH lẻ",
+                        "Hài hước - HH bộ",
+                        "Đời thường - HH lẻ",
+                        "Đời thường - HH bộ",
+                        "Thể thao - HH lẻ",
+                        "Thể thao - HH bộ",
+                        "Bí ẩn – Trinh thám - HH lẻ",
+                        "Bí ẩn – Trinh thám - HH bộ",
+                        "Hành động - HH lẻ",
+                        "Hành động - HH bộ",
+                        "Phiêu lưu - HH lẻ",
+                        "Phiêu lưu - HH bộ",
+                        "Kỳ ảo - HH lẻ",
+                        "Kỳ ảo - HH bộ",
+                        "Khoa học viễn tưởng - HH lẻ",
+                        "Khoa học viễn tưởng - HH bộ",
+                        "Kinh dị - HH lẻ",
+                        "Kinh dị - HH bộ",
+                        "Tâm lý - HH lẻ",
+                        "Tâm lý - HH bộ",
+                        "Tình cảm - HH lẻ",
+                        "Tình cảm - HH bộ",
+                        "Lịch sử - HH lẻ",
+                        "Lịch sử - HH bộ"
+                    ],
+                    optionsLimit: 1
+                },
                 {
                     name: "search",
                     isRequired: false
@@ -5877,6 +5912,306 @@ async function fetchAnimationNew() {
     return result;
 }
 
+
+/* ============================================================
+   10.13 ANIMATION GENRE FILTERS
+   - Phim hoạt hình lẻ / bộ
+   - Lọc theo thể loại
+   - Xáo trộn ổn định theo ngày Việt Nam
+   ============================================================ */
+
+const MOVINA_ANIMATION_GENRES = {
+    "gia dinh thieu nhi": {
+        slugs: ["gia-dinh", "thieu-nhi"],
+        aliases: [
+            "gia dinh",
+            "thieu nhi",
+            "family",
+            "kids",
+            "children"
+        ]
+    },
+    "hai huoc": {
+        slugs: ["hai-huoc"],
+        aliases: ["hai", "hai huoc", "comedy"]
+    },
+    "doi thuong": {
+        slugs: ["doi-thuong"],
+        aliases: [
+            "doi thuong",
+            "slice of life",
+            "daily life"
+        ]
+    },
+    "the thao": {
+        slugs: ["the-thao"],
+        aliases: ["the thao", "sport", "sports"]
+    },
+    "bi an trinh tham": {
+        slugs: ["bi-an", "trinh-tham"],
+        aliases: [
+            "bi an",
+            "trinh tham",
+            "mystery",
+            "detective"
+        ]
+    },
+    "hanh dong": {
+        slugs: ["hanh-dong"],
+        aliases: ["hanh dong", "action"]
+    },
+    "phieu luu": {
+        slugs: ["phieu-luu"],
+        aliases: ["phieu luu", "adventure"]
+    },
+    "ky ao": {
+        slugs: ["gia-tuong", "fantasy"],
+        aliases: ["gia tuong", "ky ao", "fantasy"]
+    },
+    "khoa hoc vien tuong": {
+        slugs: [
+            "khoa-hoc",
+            "vien-tuong",
+            "khoa-hoc-vien-tuong"
+        ],
+        aliases: [
+            "khoa hoc",
+            "vien tuong",
+            "science fiction",
+            "sci fi"
+        ]
+    },
+    "kinh di": {
+        slugs: ["kinh-di"],
+        aliases: ["kinh di", "horror"]
+    },
+    "tam ly": {
+        slugs: ["tam-ly", "chinh-kich"],
+        aliases: [
+            "tam ly",
+            "chinh kich",
+            "psychological"
+        ]
+    },
+    "tinh cam": {
+        slugs: ["tinh-cam", "lang-man"],
+        aliases: [
+            "tinh cam",
+            "lang man",
+            "romance",
+            "romantic"
+        ]
+    },
+    "lich su": {
+        slugs: ["lich-su"],
+        aliases: ["lich su", "history"]
+    }
+};
+
+function movinaAnimationGenreMatches(item, genreConfig) {
+    const categories = catalogCategoryNames(item);
+
+    return categories.some(category =>
+        genreConfig.aliases.some(alias => {
+            const normalizedAlias = catalogNormalize(alias);
+
+            return (
+                category === normalizedAlias ||
+                category.startsWith(normalizedAlias + " ") ||
+                category.endsWith(" " + normalizedAlias) ||
+                category.includes(" " + normalizedAlias + " ")
+            );
+        })
+    );
+}
+
+async function fetchAnimationByFilter(selectedFilter) {
+    const filter = String(selectedFilter || "").trim();
+
+    const match = filter.match(/ - HH (lẻ|bộ)$/i);
+
+    if (!match) {
+        return fetchAnimationNew();
+    }
+
+    const type =
+        match[1].toLowerCase() === "bộ"
+            ? "series"
+            : "movie";
+
+    const genreLabel =
+        filter.slice(0, match.index).trim();
+
+    const normalizedGenre =
+        catalogNormalize(genreLabel);
+
+    const day =
+        movinaTrendingDaySeed();
+
+    const isLatest =
+        normalizedGenre === "moi nhat";
+
+    const genreConfig =
+        MOVINA_ANIMATION_GENRES[normalizedGenre];
+
+    if (!isLatest && !genreConfig) {
+        console.warn(
+            "[ANIMATION FILTER] Unknown genre:",
+            genreLabel
+        );
+        return [];
+    }
+
+    const requests = [];
+
+    /*
+     * Nguồn hoạt hình chính.
+     * Giữ nhãn hoạt hình vì endpoint này chuyên biệt.
+     */
+    const ANIMATION_PAGES = 12;
+
+    for (let page = 1; page <= ANIMATION_PAGES; page++) {
+        const url =
+            "https://phimapi.com/v1/api/danh-sach/hoat-hinh" +
+            "?page=" + page +
+            "&limit=64";
+
+        requests.push(
+            catalogFetch(url).then(items =>
+                items.map(item => ({
+                    ...item,
+                    __isAnimation: true,
+                    __catalogType:
+                        isSeriesItem(item) ? "series" : "movie"
+                }))
+            )
+        );
+    }
+
+    /*
+     * Với thể loại cụ thể, lấy thêm danh sách theo thể loại
+     * để tăng số ứng viên ngoài các trang hoạt hình chính.
+     */
+    if (!isLatest) {
+        for (const slug of genreConfig.slugs) {
+            for (let page = 1; page <= 8; page++) {
+                const url =
+                    "https://phimapi.com/v1/api/the-loai/" +
+                    encodeURIComponent(slug) +
+                    "?page=" + page +
+                    "&limit=64";
+
+                requests.push(
+                    catalogFetch(url).then(items =>
+                        items.map(item => ({
+                            ...item,
+                            __genreApiSlug: slug,
+                            __catalogType:
+                                isSeriesItem(item) ? "series" : "movie"
+                        }))
+                    )
+                );
+            }
+        }
+    }
+
+    const groups = await Promise.all(requests);
+
+    /*
+     * Gộp bản ghi trùng, giữ cờ hoạt hình nếu bản ghi
+     * đã xuất hiện trong nguồn hoạt hình chuyên biệt.
+     */
+    const merged = new Map();
+
+    for (const item of groups.flat()) {
+        const key = catalogKey(item);
+
+        if (!key) {
+            continue;
+        }
+
+        if (merged.has(key)) {
+            merged.set(key, {
+                ...merged.get(key),
+                ...item,
+                __isAnimation:
+                    merged.get(key).__isAnimation === true ||
+                    item.__isAnimation === true
+            });
+        } else {
+            merged.set(key, item);
+        }
+    }
+
+    let items = Array.from(merged.values());
+
+    /*
+     * Chỉ giữ hoạt hình đúng loại.
+     * Không dùng phim thường để bù số lượng.
+     */
+    items = items.filter(item =>
+        isAnimation(item) &&
+        (
+            type === "series"
+                ? isSeriesItem(item)
+                : !isSeriesItem(item)
+        )
+    );
+
+    if (!isLatest) {
+        items = items.filter(item =>
+            movinaAnimationGenreMatches(item, genreConfig)
+        );
+    }
+
+    items = catalogDedupe(items);
+
+    /*
+     * Mới nhất:
+     * ưu tiên ứng viên mới trước, rồi chọn tối đa 50
+     * theo seed ngày để danh sách thay đổi hằng ngày.
+     *
+     * Thể loại còn lại:
+     * xáo trộn ổn định theo ngày và thể loại.
+     */
+    let result;
+
+    if (isLatest) {
+        items.sort(movinaTrendingNewestSort);
+
+        const recentPool = items.slice(
+            0,
+            Math.min(items.length, 100)
+        );
+
+        result = stableShuffle(
+            recentPool,
+            "animation|latest|" + type + "|" + day
+        ).slice(0, CATALOG_TARGET);
+    } else {
+        result = movinaTrendingBalancedDecades(
+            items,
+            "animation|" + type + "|" +
+                normalizedGenre + "|" + day,
+            CATALOG_TARGET
+        );
+    }
+
+    console.log(
+        "[ANIMATION FILTER]",
+        JSON.stringify({
+            filter,
+            type,
+            day,
+            candidates: items.length,
+            returned: result.length,
+            target: CATALOG_TARGET
+        })
+    );
+
+    return result;
+}
+
 /* ============================================================
 11. CATALOG META
 ============================================================ */
@@ -6974,11 +7309,26 @@ forcedType = "series";
 
                 }
 
-                items =
-                    await fetchAnimationNew();
+                                const selectedAnimationCategory =
+                    String(
+                        args.extra?.genre || ""
+                    ).trim();
 
-                forcedType =
-                    null;
+                if (selectedAnimationCategory) {
+                    items = await fetchAnimationByFilter(
+                        selectedAnimationCategory
+                    );
+
+                    forcedType =
+                        / - HH bộ$/i.test(
+                            selectedAnimationCategory
+                        )
+                            ? "series"
+                            : "movie";
+                } else {
+                    items = await fetchAnimationNew();
+                    forcedType = null;
+                }
 
             /* ========================================================
                12.6 UNKNOWN
