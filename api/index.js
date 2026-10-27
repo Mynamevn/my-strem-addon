@@ -3048,6 +3048,7 @@ async function fetchMovinaTrendingByGenre(
 
     
     
+    
     } else if (
         type === "series" &&
         normalizedGenre === "kinh di"
@@ -3056,24 +3057,17 @@ async function fetchMovinaTrendingByGenre(
          * KINH DỊ - PHIM BỘ
          *
          * Nguồn A: API thể loại Kinh dị.
-         * Nguồn B: API danh sách phim bộ.
+         * Nguồn B: danh sách phim bộ.
          *
-         * Gộp theo slug/ID trước khi lọc:
-         * - __catalogType xác định đúng phim bộ.
-         * - __genreApiSlug xác nhận phim thuộc Kinh dị.
-         *
-         * Không phụ thuộc hoàn toàn vào metadata thể loại
-         * của từng bản ghi phim bộ.
+         * Mở rộng phạm vi quét để tăng khả năng tìm được
+         * series kinh dị nằm ngoài các trang đầu.
          */
-        const HORROR_GENRE_PAGES = 8;
-        const HORROR_SERIES_PAGES = 8;
+        const HORROR_GENRE_PAGES = 16;
+        const HORROR_SERIES_PAGES = 16;
 
-        const horrorSlug =
-            genreSlugs.includes("kinh-di")
-                ? "kinh-di"
-                : "kinh-di";
+        const horrorSlug = "kinh-di";
 
-        // Nguồn A: lấy các phim được API xếp vào thể loại Kinh dị.
+        // Nguồn A: danh sách thuộc thể loại Kinh dị.
         for (
             let page = 1;
             page <= HORROR_GENRE_PAGES;
@@ -3081,7 +3075,7 @@ async function fetchMovinaTrendingByGenre(
         ) {
             const url =
                 "https://phimapi.com/v1/api/the-loai/" +
-                encodeURIComponent(horrorSlug) +
+                horrorSlug +
                 "?page=" + page +
                 "&limit=" + PAGE_SIZE;
 
@@ -3089,13 +3083,13 @@ async function fetchMovinaTrendingByGenre(
                 catalogFetch(url).then(items =>
                     items.map(item => ({
                         ...item,
-                        __genreApiSlug: "kinh-di"
+                        __genreApiSlug: horrorSlug
                     }))
                 )
             );
         }
 
-        // Nguồn B: danh sách phim bộ để xác định loại nội dung.
+        // Nguồn B: danh sách phim bộ để xác nhận loại nội dung.
         for (
             let page = 1;
             page <= HORROR_SERIES_PAGES;
@@ -3274,6 +3268,109 @@ if (normalizedGenre === "kinh dien") {
         );
     });
 }
+
+
+    /*
+     * KINH DỊ - PHIM BỘ:
+     * Gộp các bản ghi mùa phim có cùng IMDb ID.
+     * Ví dụ: Xác Sống Phần 1-11 chỉ là một series.
+     */
+    if (
+        type === "series" &&
+        normalizedGenre === "kinh di"
+    ) {
+        const uniqueSeries = new Map();
+
+        function horrorSeriesIMDbId(item) {
+            const candidates = [
+                item?.imdb?.id,
+                item?.imdb_id,
+                item?.imdbId,
+                item?.imdb?.imdb_id,
+                item?.tmdb?.imdb_id
+            ];
+
+            for (const value of candidates) {
+                const id = String(value || "").trim();
+
+                if (/^tt\d+$/i.test(id)) {
+                    return id;
+                }
+            }
+
+            return "";
+        }
+
+        function horrorSeriesTitle(item) {
+            return String(
+                item?.origin_name ||
+                item?.original_name ||
+                item?.name ||
+                item?.title ||
+                ""
+            ).trim();
+        }
+
+        function horrorSeasonNumber(item) {
+            const title = horrorSeriesTitle(item);
+            const match = title.match(
+                /(?:phần|season|mùa)\s*(\d+)/i
+            );
+
+            return match ? Number(match[1]) : 9999;
+        }
+
+        function horrorSeriesKey(item) {
+            const imdbId = horrorSeriesIMDbId(item);
+
+            if (imdbId) {
+                return "imdb:" + imdbId.toLowerCase();
+            }
+
+            const baseTitle = horrorSeriesTitle(item)
+                .replace(
+                    /\s*[\(\[]?\s*(?:phần|season|mùa)\s*\d+\s*[\)\]]?\s*/gi,
+                    " "
+                );
+
+            return "title:" + catalogNormalize(baseTitle);
+        }
+
+        for (const item of items) {
+            const key = horrorSeriesKey(item);
+
+            if (!key || key === "title:") {
+                continue;
+            }
+
+            const existing = uniqueSeries.get(key);
+
+            if (!existing) {
+                uniqueSeries.set(key, item);
+                continue;
+            }
+
+            // Nếu cùng series có nhiều mùa, ưu tiên mùa sớm hơn.
+            if (
+                horrorSeasonNumber(item) <
+                horrorSeasonNumber(existing)
+            ) {
+                uniqueSeries.set(key, item);
+            }
+        }
+
+        const beforeDedup = items.length;
+        items = Array.from(uniqueSeries.values());
+
+        console.log(
+            "[MOVINA HORROR SERIES DEDUPE]",
+            JSON.stringify({
+                before: beforeDedup,
+                after: items.length,
+                removed: beforeDedup - items.length
+            })
+        );
+    }
 
     const candidateCount = items.length;
     let result = [];
