@@ -2490,8 +2490,9 @@ async function movinaFetchClassicCatalog(type) {
      */
     
     if (type === "series") {
-        const LOOKUP_CONCURRENCY = 8;
-        const LOOKUP_TIMEOUT = 3000;
+        const LOOKUP_CONCURRENCY = 16;
+const LOOKUP_TIMEOUT = 2500;
+const MAX_FALLBACK_SEARCHES = 12;
         const SEARCH_TIMEOUT_NOTE =
             "Direct IMDb lookup failed; fallback to exact title/year search.";
 
@@ -2595,14 +2596,25 @@ async function movinaFetchClassicCatalog(type) {
                 }
             }
 
+            
             /*
-             * Chỉ tìm theo tên khi tra cứu IMDb ID thất bại.
-             * Không tìm lại các phim đã khớp trực tiếp.
+             * Tìm dự phòng có giới hạn.
+             * Không để hàng trăm lượt tìm kiếm theo tên tiếp tục
+             * gây tải lâu khi PhimAPI đang trả HTTP 429.
              */
-            if (matchedByKey.size < TARGET && needFallback.length) {
+            if (
+                matchedByKey.size < TARGET &&
+                needFallback.length &&
+                fallbackSearches < MAX_FALLBACK_SEARCHES
+            ) {
                 const remaining = TARGET - matchedByKey.size;
-                const fallbackBatch =
-                    needFallback.slice(0, remaining);
+                const fallbackBudget =
+                    MAX_FALLBACK_SEARCHES - fallbackSearches;
+
+                const fallbackBatch = needFallback.slice(
+                    0,
+                    Math.min(remaining, fallbackBudget)
+                );
 
                 const fallbackResults = await Promise.all(
                     fallbackBatch.map(async ranked => {
@@ -2637,6 +2649,7 @@ async function movinaFetchClassicCatalog(type) {
                     }
                 }
             }
+
         }
 
         const result = Array.from(matchedByKey.values())
