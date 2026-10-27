@@ -3169,12 +3169,75 @@ requests.push(
 
     let items = Array.from(mergedByKey.values());    
         
-    // Phân loại movie/series trước khi lọc thể loại.
-    // Nguồn hoạt hình có thể chứa cả phim lẻ lẫn phim bộ.
     
+    // Xác định loại nội dung từ các bản ghi đã được API
+    // phim-bo / phim-le xác nhận.
+    //
+    // Ghép bổ sung bằng slug, ID và tên chuẩn hóa để tránh
+    // bỏ sót khi endpoint thể loại dùng khóa khác endpoint danh sách.
+
+    const normalizeGenreIdentity = value =>
+        catalogNormalize(value);
+
+    const seriesIdentities = new Set();
+    const movieIdentities = new Set();
+
+    function addIdentityKeys(target, item) {
+        if (!item) return;
+
+        const rawKeys = [
+            item.slug,
+            item._id,
+            item.id,
+            item.name,
+            item.origin_name,
+            item.original_name
+        ];
+
+        for (const value of rawKeys) {
+            const key = normalizeGenreIdentity(value);
+
+            if (key) {
+                target.add(key);
+            }
+        }
+    }
+
+    for (const item of groups.flat()) {
+        if (item.__catalogType === "series") {
+            addIdentityKeys(seriesIdentities, item);
+        } else if (item.__catalogType === "movie") {
+            addIdentityKeys(movieIdentities, item);
+        }
+    }
+
     items = items.filter(item => {
-        // Những bản ghi lấy từ endpoint phim-le/phim-bo
-        // đã được xác định loại ngay tại nguồn.
+        const keys = new Set();
+
+        addIdentityKeys({
+            add: key => keys.add(key)
+        }, item);
+
+        const matchedSeries = [...keys].some(
+            key => seriesIdentities.has(key)
+        );
+
+        const matchedMovie = [...keys].some(
+            key => movieIdentities.has(key)
+        );
+
+        // Chỉ dùng nhãn nội bộ khi nó không mâu thuẫn với
+        // nguồn danh sách đúng loại.
+        if (matchedSeries && !matchedMovie) {
+            return type === "series";
+        }
+
+        if (matchedMovie && !matchedSeries) {
+            return type === "movie";
+        }
+
+        // Nếu chính bản ghi đã có nhãn loại rõ ràng,
+        // giữ nguyên nhãn đó.
         if (item.__catalogType === "series") {
             return type === "series";
         }
@@ -3183,8 +3246,8 @@ requests.push(
             return type === "movie";
         }
 
-        // Bản ghi từ API thể loại không có nhãn nội bộ:
-        // dùng bộ phân loại dựa trên metadata thực tế.
+        // Trường hợp chưa xác định được loại thì chỉ chấp nhận
+        // khi metadata của bản ghi có đủ dấu hiệu.
         return type === "series"
             ? isSeriesItem(item)
             : !isSeriesItem(item);
