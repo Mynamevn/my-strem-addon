@@ -2379,6 +2379,7 @@ function movinaClassicFindExactMatch(title, items) {
     return null;
 }
 
+
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
         type,
@@ -2394,17 +2395,24 @@ async function movinaClassicSearchPhimAPI(title, type) {
         return cached.item;
     }
 
-    try {
+    const isExpectedSeries = type === "series";
+
+    async function searchPhimAPI(useTypeFilter) {
+        const params = {
+            keyword: title.title,
+            page: 1,
+            limit: 20
+        };
+
+        if (useTypeFilter) {
+            params.filterType = isExpectedSeries ? "series" : "single";
+        }
+
         const response = await axios.get(
             "https://phimapi.com/v1/api/tim-kiem",
             {
-                params: {
-                    keyword: title.title,
-                    page: 1,
-                    limit: 20,
-                    filterType: type === "series" ? "series" : "single"
-                },
-                timeout: 4000,
+                params,
+                timeout: 3500,
                 headers: {
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json"
@@ -2417,10 +2425,29 @@ async function movinaClassicSearchPhimAPI(title, type) {
             response.data?.items ||
             [];
 
-        const match = movinaClassicFindExactMatch(
-            title,
-            Array.isArray(items) ? items : []
-        );
+        return Array.isArray(items) ? items : [];
+    }
+
+    try {
+        // Lượt 1: tìm theo tên và loại nội dung.
+        let items = await searchPhimAPI(true);
+
+        let match = movinaClassicFindExactMatch(title, items);
+
+        // Lượt 2: nếu không thấy, thử tìm không lọc loại.
+        // Vẫn kiểm tra loại phim trước khi chấp nhận kết quả.
+        if (!match) {
+            items = await searchPhimAPI(false);
+
+            const correctlyTyped = items.filter(item =>
+                isSeriesItem(item) === isExpectedSeries
+            );
+
+            match = movinaClassicFindExactMatch(
+                title,
+                correctlyTyped
+            );
+        }
 
         MOVINA_CLASSIC_SEARCH_CACHE.set(cacheKey, {
             time: Date.now(),
@@ -2440,10 +2467,10 @@ async function movinaClassicSearchPhimAPI(title, type) {
             })
         );
 
-        // Không cache lỗi mạng; cho phép thử lại ở yêu cầu sau.
         return null;
     }
 }
+
 
 async function movinaFetchClassicCatalog(type) {
     const rankedTitles = await movinaClassicGetRankedTitles(type);
@@ -2846,7 +2873,7 @@ async function fetchMovinaTrendingByGenre(
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
         for (const slug of genreSlugs) {
-            for (let page = 1; page <= 6; page++) {
+            for (let page = 1; page <= 4; page++) {
                 const url =
                     "https://phimapi.com/v1/api/the-loai/" +
                     encodeURIComponent(slug) +
@@ -2865,7 +2892,7 @@ async function fetchMovinaTrendingByGenre(
         }
 
         // Luôn có nguồn danh sách đúng loại để bổ sung.
-        for (let page = 1; page <= 6; page++) {
+        for (let page = 1; page <= 4; page++) {
             const url =
                 "https://phimapi.com/v1/api/danh-sach/" +
                 listEndpoint +
