@@ -167,11 +167,20 @@ const manifest = {
             ]
         },
 
-        {
+                {
             type: "MOVINA",
             id: "pa_tvb",
             name: "🇭🇰 TVB",
             extra: [
+                {
+                    name: "genre",
+                    isRequired: false,
+                    options: [
+                        "Phim lẻ TVB",
+                        "Phim bộ TVB"
+                    ],
+                    optionsLimit: 1
+                },
                 {
                     name: "search",
                     isRequired: false
@@ -3553,7 +3562,7 @@ if (isClassic) {
    ============================================================ */
 
 // [CORE-008.01] [PROVIDERS: ALL] TVB CATALOG FETCH
-async function fetchTVB() {
+async function fetchTVB(selectedType = "") {
 
     const seriesPages = [];
     const moviePages = [];
@@ -3630,6 +3639,71 @@ async function fetchTVB() {
                     !isSeriesItem(item) &&
                     isHongKong(item)
             );
+
+    /*
+       ========================================================
+       TVB FILTER — PHIM LẺ / PHIM BỘ
+       Mỗi danh sách tối đa 50 phim.
+       Xáo trộn ổn định theo ngày Việt Nam.
+       ========================================================
+    */
+
+    const tvbSelectedType =
+        String(selectedType || "").trim();
+
+    if (
+        tvbSelectedType === "Phim lẻ TVB" ||
+        tvbSelectedType === "Phim bộ TVB"
+    ) {
+        const dateParts =
+            new Intl.DateTimeFormat("en-CA", {
+                timeZone: "Asia/Ho_Chi_Minh",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit"
+            }).formatToParts(new Date());
+
+        const dateValues = {};
+
+        for (const part of dateParts) {
+            if (part.type !== "literal") {
+                dateValues[part.type] = part.value;
+            }
+        }
+
+        const vietnamDate =
+            `${dateValues.year}-${dateValues.month}-${dateValues.day}`;
+
+        const isSeriesSelection =
+            tvbSelectedType === "Phim bộ TVB";
+
+        const sourceItems =
+            isSeriesSelection
+                ? hkSeries
+                : hkMovies;
+
+        const result =
+            stableShuffle(
+                sourceItems,
+                `tvb|${isSeriesSelection ? "series" : "movie"}|${vietnamDate}`
+            ).slice(
+                0,
+                CATALOG_TARGET
+            );
+
+        console.log(
+            "[TVB FILTER]",
+            JSON.stringify({
+                category: tvbSelectedType,
+                vietnamDate,
+                available: sourceItems.length,
+                returned: result.length,
+                target: CATALOG_TARGET
+            })
+        );
+
+        return result;
+    }
 
     console.log(
         "[TVB] HK series:",
@@ -6728,11 +6802,27 @@ forcedType = "series";
 
                 }
 
-                items =
-                    await fetchTVB();
+                                const selectedTVBCategory =
+                    String(
+                        args.extra?.genre || ""
+                    ).trim();
 
-                forcedType =
-                    null;
+                items =
+                    await fetchTVB(
+                        selectedTVBCategory
+                    );
+
+                if (
+                    selectedTVBCategory === "Phim lẻ TVB"
+                ) {
+                    forcedType = "movie";
+                } else if (
+                    selectedTVBCategory === "Phim bộ TVB"
+                ) {
+                    forcedType = "series";
+                } else {
+                    forcedType = null;
+                }
 
             /* ========================================================
                12.4 DAILY
