@@ -7903,36 +7903,27 @@ forcedType = "series";
 
             }
             
+
 /* ========================================================
    12.8 BUILD METAS
    ======================================================== */
 
-// Chỉ bổ sung Cinemeta cho Phim lẻ - Trending.
-// Các catalog khác giữ nguyên cách tạo preview hiện tại.
-let metas;
-
-if (args.id === "pa_movies_trending") {
-    metas = await movinaEnrichMovieTrendingPreviews(items);
-
-    console.log(
-        "[CINEMETA PREVIEW] Enriched movie trending:",
-        metas.length
-    );
-} else {
-    metas = items
-        .slice(0, CATALOG_TARGET)
-        .map(item =>
-            makeCatalogMeta(
-                item,
-                forcedType
-            )
+// Không gọi Cinemeta trong lúc tải catalog.
+// Giữ catalog nhẹ và phản hồi nhanh.
+// Metadata chi tiết vẫn do defineMetaHandler xử lý.
+const metas = items
+    .slice(0, CATALOG_TARGET)
+    .map(item =>
+        makeCatalogMeta(
+            item,
+            forcedType
         )
-        .filter(
-            meta =>
-                meta.id &&
-                meta.name
-        );
-}
+    )
+    .filter(
+        meta =>
+            meta.id &&
+            meta.name
+    );
 
             /* ========================================================
                12.9 LOG
