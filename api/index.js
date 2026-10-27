@@ -2489,9 +2489,8 @@ async function movinaFetchClassicCatalog(type) {
      * những phim IMDb còn thiếu.
      */
     
-    
 if (type === "series") {
-    const LOOKUP_CONCURRENCY = 16;
+    const LOOKUP_CONCURRENCY = 32;
     const LOOKUP_TIMEOUT = 2200;
     const MAX_FALLBACK_SEARCHES = 12;
 
