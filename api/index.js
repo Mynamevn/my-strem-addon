@@ -3089,7 +3089,10 @@ async function fetchMovinaTrendingByGenre(
             );
         }
 
-        // Nguồn B: danh sách phim bộ để xác nhận loại nội dung.
+        
+        // Nguồn B: phim bộ đã lọc trực tiếp theo thể loại Kinh dị.
+        // Không dùng danh sách phim bộ tổng quát vì nhiều series
+        // kinh dị không xuất hiện trong các trang đầu của danh sách đó.
         for (
             let page = 1;
             page <= HORROR_SERIES_PAGES;
@@ -3097,14 +3100,16 @@ async function fetchMovinaTrendingByGenre(
         ) {
             const url =
                 "https://phimapi.com/v1/api/danh-sach/phim-bo" +
-                "?page=" + page +
+                "?category=" + encodeURIComponent(horrorSlug) +
+                "&page=" + page +
                 "&limit=" + PAGE_SIZE;
 
             requests.push(
                 catalogFetch(url).then(items =>
                     items.map(item => ({
                         ...item,
-                        __catalogType: "series"
+                        __catalogType: "series",
+                        __genreApiSlug: horrorSlug
                     }))
                 )
             );
