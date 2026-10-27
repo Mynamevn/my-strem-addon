@@ -9396,13 +9396,11 @@ if (
         // [STREMIO-013.18] [PROVIDERS: ALL] SERIES META AND VIDEOS OUTPUT
         // =====================================================
 
+        
         const meta = {
+            id: metaId,
 
-            id:
-                metaId,
-
-            type:
-                metaType,
+            type: metaType,
 
             name:
                 detail?.name ||
@@ -9424,17 +9422,96 @@ if (
 
             releaseInfo:
                 detail?.year
-                    ? String(
-                        detail.year
-                    )
+                    ? String(detail.year)
                     : (
                         item?.year
-                            ? String(
-                                item.year
-                            )
+                            ? String(item.year)
                             : undefined
-                    )
+                    ),
 
+            // Điểm IMDb đã được xử lý ở block phía trên.
+            imdbRating:
+                imdbRating !== null
+                    ? imdbRating
+                    : undefined,
+
+            // Thể loại đã được chuẩn hóa ở STREMIO-013.16.
+            genres:
+                Array.isArray(genres) && genres.length
+                    ? genres
+                    : undefined,
+
+            // PhimAPI thường trả thời lượng qua detail.time.
+            runtime:
+                detail?.time ||
+                detail?.duration ||
+                item?.time ||
+                item?.duration ||
+                undefined,
+
+            // Chuẩn hóa danh sách diễn viên.
+            cast: (() => {
+                const raw =
+                    detail?.actor ??
+                    detail?.actors ??
+                    item?.actor ??
+                    item?.actors;
+
+                if (Array.isArray(raw)) {
+                    return raw
+                        .map(x =>
+                            typeof x === "string"
+                                ? x.trim()
+                                : String(
+                                    x?.name ||
+                                    x?.title ||
+                                    ""
+                                ).trim()
+                        )
+                        .filter(Boolean);
+                }
+
+                if (typeof raw === "string" && raw.trim()) {
+                    return raw
+                        .split(",")
+                        .map(x => x.trim())
+                        .filter(Boolean);
+                }
+
+                return undefined;
+            })(),
+
+            // Chuẩn hóa tên đạo diễn.
+            director: (() => {
+                const raw =
+                    detail?.director ??
+                    detail?.directors ??
+                    item?.director ??
+                    item?.directors;
+
+                if (Array.isArray(raw)) {
+                    return raw
+                        .map(x =>
+                            typeof x === "string"
+                                ? x.trim()
+                                : String(
+                                    x?.name ||
+                                    x?.title ||
+                                    ""
+                                ).trim()
+                        )
+                        .filter(Boolean);
+                }
+
+                if (typeof raw === "string" && raw.trim()) {
+                    return raw
+                        .split(",")
+                        .map(x => x.trim())
+                        .filter(Boolean);
+                }
+
+                return undefined;
+            })()
         };
 
         if (
