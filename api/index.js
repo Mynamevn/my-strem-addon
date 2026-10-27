@@ -3046,30 +3046,57 @@ async function fetchMovinaTrendingByGenre(
         );
     }
 
+    
+    } else if (
+        type === "series" &&
+        normalizedGenre === "kinh di"
+    ) {
+        /*
+         * KINH DỊ - PHIM BỘ:
+         * 1. Chỉ lấy từ danh sách phim bộ.
+         * 2. Gắn nhãn series ngay tại nguồn.
+         * 3. Phần lọc thể loại phía dưới sẽ chỉ giữ phim Kinh dị.
+         *
+         * Không lấy API thể loại Kinh dị ở nhánh này,
+         * vì API đó có thể trả cả phim lẻ.
+         */
+        const HORROR_SERIES_PAGES = 8;
+
+        for (
+            let page = 1;
+            page <= HORROR_SERIES_PAGES;
+            page++
+        ) {
+            const url =
+                "https://phimapi.com/v1/api/danh-sach/phim-bo" +
+                "?page=" + page +
+                "&limit=" + PAGE_SIZE;
+
+            requests.push(
+                catalogFetch(url).then(items =>
+                    items.map(item => ({
+                        ...item,
+                        __catalogType: "series"
+                    }))
+                )
+            );
+        }
+
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
         for (const slug of genreSlugs) {
             for (let page = 1; page <= 6; page++) {
-                
                 const url =
                     "https://phimapi.com/v1/api/the-loai/" +
                     encodeURIComponent(slug) +
                     "?page=" + page +
-                    "&limit=" + PAGE_SIZE +
-                    (
-                        type === "series"
-                            ? "&type=series"
-                            : ""
-                    );
+                    "&limit=" + PAGE_SIZE;
 
                 requests.push(
                     catalogFetch(url).then(items =>
                         items.map(item => ({
                             ...item,
-                            __genreApiSlug: slug,
-                            ...(type === "series" && slug === "kinh-di"
-                                ? { __catalogType: "series" }
-                                : {})
+                            __genreApiSlug: slug
                         }))
                     )
                 );
@@ -3094,6 +3121,7 @@ async function fetchMovinaTrendingByGenre(
             );
         }
     }
+
 
     console.log(
         "[MOVINA TRENDING REQUEST PLAN]",
