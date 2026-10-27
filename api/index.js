@@ -3047,21 +3047,55 @@ async function fetchMovinaTrendingByGenre(
     }
 
     
+    
     } else if (
         type === "series" &&
         normalizedGenre === "kinh di"
     ) {
         /*
-         * KINH DỊ - PHIM BỘ:
-         * 1. Chỉ lấy từ danh sách phim bộ.
-         * 2. Gắn nhãn series ngay tại nguồn.
-         * 3. Phần lọc thể loại phía dưới sẽ chỉ giữ phim Kinh dị.
+         * KINH DỊ - PHIM BỘ
          *
-         * Không lấy API thể loại Kinh dị ở nhánh này,
-         * vì API đó có thể trả cả phim lẻ.
+         * Nguồn A: API thể loại Kinh dị.
+         * Nguồn B: API danh sách phim bộ.
+         *
+         * Gộp theo slug/ID trước khi lọc:
+         * - __catalogType xác định đúng phim bộ.
+         * - __genreApiSlug xác nhận phim thuộc Kinh dị.
+         *
+         * Không phụ thuộc hoàn toàn vào metadata thể loại
+         * của từng bản ghi phim bộ.
          */
+        const HORROR_GENRE_PAGES = 8;
         const HORROR_SERIES_PAGES = 8;
 
+        const horrorSlug =
+            genreSlugs.includes("kinh-di")
+                ? "kinh-di"
+                : "kinh-di";
+
+        // Nguồn A: lấy các phim được API xếp vào thể loại Kinh dị.
+        for (
+            let page = 1;
+            page <= HORROR_GENRE_PAGES;
+            page++
+        ) {
+            const url =
+                "https://phimapi.com/v1/api/the-loai/" +
+                encodeURIComponent(horrorSlug) +
+                "?page=" + page +
+                "&limit=" + PAGE_SIZE;
+
+            requests.push(
+                catalogFetch(url).then(items =>
+                    items.map(item => ({
+                        ...item,
+                        __genreApiSlug: "kinh-di"
+                    }))
+                )
+            );
+        }
+
+        // Nguồn B: danh sách phim bộ để xác định loại nội dung.
         for (
             let page = 1;
             page <= HORROR_SERIES_PAGES;
@@ -3081,6 +3115,18 @@ async function fetchMovinaTrendingByGenre(
                 )
             );
         }
+
+        console.log(
+            "[MOVINA HORROR SERIES PLAN]",
+            JSON.stringify({
+                genreEndpoint: "the-loai/kinh-di",
+                seriesEndpoint: "danh-sach/phim-bo",
+                genrePages: HORROR_GENRE_PAGES,
+                seriesPages: HORROR_SERIES_PAGES,
+                expectedRequests:
+                    HORROR_GENRE_PAGES + HORROR_SERIES_PAGES
+            })
+        );
 
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
