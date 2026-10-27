@@ -2490,7 +2490,7 @@ async function movinaFetchClassicCatalog(type) {
      */
     
 if (type === "series") {
-    const LOOKUP_CONCURRENCY = 32;
+    const LOOKUP_CONCURRENCY = 64;
     const LOOKUP_TIMEOUT = 2200;
     const MAX_FALLBACK_SEARCHES = 12;
 
