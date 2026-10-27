@@ -6346,6 +6346,313 @@ function makeCatalogMeta(
 
 }
 
+
+/* ============================================================
+   [STREMIO-012.01] [PROVIDERS: MOVINA]
+   CINEMETA CATALOG PREVIEW ENRICHMENT
+   Chỉ phục vụ Phim lẻ - Trending ở bước gọi bên dưới.
+   ============================================================ */
+
+const MOVINA_CINEMETA_PREVIEW_CACHE = new Map();
+
+const MOVINA_CINEMETA_PREVIEW_TTL =
+    6 * 60 * 60 * 1000;
+
+const MOVINA_CINEMETA_PREVIEW_FAIL_TTL =
+    10 * 60 * 1000;
+
+function movinaCinemetaPreviewYear(meta) {
+    const raw =
+        meta?.year ||
+        meta?.releaseInfo ||
+        meta?.released ||
+        "";
+
+    const match = String(raw).match(/\b(19|20)\d{2}\b/);
+
+    return match ? Number(match[0]) : 0;
+}
+
+function movinaCinemetaPreviewFields(meta) {
+    if (!meta || typeof meta !== "object") {
+        return {};
+    }
+
+    const result = {};
+
+    if (
+        typeof meta.description === "string" &&
+        meta.description.trim()
+    ) {
+        result.description = meta.description.trim();
+    }
+
+    if (
+        Array.isArray(meta.genres) &&
+        meta.genres.length
+    ) {
+        result.genres = meta.genres.filter(
+            value => typeof value === "string" && value.trim()
+        );
+    }
+
+    if (
+        Array.isArray(meta.cast) &&
+        meta.cast.length
+    ) {
+        result.cast = meta.cast.filter(
+            value => typeof value === "string" && value.trim()
+        );
+    }
+
+    if (
+        Array.isArray(meta.director) &&
+        meta.director.length
+    ) {
+        result.director = meta.director.filter(
+            value => typeof value === "string" && value.trim()
+        );
+    }
+
+    const rating = Number(meta.imdbRating);
+
+    if (Number.isFinite(rating) && rating > 0) {
+        result.imdbRating = rating;
+    }
+
+    if (
+        typeof meta.runtime === "string" &&
+        meta.runtime.trim()
+    ) {
+        result.runtime = meta.runtime.trim();
+    }
+
+    if (
+        typeof meta.background === "string" &&
+        meta.background.trim()
+    ) {
+        result.background = meta.background.trim();
+    }
+
+    return result;
+}
+
+async function movinaFetchCinemetaPreview(item) {
+    const imdbId = String(
+        item?.__movinaClassicImdbId ||
+        item?.imdb?.id ||
+        item?.imdb_id ||
+        ""
+    ).trim();
+
+    const originalName = String(
+        item?.origin_name ||
+        item?.original_name ||
+        ""
+    ).trim();
+
+    const localName = String(
+        item?.name ||
+        ""
+    ).trim();
+
+    const targetYear = Number(item?.year) || 0;
+
+    const cacheKey = /^tt\d+$/i.test(imdbId)
+        ? "id:" + imdbId
+        : "title:" +
+            catalogNormalize(originalName || localName) +
+            "|" + targetYear;
+
+    const cached = MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.promise;
+    }
+
+    const requestPromise = (async () => {
+        try {
+            const headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json"
+            };
+
+            // Ưu tiên IMDb ID đã có sẵn, không tìm theo tên.
+            if (/^tt\d+$/i.test(imdbId)) {
+                const response = await axios.get(
+                    "https://v3-cinemeta.strem.io/meta/movie/" +
+                    encodeURIComponent(imdbId) +
+                    ".json",
+                    {
+                        timeout: 2500,
+                        headers
+                    }
+                );
+
+                const meta = response.data?.meta;
+
+                if (
+                    meta &&
+                    String(meta.id || "").split(":")[0] === imdbId
+                ) {
+                    return movinaCinemetaPreviewFields(meta);
+                }
+
+                return {};
+            }
+
+            // Không có IMDb ID: tìm theo tên, sau đó kiểm tra
+            // tên và năm trước khi nhận kết quả.
+            const queries = [
+                originalName,
+                localName
+            ].filter(
+                (name, index, all) =>
+                    name &&
+                    all.findIndex(
+                        other =>
+                            catalogNormalize(other) ===
+                            catalogNormalize(name)
+                    ) === index
+            );
+
+            for (const query of queries) {
+                const response = await axios.get(
+                    "https://v3-cinemeta.strem.io/catalog/movie/top/search=" +
+                    encodeURIComponent(query) +
+                    ".json",
+                    {
+                        timeout: 2500,
+                        headers
+                    }
+                );
+
+                const candidates = response.data?.metas || [];
+
+                const exact = candidates.find(candidate => {
+                    const candidateName = catalogNormalize(
+                        candidate?.name
+                    );
+
+                    const names = [
+                        originalName,
+                        localName
+                    ]
+                        .filter(Boolean)
+                        .map(catalogNormalize);
+
+                    if (!candidateName || !names.includes(candidateName)) {
+                        return false;
+                    }
+
+                    const candidateYear =
+                        movinaCinemetaPreviewYear(candidate);
+
+                    return !targetYear || candidateYear === targetYear;
+                });
+
+                if (exact) {
+                    return movinaCinemetaPreviewFields(exact);
+                }
+            }
+
+            return {};
+        } catch (error) {
+            console.log(
+                "[CINEMETA PREVIEW] Lookup failed:",
+                localName || originalName || imdbId || "unknown",
+                error?.response?.status || error?.message || error
+            );
+
+            return {};
+        }
+    })();
+
+    MOVINA_CINEMETA_PREVIEW_CACHE.set(cacheKey, {
+        expiresAt: Date.now() + MOVINA_CINEMETA_PREVIEW_TTL,
+        promise: requestPromise
+    });
+
+    const fields = await requestPromise;
+
+    // Cache kết quả rỗng ngắn hơn để có thể thử lại sau.
+    if (!Object.keys(fields).length) {
+        MOVINA_CINEMETA_PREVIEW_CACHE.set(cacheKey, {
+            expiresAt: Date.now() + MOVINA_CINEMETA_PREVIEW_FAIL_TTL,
+            promise: Promise.resolve({})
+        });
+    }
+
+    return fields;
+}
+
+async function movinaEnrichMovieTrendingPreviews(items) {
+    const sourceItems = (items || []).slice(0, CATALOG_TARGET);
+    const metas = new Array(sourceItems.length);
+    let nextIndex = 0;
+
+    async function worker() {
+        while (true) {
+            const index = nextIndex++;
+
+            if (index >= sourceItems.length) {
+                return;
+            }
+
+            const item = sourceItems[index];
+            const preview = makeCatalogMeta(item, "movie");
+
+            try {
+                const extra = await movinaFetchCinemetaPreview(item);
+
+                metas[index] = {
+                    ...preview,
+                    ...extra,
+
+                    // Luôn giữ định danh, tên và poster MOVINA.
+                    id: preview.id,
+                    type: "movie",
+                    name: preview.name,
+                    poster: preview.poster,
+                    posterShape: preview.posterShape,
+
+                    // Năm của MOVINA được ưu tiên để tránh
+                    // Cinemeta làm đổi năm hiển thị.
+                    releaseInfo:
+                        preview.releaseInfo ||
+                        (movinaCinemetaPreviewYear(extra)
+                            ? String(movinaCinemetaPreviewYear(extra))
+                            : undefined),
+
+                    // Giữ rating MOVINA nếu đã có.
+                    imdbRating:
+                        preview.imdbRating ??
+                        extra.imdbRating
+                };
+            } catch (error) {
+                console.log(
+                    "[CINEMETA PREVIEW] Enrichment error:",
+                    error?.message || error
+                );
+
+                metas[index] = preview;
+            }
+        }
+    }
+
+    // Tối đa 8 yêu cầu Cinemeta chạy đồng thời.
+    const workerCount = Math.min(8, sourceItems.length);
+
+    await Promise.all(
+        Array.from(
+            { length: workerCount },
+            () => worker()
+        )
+    );
+
+    return metas.filter(meta => meta?.id && meta?.name);
+}
+
 /* ============================================================
    12. DEFINE CATALOG HANDLER
    ============================================================ */
@@ -7392,29 +7699,37 @@ forcedType = "series";
                     );
 
             }
+            
+/* ========================================================
+   12.8 BUILD METAS
+   ======================================================== */
 
-            /* ========================================================
-               12.8 BUILD METAS
-               ======================================================== */
+// Chỉ bổ sung Cinemeta cho Phim lẻ - Trending.
+// Các catalog khác giữ nguyên cách tạo preview hiện tại.
+let metas;
 
-            const metas =
-                items
-                    .slice(
-                        0,
-                        CATALOG_TARGET
-                    )
-                    .map(
-                        item =>
-                            makeCatalogMeta(
-                                item,
-                                forcedType
-                            )
-                    )
-                    .filter(
-                        meta =>
-                            meta.id &&
-                            meta.name
-                    );
+if (args.id === "pa_movies_trending") {
+    metas = await movinaEnrichMovieTrendingPreviews(items);
+
+    console.log(
+        "[CINEMETA PREVIEW] Enriched movie trending:",
+        metas.length
+    );
+} else {
+    metas = items
+        .slice(0, CATALOG_TARGET)
+        .map(item =>
+            makeCatalogMeta(
+                item,
+                forcedType
+            )
+        )
+        .filter(
+            meta =>
+                meta.id &&
+                meta.name
+        );
+}
 
             /* ========================================================
                12.9 LOG
