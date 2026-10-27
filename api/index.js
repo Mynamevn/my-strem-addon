@@ -2090,6 +2090,7 @@ async function movinaTrendingLoadTMDB(items, contentType) {
 const MOVINA_CLASSIC_RANKED_CACHE = new Map();
 const MOVINA_CLASSIC_SEARCH_CACHE = new Map();
 const MOVINA_CLASSIC_CATALOG_CACHE = new Map();
+const MOVINA_CLASSIC_CATALOG_INFLIGHT = new Map();
 
 const MOVINA_CLASSIC_RANKED_SOURCES = {
     movie: [
@@ -2539,7 +2540,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 }
 
-async function movinaFetchClassicCatalog(type) {
+async function movinaFetchClassicCatalogUncached(type) {
     const cacheKey = type === "series" ? "series" : "movie";
     const now = Date.now();
 
@@ -2569,7 +2570,7 @@ async function movinaFetchClassicCatalog(type) {
     }
 
     const TARGET = CATALOG_TARGET;
-    const CONCURRENCY = 8;
+    const CONCURRENCY = 12;
     const matchedByKey = new Map();
     let searched = 0;
     let failedSearches = 0;
@@ -2669,11 +2670,9 @@ async function movinaFetchClassicCatalog(type) {
     // để lần sau có cơ hội tìm bổ sung.
     
 const cacheTTL =
-    result.length >= TARGET
+    result.length > 0
         ? 30 * 60 * 1000
-        : result.length > 0
-            ? 30 * 60 * 1000
-            : 2 * 60 * 1000;
+        : 2 * 60 * 1000;
 
     MOVINA_CLASSIC_CATALOG_CACHE.set(cacheKey, {
         time: Date.now(),
@@ -2693,6 +2692,48 @@ const cacheTTL =
     return result;
 }
 
+async function movinaFetchClassicCatalog(type) {
+    const cacheKey =
+        type === "series" ? "series" : "movie";
+
+    const cached =
+        MOVINA_CLASSIC_CATALOG_CACHE.get(cacheKey);
+
+    if (
+        cached &&
+        Date.now() - cached.time < cached.ttl
+    ) {
+        return cached.items.map(item => ({ ...item }));
+    }
+
+    const existing =
+        MOVINA_CLASSIC_CATALOG_INFLIGHT.get(cacheKey);
+
+    if (existing) {
+        const sharedItems = await existing;
+
+        return sharedItems.map(item => ({ ...item }));
+    }
+
+    const pending = movinaFetchClassicCatalogUncached(type);
+
+    MOVINA_CLASSIC_CATALOG_INFLIGHT.set(
+        cacheKey,
+        pending
+    );
+
+    try {
+        const items = await pending;
+
+        return items.map(item => ({ ...item }));
+    } finally {
+        if (
+            MOVINA_CLASSIC_CATALOG_INFLIGHT.get(cacheKey) === pending
+        ) {
+            MOVINA_CLASSIC_CATALOG_INFLIGHT.delete(cacheKey);
+        }
+    }
+}
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
@@ -2774,36 +2815,31 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
         return true;
     }
 
-    /*
-     * Ưu tiên nguồn thể loại chính thức của PhimAPI.
-     *
-     * Nếu item đã được lấy từ đúng endpoint thể loại,
-     * không bắt metadata category phải lặp lại tên thể loại.
-     * Điều này tránh loại nhầm phim Kinh dị và các thể loại khác.
-     */
+    // Tin cậy endpoint thể loại gốc của PhimAPI.
+    // __genreApiSlug đã được gắn khi tải dữ liệu.
     const sourceSlug = String(
         item?.__genreApiSlug || ""
     ).trim().toLowerCase();
 
-    const trustedSlugs =
+    const expectedSlugs =
         MOVINA_TRENDING_GENRE_SLUGS[genre] || [];
 
     if (
         sourceSlug &&
-        trustedSlugs.includes(sourceSlug)
+        expectedSlugs.includes(sourceSlug)
     ) {
         return true;
     }
 
-    const categories = catalogCategoryNames(item);
-
-    // Hoạt hình dùng bộ nhận diện riêng.
+    // Giữ bộ nhận diện hoạt hình hiện có.
     if (
         genre === "hoat hinh" &&
         isAnimation(item)
     ) {
         return true;
     }
+
+    const categories = catalogCategoryNames(item);
 
     const aliases =
         MOVINA_TRENDING_GENRE_ALIASES[genre] || [genre];
