@@ -2089,6 +2089,7 @@ async function movinaTrendingLoadTMDB(items, contentType) {
 
 const MOVINA_CLASSIC_RANKED_CACHE = new Map();
 const MOVINA_CLASSIC_SEARCH_CACHE = new Map();
+const MOVINA_CLASSIC_CATALOG_CACHE = new Map();
 
 const MOVINA_CLASSIC_RANKED_SOURCES = {
     movie: [
@@ -2524,8 +2525,34 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 }
 
+
 async function movinaFetchClassicCatalog(type) {
-    const rankedTitles = await movinaClassicGetRankedTitles(type);
+    const cacheKey = type === "series" ? "series" : "movie";
+    const now = Date.now();
+
+    // Cache danh sách hoàn chỉnh lâu hơn danh sách chưa đủ 50 phim.
+    const cachedCatalog =
+        MOVINA_CLASSIC_CATALOG_CACHE.get(cacheKey);
+
+    if (
+        cachedCatalog &&
+        now - cachedCatalog.time < cachedCatalog.ttl
+    ) {
+        console.log(
+            "[MOVINA CLASSIC CATALOG CACHE HIT]",
+            JSON.stringify({
+                type: cacheKey,
+                items: cachedCatalog.items.length,
+                ageMs: now - cachedCatalog.time,
+                ttlMs: cachedCatalog.ttl
+            })
+        );
+
+        return cachedCatalog.items.map(item => ({ ...item }));
+    }
+
+    const rankedTitles =
+        await movinaClassicGetRankedTitles(type);
 
     if (!rankedTitles.length) {
         return [];
@@ -2536,8 +2563,7 @@ async function movinaFetchClassicCatalog(type) {
     const matchedByKey = new Map();
     let searched = 0;
 
-    // Duyệt theo thứ hạng. Chỉ dừng khi đã có đủ kết quả
-    // hoặc đã thử hết danh sách Top 250.
+    // Duyệt theo thứ hạng IMDb, không đảo thứ tự theo kết quả tìm kiếm.
     for (
         let start = 0;
         start < rankedTitles.length &&
@@ -2552,7 +2578,10 @@ async function movinaFetchClassicCatalog(type) {
         const batchResults = await Promise.all(
             batch.map(async title => ({
                 title,
-                item: await movinaClassicSearchPhimAPI(title, type)
+                item: await movinaClassicSearchPhimAPI(
+                    title,
+                    type
+                )
             }))
         );
 
@@ -2597,9 +2626,30 @@ async function movinaFetchClassicCatalog(type) {
         })
     );
 
+    // Đủ 50 phim: cache 30 phút.
+    // Chưa đủ 50 phim: cache 3 phút rồi cho phép thử bổ sung lại.
+    const cacheTTL =
+        result.length >= TARGET
+            ? 30 * 60 * 1000
+            : 3 * 60 * 1000;
+
+    MOVINA_CLASSIC_CATALOG_CACHE.set(cacheKey, {
+        time: Date.now(),
+        ttl: cacheTTL,
+        items: result.map(item => ({ ...item }))
+    });
+
+    console.log(
+        "[MOVINA CLASSIC CATALOG CACHE SET]",
+        JSON.stringify({
+            type: cacheKey,
+            items: result.length,
+            ttlMs: cacheTTL
+        })
+    );
+
     return result;
 }
-
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
