@@ -2307,12 +2307,46 @@ async function movinaClassicGetRankedTitles(type) {
     return [];
 }
 
+
 function movinaClassicFindExactMatch(title, items) {
+    const candidates = Array.isArray(items) ? items : [];
     const expectedName = movinaClassicNormalize(title?.title);
+    const expectedIMDbId = movinaClassicIMDbId(title?.imdbId);
+    const expectedYear = Number(title?.year) || 0;
+
+    if (!expectedName && !expectedIMDbId) return null;
+
+    function yearMatches(item) {
+        const candidateYear = Number(itemYear(item)) || 0;
+
+        return !(
+            expectedYear &&
+            candidateYear &&
+            Math.abs(expectedYear - candidateYear) > 1
+        );
+    }
+
+    // Ưu tiên 1: IMDb ID chính xác, kể cả khi tên trên PhimAPI
+    // khác tên trong danh sách IMDb.
+    if (expectedIMDbId) {
+        const idMatches = candidates.filter(item =>
+            movinaClassicItemIMDbId(item) === expectedIMDbId &&
+            yearMatches(item)
+        );
+
+        if (idMatches.length === 1) {
+            return idMatches[0];
+        }
+
+        if (idMatches.length > 1) {
+            return null;
+        }
+    }
 
     if (!expectedName) return null;
 
-    const exactCandidates = (items || []).filter(item => {
+    // Ưu tiên 2: tên gốc hoặc tên hiển thị khớp chính xác.
+    const exactCandidates = candidates.filter(item => {
         const names = [
             item?.origin_name,
             item?.original_name,
@@ -2322,32 +2356,12 @@ function movinaClassicFindExactMatch(title, items) {
             .map(movinaClassicNormalize)
             .filter(Boolean);
 
-        if (!names.includes(expectedName)) {
-            return false;
-        }
-
-        const expectedYear = Number(title?.year) || 0;
-        const candidateYear = itemYear(item);
-
-        if (expectedYear && candidateYear) {
-            return Math.abs(expectedYear - candidateYear) <= 1;
-        }
-
-        return true;
+        return names.includes(expectedName) && yearMatches(item);
     });
 
-    // Ưu tiên tuyệt đối mã IMDb trùng khớp.
-    if (title.imdbId) {
-        const idMatches = exactCandidates.filter(item =>
-            movinaClassicItemIMDbId(item) === title.imdbId
-        );
-
-        if (idMatches.length === 1) {
-            return idMatches[0];
-        }
-
-        // Nếu tên khớp nhưng bản ghi có IMDb ID khác,
-        // không ghép nhầm sang một phim khác cùng tên.
+    // Nếu PhimAPI có IMDb ID nhưng khác ID đang cần,
+    // không ghép nhầm sang một phim khác cùng tên.
+    if (expectedIMDbId) {
         const candidatesWithId = exactCandidates.filter(item =>
             movinaClassicItemIMDbId(item)
         );
@@ -2357,19 +2371,18 @@ function movinaClassicFindExactMatch(title, items) {
         }
     }
 
-    // Không có ID để xác minh: chỉ nhận duy nhất một kết quả
-    // có tên gốc/tên phim khớp chính xác.
     if (exactCandidates.length === 1) {
         return exactCandidates[0];
     }
 
-    // Nếu nhiều bản cùng tên và có năm phát hành,
-    // chỉ nhận khi năm xác định được đúng một bản ghi.
-    if (title.year) {
+    // Nhiều bản cùng tên: chỉ chọn khi năm phát hành
+    // xác định được duy nhất một bản.
+    if (expectedYear && exactCandidates.length > 1) {
         const sameYear = exactCandidates.filter(item => {
-            const year = itemYear(item);
+            const year = Number(itemYear(item)) || 0;
+
             return year &&
-                Math.abs(year - Number(title.year)) <= 1;
+                Math.abs(year - expectedYear) <= 1;
         });
 
         if (sameYear.length === 1) {
@@ -2379,8 +2392,6 @@ function movinaClassicFindExactMatch(title, items) {
 
     return null;
 }
-
-
 
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
@@ -2526,33 +2537,31 @@ async function movinaClassicSearchPhimAPI(title, type) {
 }
 
 
+
 async function movinaFetchClassicCatalog(type) {
     const cacheKey = type === "series" ? "series" : "movie";
     const now = Date.now();
 
-    // Cache danh sách hoàn chỉnh lâu hơn danh sách chưa đủ 50 phim.
-    const cachedCatalog =
-        MOVINA_CLASSIC_CATALOG_CACHE.get(cacheKey);
+    const cached = MOVINA_CLASSIC_CATALOG_CACHE.get(cacheKey);
 
     if (
-        cachedCatalog &&
-        now - cachedCatalog.time < cachedCatalog.ttl
+        cached &&
+        now - cached.time < cached.ttl
     ) {
         console.log(
             "[MOVINA CLASSIC CATALOG CACHE HIT]",
             JSON.stringify({
                 type: cacheKey,
-                items: cachedCatalog.items.length,
-                ageMs: now - cachedCatalog.time,
-                ttlMs: cachedCatalog.ttl
+                items: cached.items.length,
+                ageMs: now - cached.time,
+                ttlMs: cached.ttl
             })
         );
 
-        return cachedCatalog.items.map(item => ({ ...item }));
+        return cached.items.map(item => ({ ...item }));
     }
 
-    const rankedTitles =
-        await movinaClassicGetRankedTitles(type);
+    const rankedTitles = await movinaClassicGetRankedTitles(type);
 
     if (!rankedTitles.length) {
         return [];
@@ -2562,8 +2571,10 @@ async function movinaFetchClassicCatalog(type) {
     const CONCURRENCY = 4;
     const matchedByKey = new Map();
     let searched = 0;
+    let failedSearches = 0;
 
-    // Duyệt theo thứ hạng IMDb, không đảo thứ tự theo kết quả tìm kiếm.
+    // Duyệt theo thứ hạng IMDb. Không lấy phim ngoài Top 250
+    // để bù vào danh sách thiếu.
     for (
         let start = 0;
         start < rankedTitles.length &&
@@ -2576,18 +2587,27 @@ async function movinaFetchClassicCatalog(type) {
         );
 
         const batchResults = await Promise.all(
-            batch.map(async title => ({
-                title,
-                item: await movinaClassicSearchPhimAPI(
-                    title,
-                    type
-                )
-            }))
+            batch.map(async title => {
+                try {
+                    const item = await movinaClassicSearchPhimAPI(
+                        title,
+                        type
+                    );
+
+                    return { title, item, failed: false };
+                } catch (error) {
+                    return { title, item: null, failed: true };
+                }
+            })
         );
 
         searched += batch.length;
 
         for (const result of batchResults) {
+            if (result.failed) {
+                failedSearches++;
+            }
+
             if (!result.item) continue;
 
             const item = {
@@ -2601,7 +2621,17 @@ async function movinaFetchClassicCatalog(type) {
 
             const key = catalogKey(item);
 
-            if (key && !matchedByKey.has(key)) {
+            if (!key) continue;
+
+            const existing = matchedByKey.get(key);
+
+            // Nếu cùng một phim xuất hiện nhiều lần,
+            // giữ bản có thứ hạng IMDb tốt hơn.
+            if (
+                !existing ||
+                (item.__movinaClassicRank || 9999) <
+                (existing.__movinaClassicRank || 9999)
+            ) {
                 matchedByKey.set(key, item);
             }
         }
@@ -2620,18 +2650,26 @@ async function movinaFetchClassicCatalog(type) {
             type,
             rankedTitles: rankedTitles.length,
             searched,
+            failedSearches,
             matchedPhimAPI: matchedByKey.size,
             returned: result.length,
-            target: TARGET
+            target: TARGET,
+            firstRanks: result
+                .slice(0, 10)
+                .map(item => ({
+                    rank: item.__movinaClassicRank,
+                    imdbId: item.__movinaClassicImdbId,
+                    name: item.origin_name || item.name || ""
+                }))
         })
     );
 
-    // Đủ 50 phim: cache 30 phút.
-    // Chưa đủ 50 phim: cache 3 phút rồi cho phép thử bổ sung lại.
+    // Cache đầy đủ lâu hơn; cache thiếu kết quả ngắn hơn
+    // để lần sau có cơ hội tìm bổ sung.
     const cacheTTL =
         result.length >= TARGET
             ? 30 * 60 * 1000
-            : 3 * 60 * 1000;
+            : 2 * 60 * 1000;
 
     MOVINA_CLASSIC_CATALOG_CACHE.set(cacheKey, {
         time: Date.now(),
@@ -2650,6 +2688,7 @@ async function movinaFetchClassicCatalog(type) {
 
     return result;
 }
+
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
