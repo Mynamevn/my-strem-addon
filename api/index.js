@@ -6312,38 +6312,90 @@ function makeCatalogMeta(
         metaId
     );
 
+    
+    const rawDescription =
+        item?.content ||
+        item?.description ||
+        item?.overview ||
+        "";
+
+    const localDescription =
+        typeof rawDescription === "string"
+            ? rawDescription
+                .replace(/<[^>]*>/g, " ")
+                .replace(/&nbsp;/gi, " ")
+                .replace(/&amp;/gi, "&")
+                .replace(/&quot;/gi, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/\s+/g, " ")
+                .trim()
+            : "";
+
+    const localGenres = Array.isArray(item?.category)
+        ? item.category
+            .map(category =>
+                typeof category === "string"
+                    ? category
+                    : category?.name
+            )
+            .filter(Boolean)
+        : [];
+
+    const localCast = Array.isArray(item?.actor)
+        ? item.actor
+            .map(person =>
+                typeof person === "string"
+                    ? person
+                    : person?.name
+            )
+            .filter(Boolean)
+        : [];
+
+    const localDirectors = Array.isArray(item?.director)
+        ? item.director
+            .map(person =>
+                typeof person === "string"
+                    ? person
+                    : person?.name
+            )
+            .filter(Boolean)
+        : [];
+
     return {
-
-        id:
-            metaId,
-
-        type:
-            type,
-
+        id: metaId,
+        type,
         name:
             item?.name ||
             item?.origin_name ||
             "Unknown",
+        poster,
+        posterShape: "poster",
 
-        poster:
-            poster,
-
-        posterShape:
-            "poster",
-
-        releaseInfo:
-            item?.year
-                ? String(
-                    item.year
-                )
-                : undefined,
+        releaseInfo: item?.year
+            ? String(item.year)
+            : undefined,
 
         imdbRating:
             imdbRating !== null
                 ? imdbRating
-                : undefined
-    };
+                : undefined,
 
+        ...(localDescription
+            ? { description: localDescription }
+            : {}),
+
+        ...(localGenres.length
+            ? { genres: localGenres }
+            : {}),
+
+        ...(localCast.length
+            ? { cast: localCast }
+            : {}),
+
+        ...(localDirectors.length
+            ? { director: localDirectors }
+            : {})
+    };
 }
 
 
@@ -6586,72 +6638,117 @@ async function movinaFetchCinemetaPreview(item) {
     return fields;
 }
 
+
 async function movinaEnrichMovieTrendingPreviews(items) {
     const sourceItems = (items || []).slice(0, CATALOG_TARGET);
-    const metas = new Array(sourceItems.length);
-    let nextIndex = 0;
+    const metas = [];
+    const MAX_NEW_CINEMETA_LOOKUPS = 6;
+    let newLookups = 0;
 
-    async function worker() {
-        while (true) {
-            const index = nextIndex++;
+    for (const item of sourceItems) {
+        const preview = makeCatalogMeta(item, "movie");
 
-            if (index >= sourceItems.length) {
-                return;
+        if (!preview?.id || !preview?.name) {
+            continue;
+        }
+
+        const imdbId = String(
+            item?.__movinaClassicImdbId ||
+            item?.imdb?.id ||
+            item?.imdb_id ||
+            ""
+        ).trim();
+
+        const originalName = String(
+            item?.origin_name ||
+            item?.original_name ||
+            ""
+        ).trim();
+
+        const localName = String(item?.name || "").trim();
+
+        const cacheKey = /^tt\d+$/i.test(imdbId)
+            ? "id:" + imdbId
+            : "title:" +
+                catalogNormalize(originalName || localName) +
+                "|" + (Number(item?.year) || 0);
+
+        const cached = MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey);
+        const cacheIsValid =
+            cached && cached.expiresAt > Date.now();
+
+        let extra = {};
+
+        /*
+         * Đã có cache: dùng ngay, không tạo yêu cầu mạng mới.
+         * Chưa có cache: chỉ tra tối đa 6 phim mỗi lượt.
+         */
+        if (cacheIsValid) {
+            try {
+                extra = await movinaFetchCinemetaPreview(item);
+            } catch (_) {
+                extra = {};
             }
-
-            const item = sourceItems[index];
-            const preview = makeCatalogMeta(item, "movie");
+        } else if (newLookups < MAX_NEW_CINEMETA_LOOKUPS) {
+            newLookups++;
 
             try {
-                const extra = await movinaFetchCinemetaPreview(item);
-
-                metas[index] = {
-                    ...preview,
-                    ...extra,
-
-                    // Luôn giữ định danh, tên và poster MOVINA.
-                    id: preview.id,
-                    type: "movie",
-                    name: preview.name,
-                    poster: preview.poster,
-                    posterShape: preview.posterShape,
-
-                    // Năm của MOVINA được ưu tiên để tránh
-                    // Cinemeta làm đổi năm hiển thị.
-                    releaseInfo:
-                        preview.releaseInfo ||
-                        (movinaCinemetaPreviewYear(extra)
-                            ? String(movinaCinemetaPreviewYear(extra))
-                            : undefined),
-
-                    // Giữ rating MOVINA nếu đã có.
-                    imdbRating:
-                        preview.imdbRating ??
-                        extra.imdbRating
-                };
-            } catch (error) {
-                console.log(
-                    "[CINEMETA PREVIEW] Enrichment error:",
-                    error?.message || error
-                );
-
-                metas[index] = preview;
+                extra = await movinaFetchCinemetaPreview(item);
+            } catch (_) {
+                extra = {};
             }
         }
+
+        /*
+         * Dữ liệu MOVINA được ưu tiên cho nội dung tiếng Việt.
+         * Cinemeta chỉ lấp những trường MOVINA chưa có.
+         */
+        metas.push({
+            ...preview,
+
+            ...(extra.description && !preview.description
+                ? { description: extra.description }
+                : {}),
+
+            ...(extra.genres?.length && !preview.genres?.length
+                ? { genres: extra.genres }
+                : {}),
+
+            ...(extra.cast?.length && !preview.cast?.length
+                ? { cast: extra.cast }
+                : {}),
+
+            ...(extra.director?.length && !preview.director?.length
+                ? { director: extra.director }
+                : {}),
+
+            ...(extra.runtime && !preview.runtime
+                ? { runtime: extra.runtime }
+                : {}),
+
+            ...(extra.background && !preview.background
+                ? { background: extra.background }
+                : {}),
+
+            imdbRating:
+                preview.imdbRating ??
+                extra.imdbRating
+        });
     }
 
-    // Tối đa 8 yêu cầu Cinemeta chạy đồng thời.
-    const workerCount = Math.min(8, sourceItems.length);
-
-    await Promise.all(
-        Array.from(
-            { length: workerCount },
-            () => worker()
-        )
+    console.log(
+        "[CINEMETA PREVIEW]",
+        JSON.stringify({
+            input: sourceItems.length,
+            output: metas.length,
+            newLookups,
+            cacheSize: MOVINA_CINEMETA_PREVIEW_CACHE.size
+        })
     );
 
-    return metas.filter(meta => meta?.id && meta?.name);
+    return metas;
 }
+
 
 /* ============================================================
    12. DEFINE CATALOG HANDLER
