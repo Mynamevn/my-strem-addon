@@ -2311,11 +2311,15 @@ async function movinaClassicGetRankedTitles(type) {
 
 function movinaClassicFindExactMatch(title, items) {
     const candidates = Array.isArray(items) ? items : [];
-    const expectedName = movinaClassicNormalize(title?.title);
-    const expectedIMDbId = movinaClassicIMDbId(title?.imdbId);
+    const expectedName =
+        movinaClassicNormalize(title?.title);
+    const expectedIMDbId =
+        movinaClassicIMDbId(title?.imdbId);
     const expectedYear = Number(title?.year) || 0;
 
-    if (!expectedName && !expectedIMDbId) return null;
+    if (!expectedName && !expectedIMDbId) {
+        return null;
+    }
 
     function yearMatches(item) {
         const candidateYear = Number(itemYear(item)) || 0;
@@ -2327,26 +2331,41 @@ function movinaClassicFindExactMatch(title, items) {
         );
     }
 
-    // Ưu tiên 1: IMDb ID chính xác, kể cả khi tên trên PhimAPI
-    // khác tên trong danh sách IMDb.
+    // Ưu tiên tuyệt đối IMDb ID.
+    // ID trùng chính xác thì không yêu cầu tên hoặc năm phải khớp.
     if (expectedIMDbId) {
         const idMatches = candidates.filter(item =>
-            movinaClassicItemIMDbId(item) === expectedIMDbId &&
-            yearMatches(item)
+            movinaClassicItemIMDbId(item) === expectedIMDbId
         );
 
         if (idMatches.length === 1) {
             return idMatches[0];
         }
 
+        // Nếu có nhiều bản ghi cùng IMDb ID, không đoán.
         if (idMatches.length > 1) {
+            const sameYear = idMatches.filter(item => {
+                const year = Number(itemYear(item)) || 0;
+
+                return (
+                    expectedYear &&
+                    year &&
+                    Math.abs(year - expectedYear) <= 1
+                );
+            });
+
+            if (sameYear.length === 1) {
+                return sameYear[0];
+            }
+
             return null;
         }
     }
 
-    if (!expectedName) return null;
+    if (!expectedName) {
+        return null;
+    }
 
-    // Ưu tiên 2: tên gốc hoặc tên hiển thị khớp chính xác.
     const exactCandidates = candidates.filter(item => {
         const names = [
             item?.origin_name,
@@ -2357,11 +2376,14 @@ function movinaClassicFindExactMatch(title, items) {
             .map(movinaClassicNormalize)
             .filter(Boolean);
 
-        return names.includes(expectedName) && yearMatches(item);
+        return (
+            names.includes(expectedName) &&
+            yearMatches(item)
+        );
     });
 
-    // Nếu PhimAPI có IMDb ID nhưng khác ID đang cần,
-    // không ghép nhầm sang một phim khác cùng tên.
+    // Không ghép theo tên nếu bản ghi có IMDb ID
+    // nhưng ID đó khác ID cần tìm.
     if (expectedIMDbId) {
         const candidatesWithId = exactCandidates.filter(item =>
             movinaClassicItemIMDbId(item)
@@ -2376,14 +2398,14 @@ function movinaClassicFindExactMatch(title, items) {
         return exactCandidates[0];
     }
 
-    // Nhiều bản cùng tên: chỉ chọn khi năm phát hành
-    // xác định được duy nhất một bản.
     if (expectedYear && exactCandidates.length > 1) {
         const sameYear = exactCandidates.filter(item => {
             const year = Number(itemYear(item)) || 0;
 
-            return year &&
-                Math.abs(year - expectedYear) <= 1;
+            return (
+                year &&
+                Math.abs(year - expectedYear) <= 1
+            );
         });
 
         if (sameYear.length === 1) {
@@ -2393,7 +2415,6 @@ function movinaClassicFindExactMatch(title, items) {
 
     return null;
 }
-
 
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
