@@ -2446,6 +2446,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
 }
 
 
+
 async function movinaFetchClassicCatalog(type) {
     const rankedTitles =
         await movinaClassicGetRankedTitles(type);
@@ -2456,105 +2457,113 @@ async function movinaFetchClassicCatalog(type) {
 
     const TARGET = CATALOG_TARGET;
     const matchedByKey = new Map();
+    const matchedRanks = new Set();
+
+    function addMatch(ranked, sourceItem) {
+        if (!ranked || !sourceItem) return;
+
+        const key = catalogKey(sourceItem);
+
+        if (!key) return;
+
+        matchedRanks.add(ranked.rank);
+
+        if (matchedByKey.has(key)) return;
+
+        matchedByKey.set(key, {
+            ...sourceItem,
+            __catalogType: type,
+            __movinaClassicRank: ranked.rank,
+            __movinaClassicSource: "ranked-json",
+            __movinaClassicImdbId:
+                ranked.imdbId ||
+                movinaClassicItemIMDbId(sourceItem) ||
+                "",
+            __movinaIMDbRating: ranked.rating || 0
+        });
+    }
 
     /*
-     * SERIES ONLY:
-     * Lấy kho phim bộ theo trang rồi ghép với IMDb Top 250.
-     * Tránh gửi hàng trăm truy vấn tìm kiếm riêng lẻ.
-     *
-     * Không sử dụng cache danh mục.
+     * PHIM BỘ:
+     * Ghép kho danh sách trước, sau đó tìm trực tiếp
+     * những phim IMDb còn thiếu.
      */
     if (type === "series") {
         const PAGE_SIZE = 64;
         const MAX_PAGES = 16;
-        const FETCH_CONCURRENCY = 4;
+        const PAGE_CONCURRENCY = 4;
+        const SEARCH_CONCURRENCY = 2;
+
         const inventoryByKey = new Map();
 
         let pagesFetched = 0;
-        let inventoryCount = 0;
+        let fallbackSearches = 0;
+        let fallbackMatches = 0;
 
+        // Bước 1: tải kho phim bộ hiện có.
         for (
             let start = 1;
             start <= MAX_PAGES;
-            start += FETCH_CONCURRENCY
+            start += PAGE_CONCURRENCY
         ) {
-            const pageNumbers = [];
+            const pages = [];
 
             for (
                 let page = start;
-                page < start + FETCH_CONCURRENCY &&
+                page < start + PAGE_CONCURRENCY &&
                 page <= MAX_PAGES;
                 page++
             ) {
-                pageNumbers.push(page);
+                pages.push(page);
             }
 
             const groups = await Promise.all(
-                pageNumbers.map(async page => {
-                    const items = await catalogFetch(
+                pages.map(page =>
+                    catalogFetch(
                         "https://phimapi.com/v1/api/danh-sach/phim-bo" +
                         "?page=" + page +
                         "&limit=" + PAGE_SIZE
-                    );
-
-                    return items.map(item => ({
-                        ...item,
-                        __catalogType: "series"
-                    }));
-                })
+                    )
+                )
             );
 
-            pagesFetched += pageNumbers.length;
+            pagesFetched += pages.length;
 
             for (const item of groups.flat()) {
                 const key = catalogKey(item);
 
                 if (key && !inventoryByKey.has(key)) {
-                    inventoryByKey.set(key, item);
+                    inventoryByKey.set(key, {
+                        ...item,
+                        __catalogType: "series"
+                    });
                 }
             }
-
-            inventoryCount = inventoryByKey.size;
-
-            /*
-             * Không dừng sớm chỉ vì đã có 50 phim trong kho.
-             * Phải đối chiếu theo thứ hạng IMDb để chọn đúng
-             * những phim có thứ hạng cao nhất trong kho đã lấy.
-             */
         }
 
         const inventory = Array.from(
             inventoryByKey.values()
         );
 
-        const inventoryByIMDbId = new Map();
+        // Bước 2: lập chỉ mục IMDb ID.
+        const byIMDbId = new Map();
 
         for (const item of inventory) {
-            const imdbId =
-                movinaClassicItemIMDbId(item);
+            const id = movinaClassicItemIMDbId(item);
 
-            if (imdbId && !inventoryByIMDbId.has(imdbId)) {
-                inventoryByIMDbId.set(imdbId, item);
+            if (id && !byIMDbId.has(id)) {
+                byIMDbId.set(id, item);
             }
         }
 
+        // Bước 3: ghép theo thứ hạng IMDb.
         for (const ranked of rankedTitles) {
             let match = null;
 
-            /*
-             * Ưu tiên IMDb ID chính xác, không yêu cầu tên
-             * phải trùng trước khi kiểm tra ID.
-             */
             if (ranked.imdbId) {
-                match =
-                    inventoryByIMDbId.get(ranked.imdbId) ||
-                    null;
+                match = byIMDbId.get(ranked.imdbId) || null;
             }
 
-            /*
-             * Nếu không ghép được bằng IMDb ID, dùng quy tắc
-             * tên chính xác + năm hiện có của MOVINA.
-             */
             if (!match) {
                 match = movinaClassicFindExactMatch(
                     ranked,
@@ -2562,25 +2571,62 @@ async function movinaFetchClassicCatalog(type) {
                 );
             }
 
-            if (!match) {
-                continue;
+            if (match) {
+                addMatch(ranked, match);
             }
+        }
 
-            const item = {
-                ...match,
-                __catalogType: "series",
-                __movinaClassicRank: ranked.rank,
-                __movinaClassicSource: "ranked-json",
-                __movinaClassicImdbId:
-                    ranked.imdbId ||
-                    movinaClassicItemIMDbId(match),
-                __movinaIMDbRating: ranked.rating || 0
-            };
+        const inventoryMatches = matchedByKey.size;
 
-            const key = catalogKey(item);
+        /*
+         * Bước 4: tìm bổ sung các phim chưa ghép được.
+         * Không tìm lại các phim đã ghép từ kho.
+         */
+        for (
+            let start = 0;
+            start < rankedTitles.length &&
+            matchedByKey.size < TARGET;
+            start += SEARCH_CONCURRENCY
+        ) {
+            const batch = rankedTitles
+                .slice(start, start + SEARCH_CONCURRENCY)
+                .filter(ranked =>
+                    !matchedRanks.has(ranked.rank)
+                );
 
-            if (key && !matchedByKey.has(key)) {
-                matchedByKey.set(key, item);
+            if (!batch.length) continue;
+
+            const results = await Promise.all(
+                batch.map(async ranked => {
+                    fallbackSearches++;
+
+                    try {
+                        return {
+                            ranked,
+                            item: await movinaClassicSearchPhimAPI(
+                                ranked,
+                                "series"
+                            )
+                        };
+                    } catch (error) {
+                        return {
+                            ranked,
+                            item: null
+                        };
+                    }
+                })
+            );
+
+            for (const result of results) {
+                if (!result.item) continue;
+
+                const before = matchedByKey.size;
+
+                addMatch(result.ranked, result.item);
+
+                if (matchedByKey.size > before) {
+                    fallbackMatches++;
+                }
             }
         }
 
@@ -2596,7 +2642,10 @@ async function movinaFetchClassicCatalog(type) {
             JSON.stringify({
                 rankedTitles: rankedTitles.length,
                 pagesFetched,
-                inventoryCount,
+                inventoryCount: inventory.length,
+                inventoryMatches,
+                fallbackSearches,
+                fallbackMatches,
                 matched: matchedByKey.size,
                 returned: result.length,
                 target: TARGET
@@ -2607,9 +2656,8 @@ async function movinaFetchClassicCatalog(type) {
     }
 
     /*
-     * MOVIE ONLY:
-     * Giữ nguyên cơ chế tìm kiếm hiện tại để không làm ảnh
-     * hưởng mục Kinh điển phim lẻ đang chạy tốt.
+     * PHIM LẺ:
+     * Giữ nguyên cơ chế tìm kiếm từng tiêu đề.
      */
     const CONCURRENCY = 20;
     let searched = 0;
@@ -2626,10 +2674,10 @@ async function movinaFetchClassicCatalog(type) {
         );
 
         const batchResults = await Promise.all(
-            batch.map(async title => ({
-                title,
+            batch.map(async ranked => ({
+                ranked,
                 item: await movinaClassicSearchPhimAPI(
-                    title,
+                    ranked,
                     type
                 )
             }))
@@ -2638,23 +2686,8 @@ async function movinaFetchClassicCatalog(type) {
         searched += batch.length;
 
         for (const result of batchResults) {
-            if (!result.item) continue;
-
-            const item = {
-                ...result.item,
-                __catalogType: type,
-                __movinaClassicRank: result.title.rank,
-                __movinaClassicSource: "ranked-json",
-                __movinaClassicImdbId:
-                    result.title.imdbId || "",
-                __movinaIMDbRating:
-                    result.title.rating || 0
-            };
-
-            const key = catalogKey(item);
-
-            if (key && !matchedByKey.has(key)) {
-                matchedByKey.set(key, item);
+            if (result.item) {
+                addMatch(result.ranked, result.item);
             }
         }
     }
@@ -2680,7 +2713,6 @@ async function movinaFetchClassicCatalog(type) {
 
     return result;
 }
-
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
@@ -3125,19 +3157,18 @@ if (normalizedGenre === "kinh dien") {
 
 
 } else if (!isLatest) {
-    const isSeriesHorror =
+    const trustGenreSource =
         type === "series" &&
         normalizedGenre === "kinh di";
 
     items = items.filter(item => {
         /*
-         * Chỉ áp dụng cho Kinh dị phim bộ:
-         * tin cậy bản ghi đến từ API thể loại kinh dị,
-         * kể cả khi metadata category bị thiếu hoặc khác
-         * cách viết.
+         * API thể loại đã xác nhận phim thuộc Kinh dị.
+         * Không bắt buộc metadata category phải lặp lại
+         * cùng thông tin lần thứ hai.
          */
         if (
-            isSeriesHorror &&
+            trustGenreSource &&
             item.__genreApiSlug === "kinh-di"
         ) {
             return true;
