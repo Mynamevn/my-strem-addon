@@ -2569,7 +2569,7 @@ async function movinaFetchClassicCatalog(type) {
     }
 
     const TARGET = CATALOG_TARGET;
-    const CONCURRENCY = 4;
+    const CONCURRENCY = 8;
     const matchedByKey = new Map();
     let searched = 0;
     let failedSearches = 0;
@@ -2667,8 +2667,11 @@ async function movinaFetchClassicCatalog(type) {
 
     // Cache đầy đủ lâu hơn; cache thiếu kết quả ngắn hơn
     // để lần sau có cơ hội tìm bổ sung.
-    const cacheTTL =
-        result.length >= TARGET
+    
+const cacheTTL =
+    result.length >= TARGET
+        ? 30 * 60 * 1000
+        : result.length > 0
             ? 30 * 60 * 1000
             : 2 * 60 * 1000;
 
@@ -2771,9 +2774,30 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
         return true;
     }
 
+    /*
+     * Ưu tiên nguồn thể loại chính thức của PhimAPI.
+     *
+     * Nếu item đã được lấy từ đúng endpoint thể loại,
+     * không bắt metadata category phải lặp lại tên thể loại.
+     * Điều này tránh loại nhầm phim Kinh dị và các thể loại khác.
+     */
+    const sourceSlug = String(
+        item?.__genreApiSlug || ""
+    ).trim().toLowerCase();
+
+    const trustedSlugs =
+        MOVINA_TRENDING_GENRE_SLUGS[genre] || [];
+
+    if (
+        sourceSlug &&
+        trustedSlugs.includes(sourceSlug)
+    ) {
+        return true;
+    }
+
     const categories = catalogCategoryNames(item);
 
-    // Hoạt hình vẫn dùng bộ nhận diện riêng.
+    // Hoạt hình dùng bộ nhận diện riêng.
     if (
         genre === "hoat hinh" &&
         isAnimation(item)
@@ -2784,15 +2808,6 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
     const aliases =
         MOVINA_TRENDING_GENRE_ALIASES[genre] || [genre];
 
-    /*
-     * Cho phép khớp thể loại ghép, ví dụ:
-     * - "tam ly - tinh cam" khớp "tinh cam"
-     * - "khoa hoc vien tuong" khớp "vien tuong"
-     * - "vo thuat - kiem hiep" khớp "vo thuat"
-     *
-     * So khớp theo ranh giới từ để tránh những kết quả
-     * khớp nhầm chỉ vì có một chuỗi ký tự ngắn.
-     */
     function matchesAlias(category, alias) {
         if (!category || !alias) {
             return false;
