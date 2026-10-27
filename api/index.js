@@ -2489,8 +2489,9 @@ async function movinaFetchClassicCatalog(type) {
      * những phim IMDb còn thiếu.
      */
     
+
 if (type === "series") {
-    const LOOKUP_CONCURRENCY = 64;
+    const LOOKUP_CONCURRENCY = 32;
     const LOOKUP_TIMEOUT = 2200;
     const MAX_FALLBACK_SEARCHES = 12;
 
@@ -2503,9 +2504,12 @@ if (type === "series") {
     let fallbackMatches = 0;
     let lookupErrors = 0;
 
-    // Thu thập các tựa chưa ghép được để xử lý dự phòng
-    // SAU khi hoàn thành tra cứu IMDb trực tiếp.
     const needFallback = [];
+    const directResults = new Array(rankedTitles.length);
+
+    // Theo dõi các tựa khác nhau đã tìm thấy.
+    // Khi đủ 50 tựa, không cấp thêm request mới.
+    const discoveredKeys = new Set();
 
     async function lookupByIMDbId(ranked) {
         if (!ranked?.imdbId) {
@@ -2558,50 +2562,85 @@ if (type === "series") {
 
     /*
      * GIAI ĐOẠN 1:
-     * Tra cứu IMDb trực tiếp theo từng đợt 16 phim.
-     * Giữ thứ tự IMDb và dừng sau đợt đã đủ 50 kết quả.
-     * Không chạy tìm kiếm dự phòng xen giữa các đợt.
+     * Worker pool xử lý danh sách theo thứ hạng IMDb.
+     *
+     * Các worker lấy index theo thứ tự tăng dần.
+     * Khi đủ 50 tựa khác nhau, dừng cấp việc mới.
+     * Các request đã chạy vẫn được chờ hoàn tất.
+     */
+    let nextIndex = 0;
+
+    async function lookupWorker() {
+        while (
+            nextIndex < rankedTitles.length &&
+            discoveredKeys.size < TARGET
+        ) {
+            const index = nextIndex++;
+            const ranked = rankedTitles[index];
+
+            if (!ranked?.imdbId) {
+                directResults[index] = null;
+                continue;
+            }
+
+            const item = await lookupByIMDbId(ranked);
+
+            directResults[index] = item;
+
+            if (item) {
+                const key = catalogKey(item);
+
+                if (key) {
+                    discoveredKeys.add(key);
+                }
+            }
+        }
+    }
+
+    const workerCount = Math.min(
+        LOOKUP_CONCURRENCY,
+        rankedTitles.length
+    );
+
+    await Promise.all(
+        Array.from(
+            { length: workerCount },
+            () => lookupWorker()
+        )
+    );
+
+    /*
+     * Xử lý lại theo thứ hạng gốc.
+     * Không dùng thứ tự request hoàn thành để xếp hạng.
      */
     for (
-        let start = 0;
-        start < rankedTitles.length &&
-        matchedByKey.size < TARGET;
-        start += LOOKUP_CONCURRENCY
+        let index = 0;
+        index < rankedTitles.length;
+        index++
     ) {
-        const batch = rankedTitles.slice(
-            start,
-            start + LOOKUP_CONCURRENCY
-        );
+        const ranked = rankedTitles[index];
+        const item = directResults[index];
 
-        const directResults = await Promise.all(
-            batch.map(async ranked => ({
-                ranked,
-                item: await lookupByIMDbId(ranked)
-            }))
-        );
+        if (!ranked?.imdbId) {
+            continue;
+        }
 
-        // Promise.all giữ thứ tự kết quả theo batch,
-        // không phụ thuộc thứ tự request hoàn thành.
-        for (const result of directResults) {
-            if (result.item) {
-                const before = matchedByKey.size;
+        if (item) {
+            const before = matchedByKey.size;
 
-                addMatch(result.ranked, result.item);
+            addMatch(ranked, item);
 
-                if (matchedByKey.size > before) {
-                    directMatches++;
-                }
-            } else if (result.ranked?.imdbId) {
-                needFallback.push(result.ranked);
+            if (matchedByKey.size > before) {
+                directMatches++;
             }
+        } else {
+            needFallback.push(ranked);
         }
     }
 
     /*
      * GIAI ĐOẠN 2:
-     * Chỉ tìm theo tên/năm nếu IMDb trực tiếp vẫn chưa đủ 50.
-     * Giới hạn 12 lượt để tránh kéo dài thời gian tải
-     * khi PhimAPI gặp HTTP 429.
+     * Chỉ tìm dự phòng nếu kết quả trực tiếp chưa đủ 50.
      */
     if (
         matchedByKey.size < TARGET &&
@@ -2636,6 +2675,11 @@ if (type === "series") {
                     };
                 }
             })
+        );
+
+        // Giữ thứ hạng IMDb khi bổ sung kết quả dự phòng.
+        fallbackResults.sort(
+            (a, b) => a.ranked.rank - b.ranked.rank
         );
 
         for (const result of fallbackResults) {
@@ -2675,6 +2719,7 @@ if (type === "series") {
             lookupConcurrency: LOOKUP_CONCURRENCY,
             lookupTimeout: LOOKUP_TIMEOUT,
             fallbackLimit: MAX_FALLBACK_SEARCHES,
+            earlyStop: true,
             fallbackReason: SEARCH_TIMEOUT_NOTE
         })
     );
