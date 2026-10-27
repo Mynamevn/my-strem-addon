@@ -2393,6 +2393,7 @@ function movinaClassicFindExactMatch(title, items) {
     return null;
 }
 
+
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
         type,
@@ -2424,7 +2425,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
             "https://phimapi.com/v1/api/tim-kiem",
             {
                 params,
-                timeout: 5000,
+                timeout: 3500,
                 headers: {
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json"
@@ -2444,9 +2445,9 @@ async function movinaClassicSearchPhimAPI(title, type) {
         let items = [];
         let lastError = null;
 
-        // Thử có bộ lọc loại nội dung trước.
-        // Nếu bị giới hạn 429, chờ rồi thử lại tối đa 2 lần.
-        for (let attempt = 0; attempt < 3; attempt++) {
+        // Chỉ thử lại một lần khi gặp lỗi tạm thời.
+        // Tránh chờ nhiều vòng retry cho từng tựa IMDb.
+        for (let attempt = 0; attempt < 2; attempt++) {
             try {
                 items = await searchOnce(true);
                 lastError = null;
@@ -2455,24 +2456,21 @@ async function movinaClassicSearchPhimAPI(title, type) {
                 lastError = error;
 
                 const status = error?.response?.status || 0;
+                const transient =
+                    status === 429 ||
+                    status >= 500 ||
+                    status === 0;
 
-                if (
-                    status !== 429 &&
-                    status < 500
-                ) {
+                if (!transient || attempt === 1) {
                     break;
                 }
 
-                if (attempt < 2) {
-                    const delayMs =
-                        status === 429
-                            ? 1200 * (attempt + 1)
-                            : 500 * (attempt + 1);
-
-                    await new Promise(resolve =>
-                        setTimeout(resolve, delayMs)
-                    );
-                }
+                await new Promise(resolve =>
+                    setTimeout(
+                        resolve,
+                        status === 429 ? 500 : 250
+                    )
+                );
             }
         }
 
@@ -2485,14 +2483,19 @@ async function movinaClassicSearchPhimAPI(title, type) {
             items
         );
 
-        // Chỉ thử tìm không lọc loại nếu lượt đầu chưa ghép được.
-        // Trước khi chấp nhận kết quả, vẫn phải xác minh đúng phim bộ/phim lẻ.
-        if (!match) {
+        /*
+         * Chỉ gọi tìm kiếm dự phòng khi lượt có bộ lọc
+         * trả về quá ít kết quả và chưa ghép được tựa.
+         * Nếu đã có nhiều kết quả nhưng không khớp chính xác,
+         * bỏ qua fallback để giảm số request.
+         */
+        if (!match && items.length < 5) {
             try {
                 const fallbackItems = await searchOnce(false);
 
-                const correctTypeItems = fallbackItems.filter(item =>
-                    isSeriesItem(item) === (type === "series")
+                const correctTypeItems = fallbackItems.filter(
+                    item =>
+                        isSeriesItem(item) === (type === "series")
                 );
 
                 match = movinaClassicFindExactMatch(
@@ -2530,13 +2533,11 @@ async function movinaClassicSearchPhimAPI(title, type) {
             })
         );
 
-        // Không cache lỗi mạng hoặc lỗi 429:
-        // yêu cầu sau vẫn có thể thử lại.
+        // Không cache lỗi mạng hoặc lỗi 429.
+        // Lần sau vẫn có thể thử lại.
         return null;
     }
 }
-
-
 
 async function movinaFetchClassicCatalog(type) {
     const cacheKey = type === "series" ? "series" : "movie";
