@@ -2380,6 +2380,7 @@ function movinaClassicFindExactMatch(title, items) {
 }
 
 
+
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
         type,
@@ -2395,9 +2396,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
         return cached.item;
     }
 
-    const isExpectedSeries = type === "series";
-
-    async function searchPhimAPI(useTypeFilter) {
+    const searchOnce = async (useTypeFilter) => {
         const params = {
             keyword: title.title,
             page: 1,
@@ -2405,14 +2404,15 @@ async function movinaClassicSearchPhimAPI(title, type) {
         };
 
         if (useTypeFilter) {
-            params.filterType = isExpectedSeries ? "series" : "single";
+            params.filterType =
+                type === "series" ? "series" : "single";
         }
 
         const response = await axios.get(
             "https://phimapi.com/v1/api/tim-kiem",
             {
                 params,
-                timeout: 3500,
+                timeout: 5000,
                 headers: {
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json"
@@ -2426,27 +2426,78 @@ async function movinaClassicSearchPhimAPI(title, type) {
             [];
 
         return Array.isArray(items) ? items : [];
-    }
+    };
 
     try {
-        // Lượt 1: tìm theo tên và loại nội dung.
-        let items = await searchPhimAPI(true);
+        let items = [];
+        let lastError = null;
 
-        let match = movinaClassicFindExactMatch(title, items);
+        // Thử có bộ lọc loại nội dung trước.
+        // Nếu bị giới hạn 429, chờ rồi thử lại tối đa 2 lần.
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                items = await searchOnce(true);
+                lastError = null;
+                break;
+            } catch (error) {
+                lastError = error;
 
-        // Lượt 2: nếu không thấy, thử tìm không lọc loại.
-        // Vẫn kiểm tra loại phim trước khi chấp nhận kết quả.
+                const status = error?.response?.status || 0;
+
+                if (
+                    status !== 429 &&
+                    status < 500
+                ) {
+                    break;
+                }
+
+                if (attempt < 2) {
+                    const delayMs =
+                        status === 429
+                            ? 1200 * (attempt + 1)
+                            : 500 * (attempt + 1);
+
+                    await new Promise(resolve =>
+                        setTimeout(resolve, delayMs)
+                    );
+                }
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
+
+        let match = movinaClassicFindExactMatch(
+            title,
+            items
+        );
+
+        // Chỉ thử tìm không lọc loại nếu lượt đầu chưa ghép được.
+        // Trước khi chấp nhận kết quả, vẫn phải xác minh đúng phim bộ/phim lẻ.
         if (!match) {
-            items = await searchPhimAPI(false);
+            try {
+                const fallbackItems = await searchOnce(false);
 
-            const correctlyTyped = items.filter(item =>
-                isSeriesItem(item) === isExpectedSeries
-            );
+                const correctTypeItems = fallbackItems.filter(item =>
+                    isSeriesItem(item) === (type === "series")
+                );
 
-            match = movinaClassicFindExactMatch(
-                title,
-                correctlyTyped
-            );
+                match = movinaClassicFindExactMatch(
+                    title,
+                    correctTypeItems
+                );
+            } catch (error) {
+                console.warn(
+                    "[MOVINA CLASSIC FALLBACK SEARCH ERROR]",
+                    JSON.stringify({
+                        type,
+                        title: title.title,
+                        status: error?.response?.status || 0,
+                        error: error?.message || String(error)
+                    })
+                );
+            }
         }
 
         MOVINA_CLASSIC_SEARCH_CACHE.set(cacheKey, {
@@ -2467,10 +2518,11 @@ async function movinaClassicSearchPhimAPI(title, type) {
             })
         );
 
+        // Không cache lỗi mạng hoặc lỗi 429:
+        // yêu cầu sau vẫn có thể thử lại.
         return null;
     }
 }
-
 
 async function movinaFetchClassicCatalog(type) {
     const rankedTitles = await movinaClassicGetRankedTitles(type);
@@ -2480,7 +2532,7 @@ async function movinaFetchClassicCatalog(type) {
     }
 
     const TARGET = CATALOG_TARGET;
-    const CONCURRENCY = 20;
+    const CONCURRENCY = 4;
     const matchedByKey = new Map();
     let searched = 0;
 
@@ -2859,15 +2911,21 @@ async function fetchMovinaTrendingByGenre(
             "https://phimapi.com/v1/api/danh-sach/hoat-hinh" +
             "?page=" + page +
             "&limit=" + PAGE_SIZE;
+        
+requests.push(
+    catalogFetch(url).then(items =>
+        items.map(item => {
+            const series = isSeriesItem(item);
 
-        requests.push(
-            catalogFetch(url).then(items =>
-                items.map(item => ({
-                    ...item,
-                    __isAnimation: true
-                }))
-            )
-        );
+            return {
+                ...item,
+                __catalogType: series ? "series" : "movie",
+                __isAnimation: true
+            };
+        })
+    )
+);
+
     }
 
     } else {
