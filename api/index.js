@@ -2077,6 +2077,534 @@ async function movinaTrendingLoadTMDB(items, contentType) {
     return result;
 }
 
+
+/* ============================================================
+   [CLASSIC-001] [MOVINA] RANKED CLASSIC LIST + PHIMAPI MATCH
+   - Movies and series use separate ranked lists.
+   - IMDb is primary; public lists are fallbacks.
+   - Only return records actually found in PhimAPI.
+   ============================================================ */
+
+const MOVINA_CLASSIC_RANKED_CACHE = new Map();
+const MOVINA_CLASSIC_SEARCH_CACHE = new Map();
+
+function movinaClassicNormalize(value) {
+    return String(value || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function movinaClassicYearTitle(value) {
+    const text = String(value || "")
+        .replace(/^Image:\s*/i, "")
+        .trim();
+
+    const match = text.match(/\b((?:19|20)\d{2})\b/);
+    const year = match ? Number(match[1]) : 0;
+
+    const title = text
+        .replace(/\s*\(((?:19|20)\d{2})\)\s*$/, "")
+        .replace(/^\d+\.\s*/, "")
+        .trim();
+
+    if (!title) return null;
+
+    return {
+        title,
+        year,
+        rating: 0,
+        imdbId: "",
+        rank: 0
+    };
+}
+
+function movinaClassicParseIMDb(html) {
+    const $ = cheerio.load(html);
+    const rows = [];
+
+    $("li.ipc-metadata-list-summary-item").each((index, element) => {
+        const row = $(element);
+        const anchor = row
+            .find('a.ipc-title-link-wrapper[href*="/title/tt"]')
+            .first();
+
+        const heading = anchor.find("h3").text().trim()
+            || row.find("h3.ipc-title__text").text().trim();
+
+        const title = heading.replace(/^\d+\.\s*/, "").trim();
+        if (!title) return;
+
+        const href = anchor.attr("href") || "";
+        const idMatch = href.match(/\/title\/(tt\d+)/);
+        const metadata = row
+            .find(".cli-title-metadata-item")
+            .map((_, el) => $(el).text().trim())
+            .get();
+
+        const yearMatch = metadata.join(" ").match(/\b((?:19|20)\d{2})\b/);
+        const ratingText = row
+            .find(".ipc-rating-star--rating")
+            .first()
+            .text()
+            .trim();
+
+        rows.push({
+            title,
+            year: yearMatch ? Number(yearMatch[1]) : 0,
+            rating: Number(ratingText) || 0,
+            imdbId: idMatch ? idMatch[1] : "",
+            rank: rows.length + 1
+        });
+    });
+
+    return rows;
+}
+
+function movinaClassicParseBackup(html, rankOffset = 0) {
+    const $ = cheerio.load(html);
+    const rows = [];
+    const seen = new Set();
+
+    $("img[alt]").each((_, element) => {
+        const alt = String($(element).attr("alt") || "").trim();
+        const parsed = movinaClassicYearTitle(alt);
+
+        if (!parsed || !parsed.year || parsed.title.length < 2) {
+            return;
+        }
+
+        const key = movinaClassicNormalize(parsed.title) + "|" + parsed.year;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        // Thử lấy điểm trong vùng nội dung gần ảnh.
+        let rating = 0;
+        let node = $(element);
+
+        for (let depth = 0; depth < 4 && node.length; depth++) {
+            const text = node.text();
+            const match = text.match(/(?:^|\s)(10(?:\.0)?|[0-9]\.[0-9])(?:\s|$)/);
+
+            if (match) {
+                const candidate = Number(match[1]);
+                if (candidate >= 1 && candidate <= 10) {
+                    rating = candidate;
+                    break;
+                }
+            }
+
+            node = node.parent();
+        }
+
+        rows.push({
+            ...parsed,
+            rating,
+            rank: rankOffset + rows.length + 1
+        });
+    });
+
+    return rows;
+}
+
+async function movinaClassicGetRankedTitles(type) {
+    const isSeries = type === "series";
+    const key = isSeries ? "series" : "movie";
+    const TTL = 6 * 60 * 60 * 1000;
+
+    const cached = MOVINA_CLASSIC_RANKED_CACHE.get(key);
+    if (cached && Date.now() - cached.time < TTL) {
+        return cached.rows;
+    }
+
+    const headers = {
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+        "Accept":
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9"
+    };
+
+    const primaryUrl = isSeries
+        ? "https://www.imdb.com/chart/toptv/"
+        : "https://www.imdb.com/chart/top/";
+
+    try {
+        const response = await axios.get(primaryUrl, {
+            timeout: 6500,
+            headers
+        });
+
+        const rows = movinaClassicParseIMDb(response.data);
+
+        if (rows.length >= 100) {
+            console.log("[MOVINA CLASSIC LIST]", JSON.stringify({
+                type, source: "IMDb", rows: rows.length
+            }));
+
+            MOVINA_CLASSIC_RANKED_CACHE.set(key, {
+                time: Date.now(),
+                rows
+            });
+
+            return rows;
+        }
+    } catch (error) {
+        console.warn(
+            "[MOVINA CLASSIC IMDb LIST ERROR]",
+            key,
+            error?.response?.status || error?.message
+        );
+    }
+
+    // Nguồn dự phòng công khai. Các trang ListChallenges có phân trang.
+    const backupUrl = isSeries
+        ? "https://www.listchallenges.com/imdbs-top-250-tv-series"
+        : "https://www.listchallenges.com/imdb-top-250-the-complete-2024-list";
+
+    const backupRows = [];
+
+    for (let page = 1; page <= 7; page += 1) {
+        const url = page === 1
+            ? backupUrl
+            : backupUrl + "/list/" + page;
+
+        try {
+            const response = await axios.get(url, {
+                timeout: 6500,
+                headers
+            });
+
+            const rows = movinaClassicParseBackup(
+                response.data,
+                backupRows.length
+            );
+
+            if (!rows.length && page === 1) {
+                console.warn(
+                    "[MOVINA CLASSIC BACKUP EMPTY]",
+                    key,
+                    url
+                );
+                break;
+            }
+
+            for (const row of rows) {
+                const duplicate = backupRows.some(existing =>
+                    movinaClassicNormalize(existing.title) ===
+                        movinaClassicNormalize(row.title) &&
+                    existing.year === row.year
+                );
+
+                if (!duplicate) {
+                    row.rank = backupRows.length + 1;
+                    backupRows.push(row);
+                }
+            }
+
+            // Danh sách thường có khoảng 40 mục mỗi trang.
+            if (rows.length === 0) break;
+        } catch (error) {
+            console.warn(
+                "[MOVINA CLASSIC BACKUP PAGE ERROR]",
+                key,
+                page,
+                error?.response?.status || error?.message
+            );
+            break;
+        }
+    }
+
+    // IMDb list và TMDB list là nguồn dự phòng cuối cho phim bộ.
+    // Không thay danh sách phim lẻ bằng danh sách phim bộ.
+    if (backupRows.length < 50 && isSeries) {
+        const fallbackUrls = [
+            "https://www.imdb.com/de/list/ls008957859/",
+            "https://www.themoviedb.org/list/8647022-imdb-top-250-tv-shows"
+        ];
+
+        for (const url of fallbackUrls) {
+            try {
+                const response = await axios.get(url, {
+                    timeout: 5000,
+                    headers
+                });
+
+                let rows = movinaClassicParseIMDb(response.data);
+                if (rows.length < 10) {
+                    rows = movinaClassicParseBackup(
+                        response.data,
+                        backupRows.length
+                    );
+                }
+
+                for (const row of rows) {
+                    const duplicate = backupRows.some(existing =>
+                        movinaClassicNormalize(existing.title) ===
+                            movinaClassicNormalize(row.title) &&
+                        existing.year === row.year
+                    );
+
+                    if (!duplicate) {
+                        row.rank = backupRows.length + 1;
+                        backupRows.push(row);
+                    }
+                }
+
+                if (backupRows.length >= 100) break;
+            } catch (error) {
+                console.warn(
+                    "[MOVINA CLASSIC SECONDARY SOURCE ERROR]",
+                    url,
+                    error?.response?.status || error?.message
+                );
+            }
+        }
+    }
+
+    if (backupRows.length) {
+        console.log("[MOVINA CLASSIC LIST]", JSON.stringify({
+            type,
+            source: "backup",
+            rows: backupRows.length
+        }));
+
+        MOVINA_CLASSIC_RANKED_CACHE.set(key, {
+            time: Date.now(),
+            rows: backupRows
+        });
+    }
+
+    return backupRows;
+}
+
+function movinaClassicCandidateNames(item) {
+    const values = [
+        item?.origin_name,
+        item?.original_name,
+        item?.name,
+        item?.title,
+        ...(Array.isArray(item?.alternative_names)
+            ? item.alternative_names
+            : [])
+    ];
+
+    return [...new Set(
+        values.map(movinaClassicNormalize).filter(Boolean)
+    )];
+}
+
+function movinaClassicFindExactMatch(title, items) {
+    const expectedName = movinaClassicNormalize(title.title);
+    if (!expectedName) return null;
+
+    const candidates = (items || []).filter(item => {
+        const names = movinaClassicCandidateNames(item);
+
+        if (!names.includes(expectedName)) return false;
+
+        const expectedYear = Number(title.year) || 0;
+        const candidateYear = itemYear(item);
+
+        if (expectedYear && candidateYear) {
+            return Math.abs(expectedYear - candidateYear) <= 1;
+        }
+
+        // Nếu không có năm, chỉ nhận kết quả khi tên khớp chính xác
+        // và truy vấn chỉ trả về duy nhất một bản ghi cùng tên.
+        return names.includes(expectedName);
+    });
+
+    if (candidates.length === 1) return candidates[0];
+
+    // Nếu trùng tên, chỉ chọn khi năm phân biệt được một kết quả.
+    if (title.year) {
+        const sameYear = candidates.filter(item =>
+            itemYear(item) &&
+            Math.abs(itemYear(item) - Number(title.year)) <= 1
+        );
+
+        if (sameYear.length === 1) return sameYear[0];
+    }
+
+    return null;
+}
+
+async function movinaClassicSearchPhimAPI(title, type) {
+    const cacheKey = [
+        type,
+        movinaClassicNormalize(title.title),
+        title.year || 0
+    ].join("|");
+
+    const TTL = 12 * 60 * 60 * 1000;
+    const cached = MOVINA_CLASSIC_SEARCH_CACHE.get(cacheKey);
+
+    if (cached && Date.now() - cached.time < TTL) {
+        return cached.item;
+    }
+
+    try {
+        const response = await axios.get(
+            "https://phimapi.com/v1/api/tim-kiem",
+            {
+                params: {
+                    keyword: title.title,
+                    page: 1,
+                    limit: 20,
+                    filterType: type === "series" ? "series" : "single"
+                },
+                timeout: 3500,
+                headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json"
+                }
+            }
+        );
+
+        const items =
+            response.data?.data?.items ||
+            response.data?.items ||
+            [];
+
+        const correctlyTyped = items.filter(item => {
+            if (type === "series") {
+                return isSeriesItem(item);
+            }
+
+            return !isSeriesItem(item);
+        });
+
+        const match = movinaClassicFindExactMatch(
+            title,
+            correctlyTyped
+        );
+
+        MOVINA_CLASSIC_SEARCH_CACHE.set(cacheKey, {
+            time: Date.now(),
+            item: match || null
+        });
+
+        return match || null;
+    } catch (error) {
+        console.warn(
+            "[MOVINA CLASSIC PHIMAPI SEARCH ERROR]",
+            title.title,
+            error?.response?.status || error?.message
+        );
+
+        // Không cache lỗi mạng lâu; lần gọi sau được phép thử lại.
+        return null;
+    }
+}
+
+async function movinaFetchClassicCatalog(type, existingItems = []) {
+    const rankedTitles = await movinaClassicGetRankedTitles(type);
+
+    if (!rankedTitles.length) {
+        console.warn(
+            "[MOVINA CLASSIC NO RANKED LIST]",
+            type
+        );
+        return [];
+    }
+
+    const TARGET = CATALOG_TARGET;
+    const CONCURRENCY = 12;
+    const MAX_TITLES = Math.min(rankedTitles.length, 250);
+    const matchedByKey = new Map();
+
+    // Ưu tiên danh sách Top 250 theo thứ hạng.
+    // Xử lý theo từng lô để giữ thứ tự và giới hạn số request đồng thời.
+    for (
+        let start = 0;
+        start < MAX_TITLES && matchedByKey.size < TARGET;
+        start += CONCURRENCY
+    ) {
+        const batch = rankedTitles.slice(start, start + CONCURRENCY);
+
+        const batchResults = await Promise.all(
+            batch.map(async title => ({
+                title,
+                item: await movinaClassicSearchPhimAPI(title, type)
+            }))
+        );
+
+        for (const result of batchResults) {
+            if (!result.item) continue;
+
+            const item = {
+                ...result.item,
+                __catalogType: type,
+                __movinaClassicRank: result.title.rank,
+                __movinaClassicSource: "ranked-list"
+            };
+
+            if (
+                Number(result.title.rating) > 0 &&
+                Number(result.title.rating) <= 10
+            ) {
+                item.__movinaIMDbRating = Number(result.title.rating);
+            }
+
+            const key = catalogKey(item);
+            if (key && !matchedByKey.has(key)) {
+                matchedByKey.set(key, item);
+            }
+        }
+
+        if (matchedByKey.size >= TARGET) break;
+    }
+
+    let result = Array.from(matchedByKey.values())
+        .sort((a, b) =>
+            (a.__movinaClassicRank || 9999) -
+            (b.__movinaClassicRank || 9999)
+        )
+        .slice(0, TARGET);
+
+    // Nếu nguồn xếp hạng không có đủ kết quả, chỉ bổ sung từ các ứng viên
+    // sẵn có khi chúng thực sự có điểm IMDb/TMDB từ metadata hiện hữu.
+    if (result.length < TARGET) {
+        const seen = new Set(result.map(catalogKey));
+
+        for (const item of existingItems || []) {
+            if (result.length >= TARGET) break;
+
+            const key = catalogKey(item);
+            if (!key || seen.has(key)) continue;
+
+            const imdbRating = movinaTrendingIMDb(item);
+            const tmdbRating = movinaTrendingTMDB(item);
+
+            if (imdbRating < 8.0 && tmdbRating < 8.0) continue;
+
+            seen.add(key);
+            result.push({
+                ...item,
+                __catalogType: type,
+                __movinaClassicRank: 10000 + result.length,
+                __movinaClassicSource: "rated-inventory"
+            });
+        }
+    }
+
+    console.log("[MOVINA CLASSIC MATCH SUMMARY]", JSON.stringify({
+        type,
+        rankedTitles: rankedTitles.length,
+        matchedPhimAPI: matchedByKey.size,
+        returned: result.length,
+        target: TARGET,
+        source: result[0]?.__movinaClassicSource || "none"
+    }));
+
+    return result;
+}
+
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
     return new Date(
@@ -2523,61 +3051,78 @@ async function fetchMovinaTrendingByGenre(
             : !isSeriesItem(item);
     });
         
-    if (normalizedGenre === "kinh dien") {
-        
-        // Ưu tiên điểm IMDb.
-        items = await movinaTrendingLoadIMDb(items);
+    
+if (normalizedGenre === "kinh dien") {
+    const rankedItems = await movinaFetchClassicCatalog(
+        type,
+        items
+    );
 
-        items = items.filter(item => {
-            const imdbRating = movinaTrendingIMDb(item);
-
-            if (imdbRating > 0) {
-                return imdbRating >= 8.0;
-            }
-
-            return movinaTrendingTMDB(item) >= 8.0;
-        });
-
-        console.log(
-            "[MOVINA CLASSIC RATING SOURCES]",
-            JSON.stringify({
-                type,
-                total: items.length,
-                imdb: items.filter(item =>
-                    movinaTrendingIMDb(item) >= 8.0
-                ).length,
-                tmdbFallback: items.filter(item =>
-                    movinaTrendingIMDb(item) === 0 &&
-                    movinaTrendingTMDB(item) >= 8.0
-                ).length
-            })
-        );
-
-    } else if (!isLatest) {
+    if (rankedItems.length) {
+        items = rankedItems;
+    } else {
+        // Nguồn danh sách xếp hạng và tìm kiếm PhimAPI đều thất bại:
+        // chỉ giữ phim có điểm số thực trong dữ liệu hiện có.
         items = items.filter(item =>
-            movinaTrendingGenreMatches(item, genre)
+            movinaTrendingIMDb(item) >= 8.0 ||
+            movinaTrendingTMDB(item) >= 8.0
         );
     }
 
+    console.log(
+        "[MOVINA CLASSIC RATING SOURCES]",
+        JSON.stringify({
+            type,
+            total: items.length,
+            rankedList: items.filter(item =>
+                item.__movinaClassicSource === "ranked-list"
+            ).length,
+            ratedInventory: items.filter(item =>
+                item.__movinaClassicSource === "rated-inventory"
+            ).length,
+            imdb: items.filter(item =>
+                movinaTrendingIMDb(item) >= 8.0
+            ).length,
+            tmdbFallback: items.filter(item =>
+                movinaTrendingIMDb(item) === 0 &&
+                movinaTrendingTMDB(item) >= 8.0
+            ).length
+        })
+    );
+
+} else if (!isLatest) {
+    items = items.filter(item =>
+        movinaTrendingGenreMatches(item, genre)
+    );
+}
 
     const candidateCount = items.length;
     let result = [];
 
-        if (isLatest) {
-        // Mới nhất: giữ thứ tự từ phim mới đến phim cũ.
-        // Không shuffle vì sẽ làm phim cũ chen lên trước.
-        items.sort(movinaTrendingNewestSort);
+        
+if (isClassic) {
+    // Giữ thứ hạng từ danh sách kinh điển đã đối chiếu.
+    items.sort((a, b) =>
+        (a.__movinaClassicRank || 9999) -
+        (b.__movinaClassicRank || 9999)
+    );
 
-        result = items.slice(0, CATALOG_TARGET);
-    } else {
-        // Thể loại thông thường: chia tương đối đều theo thập niên.
-        // Nếu một thập niên hết phim, lấy tiếp từ các thập niên khác.
-        result = movinaTrendingBalancedDecades(
-            items,
-            type + "|" + genre + "|" + day,
-            CATALOG_TARGET
-        );
-    }
+    result = items.slice(0, CATALOG_TARGET);
+
+} else if (isLatest) {
+    // Mới nhất: giữ thứ tự từ phim mới đến phim cũ.
+    items.sort(movinaTrendingNewestSort);
+    result = items.slice(0, CATALOG_TARGET);
+
+} else {
+    // Các thể loại khác vẫn cân bằng theo thập niên.
+    result = movinaTrendingBalancedDecades(
+        items,
+        type + "|" + genre + "|" + day,
+        CATALOG_TARGET
+    );
+}
+
 
     console.log(
         "[MOVINA TRENDING GENRE]",
