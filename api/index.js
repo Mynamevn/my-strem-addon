@@ -2445,20 +2445,175 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 }
 
+
 async function movinaFetchClassicCatalog(type) {
-    const rankedTitles = await movinaClassicGetRankedTitles(type);
+    const rankedTitles =
+        await movinaClassicGetRankedTitles(type);
 
     if (!rankedTitles.length) {
         return [];
     }
 
     const TARGET = CATALOG_TARGET;
-    const CONCURRENCY = 20;
     const matchedByKey = new Map();
+
+    /*
+     * SERIES ONLY:
+     * Lấy kho phim bộ theo trang rồi ghép với IMDb Top 250.
+     * Tránh gửi hàng trăm truy vấn tìm kiếm riêng lẻ.
+     *
+     * Không sử dụng cache danh mục.
+     */
+    if (type === "series") {
+        const PAGE_SIZE = 64;
+        const MAX_PAGES = 16;
+        const FETCH_CONCURRENCY = 4;
+        const inventoryByKey = new Map();
+
+        let pagesFetched = 0;
+        let inventoryCount = 0;
+
+        for (
+            let start = 1;
+            start <= MAX_PAGES;
+            start += FETCH_CONCURRENCY
+        ) {
+            const pageNumbers = [];
+
+            for (
+                let page = start;
+                page < start + FETCH_CONCURRENCY &&
+                page <= MAX_PAGES;
+                page++
+            ) {
+                pageNumbers.push(page);
+            }
+
+            const groups = await Promise.all(
+                pageNumbers.map(async page => {
+                    const items = await catalogFetch(
+                        "https://phimapi.com/v1/api/danh-sach/phim-bo" +
+                        "?page=" + page +
+                        "&limit=" + PAGE_SIZE
+                    );
+
+                    return items.map(item => ({
+                        ...item,
+                        __catalogType: "series"
+                    }));
+                })
+            );
+
+            pagesFetched += pageNumbers.length;
+
+            for (const item of groups.flat()) {
+                const key = catalogKey(item);
+
+                if (key && !inventoryByKey.has(key)) {
+                    inventoryByKey.set(key, item);
+                }
+            }
+
+            inventoryCount = inventoryByKey.size;
+
+            /*
+             * Không dừng sớm chỉ vì đã có 50 phim trong kho.
+             * Phải đối chiếu theo thứ hạng IMDb để chọn đúng
+             * những phim có thứ hạng cao nhất trong kho đã lấy.
+             */
+        }
+
+        const inventory = Array.from(
+            inventoryByKey.values()
+        );
+
+        const inventoryByIMDbId = new Map();
+
+        for (const item of inventory) {
+            const imdbId =
+                movinaClassicItemIMDbId(item);
+
+            if (imdbId && !inventoryByIMDbId.has(imdbId)) {
+                inventoryByIMDbId.set(imdbId, item);
+            }
+        }
+
+        for (const ranked of rankedTitles) {
+            let match = null;
+
+            /*
+             * Ưu tiên IMDb ID chính xác, không yêu cầu tên
+             * phải trùng trước khi kiểm tra ID.
+             */
+            if (ranked.imdbId) {
+                match =
+                    inventoryByIMDbId.get(ranked.imdbId) ||
+                    null;
+            }
+
+            /*
+             * Nếu không ghép được bằng IMDb ID, dùng quy tắc
+             * tên chính xác + năm hiện có của MOVINA.
+             */
+            if (!match) {
+                match = movinaClassicFindExactMatch(
+                    ranked,
+                    inventory
+                );
+            }
+
+            if (!match) {
+                continue;
+            }
+
+            const item = {
+                ...match,
+                __catalogType: "series",
+                __movinaClassicRank: ranked.rank,
+                __movinaClassicSource: "ranked-json",
+                __movinaClassicImdbId:
+                    ranked.imdbId ||
+                    movinaClassicItemIMDbId(match),
+                __movinaIMDbRating: ranked.rating || 0
+            };
+
+            const key = catalogKey(item);
+
+            if (key && !matchedByKey.has(key)) {
+                matchedByKey.set(key, item);
+            }
+        }
+
+        const result = Array.from(matchedByKey.values())
+            .sort((a, b) =>
+                (a.__movinaClassicRank || 9999) -
+                (b.__movinaClassicRank || 9999)
+            )
+            .slice(0, TARGET);
+
+        console.log(
+            "[MOVINA CLASSIC SERIES INVENTORY SUMMARY]",
+            JSON.stringify({
+                rankedTitles: rankedTitles.length,
+                pagesFetched,
+                inventoryCount,
+                matched: matchedByKey.size,
+                returned: result.length,
+                target: TARGET
+            })
+        );
+
+        return result;
+    }
+
+    /*
+     * MOVIE ONLY:
+     * Giữ nguyên cơ chế tìm kiếm hiện tại để không làm ảnh
+     * hưởng mục Kinh điển phim lẻ đang chạy tốt.
+     */
+    const CONCURRENCY = 20;
     let searched = 0;
 
-    // Duyệt theo thứ hạng. Chỉ dừng khi đã có đủ kết quả
-    // hoặc đã thử hết danh sách Top 250.
     for (
         let start = 0;
         start < rankedTitles.length &&
@@ -2473,7 +2628,10 @@ async function movinaFetchClassicCatalog(type) {
         const batchResults = await Promise.all(
             batch.map(async title => ({
                 title,
-                item: await movinaClassicSearchPhimAPI(title, type)
+                item: await movinaClassicSearchPhimAPI(
+                    title,
+                    type
+                )
             }))
         );
 
@@ -2487,8 +2645,10 @@ async function movinaFetchClassicCatalog(type) {
                 __catalogType: type,
                 __movinaClassicRank: result.title.rank,
                 __movinaClassicSource: "ranked-json",
-                __movinaClassicImdbId: result.title.imdbId || "",
-                __movinaIMDbRating: result.title.rating || 0
+                __movinaClassicImdbId:
+                    result.title.imdbId || "",
+                __movinaIMDbRating:
+                    result.title.rating || 0
             };
 
             const key = catalogKey(item);
@@ -2963,10 +3123,31 @@ if (normalizedGenre === "kinh dien") {
         })
     );
 
+
 } else if (!isLatest) {
-    items = items.filter(item =>
-        movinaTrendingGenreMatches(item, genre)
-    );
+    const isSeriesHorror =
+        type === "series" &&
+        normalizedGenre === "kinh di";
+
+    items = items.filter(item => {
+        /*
+         * Chỉ áp dụng cho Kinh dị phim bộ:
+         * tin cậy bản ghi đến từ API thể loại kinh dị,
+         * kể cả khi metadata category bị thiếu hoặc khác
+         * cách viết.
+         */
+        if (
+            isSeriesHorror &&
+            item.__genreApiSlug === "kinh-di"
+        ) {
+            return true;
+        }
+
+        return movinaTrendingGenreMatches(
+            item,
+            genre
+        );
+    });
 }
 
     const candidateCount = items.length;
