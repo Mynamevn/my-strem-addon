@@ -2089,8 +2089,6 @@ async function movinaTrendingLoadTMDB(items, contentType) {
 
 const MOVINA_CLASSIC_RANKED_CACHE = new Map();
 const MOVINA_CLASSIC_SEARCH_CACHE = new Map();
-const MOVINA_CLASSIC_CATALOG_CACHE = new Map();
-const MOVINA_CLASSIC_CATALOG_INFLIGHT = new Map();
 
 const MOVINA_CLASSIC_RANKED_SOURCES = {
     movie: [
@@ -2308,65 +2306,12 @@ async function movinaClassicGetRankedTitles(type) {
     return [];
 }
 
-
 function movinaClassicFindExactMatch(title, items) {
-    const candidates = Array.isArray(items) ? items : [];
-    const expectedName =
-        movinaClassicNormalize(title?.title);
-    const expectedIMDbId =
-        movinaClassicIMDbId(title?.imdbId);
-    const expectedYear = Number(title?.year) || 0;
+    const expectedName = movinaClassicNormalize(title?.title);
 
-    if (!expectedName && !expectedIMDbId) {
-        return null;
-    }
+    if (!expectedName) return null;
 
-    function yearMatches(item) {
-        const candidateYear = Number(itemYear(item)) || 0;
-
-        return !(
-            expectedYear &&
-            candidateYear &&
-            Math.abs(expectedYear - candidateYear) > 1
-        );
-    }
-
-    // Ưu tiên tuyệt đối IMDb ID.
-    // ID trùng chính xác thì không yêu cầu tên hoặc năm phải khớp.
-    if (expectedIMDbId) {
-        const idMatches = candidates.filter(item =>
-            movinaClassicItemIMDbId(item) === expectedIMDbId
-        );
-
-        if (idMatches.length === 1) {
-            return idMatches[0];
-        }
-
-        // Nếu có nhiều bản ghi cùng IMDb ID, không đoán.
-        if (idMatches.length > 1) {
-            const sameYear = idMatches.filter(item => {
-                const year = Number(itemYear(item)) || 0;
-
-                return (
-                    expectedYear &&
-                    year &&
-                    Math.abs(year - expectedYear) <= 1
-                );
-            });
-
-            if (sameYear.length === 1) {
-                return sameYear[0];
-            }
-
-            return null;
-        }
-    }
-
-    if (!expectedName) {
-        return null;
-    }
-
-    const exactCandidates = candidates.filter(item => {
+    const exactCandidates = (items || []).filter(item => {
         const names = [
             item?.origin_name,
             item?.original_name,
@@ -2376,15 +2321,32 @@ function movinaClassicFindExactMatch(title, items) {
             .map(movinaClassicNormalize)
             .filter(Boolean);
 
-        return (
-            names.includes(expectedName) &&
-            yearMatches(item)
-        );
+        if (!names.includes(expectedName)) {
+            return false;
+        }
+
+        const expectedYear = Number(title?.year) || 0;
+        const candidateYear = itemYear(item);
+
+        if (expectedYear && candidateYear) {
+            return Math.abs(expectedYear - candidateYear) <= 1;
+        }
+
+        return true;
     });
 
-    // Không ghép theo tên nếu bản ghi có IMDb ID
-    // nhưng ID đó khác ID cần tìm.
-    if (expectedIMDbId) {
+    // Ưu tiên tuyệt đối mã IMDb trùng khớp.
+    if (title.imdbId) {
+        const idMatches = exactCandidates.filter(item =>
+            movinaClassicItemIMDbId(item) === title.imdbId
+        );
+
+        if (idMatches.length === 1) {
+            return idMatches[0];
+        }
+
+        // Nếu tên khớp nhưng bản ghi có IMDb ID khác,
+        // không ghép nhầm sang một phim khác cùng tên.
         const candidatesWithId = exactCandidates.filter(item =>
             movinaClassicItemIMDbId(item)
         );
@@ -2394,18 +2356,19 @@ function movinaClassicFindExactMatch(title, items) {
         }
     }
 
+    // Không có ID để xác minh: chỉ nhận duy nhất một kết quả
+    // có tên gốc/tên phim khớp chính xác.
     if (exactCandidates.length === 1) {
         return exactCandidates[0];
     }
 
-    if (expectedYear && exactCandidates.length > 1) {
+    // Nếu nhiều bản cùng tên và có năm phát hành,
+    // chỉ nhận khi năm xác định được đúng một bản ghi.
+    if (title.year) {
         const sameYear = exactCandidates.filter(item => {
-            const year = Number(itemYear(item)) || 0;
-
-            return (
-                year &&
-                Math.abs(year - expectedYear) <= 1
-            );
+            const year = itemYear(item);
+            return year &&
+                Math.abs(year - Number(title.year)) <= 1;
         });
 
         if (sameYear.length === 1) {
@@ -2431,23 +2394,17 @@ async function movinaClassicSearchPhimAPI(title, type) {
         return cached.item;
     }
 
-    const searchOnce = async (useTypeFilter) => {
-        const params = {
-            keyword: title.title,
-            page: 1,
-            limit: 20
-        };
-
-        if (useTypeFilter) {
-            params.filterType =
-                type === "series" ? "series" : "single";
-        }
-
+    try {
         const response = await axios.get(
             "https://phimapi.com/v1/api/tim-kiem",
             {
-                params,
-                timeout: 3500,
+                params: {
+                    keyword: title.title,
+                    page: 1,
+                    limit: 20,
+                    filterType: type === "series" ? "series" : "single"
+                },
+                timeout: 4000,
                 headers: {
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json"
@@ -2460,82 +2417,10 @@ async function movinaClassicSearchPhimAPI(title, type) {
             response.data?.items ||
             [];
 
-        return Array.isArray(items) ? items : [];
-    };
-
-    try {
-        let items = [];
-        let lastError = null;
-
-        // Chỉ thử lại một lần khi gặp lỗi tạm thời.
-        // Tránh chờ nhiều vòng retry cho từng tựa IMDb.
-        for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-                items = await searchOnce(true);
-                lastError = null;
-                break;
-            } catch (error) {
-                lastError = error;
-
-                const status = error?.response?.status || 0;
-                const transient =
-                    status === 429 ||
-                    status >= 500 ||
-                    status === 0;
-
-                if (!transient || attempt === 1) {
-                    break;
-                }
-
-                await new Promise(resolve =>
-                    setTimeout(
-                        resolve,
-                        status === 429 ? 500 : 250
-                    )
-                );
-            }
-        }
-
-        if (lastError) {
-            throw lastError;
-        }
-
-        let match = movinaClassicFindExactMatch(
+        const match = movinaClassicFindExactMatch(
             title,
-            items
+            Array.isArray(items) ? items : []
         );
-
-        /*
-         * Chỉ gọi tìm kiếm dự phòng khi lượt có bộ lọc
-         * trả về quá ít kết quả và chưa ghép được tựa.
-         * Nếu đã có nhiều kết quả nhưng không khớp chính xác,
-         * bỏ qua fallback để giảm số request.
-         */
-        if (!match && items.length < 5) {
-            try {
-                const fallbackItems = await searchOnce(false);
-
-                const correctTypeItems = fallbackItems.filter(
-                    item =>
-                        isSeriesItem(item) === (type === "series")
-                );
-
-                match = movinaClassicFindExactMatch(
-                    title,
-                    correctTypeItems
-                );
-            } catch (error) {
-                console.warn(
-                    "[MOVINA CLASSIC FALLBACK SEARCH ERROR]",
-                    JSON.stringify({
-                        type,
-                        title: title.title,
-                        status: error?.response?.status || 0,
-                        error: error?.message || String(error)
-                    })
-                );
-            }
-        }
 
         MOVINA_CLASSIC_SEARCH_CACHE.set(cacheKey, {
             time: Date.now(),
@@ -2555,35 +2440,12 @@ async function movinaClassicSearchPhimAPI(title, type) {
             })
         );
 
-        // Không cache lỗi mạng hoặc lỗi 429.
-        // Lần sau vẫn có thể thử lại.
+        // Không cache lỗi mạng; cho phép thử lại ở yêu cầu sau.
         return null;
     }
 }
 
-async function movinaFetchClassicCatalogUncached(type) {
-    const cacheKey = type === "series" ? "series" : "movie";
-    const now = Date.now();
-
-    const cached = MOVINA_CLASSIC_CATALOG_CACHE.get(cacheKey);
-
-    if (
-        cached &&
-        now - cached.time < cached.ttl
-    ) {
-        console.log(
-            "[MOVINA CLASSIC CATALOG CACHE HIT]",
-            JSON.stringify({
-                type: cacheKey,
-                items: cached.items.length,
-                ageMs: now - cached.time,
-                ttlMs: cached.ttl
-            })
-        );
-
-        return cached.items.map(item => ({ ...item }));
-    }
-
+async function movinaFetchClassicCatalog(type) {
     const rankedTitles = await movinaClassicGetRankedTitles(type);
 
     if (!rankedTitles.length) {
@@ -2591,13 +2453,12 @@ async function movinaFetchClassicCatalogUncached(type) {
     }
 
     const TARGET = CATALOG_TARGET;
-    const CONCURRENCY = 12;
+    const CONCURRENCY = 20;
     const matchedByKey = new Map();
     let searched = 0;
-    let failedSearches = 0;
 
-    // Duyệt theo thứ hạng IMDb. Không lấy phim ngoài Top 250
-    // để bù vào danh sách thiếu.
+    // Duyệt theo thứ hạng. Chỉ dừng khi đã có đủ kết quả
+    // hoặc đã thử hết danh sách Top 250.
     for (
         let start = 0;
         start < rankedTitles.length &&
@@ -2610,27 +2471,15 @@ async function movinaFetchClassicCatalogUncached(type) {
         );
 
         const batchResults = await Promise.all(
-            batch.map(async title => {
-                try {
-                    const item = await movinaClassicSearchPhimAPI(
-                        title,
-                        type
-                    );
-
-                    return { title, item, failed: false };
-                } catch (error) {
-                    return { title, item: null, failed: true };
-                }
-            })
+            batch.map(async title => ({
+                title,
+                item: await movinaClassicSearchPhimAPI(title, type)
+            }))
         );
 
         searched += batch.length;
 
         for (const result of batchResults) {
-            if (result.failed) {
-                failedSearches++;
-            }
-
             if (!result.item) continue;
 
             const item = {
@@ -2644,17 +2493,7 @@ async function movinaFetchClassicCatalogUncached(type) {
 
             const key = catalogKey(item);
 
-            if (!key) continue;
-
-            const existing = matchedByKey.get(key);
-
-            // Nếu cùng một phim xuất hiện nhiều lần,
-            // giữ bản có thứ hạng IMDb tốt hơn.
-            if (
-                !existing ||
-                (item.__movinaClassicRank || 9999) <
-                (existing.__movinaClassicRank || 9999)
-            ) {
+            if (key && !matchedByKey.has(key)) {
                 matchedByKey.set(key, item);
             }
         }
@@ -2673,88 +2512,15 @@ async function movinaFetchClassicCatalogUncached(type) {
             type,
             rankedTitles: rankedTitles.length,
             searched,
-            failedSearches,
             matchedPhimAPI: matchedByKey.size,
             returned: result.length,
-            target: TARGET,
-            firstRanks: result
-                .slice(0, 10)
-                .map(item => ({
-                    rank: item.__movinaClassicRank,
-                    imdbId: item.__movinaClassicImdbId,
-                    name: item.origin_name || item.name || ""
-                }))
-        })
-    );
-
-    // Cache đầy đủ lâu hơn; cache thiếu kết quả ngắn hơn
-    // để lần sau có cơ hội tìm bổ sung.
-    
-const cacheTTL =
-    result.length > 0
-        ? 30 * 60 * 1000
-        : 2 * 60 * 1000;
-
-    MOVINA_CLASSIC_CATALOG_CACHE.set(cacheKey, {
-        time: Date.now(),
-        ttl: cacheTTL,
-        items: result.map(item => ({ ...item }))
-    });
-
-    console.log(
-        "[MOVINA CLASSIC CATALOG CACHE SET]",
-        JSON.stringify({
-            type: cacheKey,
-            items: result.length,
-            ttlMs: cacheTTL
+            target: TARGET
         })
     );
 
     return result;
 }
 
-async function movinaFetchClassicCatalog(type) {
-    const cacheKey =
-        type === "series" ? "series" : "movie";
-
-    const cached =
-        MOVINA_CLASSIC_CATALOG_CACHE.get(cacheKey);
-
-    if (
-        cached &&
-        Date.now() - cached.time < cached.ttl
-    ) {
-        return cached.items.map(item => ({ ...item }));
-    }
-
-    const existing =
-        MOVINA_CLASSIC_CATALOG_INFLIGHT.get(cacheKey);
-
-    if (existing) {
-        const sharedItems = await existing;
-
-        return sharedItems.map(item => ({ ...item }));
-    }
-
-    const pending = movinaFetchClassicCatalogUncached(type);
-
-    MOVINA_CLASSIC_CATALOG_INFLIGHT.set(
-        cacheKey,
-        pending
-    );
-
-    try {
-        const items = await pending;
-
-        return items.map(item => ({ ...item }));
-    } finally {
-        if (
-            MOVINA_CLASSIC_CATALOG_INFLIGHT.get(cacheKey) === pending
-        ) {
-            MOVINA_CLASSIC_CATALOG_INFLIGHT.delete(cacheKey);
-        }
-    }
-}
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
@@ -2836,23 +2602,9 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
         return true;
     }
 
-    // Tin cậy endpoint thể loại gốc của PhimAPI.
-    // __genreApiSlug đã được gắn khi tải dữ liệu.
-    const sourceSlug = String(
-        item?.__genreApiSlug || ""
-    ).trim().toLowerCase();
+    const categories = catalogCategoryNames(item);
 
-    const expectedSlugs =
-        MOVINA_TRENDING_GENRE_SLUGS[genre] || [];
-
-    if (
-        sourceSlug &&
-        expectedSlugs.includes(sourceSlug)
-    ) {
-        return true;
-    }
-
-    // Giữ bộ nhận diện hoạt hình hiện có.
+    // Hoạt hình vẫn dùng bộ nhận diện riêng.
     if (
         genre === "hoat hinh" &&
         isAnimation(item)
@@ -2860,11 +2612,18 @@ function movinaTrendingGenreMatches(item, selectedGenre) {
         return true;
     }
 
-    const categories = catalogCategoryNames(item);
-
     const aliases =
         MOVINA_TRENDING_GENRE_ALIASES[genre] || [genre];
 
+    /*
+     * Cho phép khớp thể loại ghép, ví dụ:
+     * - "tam ly - tinh cam" khớp "tinh cam"
+     * - "khoa hoc vien tuong" khớp "vien tuong"
+     * - "vo thuat - kiem hiep" khớp "vo thuat"
+     *
+     * So khớp theo ranh giới từ để tránh những kết quả
+     * khớp nhầm chỉ vì có một chuỗi ký tự ngắn.
+     */
     function matchesAlias(category, alias) {
         if (!category || !alias) {
             return false;
@@ -3073,27 +2832,21 @@ async function fetchMovinaTrendingByGenre(
             "https://phimapi.com/v1/api/danh-sach/hoat-hinh" +
             "?page=" + page +
             "&limit=" + PAGE_SIZE;
-        
-requests.push(
-    catalogFetch(url).then(items =>
-        items.map(item => {
-            const series = isSeriesItem(item);
 
-            return {
-                ...item,
-                __catalogType: series ? "series" : "movie",
-                __isAnimation: true
-            };
-        })
-    )
-);
-
+        requests.push(
+            catalogFetch(url).then(items =>
+                items.map(item => ({
+                    ...item,
+                    __isAnimation: true
+                }))
+            )
+        );
     }
 
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
         for (const slug of genreSlugs) {
-            for (let page = 1; page <= 4; page++) {
+            for (let page = 1; page <= 6; page++) {
                 const url =
                     "https://phimapi.com/v1/api/the-loai/" +
                     encodeURIComponent(slug) +
@@ -3112,7 +2865,7 @@ requests.push(
         }
 
         // Luôn có nguồn danh sách đúng loại để bổ sung.
-        for (let page = 1; page <= 4; page++) {
+        for (let page = 1; page <= 6; page++) {
             const url =
                 "https://phimapi.com/v1/api/danh-sach/" +
                 listEndpoint +
@@ -3169,75 +2922,12 @@ requests.push(
 
     let items = Array.from(mergedByKey.values());    
         
+    // Phân loại movie/series trước khi lọc thể loại.
+    // Nguồn hoạt hình có thể chứa cả phim lẻ lẫn phim bộ.
     
-    // Xác định loại nội dung từ các bản ghi đã được API
-    // phim-bo / phim-le xác nhận.
-    //
-    // Ghép bổ sung bằng slug, ID và tên chuẩn hóa để tránh
-    // bỏ sót khi endpoint thể loại dùng khóa khác endpoint danh sách.
-
-    const normalizeGenreIdentity = value =>
-        catalogNormalize(value);
-
-    const seriesIdentities = new Set();
-    const movieIdentities = new Set();
-
-    function addIdentityKeys(target, item) {
-        if (!item) return;
-
-        const rawKeys = [
-            item.slug,
-            item._id,
-            item.id,
-            item.name,
-            item.origin_name,
-            item.original_name
-        ];
-
-        for (const value of rawKeys) {
-            const key = normalizeGenreIdentity(value);
-
-            if (key) {
-                target.add(key);
-            }
-        }
-    }
-
-    for (const item of groups.flat()) {
-        if (item.__catalogType === "series") {
-            addIdentityKeys(seriesIdentities, item);
-        } else if (item.__catalogType === "movie") {
-            addIdentityKeys(movieIdentities, item);
-        }
-    }
-
     items = items.filter(item => {
-        const keys = new Set();
-
-        addIdentityKeys({
-            add: key => keys.add(key)
-        }, item);
-
-        const matchedSeries = [...keys].some(
-            key => seriesIdentities.has(key)
-        );
-
-        const matchedMovie = [...keys].some(
-            key => movieIdentities.has(key)
-        );
-
-        // Chỉ dùng nhãn nội bộ khi nó không mâu thuẫn với
-        // nguồn danh sách đúng loại.
-        if (matchedSeries && !matchedMovie) {
-            return type === "series";
-        }
-
-        if (matchedMovie && !matchedSeries) {
-            return type === "movie";
-        }
-
-        // Nếu chính bản ghi đã có nhãn loại rõ ràng,
-        // giữ nguyên nhãn đó.
+        // Những bản ghi lấy từ endpoint phim-le/phim-bo
+        // đã được xác định loại ngay tại nguồn.
         if (item.__catalogType === "series") {
             return type === "series";
         }
@@ -3246,8 +2936,8 @@ requests.push(
             return type === "movie";
         }
 
-        // Trường hợp chưa xác định được loại thì chỉ chấp nhận
-        // khi metadata của bản ghi có đủ dấu hiệu.
+        // Bản ghi từ API thể loại không có nhãn nội bộ:
+        // dùng bộ phân loại dựa trên metadata thực tế.
         return type === "series"
             ? isSeriesItem(item)
             : !isSeriesItem(item);
