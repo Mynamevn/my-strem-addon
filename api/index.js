@@ -454,10 +454,9 @@ return result;
 
 // [CORE-003.04] [PROVIDERS: ALL] CATALOG API FETCH
 
-
 const MOVINA_CATALOG_FETCH_CACHE = new Map();
 const MOVINA_CATALOG_FETCH_TTL = 5 * 60 * 1000;
-const MOVINA_CATALOG_FETCH_FAIL_TTL = 30 * 1000;
+const MOVINA_CATALOG_FETCH_FAIL_TTL = 15 * 1000;
 
 async function catalogFetch(url) {
     const cacheKey = String(url || "");
@@ -472,8 +471,8 @@ async function catalogFetch(url) {
         try {
             console.log("[CATALOG API] Request:", url);
 
-            const res = await axios.get(url, {
-                timeout: 7000,
+            const response = await axios.get(url, {
+                timeout: 5000,
                 headers: {
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json"
@@ -481,37 +480,41 @@ async function catalogFetch(url) {
             });
 
             const items =
-                res.data?.data?.items ||
-                res.data?.items ||
+                response.data?.data?.items ??
+                response.data?.items ??
                 [];
 
-            const result = Array.isArray(items) ? items : [];
+            if (!Array.isArray(items)) {
+                throw new Error("Invalid catalog response");
+            }
 
-            console.log("[CATALOG API] Items:", result.length);
+            console.log("[CATALOG API] Items:", items.length);
 
-            return result;
-        } catch (e) {
-            console.error(
+            return items;
+        } catch (error) {
+            console.warn(
                 "[CATALOG API ERROR]",
                 url,
-                e?.response?.status ||
-                    e?.message ||
-                    e
+                error?.response?.status ||
+                    error?.code ||
+                    error?.message ||
+                    "Unknown error"
             );
 
             return null;
         }
     })();
 
-    // Lưu cả Promise để các request trùng URL cùng chờ một lần tải.
+    // Lưu Promise ngay lập tức để các request cùng URL
+    // không tạo nhiều lượt gọi mạng trùng nhau.
     MOVINA_CATALOG_FETCH_CACHE.set(cacheKey, {
         expiresAt: now + MOVINA_CATALOG_FETCH_TTL,
         promise: requestPromise
     });
 
-    const result = await requestPromise;
+    const items = await requestPromise;
 
-    if (result === null) {
+    if (items === null) {
         MOVINA_CATALOG_FETCH_CACHE.set(cacheKey, {
             expiresAt: Date.now() + MOVINA_CATALOG_FETCH_FAIL_TTL,
             promise: Promise.resolve([])
@@ -520,7 +523,7 @@ async function catalogFetch(url) {
         return [];
     }
 
-    return result;
+    return items;
 }
 
 
@@ -3171,7 +3174,7 @@ async function fetchMovinaTrendingByGenre(
     // Dùng endpoint hoạt hình chuyên biệt của PhimAPI.
     // Endpoint này có thể chứa cả phim lẻ và phim bộ,
     // nên không gán __catalogType tại bước lấy dữ liệu.
-    const animationPages = 12;
+    const animationPages = 4;
 
     for (let page = 1; page <= animationPages; page++) {
         const url =
@@ -3270,7 +3273,7 @@ async function fetchMovinaTrendingByGenre(
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
         for (const slug of genreSlugs) {
-            for (let page = 1; page <= 6; page++) {
+            for (let page = 1; page <= 3; page++) {
                 const url =
                     "https://phimapi.com/v1/api/the-loai/" +
                     encodeURIComponent(slug) +
@@ -3289,7 +3292,7 @@ async function fetchMovinaTrendingByGenre(
         }
 
         // Luôn có nguồn danh sách đúng loại để bổ sung.
-        for (let page = 1; page <= 6; page++) {
+        for (let page = 1; page <= 3; page++) {
             const url =
                 "https://phimapi.com/v1/api/danh-sach/" +
                 listEndpoint +
@@ -4179,7 +4182,7 @@ const animationSources = [];
 
 for (
     let page = 1;
-    page <= 12;
+    page <= 3;
     page++
 ) {
 
