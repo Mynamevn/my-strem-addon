@@ -3188,12 +3188,13 @@ async function fetchMovinaTrendingByGenre(
          * Mở rộng phạm vi quét để tăng khả năng tìm được
          * series kinh dị nằm ngoài các trang đầu.
          */
-        const HORROR_GENRE_PAGES = 16;
-        const HORROR_SERIES_PAGES = 16;
+        
+        const HORROR_GENRE_PAGES = 3;
+        const HORROR_SERIES_PAGES = 3;
 
         const horrorSlug = "kinh-di";
 
-        // Nguồn A: danh sách thuộc thể loại Kinh dị.
+        // Nguồn A: API thể loại Kinh dị.
         for (
             let page = 1;
             page <= HORROR_GENRE_PAGES;
@@ -3215,10 +3216,7 @@ async function fetchMovinaTrendingByGenre(
             );
         }
 
-        
-        // Nguồn B: phim bộ đã lọc trực tiếp theo thể loại Kinh dị.
-        // Không dùng danh sách phim bộ tổng quát vì nhiều series
-        // kinh dị không xuất hiện trong các trang đầu của danh sách đó.
+        // Nguồn B: danh sách phim bộ lọc theo thể loại Kinh dị.
         for (
             let page = 1;
             page <= HORROR_SERIES_PAGES;
@@ -3252,6 +3250,7 @@ async function fetchMovinaTrendingByGenre(
                     HORROR_GENRE_PAGES + HORROR_SERIES_PAGES
             })
         );
+
 
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
@@ -6491,36 +6490,15 @@ function movinaCinemetaPreviewFields(meta) {
 
 
 
+
 async function movinaFetchCinemetaPreview(item, type = "movie") {
-    type = type === "series" ? "series" : "movie";
+    const slug = String(item?.slug || "").trim();
 
-    const imdbId = String(
-        item?.__movinaClassicImdbId ||
-        item?.imdb?.id ||
-        item?.imdb_id ||
-        ""
-    ).trim();
+    if (!slug) {
+        return {};
+    }
 
-    const originalName = String(
-        item?.origin_name ||
-        item?.original_name ||
-        ""
-    ).trim();
-
-    const localName = String(item?.name || "").trim();
-    const targetYear = Number(item?.year) || 0;
-
-    const cacheKey = type + ":" + (
-        /^tt\d+$/i.test(imdbId)
-            ? "id:" + imdbId
-            : "title:" +
-                catalogNormalize(originalName) +
-                "|" +
-                catalogNormalize(localName) +
-                "|" +
-                targetYear
-    );
-
+    const cacheKey = "phimapi:detail:" + slug;
     const cached = MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey);
 
     if (cached && cached.expiresAt > Date.now()) {
@@ -6528,115 +6506,100 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
     }
 
     const requestPromise = (async () => {
-        const headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        };
-
         try {
-            if (/^tt\d+$/i.test(imdbId)) {
-                const response = await axios.get(
-                    `https://v3-cinemeta.strem.io/meta/${type}/${encodeURIComponent(imdbId)}.json`,
-                    { timeout: 2500, headers }
-                );
-
-                const meta = response.data?.meta;
-
-                if (
-                    meta &&
-                    String(meta.id || "").split(":")[0] === imdbId
-                ) {
-                    return movinaCinemetaPreviewFields(meta);
+            const response = await axios.get(
+                "https://phimapi.com/v1/api/phim/" +
+                    encodeURIComponent(slug),
+                {
+                    timeout: 2500,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
                 }
-
-                return {};
-            }
-
-            const queries = [
-                originalName,
-                localName
-            ].filter(
-                (name, index, all) =>
-                    name &&
-                    all.findIndex(
-                        other =>
-                            catalogNormalize(other) ===
-                            catalogNormalize(name)
-                    ) === index
             );
 
-            for (const query of queries) {
-                const response = await axios.get(
-                    `https://v3-cinemeta.strem.io/catalog/${type}/top/search=${encodeURIComponent(query)}.json`,
-                    { timeout: 2500, headers }
-                );
+            const detail =
+                response.data?.data?.item ||
+                response.data?.item ||
+                {};
 
-                const candidates = response.data?.metas || [];
+            const rawDescription =
+                detail.content ||
+                detail.description ||
+                detail.overview ||
+                "";
 
-                const exact = candidates.find(candidate => {
-                    const candidateName =
-                        catalogNormalize(candidate?.name);
+            const description =
+                typeof rawDescription === "string"
+                    ? rawDescription
+                        .replace(/<br\s*\/?>/gi, "\n")
+                        .replace(/<\/p>/gi, "\n")
+                        .replace(/<[^>]*>/g, " ")
+                        .replace(/&nbsp;/gi, " ")
+                        .replace(/&amp;/gi, "&")
+                        .replace(/&quot;/gi, '"')
+                        .replace(/&#39;/g, "'")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                    : "";
 
-                    const exactName =
-                        candidateName === catalogNormalize(originalName) ||
-                        candidateName === catalogNormalize(localName);
+            const genres = Array.isArray(detail.category)
+                ? detail.category
+                    .map(value =>
+                        typeof value === "string"
+                            ? value
+                            : value?.name
+                    )
+                    .filter(Boolean)
+                : [];
 
-                    if (!exactName) return false;
+            const cast = Array.isArray(detail.actor)
+                ? detail.actor
+                    .map(value =>
+                        typeof value === "string"
+                            ? value
+                            : value?.name
+                    )
+                    .filter(Boolean)
+                : [];
 
-                    const candidateYear =
-                        movinaCinemetaPreviewYear(candidate);
+            const director = Array.isArray(detail.director)
+                ? detail.director
+                    .map(value =>
+                        typeof value === "string"
+                            ? value
+                            : value?.name
+                    )
+                    .filter(Boolean)
+                : [];
 
-                    return (
-                        !targetYear ||
-                        !candidateYear ||
-                        candidateYear === targetYear
-                    );
-                });
+            const runtime =
+                detail.time ||
+                detail.runtime ||
+                "";
 
-                if (!exact?.id) continue;
+            const rawRating =
+                detail.imdb?.vote_average ??
+                detail.imdb?.rating ??
+                detail.tmdb?.vote_average;
 
-                const fields = movinaCinemetaPreviewFields(exact);
+            const rating = Number(rawRating);
 
-                // Nếu kết quả tìm kiếm đã có các trường cơ bản,
-                // không cần gọi thêm endpoint metadata.
-                if (
-                    fields.description &&
-                    fields.imdbRating &&
-                    fields.genres?.length
-                ) {
-                    return fields;
-                }
-
-                try {
-                    const detailResponse = await axios.get(
-                        `https://v3-cinemeta.strem.io/meta/${type}/${encodeURIComponent(exact.id)}.json`,
-                        { timeout: 2500, headers }
-                    );
-
-                    const detail = detailResponse.data?.meta;
-
-                    if (
-                        detail &&
-                        detail.id === exact.id
-                    ) {
-                        return {
-                            ...fields,
-                            ...movinaCinemetaPreviewFields(detail)
-                        };
-                    }
-                } catch (_) {
-                    // Giữ lại dữ liệu có sẵn từ catalog search.
-                }
-
-                return fields;
-            }
-
-            return {};
+            return {
+                ...(description ? { description } : {}),
+                ...(genres.length ? { genres } : {}),
+                ...(cast.length ? { cast } : {}),
+                ...(director.length ? { director } : {}),
+                ...(runtime ? { runtime: String(runtime) } : {}),
+                ...(Number.isFinite(rating) && rating > 0
+                    ? { imdbRating: Math.round(rating * 10) / 10 }
+                    : {})
+            };
         } catch (error) {
             console.log(
-                "[CINEMETA PREVIEW]",
-                type,
-                localName || originalName || imdbId || "unknown",
+                "[PHIMAPI PREVIEW DETAIL]",
+                slug,
                 error?.response?.status || error?.message || error
             );
 
@@ -6662,7 +6625,6 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
 }
 
 
-
 async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
     type = type === "series" ? "series" : "movie";
 
@@ -6674,7 +6636,9 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
         while (true) {
             const index = nextIndex++;
 
-            if (index >= sourceItems.length) return;
+            if (index >= sourceItems.length) {
+                return;
+            }
 
             const item = sourceItems[index];
             const preview = makeCatalogMeta(item, type);
@@ -6684,52 +6648,55 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
                 continue;
             }
 
-            try {
-                const extra =
-                    await movinaFetchCinemetaPreview(item, type);
+            // Chỉ truy vấn chi tiết khi catalog chưa có tóm tắt.
+            // Tóm tắt từ PhimAPI được ưu tiên để giữ tiếng Việt.
+            let extra = {};
 
-                metas[index] = {
-                    ...preview,
-
-                    ...(!preview.description && extra.description
-                        ? { description: extra.description }
-                        : {}),
-
-                    ...(!preview.genres?.length && extra.genres?.length
-                        ? { genres: extra.genres }
-                        : {}),
-
-                    ...(!preview.cast?.length && extra.cast?.length
-                        ? { cast: extra.cast }
-                        : {}),
-
-                    ...(!preview.director?.length && extra.director?.length
-                        ? { director: extra.director }
-                        : {}),
-
-                    ...(!preview.runtime && extra.runtime
-                        ? { runtime: extra.runtime }
-                        : {}),
-
-                    imdbRating:
-                        preview.imdbRating ??
-                        extra.imdbRating,
-
-                    id: preview.id,
-                    type,
-                    name: preview.name,
-                    poster: preview.poster,
-                    posterShape: preview.posterShape
-                };
-            } catch (error) {
-                console.log(
-                    "[CINEMETA PREVIEW] Enrichment failed:",
-                    preview.name,
-                    error?.message || error
-                );
-
-                metas[index] = preview;
+            if (!preview.description?.trim()) {
+                try {
+                    extra = await movinaFetchCinemetaPreview(item, type);
+                } catch (error) {
+                    console.log(
+                        "[PHIMAPI PREVIEW] Enrichment failed:",
+                        preview.name,
+                        error?.message || error
+                    );
+                }
             }
+
+            metas[index] = {
+                ...preview,
+
+                ...(!preview.description && extra.description
+                    ? { description: extra.description }
+                    : {}),
+
+                ...(!preview.genres?.length && extra.genres?.length
+                    ? { genres: extra.genres }
+                    : {}),
+
+                ...(!preview.cast?.length && extra.cast?.length
+                    ? { cast: extra.cast }
+                    : {}),
+
+                ...(!preview.director?.length && extra.director?.length
+                    ? { director: extra.director }
+                    : {}),
+
+                ...(!preview.runtime && extra.runtime
+                    ? { runtime: extra.runtime }
+                    : {}),
+
+                imdbRating:
+                    preview.imdbRating ??
+                    extra.imdbRating,
+
+                id: preview.id,
+                type,
+                name: preview.name,
+                poster: preview.poster,
+                posterShape: preview.posterShape
+            };
         }
     }
 
@@ -6744,7 +6711,7 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
     );
 
     console.log(
-        "[CINEMETA PREVIEW]",
+        "[MOVINA VIETNAMESE PREVIEW]",
         JSON.stringify({
             type,
             input: sourceItems.length,
@@ -7817,7 +7784,7 @@ const selectedGenre = String(
 ).trim();
 
 let previewType = "movie";
-let enableCinemetaPreview = false;
+let enableCinemetaPreview = args.id === "pa_daily";
 
 if (args.id === "pa_movies_trending") {
     previewType = "movie";
