@@ -6556,9 +6556,6 @@ function movinaCinemetaPreviewFields(meta) {
     return result;
 }
 
-
-
-
 async function movinaFetchCinemetaPreview(item, type = "movie") {
     const slug = String(item?.slug || "").trim();
 
@@ -6692,13 +6689,20 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
     return fields;
 }
 
-
 async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
     type = type === "series" ? "series" : "movie";
 
     const sourceItems = (items || []).slice(0, CATALOG_TARGET);
     const metas = new Array(sourceItems.length);
+
     let nextIndex = 0;
+    let detailRequests = 0;
+    let detailCacheHits = 0;
+
+    // Giới hạn số phim cần truy vấn chi tiết trong một lượt catalog.
+    // Các phim còn lại vẫn giữ dữ liệu có sẵn từ nguồn.
+    const MAX_DETAIL_REQUESTS = 50;
+    const WORKERS = Math.min(8, sourceItems.length);
 
     async function worker() {
         while (true) {
@@ -6716,48 +6720,57 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
                 continue;
             }
 
-            // Chỉ truy vấn chi tiết khi catalog chưa có tóm tắt.
-            // Tóm tắt từ PhimAPI được ưu tiên để giữ tiếng Việt.
+            const hasDescription =
+                typeof preview.description === "string" &&
+                preview.description.trim().length > 0;
+
+            const hasRating =
+                Number.isFinite(Number(preview.imdbRating)) &&
+                Number(preview.imdbRating) > 0;
+
             let extra = {};
 
-            if (!preview.description?.trim()) {
-                try {
+            // Không gọi API khi đã có cả mô tả lẫn điểm IMDb.
+            // Nếu thiếu một trong hai, thử lấy dữ liệu chi tiết,
+            // nhưng giới hạn tổng số phim được truy vấn mỗi lượt.
+            if (!hasDescription || !hasRating) {
+                const slug = String(item?.slug || "").trim();
+                const cacheKey = slug
+                    ? "phimapi:detail:" + slug
+                    : "";
+
+                const cached =
+                    cacheKey
+                        ? MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey)
+                        : null;
+
+                const cacheIsValid =
+                    cached && cached.expiresAt > Date.now();
+
+                if (cacheIsValid) {
+                    detailCacheHits++;
                     extra = await movinaFetchCinemetaPreview(item, type);
-                } catch (error) {
-                    console.log(
-                        "[PHIMAPI PREVIEW] Enrichment failed:",
-                        preview.name,
-                        error?.message || error
-                    );
+                } else if (
+                    slug &&
+                    detailRequests < MAX_DETAIL_REQUESTS
+                ) {
+                    // Không tăng bộ đếm nếu không còn suất truy vấn.
+                    detailRequests++;
+                    extra = await movinaFetchCinemetaPreview(item, type);
                 }
             }
 
             metas[index] = {
                 ...preview,
 
-                ...(!preview.description && extra.description
+                ...(!hasDescription && extra.description
                     ? { description: extra.description }
                     : {}),
 
-                ...(!preview.genres?.length && extra.genres?.length
-                    ? { genres: extra.genres }
-                    : {}),
-
-                ...(!preview.cast?.length && extra.cast?.length
-                    ? { cast: extra.cast }
-                    : {}),
-
-                ...(!preview.director?.length && extra.director?.length
-                    ? { director: extra.director }
-                    : {}),
-
-                ...(!preview.runtime && extra.runtime
-                    ? { runtime: extra.runtime }
-                    : {}),
-
-                imdbRating:
-                    preview.imdbRating ??
-                    extra.imdbRating,
+                // Chỉ bổ sung rating khi rating hiện tại bị thiếu.
+                imdbRating: hasRating
+                    ? preview.imdbRating
+                    : extra.imdbRating,
 
                 id: preview.id,
                 type,
@@ -6768,10 +6781,8 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
         }
     }
 
-    const workerCount = Math.min(8, sourceItems.length);
-
     await Promise.all(
-        Array.from({ length: workerCount }, () => worker())
+        Array.from({ length: WORKERS }, () => worker())
     );
 
     const result = metas.filter(
@@ -6784,14 +6795,16 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
             type,
             input: sourceItems.length,
             output: result.length,
-            workers: workerCount,
+            workers: WORKERS,
+            detailRequests,
+            detailCacheHits,
+            maxDetailRequests: MAX_DETAIL_REQUESTS,
             cacheSize: MOVINA_CINEMETA_PREVIEW_CACHE.size
         })
     );
 
     return result;
 }
-
 
 /* ============================================================
    12. DEFINE CATALOG HANDLER
