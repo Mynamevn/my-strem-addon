@@ -404,7 +404,7 @@ const CATALOG_TARGET = 50;
 
 // Giới hạn riêng số phim hiển thị trong các catalog VOD MOVINA.
 // Không thay đổi giới hạn chung để tránh ảnh hưởng IPTV và catalog khác.
-const MOVINA_VOD_CATALOG_TARGET = 20;async function movinaEnrichMovieTrendingPreviews(
+const MOVINA_VOD_CATALOG_TARGET = 20;
 
 // [CORE-003.02] [PROVIDERS: ALL] CATALOG TEXT NORMALIZATION
 function catalogNormalize(value) {
@@ -6698,7 +6698,6 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
 }
 
 
-
 async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
     type = type === "series" ? "series" : "movie";
 
@@ -6727,6 +6726,7 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
 
     return metas;
 }
+
 
 /* ============================================================
    12. DEFINE CATALOG HANDLER
