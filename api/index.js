@@ -399,7 +399,12 @@ function makePosterUrl(item) {
 ============================================================ */
 
 // [CORE-003.01] [PROVIDERS: ALL] CATALOG LIMIT
+
 const CATALOG_TARGET = 50;
+
+// Giới hạn riêng số phim hiển thị trong các catalog VOD MOVINA.
+// Không thay đổi giới hạn chung để tránh ảnh hưởng IPTV và catalog khác.
+const MOVINA_VOD_CATALOG_TARGET = 20;async function movinaEnrichMovieTrendingPreviews(
 
 // [CORE-003.02] [PROVIDERS: ALL] CATALOG TEXT NORMALIZATION
 function catalogNormalize(value) {
@@ -6693,105 +6698,35 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
 }
 
 
+
 async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
     type = type === "series" ? "series" : "movie";
 
-    const sourceItems = (items || []).slice(0, CATALOG_TARGET);
-    const metas = new Array(sourceItems.length);
-    let nextIndex = 0;
-
-    async function worker() {
-        while (true) {
-            const index = nextIndex++;
-
-            if (index >= sourceItems.length) {
-                return;
-            }
-
-            const item = sourceItems[index];
-            const preview = makeCatalogMeta(item, type);
-
-            if (!preview?.id || !preview?.name) {
-                metas[index] = null;
-                continue;
-            }
-
-            // Chỉ truy vấn chi tiết khi catalog chưa có tóm tắt.
-            // Tóm tắt từ PhimAPI được ưu tiên để giữ tiếng Việt.
-            let extra = {};
-
-            if (!preview.description?.trim()) {
-                try {
-                    extra = await movinaFetchCinemetaPreview(item, type);
-                } catch (error) {
-                    console.log(
-                        "[PHIMAPI PREVIEW] Enrichment failed:",
-                        preview.name,
-                        error?.message || error
-                    );
-                }
-            }
-
-            metas[index] = {
-                ...preview,
-
-                ...(!preview.description && extra.description
-                    ? { description: extra.description }
-                    : {}),
-
-                ...(!preview.genres?.length && extra.genres?.length
-                    ? { genres: extra.genres }
-                    : {}),
-
-                ...(!preview.cast?.length && extra.cast?.length
-                    ? { cast: extra.cast }
-                    : {}),
-
-                ...(!preview.director?.length && extra.director?.length
-                    ? { director: extra.director }
-                    : {}),
-
-                ...(!preview.runtime && extra.runtime
-                    ? { runtime: extra.runtime }
-                    : {}),
-
-                imdbRating:
-                    preview.imdbRating ??
-                    extra.imdbRating,
-
-                id: preview.id,
-                type,
-                name: preview.name,
-                poster: preview.poster,
-                posterShape: preview.posterShape
-            };
-        }
-    }
-
-    const workerCount = Math.min(8, sourceItems.length);
-
-    await Promise.all(
-        Array.from({ length: workerCount }, () => worker())
+    const sourceItems = (items || []).slice(
+        0,
+        MOVINA_VOD_CATALOG_TARGET
     );
 
-    const result = metas.filter(
-        meta => meta?.id && meta?.name
-    );
+    // Không gọi API bổ sung preview trong luồng catalog.
+    // Giữ mô tả, điểm IMDb và thông tin đã có sẵn từ nguồn.
+    const metas = sourceItems
+        .map(item => makeCatalogMeta(item, type))
+        .filter(meta => meta?.id && meta?.name);
 
     console.log(
         "[MOVINA VIETNAMESE PREVIEW]",
         JSON.stringify({
             type,
             input: sourceItems.length,
-            output: result.length,
-            workers: workerCount,
+            output: metas.length,
+            workers: 0,
+            enrichment: false,
             cacheSize: MOVINA_CINEMETA_PREVIEW_CACHE.size
         })
     );
 
-    return result;
+    return metas;
 }
-
 
 /* ============================================================
    12. DEFINE CATALOG HANDLER
@@ -7889,10 +7824,21 @@ if (enableCinemetaPreview) {
     );
 } else {
     metas = items
-        .slice(0, CATALOG_TARGET)
-        .map(item =>
-            makeCatalogMeta(item, forcedType)
-        )
+    .slice(
+        0,
+        [
+            "pa_movies_trending",
+            "pa_series_trending",
+            "pa_daily",
+            "pa_animation_new",
+            "pa_tvb"
+        ].includes(args.id)
+            ? MOVINA_VOD_CATALOG_TARGET
+            : CATALOG_TARGET
+    )
+    .map(item =>
+        makeCatalogMeta(item, forcedType)
+    )
         .filter(
             meta =>
                 meta.id &&
