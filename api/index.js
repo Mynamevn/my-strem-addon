@@ -2573,9 +2573,11 @@ function addMatch(ranked, sourceItem) {
     
 
 if (type === "series") {
-    const LOOKUP_CONCURRENCY = 8;
-    const LOOKUP_TIMEOUT = 2200;
-    const MAX_FALLBACK_SEARCHES = 12;
+    const LOOKUP_CONCURRENCY = 4;
+const LOOKUP_TIMEOUT = 2500;
+const MAX_FALLBACK_SEARCHES = 80;
+const MAX_DIRECT_LOOKUP_ERRORS = 20;
+const FALLBACK_CONCURRENCY = 3;
 
     const SEARCH_TIMEOUT_NOTE =
         "Direct IMDb lookup failed; fallback to exact title/year search.";
@@ -2616,29 +2618,29 @@ if (type === "series") {
             const data = response.data || {};
 
             const item =
-                data?.movie ||
-                data?.data?.movie ||
-                data?.data?.item ||
-                data?.item ||
-                null;
+    data?.movie ||
+    data?.data?.movie ||
+    data?.data?.item ||
+    data?.item ||
+    null;
 
-            if (
-                !item ||
-                typeof item !== "object" ||
-                !item.slug ||
-                !item.name
-            ) 
 if (
-    type === "series" &&
-    isAnimation(item)
+    !item ||
+    typeof item !== "object" ||
+    !item.slug ||
+    !item.name
 ) {
     return null;
 }
 
-            return {
-                ...item,
-                __catalogType: "series"
-            };
+if (isAnimation(item)) {
+    return null;
+}
+
+return {
+    ...item,
+    __catalogType: "series"
+};
 
         } catch (error) {
             lookupErrors++;
@@ -2657,10 +2659,11 @@ if (
     let nextIndex = 0;
 
     async function lookupWorker() {
-        while (
-            nextIndex < rankedTitles.length &&
-            discoveredKeys.size < TARGET
-        ) {
+    while (
+        nextIndex < rankedTitles.length &&
+        discoveredKeys.size < TARGET &&
+        lookupErrors < MAX_DIRECT_LOOKUP_ERRORS
+    ) {
             const index = nextIndex++;
             const ranked = rankedTitles[index];
 
@@ -2724,63 +2727,91 @@ if (
         }
     }
 
+    
     /*
      * GIAI ĐOẠN 2:
-     * Chỉ tìm dự phòng nếu kết quả trực tiếp chưa đủ 50.
+     * Tìm dự phòng bằng worker pool nhỏ.
+     * Nghỉ ngắn sau giai đoạn IMDb để giảm nguy cơ 429 liên tiếp.
      */
     if (
         matchedByKey.size < TARGET &&
         needFallback.length > 0
     ) {
-        const remaining = TARGET - matchedByKey.size;
+        await new Promise(resolve => setTimeout(resolve, 900));
 
         const fallbackBatch = needFallback.slice(
             0,
-            Math.min(
-                MAX_FALLBACK_SEARCHES,
-                remaining
-            )
+            MAX_FALLBACK_SEARCHES
         );
 
-        const fallbackResults = await Promise.all(
-            fallbackBatch.map(async ranked => {
+        const fallbackResults = new Array(fallbackBatch.length);
+        let fallbackIndex = 0;
+
+        async function fallbackWorker() {
+            while (
+                fallbackIndex < fallbackBatch.length &&
+                matchedByKey.size < TARGET
+            ) {
+                const index = fallbackIndex++;
+                const ranked = fallbackBatch[index];
+
                 fallbackSearches++;
 
                 try {
-                    return {
+                    const item = await movinaClassicSearchPhimAPI(
                         ranked,
-                        item: await movinaClassicSearchPhimAPI(
-                            ranked,
-                            "series"
-                        )
+                        "series"
+                    );
+
+                    fallbackResults[index] = {
+                        ranked,
+                        item
                     };
+
+                    if (item) {
+                        const key = catalogKey(item);
+                        if (key) {
+                            // Không cộng trùng phim đã có.
+                            discoveredKeys.add(key);
+                        }
+                    }
                 } catch {
-                    return {
+                    fallbackResults[index] = {
                         ranked,
                         item: null
                     };
                 }
-            })
-        );
-
-        // Giữ thứ hạng IMDb khi bổ sung kết quả dự phòng.
-        fallbackResults.sort(
-            (a, b) => a.ranked.rank - b.ranked.rank
-        );
-
-        for (const result of fallbackResults) {
-            if (!result.item) {
-                continue;
-            }
-
-            const before = matchedByKey.size;
-
-            addMatch(result.ranked, result.item);
-
-            if (matchedByKey.size > before) {
-                fallbackMatches++;
             }
         }
+
+        await Promise.all(
+            Array.from(
+                {
+                    length: Math.min(
+                        FALLBACK_CONCURRENCY,
+                        fallbackBatch.length
+                    )
+                },
+                () => fallbackWorker()
+            )
+        );
+
+        // Duy trì thứ hạng IMDb, không theo thứ tự hoàn thành.
+        fallbackResults
+            .filter(Boolean)
+            .sort((a, b) => a.ranked.rank - b.ranked.rank)
+            .forEach(result => {
+                if (!result.item) {
+                    return;
+                }
+
+                const before = matchedByKey.size;
+                addMatch(result.ranked, result.item);
+
+                if (matchedByKey.size > before) {
+                    fallbackMatches++;
+                }
+            });
     }
 
     const result = Array.from(matchedByKey.values())
@@ -2803,8 +2834,10 @@ if (
             returned: result.length,
             target: TARGET,
             lookupConcurrency: LOOKUP_CONCURRENCY,
-            lookupTimeout: LOOKUP_TIMEOUT,
-            fallbackLimit: MAX_FALLBACK_SEARCHES,
+lookupTimeout: LOOKUP_TIMEOUT,
+maxDirectLookupErrors: MAX_DIRECT_LOOKUP_ERRORS,
+fallbackLimit: MAX_FALLBACK_SEARCHES,
+fallbackConcurrency: FALLBACK_CONCURRENCY,
             earlyStop: true,
             fallbackReason: SEARCH_TIMEOUT_NOTE
         })
@@ -3194,7 +3227,7 @@ async function fetchMovinaTrendingByGenre(
     // Dùng endpoint hoạt hình chuyên biệt của PhimAPI.
     // Endpoint này có thể chứa cả phim lẻ và phim bộ,
     // nên không gán __catalogType tại bước lấy dữ liệu.
-    const animationPages = 4;
+    const animationPages = 12;
 
     for (let page = 1; page <= animationPages; page++) {
         const url =
