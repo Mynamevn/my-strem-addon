@@ -2813,42 +2813,60 @@ if (
     return result;
 }
 
+    
     /*
      * PHIM LẺ:
-     * Giữ nguyên cơ chế tìm kiếm từng tiêu đề.
+     * Worker pool chạy liên tục thay vì chờ từng đợt 32 phim.
+     * Giữ nguyên đối chiếu tên/năm và thứ hạng IMDb.
      */
-    const CONCURRENCY = 32;
+    const CONCURRENCY = 8;
     let searched = 0;
+    let nextIndex = 0;
 
-    for (
-        let start = 0;
-        start < rankedTitles.length &&
-        matchedByKey.size < TARGET;
-        start += CONCURRENCY
-    ) {
-        const batch = rankedTitles.slice(
-            start,
-            start + CONCURRENCY
-        );
+    async function classicMovieSearchWorker() {
+        while (
+            nextIndex < rankedTitles.length &&
+            matchedByKey.size < TARGET
+        ) {
+            const index = nextIndex++;
+            const ranked = rankedTitles[index];
 
-        const batchResults = await Promise.all(
-            batch.map(async ranked => ({
-                ranked,
-                item: await movinaClassicSearchPhimAPI(
+            if (!ranked) {
+                continue;
+            }
+
+            searched++;
+
+            try {
+                const item = await movinaClassicSearchPhimAPI(
                     ranked,
-                    type
-                )
-            }))
-        );
+                    "movie"
+                );
 
-        searched += batch.length;
-
-        for (const result of batchResults) {
-            if (result.item) {
-                addMatch(result.ranked, result.item);
+                if (item && matchedByKey.size < TARGET) {
+                    addMatch(ranked, item);
+                }
+            } catch (error) {
+                console.warn(
+                    "[MOVINA CLASSIC MOVIE WORKER ERROR]",
+                    ranked.title || ranked.imdbId || index,
+                    error?.message || error
+                );
             }
         }
     }
+
+    const workerCount = Math.min(
+        CONCURRENCY,
+        rankedTitles.length
+    );
+
+    await Promise.all(
+        Array.from(
+            { length: workerCount },
+            () => classicMovieSearchWorker()
+        )
+    );
 
     const result = Array.from(matchedByKey.values())
         .sort((a, b) =>
@@ -2863,6 +2881,7 @@ if (
             type,
             rankedTitles: rankedTitles.length,
             searched,
+            concurrency: CONCURRENCY,
             matchedPhimAPI: matchedByKey.size,
             returned: result.length,
             target: TARGET
@@ -2871,6 +2890,7 @@ if (
 
     return result;
 }
+
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
