@@ -472,7 +472,7 @@ async function catalogFetch(url) {
             console.log("[CATALOG API] Request:", url);
 
             const response = await axios.get(url, {
-                timeout: 5000,
+                timeout: 3000,
                 headers: {
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json"
@@ -6576,7 +6576,7 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
                 "https://phimapi.com/v1/api/phim/" +
                     encodeURIComponent(slug),
                 {
-                    timeout: 2500,
+                    timeout: 1800,
                     headers: {
                         "User-Agent": "Mozilla/5.0",
                         "Accept": "application/json"
@@ -6807,6 +6807,22 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
 }
 
 /* ============================================================
+   [CORE-003.06] [PROVIDERS: MOVINA]
+   FINAL CATALOG RESULT CACHE
+   ============================================================ */
+
+const MOVINA_FINAL_CATALOG_CACHE = new Map();
+const MOVINA_FINAL_CATALOG_TTL = 2 * 60 * 1000;
+
+function movinaFinalCatalogCacheKey(args) {
+    return JSON.stringify({
+        type: args?.type || "",
+        id: args?.id || "",
+        extra: args?.extra || {}
+    });
+}
+
+/* ============================================================
    12. DEFINE CATALOG HANDLER
    ============================================================ */
 
@@ -6833,6 +6849,34 @@ builder.defineCatalogHandler(
                     args.extra?.search ||
                     ""
                 ).trim();
+
+const finalCacheEligible = [
+  "pa_movies_trending",
+  "pa_series_trending",
+  "pa_tvb",
+  "pa_daily",
+  "pa_animation_new"
+].includes(args.id) && !searchQuery;
+
+const finalCacheKey = finalCacheEligible
+  ? movinaFinalCatalogCacheKey(args)
+  : "";
+
+if (finalCacheKey) {
+  const cached = MOVINA_FINAL_CATALOG_CACHE.get(finalCacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    console.log("[MOVINA FINAL CATALOG CACHE] HIT:", args.id);
+
+    return {
+      metas: cached.metas.map(meta => ({ ...meta }))
+    };
+  }
+
+  if (cached) {
+    MOVINA_FINAL_CATALOG_CACHE.delete(finalCacheKey);
+  }
+}
 
 /* ============================================================
    12.0 MOVINA TV / IPTV HUB
@@ -7951,9 +7995,14 @@ if (enableCinemetaPreview) {
                 ).length
             );
 
-            return {
-                metas
-            };
+            if (finalCacheKey) {
+  MOVINA_FINAL_CATALOG_CACHE.set(finalCacheKey, {
+    expiresAt: Date.now() + MOVINA_FINAL_CATALOG_TTL,
+    metas: metas.map(meta => ({ ...meta }))
+  });
+}
+
+return { metas };
 
         } catch (e) {
 
