@@ -2573,10 +2573,9 @@ function addMatch(ranked, sourceItem) {
     
 
 if (type === "series") {
-    const LOOKUP_CONCURRENCY = 4;
-const LOOKUP_TIMEOUT = 2500;
-const MAX_FALLBACK_SEARCHES = 80;
-const MAX_DIRECT_LOOKUP_ERRORS = 20;
+    const LOOKUP_CONCURRENCY = 32;
+const LOOKUP_TIMEOUT = 2200;
+const MAX_FALLBACK_SEARCHES = 12;
 const FALLBACK_CONCURRENCY = 3;
 
     const SEARCH_TIMEOUT_NOTE =
@@ -2660,10 +2659,9 @@ return {
 
     async function lookupWorker() {
     while (
-        nextIndex < rankedTitles.length &&
-        discoveredKeys.size < TARGET &&
-        lookupErrors < MAX_DIRECT_LOOKUP_ERRORS
-    ) {
+    nextIndex < rankedTitles.length &&
+    discoveredKeys.size < TARGET
+) {
             const index = nextIndex++;
             const ranked = rankedTitles[index];
 
@@ -2835,7 +2833,6 @@ return {
             target: TARGET,
             lookupConcurrency: LOOKUP_CONCURRENCY,
 lookupTimeout: LOOKUP_TIMEOUT,
-maxDirectLookupErrors: MAX_DIRECT_LOOKUP_ERRORS,
 fallbackLimit: MAX_FALLBACK_SEARCHES,
 fallbackConcurrency: FALLBACK_CONCURRENCY,
             earlyStop: true,
