@@ -454,60 +454,75 @@ return result;
 
 // [CORE-003.04] [PROVIDERS: ALL] CATALOG API FETCH
 
+
+const MOVINA_CATALOG_FETCH_CACHE = new Map();
+const MOVINA_CATALOG_FETCH_TTL = 5 * 60 * 1000;
+const MOVINA_CATALOG_FETCH_FAIL_TTL = 30 * 1000;
+
 async function catalogFetch(url) {
+    const cacheKey = String(url || "");
+    const now = Date.now();
+    const cached = MOVINA_CATALOG_FETCH_CACHE.get(cacheKey);
 
-console.log(
-    "[CATALOG API] Request:",
-    url
-);
+    if (cached && cached.expiresAt > now) {
+        return cached.promise;
+    }
 
-try {
+    const requestPromise = (async () => {
+        try {
+            console.log("[CATALOG API] Request:", url);
 
-    const res =
-        await axios.get(
-            url,
-            {
-                timeout: 10000,
-
+            const res = await axios.get(url, {
+                timeout: 7000,
                 headers: {
-                    "User-Agent":
-                        "Mozilla/5.0",
-                    "Accept":
-                        "application/json"
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json"
                 }
-            }
-        );
+            });
 
-    const items =
-        res.data?.data?.items ||
-        res.data?.items ||
-        [];
+            const items =
+                res.data?.data?.items ||
+                res.data?.items ||
+                [];
 
-    console.log(
-        "[CATALOG API] Items:",
-        Array.isArray(items)
-            ? items.length
-            : 0
-    );
+            const result = Array.isArray(items) ? items : [];
 
-    return Array.isArray(items)
-        ? items
-        : [];
+            console.log("[CATALOG API] Items:", result.length);
 
-} catch (e) {
+            return result;
+        } catch (e) {
+            console.error(
+                "[CATALOG API ERROR]",
+                url,
+                e?.response?.status ||
+                    e?.message ||
+                    e
+            );
 
-    console.error(
-        "[CATALOG API ERROR]",
-        url,
-        e?.response?.status ||
-        e?.message ||
-        e
-    );
+            return null;
+        }
+    })();
 
-    return [];
+    // Lưu cả Promise để các request trùng URL cùng chờ một lần tải.
+    MOVINA_CATALOG_FETCH_CACHE.set(cacheKey, {
+        expiresAt: now + MOVINA_CATALOG_FETCH_TTL,
+        promise: requestPromise
+    });
+
+    const result = await requestPromise;
+
+    if (result === null) {
+        MOVINA_CATALOG_FETCH_CACHE.set(cacheKey, {
+            expiresAt: Date.now() + MOVINA_CATALOG_FETCH_FAIL_TTL,
+            promise: Promise.resolve([])
+        });
+
+        return [];
+    }
+
+    return result;
 }
 
-}
 
 // [CORE-003.05] [PROVIDERS: ALL] STABLE CATALOG HASH AND SHUFFLE
 
@@ -2799,7 +2814,7 @@ if (
      * PHIM LẺ:
      * Giữ nguyên cơ chế tìm kiếm từng tiêu đề.
      */
-    const CONCURRENCY = 20;
+    const CONCURRENCY = 32;
     let searched = 0;
 
     for (
