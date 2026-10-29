@@ -2728,40 +2728,37 @@ function addMatch(ranked, sourceItem) {
      */
     
 
+
 if (type === "series") {
     /*
-     * MOVINA CLASSIC SERIES — SEARCH-FIRST
+     * MOVINA CLASSIC SERIES — SEARCH-FIRST OPTIMIZED
      *
-     * Không gọi hàng loạt /imdb/title/{id}:
-     * endpoint này thường không có bản ghi tương ứng và
-     * khiến các lượt tìm theo tên tiếp theo bị HTTP 429.
-     *
-     * Ưu tiên tìm tên theo thứ hạng IMDb, giữ đúng thứ tự
-     * khi trả kết quả và ngừng cấp request mới khi bị 429.
+     * - Tìm theo tên, không gọi hàng loạt IMDb direct-ID.
+     * - Thêm kết quả ngay khi tìm được.
+     * - Dừng cấp request mới khi đạt 50 tựa khác nhau.
+     * - Sắp xếp cuối cùng theo thứ hạng IMDb.
      */
 
-    const SEARCH_CONCURRENCY = 2;
-    const MAX_SEARCHES = Math.min(100, rankedTitles.length);
+    const SEARCH_CONCURRENCY = 5;
+    const MAX_SEARCHES = rankedTitles.length;
 
     let searched = 0;
     let matchedSearches = 0;
     let searchErrors = 0;
-    let rateLimited = false;
     let nextIndex = 0;
 
-    const searchResults = new Array(MAX_SEARCHES);
+    const searchResults = [];
 
     async function classicSeriesSearchWorker() {
         while (
             nextIndex < MAX_SEARCHES &&
-            matchedByKey.size < TARGET &&
-            !rateLimited
+            matchedByKey.size < TARGET
         ) {
             const index = nextIndex++;
+
             const ranked = rankedTitles[index];
 
             if (!ranked || !ranked.title) {
-                searchResults[index] = null;
                 continue;
             }
 
@@ -2778,16 +2775,28 @@ if (type === "series") {
                     item
                 };
 
-                if (item) {
-                    matchedSearches++;
+                if (!item) {
+                    continue;
                 }
+
+                matchedSearches++;
+
+                /*
+                 * Thêm ngay khi có kết quả để các worker
+                 * nhìn thấy tiến độ và dừng sớm khi đủ 50.
+                 */
+                addMatch(ranked, item);
+
             } catch (error) {
                 searchErrors++;
 
-                searchResults[index] = {
-                    ranked,
-                    item: null
-                };
+                console.warn(
+                    "[MOVINA CLASSIC SERIES SEARCH WORKER ERROR]",
+                    JSON.stringify({
+                        title: ranked.title,
+                        error: error?.message || String(error)
+                    })
+                );
             }
         }
     }
@@ -2804,48 +2813,32 @@ if (type === "series") {
         )
     );
 
-    /*
-     * Ghi nhận kết quả theo thứ hạng IMDb gốc,
-     * không theo thứ tự các request hoàn tất.
-     */
-    for (const result of searchResults) {
-        if (!result || !result.ranked || !result.item) {
-            continue;
-        }
-
-        addMatch(result.ranked, result.item);
-    }
-
-    /*
-     * Báo cáo chẩn đoán.
-     *
-     * HTTP 429 được ghi nhận trong
-     * movinaClassicSearchPhimAPI(). Không tiếp tục gọi
-     * endpoint IMDb trực tiếp để tránh tạo thêm tải.
-     */
-    console.log(
-        "[MOVINA CLASSIC SERIES SEARCH-FIRST SUMMARY]",
-        JSON.stringify({
-            rankedTitles: rankedTitles.length,
-            searchLimit: MAX_SEARCHES,
-            searched,
-            searchConcurrency: SEARCH_CONCURRENCY,
-            matchedSearches,
-            returned: matchedByKey.size,
-            target: TARGET,
-            directIMDbLookups: 0,
-            strategy: "search-first",
-            note: "Results sorted by original IMDb rank"
-        })
-    );
-
-    return Array.from(matchedByKey.values())
+    const result = Array.from(matchedByKey.values())
         .sort((a, b) =>
             (a.__movinaClassicRank || 9999) -
             (b.__movinaClassicRank || 9999)
         )
         .slice(0, TARGET);
+
+    console.log(
+        "[MOVINA CLASSIC SERIES SEARCH-FIRST SUMMARY]",
+        JSON.stringify({
+            rankedTitles: rankedTitles.length,
+            searched,
+            searchConcurrency: SEARCH_CONCURRENCY,
+            matchedSearches,
+            searchErrors,
+            returned: result.length,
+            target: TARGET,
+            directIMDbLookups: 0,
+            earlyStop: matchedByKey.size >= TARGET,
+            strategy: "incremental-search-first"
+        })
+    );
+
+    return result;
 }
+
   
     /*
      * PHIM LẺ:
