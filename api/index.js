@@ -15967,27 +15967,75 @@ if (
             yearItems.length
         ) {
 
-            const imdbMatched =
-                yearItems.find(
-                    item => {
+            const requestedTitle =
+    kkphimNormalizeTitle(movieName);
 
-                        const itemImdb =
-                            item?.imdb?.id ||
-                            item?.imdb_id ||
-                            item?.imdbId ||
-                            "";
+const requestedYear =
+    Number(movieYear) || 0;
 
-                        return (
-                            String(
-                                itemImdb
-                            ).trim().toLowerCase() ===
-                            String(
-                                imdbId
-                            ).trim().toLowerCase()
-                        );
+const imdbMatched =
+    yearItems.find(item => {
+        const itemImdb =
+            item?.imdb?.id ||
+            item?.imdb_id ||
+            item?.imdbId ||
+            "";
 
-                    }
-                );
+        const imdbMatches =
+            String(itemImdb).trim().toLowerCase() ===
+            String(imdbId).trim().toLowerCase();
+
+        if (!imdbMatches) {
+            return false;
+        }
+
+        const candidateTitles = [
+            item?.name,
+            item?.origin_name,
+            item?.original_name
+        ]
+            .filter(Boolean)
+            .map(kkphimNormalizeTitle);
+
+        const titleMatches =
+            candidateTitles.some(title =>
+                title === requestedTitle ||
+                (
+                    requestedTitle.length >= 5 &&
+                    title.length >= 5 &&
+                    (
+                        title.includes(requestedTitle) ||
+                        requestedTitle.includes(title)
+                    )
+                )
+            );
+
+        const candidateYear =
+            Number(item?.year) || 0;
+
+        const yearMatches =
+            !requestedYear ||
+            !candidateYear ||
+            requestedYear === candidateYear;
+
+        if (!titleMatches || !yearMatches) {
+            console.warn(
+                "[KKPHIM] YEAR + IMDb MISMATCH REJECTED:",
+                {
+                    requestedTitle: movieName,
+                    requestedYear,
+                    candidateName: item?.name,
+                    candidateOriginName: item?.origin_name,
+                    candidateYear,
+                    imdbId
+                }
+            );
+
+            return false;
+        }
+
+        return true;
+    });
 
             if (
                 imdbMatched
