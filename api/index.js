@@ -578,7 +578,7 @@ return [...items]
 
 
 function catalogPoster(item) {
-    const raw =
+        const raw =
         item?.poster_url ||
         item?.poster ||
         item?.thumb_url ||
@@ -2665,9 +2665,38 @@ function addMatch(ranked, sourceItem) {
 
     if (!key) return;
 
-    matchedRanks.add(ranked.rank);
+    const sourceIMDbId =
+        movinaClassicItemIMDbId(sourceItem);
+
+    const rankedIMDbId =
+        String(ranked.imdbId || "").trim();
+
+    // Không ghép hai phim nếu mỗi bên có một IMDb ID
+    // hợp lệ nhưng hai ID khác nhau.
+    if (
+        /^tt\d+$/i.test(sourceIMDbId) &&
+        /^tt\d+$/i.test(rankedIMDbId) &&
+        sourceIMDbId.toLowerCase() !==
+            rankedIMDbId.toLowerCase()
+    ) {
+        console.warn(
+            "[MOVINA CLASSIC MATCH REJECTED]",
+            JSON.stringify({
+                type,
+                title: sourceItem?.name || "",
+                rankedTitle: ranked?.title || "",
+                sourceIMDbId,
+                rankedIMDbId,
+                reason: "IMDb ID mismatch"
+            })
+        );
+
+        return;
+    }
 
     if (matchedByKey.has(key)) return;
+
+    matchedRanks.add(ranked.rank);
 
     matchedByKey.set(key, {
         ...sourceItem,
@@ -2675,9 +2704,7 @@ function addMatch(ranked, sourceItem) {
         __movinaClassicRank: ranked.rank,
         __movinaClassicSource: "ranked-json",
         __movinaClassicImdbId:
-            ranked.imdbId ||
-            movinaClassicItemIMDbId(sourceItem) ||
-            "",
+            sourceIMDbId || rankedIMDbId || "",
         __movinaIMDbRating: ranked.rating || 0
     });
 }
@@ -2701,10 +2728,10 @@ if (type === "series") {
 
     const PAGE_SIZE = 64;
     const INVENTORY_PAGES = 8;
-    const INVENTORY_CONCURRENCY = 3;
+    const INVENTORY_CONCURRENCY = 8;
 
-    const MAX_FALLBACK_SEARCHES = 60;
-    const SEARCH_CONCURRENCY = 2;
+    const MAX_FALLBACK_SEARCHES = 40;
+    const SEARCH_CONCURRENCY = 6;
 
     let inventoryRequests = 0;
     let fallbackSearches = 0;
@@ -3503,9 +3530,6 @@ if (normalizedGenre === "kinh dien") {
 
 
 } else if (!isLatest) {
-    // Nếu bản ghi đến từ đúng API thể loại đang chọn,
-    // tin cậy nguồn đó thay vì bắt category phải lặp lại
-    // cùng thông tin một lần nữa.
     const requestedGenreSlugs =
         MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
@@ -3521,20 +3545,20 @@ if (normalizedGenre === "kinh dien") {
                     catalogNormalize(slug) === sourceSlug
             );
 
-        // API thể loại đã xác nhận thể loại của phim.
+        // Nếu chính API thể loại đã xác nhận thể loại,
+        // không lọc loại phim này lần thứ hai bằng category.
         if (sourceConfirmsGenre) {
             return true;
         }
 
-        // Các bản ghi bổ sung từ danh sách chung vẫn phải
-        // có thể loại phù hợp trong metadata.
+        // Các phim bổ sung từ danh sách chung vẫn phải
+        // vượt qua bộ lọc thể loại hiện có.
         return movinaTrendingGenreMatches(
             item,
             genre
         );
     });
 }
-
 
 /*
  * MOVINA — EXCLUDE ANIMATION FROM NON-ANIMATION GENRES
@@ -6402,10 +6426,9 @@ function makeCatalogMeta(
         }
     }
 
-    // Ưu tiên IMDb ID hợp lệ làm ID mở phim.
-    // Chỉ dùng ID nội bộ khi không có IMDb ID.
         // Giữ ID nội bộ để MOVINA tìm đúng phim trên PhimAPI.
-    // IMDb ID chỉ dùng để đối chiếu metadata, không thay ID mở luồng.
+    // Không dùng IMDb ID của danh sách xếp hạng làm ID mở luồng,
+    // vì một bản ghi ghép nhầm có thể mở sang phim khác.
     const metaId =
         "vnwpsw:" +
         encodeURIComponent(
@@ -35485,27 +35508,91 @@ const kkphimPromise = (async () => {
           );
           return [];
       }
-  })();
-
-  // Thu gom toàn bộ kết quả; không trả sớm khi mới có một nguồn.
+  })();  // Thu gom kết quả với thời hạn chờ riêng cho từng nhóm.
+  // Provider chạy lâu vẫn tiếp tục xử lý nền, nhưng không
+  // giữ toàn bộ request stream phải chờ theo.
   let providerResults = [];
   let longtiengResult = [];
+  let kkphimResult = [];
+
+  function movinaWaitForResult(promise, timeoutMs, fallback, label) {
+      let timeoutHandle;
+
+      const timeoutPromise = new Promise(resolve => {
+          timeoutHandle = setTimeout(() => {
+              console.warn(
+                  "[STREAM COLLECT TIMEOUT]",
+                  JSON.stringify({
+                      provider: label,
+                      timeoutMs
+                  })
+              );
+
+              resolve(fallback);
+          }, timeoutMs);
+      });
+
+      return Promise.race([
+          Promise.resolve(promise).catch(error => {
+              console.warn(
+                  "[STREAM COLLECT ERROR]",
+                  JSON.stringify({
+                      provider: label,
+                      error: error?.message || String(error)
+                  })
+              );
+
+              return fallback;
+          }),
+          timeoutPromise
+      ]).finally(() => {
+          if (timeoutHandle) {
+              clearTimeout(timeoutHandle);
+          }
+      });
+  }
 
   try {
       const [
           settledProviders,
-          kkphimResult,
+          settledKkphim,
           settledLongtieng
       ] = await Promise.all([
-          providerResultsPromise,
-          kkphimPromise,
-          longtiengPromise
+          movinaWaitForResult(
+              providerResultsPromise,
+              12000,
+              [
+                  { status: "fulfilled", value: [] },
+                  { status: "fulfilled", value: [] },
+                  { status: "fulfilled", value: [] }
+              ],
+              "NguonC / VSMov / PhimHDCS"
+          ),
+
+          movinaWaitForResult(
+              kkphimPromise,
+              10000,
+              [],
+              "KKPhim"
+          ),
+
+          movinaWaitForResult(
+              longtiengPromise,
+              12000,
+              [],
+              "PhimLongTieng"
+          )
       ]);
 
-      providerResults = settledProviders;
-      kkphim = Array.isArray(kkphimResult)
-          ? kkphimResult
+      providerResults = Array.isArray(settledProviders)
+          ? settledProviders
           : [];
+
+      kkphim = Array.isArray(settledKkphim)
+          ? settledKkphim
+          : [];
+
+      kkphimResult = kkphim;
 
       longtiengResult = Array.isArray(settledLongtieng)
           ? settledLongtieng
