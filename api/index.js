@@ -6347,20 +6347,14 @@ function makeCatalogMeta(
      */
 
     const metaId =
-        /^tt\d+$/i.test(
-            String(imdbId)
+    "vnwpsw:" +
+    encodeURIComponent(
+        String(
+            item?.name ||
+            item?.origin_name ||
+            ""
         )
-            ? String(imdbId)
-            : (
-                "vnwpsw:" +
-                encodeURIComponent(
-                    String(
-                        item?.name ||
-                        item?.origin_name ||
-                        ""
-                    )
-                )
-            );
+    );
 
     console.log(
         "[CATALOG META] Name:",
@@ -6944,14 +6938,22 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
 
                                 // Ưu tiên điểm đã có trong catalog.
                 // Nếu thiếu, dùng điểm PhimAPI; cuối cùng mới dùng Cinemeta.
-                imdbRating: hasRating
-                    ? preview.imdbRating
-                    : (
-                        Number.isFinite(Number(extra.imdbRating)) &&
-                        Number(extra.imdbRating) > 0
-                            ? Number(extra.imdbRating)
-                            : cinemetaRating
-                    ),
+                ...(hasRating
+    ? { imdbRating: preview.imdbRating }
+    : (
+        Number.isFinite(Number(extra.imdbRating)) &&
+        Number(extra.imdbRating) > 0 &&
+        Number(extra.imdbRating) <= 10
+            ? { imdbRating: Number(extra.imdbRating) }
+            : (
+                Number.isFinite(Number(cinemetaRating)) &&
+                Number(cinemetaRating) > 0 &&
+                Number(cinemetaRating) <= 10
+                    ? { imdbRating: Number(cinemetaRating) }
+                    : {}
+            )
+    )
+),
 
                 id: preview.id,
                 type,
@@ -9119,21 +9121,7 @@ if (
 
             }
 
-            // -------------------------------------------------
-            // D. KHÔNG CÓ KHỚP TUYỆT ĐỐI
-            // -------------------------------------------------
-
-            if (
-                !item &&
-                items.length > 0
-            ) {
-
-                item =
-                    items[0];
-
-            }
-
-        }
+           }
 
         if (!item) {
 
@@ -9353,13 +9341,11 @@ if (
             ).trim();
 
         if (
-            imdbId.startsWith("tt")
-        ) {
-
-            metaId =
-                imdbId;
-
-        }
+    imdbId.startsWith("tt") &&
+    !rawId.startsWith("vnwpsw:")
+) {
+    metaId = imdbId;
+}
 
         // =====================================================
         // [STREMIO-013.14] [PROVIDERS: ALL] CINEMETA IMDB FALLBACK
