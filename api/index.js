@@ -454,78 +454,60 @@ return result;
 
 // [CORE-003.04] [PROVIDERS: ALL] CATALOG API FETCH
 
-const MOVINA_CATALOG_FETCH_CACHE = new Map();
-const MOVINA_CATALOG_FETCH_TTL = 5 * 60 * 1000;
-const MOVINA_CATALOG_FETCH_FAIL_TTL = 15 * 1000;
-
 async function catalogFetch(url) {
-    const cacheKey = String(url || "");
-    const now = Date.now();
-    const cached = MOVINA_CATALOG_FETCH_CACHE.get(cacheKey);
 
-    if (cached && cached.expiresAt > now) {
-        return cached.promise;
-    }
+console.log(
+    "[CATALOG API] Request:",
+    url
+);
 
-    const requestPromise = (async () => {
-        try {
-            console.log("[CATALOG API] Request:", url);
+try {
 
-            const response = await axios.get(url, {
-                timeout: 3000,
+    const res =
+        await axios.get(
+            url,
+            {
+                timeout: 10000,
+
                 headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json"
+                    "User-Agent":
+                        "Mozilla/5.0",
+                    "Accept":
+                        "application/json"
                 }
-            });
-
-            const items =
-                response.data?.data?.items ??
-                response.data?.items ??
-                [];
-
-            if (!Array.isArray(items)) {
-                throw new Error("Invalid catalog response");
             }
+        );
 
-            console.log("[CATALOG API] Items:", items.length);
+    const items =
+        res.data?.data?.items ||
+        res.data?.items ||
+        [];
 
-            return items;
-        } catch (error) {
-            console.warn(
-                "[CATALOG API ERROR]",
-                url,
-                error?.response?.status ||
-                    error?.code ||
-                    error?.message ||
-                    "Unknown error"
-            );
+    console.log(
+        "[CATALOG API] Items:",
+        Array.isArray(items)
+            ? items.length
+            : 0
+    );
 
-            return null;
-        }
-    })();
+    return Array.isArray(items)
+        ? items
+        : [];
 
-    // Lưu Promise ngay lập tức để các request cùng URL
-    // không tạo nhiều lượt gọi mạng trùng nhau.
-    MOVINA_CATALOG_FETCH_CACHE.set(cacheKey, {
-        expiresAt: now + MOVINA_CATALOG_FETCH_TTL,
-        promise: requestPromise
-    });
+} catch (e) {
 
-    const items = await requestPromise;
+    console.error(
+        "[CATALOG API ERROR]",
+        url,
+        e?.response?.status ||
+        e?.message ||
+        e
+    );
 
-    if (items === null) {
-        MOVINA_CATALOG_FETCH_CACHE.set(cacheKey, {
-            expiresAt: Date.now() + MOVINA_CATALOG_FETCH_FAIL_TTL,
-            promise: Promise.resolve([])
-        });
-
-        return [];
-    }
-
-    return items;
+    return [];
 }
 
+}
 
 // [CORE-003.05] [PROVIDERS: ALL] STABLE CATALOG HASH AND SHUFFLE
 
@@ -575,53 +557,83 @@ return [...items]
    ============================================================ */
 
 // [CORE-004.01] [PROVIDERS: ALL] CATALOG POSTER RESOLUTION
-
-
 function catalogPoster(item) {
-        const raw =
+
+    const raw =
         item?.poster_url ||
-        item?.poster ||
         item?.thumb_url ||
-        item?.thumb ||
+        item?.poster ||
         "";
 
     if (!raw) {
         return "";
     }
 
-    const value = String(raw).trim();
+    const value =
+        String(raw).trim();
 
-    let originalUrl = "";
+    /*
+       Đã là URL đầy đủ.
+    */
 
-    try {
-        originalUrl = new URL(
-            value.startsWith("//")
-                ? "https:" + value
-                : value.startsWith("http://") ||
-                    value.startsWith("https://")
-                    ? value
-                    : value.startsWith("uploads/movies/")
-                        ? "https://phimapi.com/" + value
-                        : value.startsWith("upload/vod/")
-                            ? "https://phimimg.com/" + value
-                            : "https://phimimg.com/" +
-                                value.replace(/^\/+/, "")
-        ).href;
-    } catch (_) {
+    if (
+        /^https?:\/\//i.test(value)
+    ) {
         return value;
     }
 
-    // Dùng poster đầy đủ, nhờ dịch vụ ảnh giảm kích thước
-    // và nén trước khi Stremio tải ảnh về.
-    const proxyUrl =
-        "https://images.weserv.nl/?" +
-        "url=" + encodeURIComponent(
-            originalUrl.replace(/^https?:\/\//i, "")
-        ) +
-        "&w=300&q=78&output=webp";
+    /*
+       Protocol-relative URL.
+    */
 
-    return proxyUrl;
+    if (
+        value.startsWith("//")
+    ) {
+        return "https:" + value;
+    }
+
+    /*
+       Poster dạng uploads/movies/...
+       thường thuộc phimapi.com.
+    */
+
+    if (
+        value.startsWith(
+            "uploads/movies/"
+        )
+    ) {
+        return (
+            "https://phimapi.com/" +
+            value
+        );
+    }
+
+    /*
+       Poster dạng upload/vod/...
+       thường thuộc phimimg.com.
+    */
+
+    if (
+        value.startsWith(
+            "upload/vod/"
+        )
+    ) {
+        return (
+            "https://phimimg.com/" +
+            value
+        );
+    }
+
+    /*
+       Fallback.
+    */
+
+    return (
+        "https://phimimg.com/" +
+        value.replace(/^\/+/, "")
+    );
 }
+
 
 /* ============================================================
    [CORE-005] [PROVIDERS: ALL] MOVIE / SERIES CLASSIFICATION
@@ -2349,39 +2361,10 @@ async function movinaClassicGetRankedTitles(type) {
     return [];
 }
 
-
 function movinaClassicFindExactMatch(title, items) {
     const expectedName = movinaClassicNormalize(title?.title);
 
     if (!expectedName) return null;
-
-    // Nhận diện tên gốc có hậu tố mùa:
-    // "Breaking Bad (Season 1)" -> "breaking bad"
-    // "Tập làm người xấu (Phần 1)" -> "tap lam nguoi xau"
-    const normalizeSeriesBaseName = value =>
-        movinaClassicNormalize(value)
-            .replace(/\s+(?:season|phan|part)\s+\d+\s*$/i, "")
-            .trim();
-
-    const getSeasonNumber = item => {
-        const names = [
-            item?.origin_name,
-            item?.original_name,
-            item?.name,
-            item?.title
-        ];
-
-        for (const value of names) {
-            const normalized = movinaClassicNormalize(value);
-            const match = normalized.match(
-                /(?:^|\s)(?:season|phan|part)\s+(\d+)\s*$/
-            );
-
-            if (match) return Number(match[1]);
-        }
-
-        return 0;
-    };
 
     const exactCandidates = (items || []).filter(item => {
         const names = [
@@ -2390,21 +2373,10 @@ function movinaClassicFindExactMatch(title, items) {
             item?.name,
             item?.title
         ]
-            .map(value => ({
-                exact: movinaClassicNormalize(value),
-                base: normalizeSeriesBaseName(value)
-            }))
-            .filter(value => value.exact);
+            .map(movinaClassicNormalize)
+            .filter(Boolean);
 
-        const exactNameMatches = names.some(
-            value => value.exact === expectedName
-        );
-
-        const seasonBaseMatches = names.some(
-            value => value.base === expectedName
-        );
-
-        if (!exactNameMatches && !seasonBaseMatches) {
+        if (!names.includes(expectedName)) {
             return false;
         }
 
@@ -2412,30 +2384,26 @@ function movinaClassicFindExactMatch(title, items) {
         const candidateYear = itemYear(item);
 
         if (expectedYear && candidateYear) {
-            if (Math.abs(expectedYear - candidateYear) > 1) {
-                return false;
-            }
+            return Math.abs(expectedYear - candidateYear) <= 1;
         }
 
         return true;
     });
 
-    if (!exactCandidates.length) return null;
-
     // Ưu tiên tuyệt đối mã IMDb trùng khớp.
     if (title.imdbId) {
-        const idMatches = exactCandidates.filter(
-            item =>
-                movinaClassicItemIMDbId(item) === title.imdbId
+        const idMatches = exactCandidates.filter(item =>
+            movinaClassicItemIMDbId(item) === title.imdbId
         );
 
         if (idMatches.length === 1) {
             return idMatches[0];
         }
 
-        // Không ghép nếu tên trùng nhưng IMDb ID mâu thuẫn.
-        const candidatesWithId = exactCandidates.filter(
-            item => movinaClassicItemIMDbId(item)
+        // Nếu tên khớp nhưng bản ghi có IMDb ID khác,
+        // không ghép nhầm sang một phim khác cùng tên.
+        const candidatesWithId = exactCandidates.filter(item =>
+            movinaClassicItemIMDbId(item)
         );
 
         if (candidatesWithId.length > 0) {
@@ -2443,28 +2411,17 @@ function movinaClassicFindExactMatch(title, items) {
         }
     }
 
-    // Nếu chỉ có một bản ghi tên phù hợp, nhận bản ghi đó.
+    // Không có ID để xác minh: chỉ nhận duy nhất một kết quả
+    // có tên gốc/tên phim khớp chính xác.
     if (exactCandidates.length === 1) {
         return exactCandidates[0];
     }
 
-    // Khi có nhiều mùa, ưu tiên Phần 1 nếu năm không phân biệt
-    // được duy nhất một bản ghi.
-    if (!title.year) {
-        const seasonOne = exactCandidates.filter(
-            item => getSeasonNumber(item) === 1
-        );
-
-        if (seasonOne.length === 1) {
-            return seasonOne[0];
-        }
-    }
-
-    // Nếu có năm IMDb, ưu tiên các bản ghi khớp năm.
+    // Nếu nhiều bản cùng tên và có năm phát hành,
+    // chỉ nhận khi năm xác định được đúng một bản ghi.
     if (title.year) {
         const sameYear = exactCandidates.filter(item => {
             const year = itemYear(item);
-
             return year &&
                 Math.abs(year - Number(title.year)) <= 1;
         });
@@ -2472,19 +2429,8 @@ function movinaClassicFindExactMatch(title, items) {
         if (sameYear.length === 1) {
             return sameYear[0];
         }
-
-        if (sameYear.length > 1) {
-            const seasonOne = sameYear.filter(
-                item => getSeasonNumber(item) === 1
-            );
-
-            if (seasonOne.length === 1) {
-                return seasonOne[0];
-            }
-        }
     }
 
-    // Không tự chọn ngẫu nhiên khi vẫn còn nhiều bản ghi mơ hồ.
     return null;
 }
 
@@ -2526,102 +2472,10 @@ async function movinaClassicSearchPhimAPI(title, type) {
             response.data?.items ||
             [];
 
-        let match = movinaClassicFindExactMatch(
+        const match = movinaClassicFindExactMatch(
             title,
             Array.isArray(items) ? items : []
         );
-
-        /*
-         * PHIM LẺ:
-         * Nếu tìm bằng tên không thành công, thử tra cứu
-         * bằng IMDb ID. Chỉ dùng kết quả nếu không phát hiện
-         * IMDb ID mâu thuẫn hoặc loại nội dung không phù hợp.
-         */
-        if (
-            !match &&
-            type === "movie" &&
-            title.imdbId
-        ) {
-            try {
-                const imdbResponse = await axios.get(
-                    "https://phimapi.com/imdb/title/" +
-                    encodeURIComponent(title.imdbId),
-                    {
-                        timeout: 2200,
-                        headers: {
-                            "User-Agent": "Mozilla/5.0",
-                            "Accept": "application/json"
-                        }
-                    }
-                );
-
-                const data = imdbResponse.data || {};
-
-                const candidate =
-                    data?.movie ||
-                    data?.data?.movie ||
-                    data?.data?.item ||
-                    data?.item ||
-                    null;
-
-                if (
-                    candidate &&
-                    typeof candidate === "object" &&
-                    candidate.slug &&
-                    candidate.name
-                ) {
-                    const candidateIMDbId =
-                        movinaClassicItemIMDbId(candidate);
-
-                    const candidateType = String(
-                        candidate?.type ||
-                        candidate?.tmdb?.type ||
-                        ""
-                    ).trim().toLowerCase();
-
-                    const isExplicitSeries = [
-                        "series",
-                        "tv",
-                        "tvshow",
-                        "tvshows"
-                    ].includes(candidateType);
-
-                    const expectedYear =
-                        Number(title.year) || 0;
-
-                    const actualYear = itemYear(candidate);
-
-                    const yearMatches =
-                        !expectedYear ||
-                        !actualYear ||
-                        Math.abs(expectedYear - actualYear) <= 1;
-
-                    const idMatches =
-                        !candidateIMDbId ||
-                        candidateIMDbId === title.imdbId;
-
-                    if (
-                        !isExplicitSeries &&
-                        idMatches &&
-                        yearMatches
-                    ) {
-                        match = {
-                            ...candidate,
-                            __catalogType: "movie"
-                        };
-                    }
-                }
-            } catch (error) {
-                console.warn(
-                    "[MOVINA CLASSIC MOVIE IMDb FALLBACK]",
-                    JSON.stringify({
-                        title: title.title,
-                        imdbId: title.imdbId,
-                        error: error?.message || String(error)
-                    })
-                );
-            }
-        }
 
         MOVINA_CLASSIC_SEARCH_CACHE.set(cacheKey, {
             time: Date.now(),
@@ -2646,6 +2500,8 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 }
 
+
+
 async function movinaFetchClassicCatalog(type) {
     const rankedTitles =
         await movinaClassicGetRankedTitles(type);
@@ -2661,42 +2517,22 @@ async function movinaFetchClassicCatalog(type) {
 function addMatch(ranked, sourceItem) {
     if (!ranked || !sourceItem) return;
 
+    // Kinh điển phim bộ không nhận phim hoạt hình.
+    // Không tính anime vào chỉ tiêu 50 phim.
+    if (
+        type === "series" &&
+        isAnimation(sourceItem)
+    ) {
+        return;
+    }
+
     const key = catalogKey(sourceItem);
 
     if (!key) return;
 
-    const sourceIMDbId =
-        movinaClassicItemIMDbId(sourceItem);
-
-    const rankedIMDbId =
-        String(ranked.imdbId || "").trim();
-
-    // Không ghép hai phim nếu mỗi bên có một IMDb ID
-    // hợp lệ nhưng hai ID khác nhau.
-    if (
-        /^tt\d+$/i.test(sourceIMDbId) &&
-        /^tt\d+$/i.test(rankedIMDbId) &&
-        sourceIMDbId.toLowerCase() !==
-            rankedIMDbId.toLowerCase()
-    ) {
-        console.warn(
-            "[MOVINA CLASSIC MATCH REJECTED]",
-            JSON.stringify({
-                type,
-                title: sourceItem?.name || "",
-                rankedTitle: ranked?.title || "",
-                sourceIMDbId,
-                rankedIMDbId,
-                reason: "IMDb ID mismatch"
-            })
-        );
-
-        return;
-    }
+    matchedRanks.add(ranked.rank);
 
     if (matchedByKey.has(key)) return;
-
-    matchedRanks.add(ranked.rank);
 
     matchedByKey.set(key, {
         ...sourceItem,
@@ -2704,7 +2540,9 @@ function addMatch(ranked, sourceItem) {
         __movinaClassicRank: ranked.rank,
         __movinaClassicSource: "ranked-json",
         __movinaClassicImdbId:
-            sourceIMDbId || rankedIMDbId || "",
+            ranked.imdbId ||
+            movinaClassicItemIMDbId(sourceItem) ||
+            "",
         __movinaIMDbRating: ranked.rating || 0
     });
 }
@@ -2717,185 +2555,215 @@ function addMatch(ranked, sourceItem) {
     
 
 if (type === "series") {
-    /*
-     * MOVINA CLASSIC SERIES — INVENTORY FIRST
-     *
-     * 1. Tải danh sách phim bộ theo trang.
-     * 2. Đối chiếu Top IMDb ngay trong bộ nhớ.
-     * 3. Chỉ tìm theo tên cho các tựa chưa ghép được.
-     * 4. Giới hạn tìm dự phòng để tránh bắn 250 request.
-     */
+    const LOOKUP_CONCURRENCY = 32;
+    const LOOKUP_TIMEOUT = 2200;
+    const MAX_FALLBACK_SEARCHES = 12;
 
-    const PAGE_SIZE = 64;
-    const INVENTORY_PAGES = 8;
-    const INVENTORY_CONCURRENCY = 8;
+    const SEARCH_TIMEOUT_NOTE =
+        "Direct IMDb lookup failed; fallback to exact title/year search.";
 
-    const MAX_FALLBACK_SEARCHES = 40;
-    const SEARCH_CONCURRENCY = 6;
-
-    let inventoryRequests = 0;
+    let directLookups = 0;
+    let directMatches = 0;
     let fallbackSearches = 0;
     let fallbackMatches = 0;
-    let nextFallbackIndex = 0;
+    let lookupErrors = 0;
+
+    const needFallback = [];
+    const directResults = new Array(rankedTitles.length);
+
+    // Theo dõi các tựa khác nhau đã tìm thấy.
+    // Khi đủ 50 tựa, không cấp thêm request mới.
+    const discoveredKeys = new Set();
+
+    async function lookupByIMDbId(ranked) {
+        if (!ranked?.imdbId) {
+            return null;
+        }
+
+        directLookups++;
+
+        try {
+            const response = await axios.get(
+                "https://phimapi.com/imdb/title/" +
+                encodeURIComponent(ranked.imdbId),
+                {
+                    timeout: LOOKUP_TIMEOUT,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+            const data = response.data || {};
+
+            const item =
+                data?.movie ||
+                data?.data?.movie ||
+                data?.data?.item ||
+                data?.item ||
+                null;
+
+            if (
+                !item ||
+                typeof item !== "object" ||
+                !item.slug ||
+                !item.name
+            ) 
+if (
+    type === "series" &&
+    isAnimation(item)
+) {
+    return null;
+}
+
+            return {
+                ...item,
+                __catalogType: "series"
+            };
+
+        } catch (error) {
+            lookupErrors++;
+            return null;
+        }
+    }
 
     /*
-     * Bước 1: Lấy kho phim bộ theo trang.
-     * catalogFetch đã có cache theo URL.
+     * GIAI ĐOẠN 1:
+     * Worker pool xử lý danh sách theo thứ hạng IMDb.
+     *
+     * Các worker lấy index theo thứ tự tăng dần.
+     * Khi đủ 50 tựa khác nhau, dừng cấp việc mới.
+     * Các request đã chạy vẫn được chờ hoàn tất.
      */
-    const inventoryPages = new Array(INVENTORY_PAGES);
-    let nextPage = 1;
+    let nextIndex = 0;
 
-    async function classicSeriesInventoryWorker() {
-        while (nextPage <= INVENTORY_PAGES) {
-            const page = nextPage++;
+    async function lookupWorker() {
+        while (
+            nextIndex < rankedTitles.length &&
+            discoveredKeys.size < TARGET
+        ) {
+            const index = nextIndex++;
+            const ranked = rankedTitles[index];
 
-            const url =
-                "https://phimapi.com/v1/api/danh-sach/phim-bo" +
-                "?page=" + page +
-                "&limit=" + PAGE_SIZE;
+            if (!ranked?.imdbId) {
+                directResults[index] = null;
+                continue;
+            }
 
-            inventoryRequests++;
+            const item = await lookupByIMDbId(ranked);
 
-            try {
-                const items = await catalogFetch(url);
+            directResults[index] = item;
 
-                inventoryPages[page - 1] = (
-                    Array.isArray(items) ? items : []
-                ).map(item => ({
-                    ...item,
-                    __catalogType: "series"
-                }));
-            } catch (error) {
-                inventoryPages[page - 1] = [];
+            if (item) {
+                const key = catalogKey(item);
 
-                console.warn(
-                    "[MOVINA CLASSIC SERIES INVENTORY ERROR]",
-                    JSON.stringify({
-                        page,
-                        error: error?.message || String(error)
-                    })
-                );
+                if (key) {
+                    discoveredKeys.add(key);
+                }
             }
         }
     }
 
+    const workerCount = Math.min(
+        LOOKUP_CONCURRENCY,
+        rankedTitles.length
+    );
+
     await Promise.all(
         Array.from(
-            {
-                length: Math.min(
-                    INVENTORY_CONCURRENCY,
-                    INVENTORY_PAGES
-                )
-            },
-            () => classicSeriesInventoryWorker()
+            { length: workerCount },
+            () => lookupWorker()
         )
     );
 
-    const inventory = inventoryPages.flat();
-    const inventoryKeys = new Set();
-
     /*
-     * Bước 2: Ghép các tựa IMDb với kho phim đã tải.
-     * Duyệt theo thứ hạng IMDb, không theo thứ tự API.
+     * Xử lý lại theo thứ hạng gốc.
+     * Không dùng thứ tự request hoàn thành để xếp hạng.
      */
-    let inventoryMatches = 0;
+    for (
+        let index = 0;
+        index < rankedTitles.length;
+        index++
+    ) {
+        const ranked = rankedTitles[index];
+        const item = directResults[index];
 
-    for (const ranked of rankedTitles) {
-        if (!ranked?.title) continue;
-
-        const item = movinaClassicFindExactMatch(
-            ranked,
-            inventory
-        );
-
-        if (!item) continue;
-
-        const key = catalogKey(item);
-
-        if (!key || inventoryKeys.has(key)) {
+        if (!ranked?.imdbId) {
             continue;
         }
 
-        inventoryKeys.add(key);
+        if (item) {
+            const before = matchedByKey.size;
 
-        addMatch(ranked, {
-            ...item,
-            __catalogType: "series"
-        });
+            addMatch(ranked, item);
 
-        inventoryMatches++;
-    }
-
-    /*
-     * Bước 3: Tìm dự phòng cho các tựa IMDb chưa ghép.
-     * Chỉ xét một phần danh sách đầu bảng để giới hạn tải.
-     */
-    const fallbackTitles = rankedTitles
-        .filter(ranked => {
-            if (!ranked?.title) return false;
-
-            return !movinaClassicFindExactMatch(
-                ranked,
-                inventory
-            );
-        })
-        .slice(0, MAX_FALLBACK_SEARCHES);
-
-    async function classicSeriesFallbackWorker() {
-        while (
-            nextFallbackIndex < fallbackTitles.length &&
-            matchedByKey.size < TARGET
-        ) {
-            const index = nextFallbackIndex++;
-            const ranked = fallbackTitles[index];
-
-            fallbackSearches++;
-
-            try {
-                const item = await movinaClassicSearchPhimAPI(
-                    ranked,
-                    "series"
-                );
-
-                if (!item) continue;
-
-                const key = catalogKey(item);
-
-                if (!key) continue;
-
-                const before = matchedByKey.size;
-
-                addMatch(ranked, {
-                    ...item,
-                    __catalogType: "series"
-                });
-
-                if (matchedByKey.size > before) {
-                    fallbackMatches++;
-                }
-            } catch (error) {
-                console.warn(
-                    "[MOVINA CLASSIC SERIES FALLBACK ERROR]",
-                    JSON.stringify({
-                        title: ranked.title,
-                        error: error?.message || String(error)
-                    })
-                );
+            if (matchedByKey.size > before) {
+                directMatches++;
             }
+        } else {
+            needFallback.push(ranked);
         }
     }
 
-    await Promise.all(
-        Array.from(
-            {
-                length: Math.min(
-                    SEARCH_CONCURRENCY,
-                    fallbackTitles.length
-                )
-            },
-            () => classicSeriesFallbackWorker()
-        )
-    );
+    /*
+     * GIAI ĐOẠN 2:
+     * Chỉ tìm dự phòng nếu kết quả trực tiếp chưa đủ 50.
+     */
+    if (
+        matchedByKey.size < TARGET &&
+        needFallback.length > 0
+    ) {
+        const remaining = TARGET - matchedByKey.size;
+
+        const fallbackBatch = needFallback.slice(
+            0,
+            Math.min(
+                MAX_FALLBACK_SEARCHES,
+                remaining
+            )
+        );
+
+        const fallbackResults = await Promise.all(
+            fallbackBatch.map(async ranked => {
+                fallbackSearches++;
+
+                try {
+                    return {
+                        ranked,
+                        item: await movinaClassicSearchPhimAPI(
+                            ranked,
+                            "series"
+                        )
+                    };
+                } catch {
+                    return {
+                        ranked,
+                        item: null
+                    };
+                }
+            })
+        );
+
+        // Giữ thứ hạng IMDb khi bổ sung kết quả dự phòng.
+        fallbackResults.sort(
+            (a, b) => a.ranked.rank - b.ranked.rank
+        );
+
+        for (const result of fallbackResults) {
+            if (!result.item) {
+                continue;
+            }
+
+            const before = matchedByKey.size;
+
+            addMatch(result.ranked, result.item);
+
+            if (matchedByKey.size > before) {
+                fallbackMatches++;
+            }
+        }
+    }
 
     const result = Array.from(matchedByKey.values())
         .sort((a, b) =>
@@ -2905,85 +2773,64 @@ if (type === "series") {
         .slice(0, TARGET);
 
     console.log(
-        "[MOVINA CLASSIC SERIES INVENTORY SUMMARY]",
+        "[MOVINA CLASSIC SERIES DIRECT-ID SUMMARY]",
         JSON.stringify({
             rankedTitles: rankedTitles.length,
-            inventoryPages: INVENTORY_PAGES,
-            inventoryRequests,
-            inventoryItems: inventory.length,
-            inventoryMatches,
-            fallbackLimit: MAX_FALLBACK_SEARCHES,
+            directLookups,
+            directMatches,
             fallbackSearches,
             fallbackMatches,
+            lookupErrors,
+            matched: matchedByKey.size,
             returned: result.length,
             target: TARGET,
-            inventoryConcurrency: INVENTORY_CONCURRENCY,
-            searchConcurrency: SEARCH_CONCURRENCY,
-            strategy: "inventory-first"
+            lookupConcurrency: LOOKUP_CONCURRENCY,
+            lookupTimeout: LOOKUP_TIMEOUT,
+            fallbackLimit: MAX_FALLBACK_SEARCHES,
+            earlyStop: true,
+            fallbackReason: SEARCH_TIMEOUT_NOTE
         })
     );
 
     return result;
 }
- 
+
     /*
      * PHIM LẺ:
-     * Worker pool chạy liên tục thay vì chờ từng đợt 32 phim.
-     * Giữ nguyên đối chiếu tên/năm và thứ hạng IMDb.
+     * Giữ nguyên cơ chế tìm kiếm từng tiêu đề.
      */
-    const CONCURRENCY = 8;
+    const CONCURRENCY = 20;
     let searched = 0;
-    let nextIndex = 0;
 
-    async function classicMovieSearchWorker() {
-        while (
-            nextIndex < rankedTitles.length &&
-            matchedByKey.size < TARGET
-        ) {
-            const index = nextIndex++;
-            const ranked = rankedTitles[index];
+    for (
+        let start = 0;
+        start < rankedTitles.length &&
+        matchedByKey.size < TARGET;
+        start += CONCURRENCY
+    ) {
+        const batch = rankedTitles.slice(
+            start,
+            start + CONCURRENCY
+        );
 
-            if (!ranked) {
-                continue;
-            }
-
-            searched++;
-
-            try {
-                const item = await movinaClassicSearchPhimAPI(
+        const batchResults = await Promise.all(
+            batch.map(async ranked => ({
+                ranked,
+                item: await movinaClassicSearchPhimAPI(
                     ranked,
-                    "movie"
-                );
+                    type
+                )
+            }))
+        );
 
-                
-                // Giữ mọi kết quả đã được worker cấp việc.
-                // Cuối hàm sẽ sắp xếp theo hạng IMDb và cắt 50 phim,
-                // không loại phim hạng cao chỉ vì worker khác chạy nhanh hơn.
-                if (item) {
-                    addMatch(ranked, item);
-                }
+        searched += batch.length;
 
-            } catch (error) {
-                console.warn(
-                    "[MOVINA CLASSIC MOVIE WORKER ERROR]",
-                    ranked.title || ranked.imdbId || index,
-                    error?.message || error
-                );
+        for (const result of batchResults) {
+            if (result.item) {
+                addMatch(result.ranked, result.item);
             }
         }
     }
-
-    const workerCount = Math.min(
-        CONCURRENCY,
-        rankedTitles.length
-    );
-
-    await Promise.all(
-        Array.from(
-            { length: workerCount },
-            () => classicMovieSearchWorker()
-        )
-    );
 
     const result = Array.from(matchedByKey.values())
         .sort((a, b) =>
@@ -2998,7 +2845,6 @@ if (type === "series") {
             type,
             rankedTitles: rankedTitles.length,
             searched,
-            concurrency: CONCURRENCY,
             matchedPhimAPI: matchedByKey.size,
             returned: result.length,
             target: TARGET
@@ -3007,7 +2853,6 @@ if (type === "series") {
 
     return result;
 }
-
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
@@ -3343,13 +3188,12 @@ async function fetchMovinaTrendingByGenre(
          * Mở rộng phạm vi quét để tăng khả năng tìm được
          * series kinh dị nằm ngoài các trang đầu.
          */
-        
-        const HORROR_GENRE_PAGES = 3;
-        const HORROR_SERIES_PAGES = 3;
+        const HORROR_GENRE_PAGES = 16;
+        const HORROR_SERIES_PAGES = 16;
 
         const horrorSlug = "kinh-di";
 
-        // Nguồn A: API thể loại Kinh dị.
+        // Nguồn A: danh sách thuộc thể loại Kinh dị.
         for (
             let page = 1;
             page <= HORROR_GENRE_PAGES;
@@ -3371,7 +3215,10 @@ async function fetchMovinaTrendingByGenre(
             );
         }
 
-        // Nguồn B: danh sách phim bộ lọc theo thể loại Kinh dị.
+        
+        // Nguồn B: phim bộ đã lọc trực tiếp theo thể loại Kinh dị.
+        // Không dùng danh sách phim bộ tổng quát vì nhiều series
+        // kinh dị không xuất hiện trong các trang đầu của danh sách đó.
         for (
             let page = 1;
             page <= HORROR_SERIES_PAGES;
@@ -3406,11 +3253,10 @@ async function fetchMovinaTrendingByGenre(
             })
         );
 
-
     } else {
         // Các thể loại khác: giữ nguồn thể loại hiện có.
         for (const slug of genreSlugs) {
-            for (let page = 1; page <= 3; page++) {
+            for (let page = 1; page <= 6; page++) {
                 const url =
                     "https://phimapi.com/v1/api/the-loai/" +
                     encodeURIComponent(slug) +
@@ -3429,7 +3275,7 @@ async function fetchMovinaTrendingByGenre(
         }
 
         // Luôn có nguồn danh sách đúng loại để bổ sung.
-        for (let page = 1; page <= 3; page++) {
+        for (let page = 1; page <= 6; page++) {
             const url =
                 "https://phimapi.com/v1/api/danh-sach/" +
                 listEndpoint +
@@ -3530,35 +3376,30 @@ if (normalizedGenre === "kinh dien") {
 
 
 } else if (!isLatest) {
-    const requestedGenreSlugs =
-        MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
+    const trustGenreSource =
+        type === "series" &&
+        normalizedGenre === "kinh di";
 
     items = items.filter(item => {
-        const sourceSlug = catalogNormalize(
-            item?.__genreApiSlug || ""
-        );
-
-        const sourceConfirmsGenre =
-            sourceSlug &&
-            requestedGenreSlugs.some(
-                slug =>
-                    catalogNormalize(slug) === sourceSlug
-            );
-
-        // Nếu chính API thể loại đã xác nhận thể loại,
-        // không lọc loại phim này lần thứ hai bằng category.
-        if (sourceConfirmsGenre) {
+        /*
+         * API thể loại đã xác nhận phim thuộc Kinh dị.
+         * Không bắt buộc metadata category phải lặp lại
+         * cùng thông tin lần thứ hai.
+         */
+        if (
+            trustGenreSource &&
+            item.__genreApiSlug === "kinh-di"
+        ) {
             return true;
         }
 
-        // Các phim bổ sung từ danh sách chung vẫn phải
-        // vượt qua bộ lọc thể loại hiện có.
         return movinaTrendingGenreMatches(
             item,
             genre
         );
     });
 }
+
 
 /*
  * MOVINA — EXCLUDE ANIMATION FROM NON-ANIMATION GENRES
@@ -3572,10 +3413,7 @@ if (normalizedGenre === "kinh dien") {
  */
 const allowAnimation =
     isAnimationGenre ||
-    (
-        isClassic &&
-        (type === "movie" || type === "series")
-    );
+    (isClassic && type === "movie");
 
 if (!allowAnimation) {
     const beforeAnimationFilter = items.length;
@@ -4327,7 +4165,7 @@ const animationSources = [];
 
 for (
     let page = 1;
-    page <= 3;
+    page <= 12;
     page++
 ) {
 
@@ -6378,11 +6216,11 @@ async function fetchAnimationByFilter(selectedFilter) {
 11. CATALOG META
 ============================================================ */
 
-
 function makeCatalogMeta(
     item,
     forcedType = null
 ) {
+
     const type =
         forcedType ||
         (
@@ -6391,693 +6229,121 @@ function makeCatalogMeta(
                 : "movie"
         );
 
-    const poster = catalogPoster(item);
+    const poster =
+        catalogPoster(item);
 
-    const imdbId = String(
-        item?.__movinaClassicImdbId ||
-        item?.imdb?.id ||
-        item?.imdb_id ||
-        ""
-    ).trim();
+    const imdbId =
+    item?.__movinaClassicImdbId ||
+    item?.imdb?.id ||
+    item?.imdb_id ||
+    "";
 
     let imdbRating = null;
 
     const rawRating =
-        item?.__movinaIMDbRating ??
-        item?.imdbRating ??
-        item?.imdb_rating ??
-        item?.imdb?.vote_average ??
-        item?.imdb?.rating ??
-        null;
+    item?.__movinaIMDbRating ??
+    item?.imdb?.vote_average ??
+    item?.imdb?.rating ??
+    item?.tmdb?.vote_average ??
+    null;
 
     if (
         rawRating !== null &&
         rawRating !== undefined &&
         rawRating !== ""
     ) {
-        const parsed = Number(rawRating);
+
+        const parsed =
+            Number(
+                rawRating
+            );
 
         if (
             Number.isFinite(parsed) &&
-            parsed > 0 &&
-            parsed <= 10
+            parsed > 0
         ) {
-            imdbRating = Math.round(parsed * 10) / 10;
+
+            imdbRating =
+                Math.round(
+                    parsed * 10
+                ) / 10;
         }
     }
 
-        // Giữ ID nội bộ để MOVINA tìm đúng phim trên PhimAPI.
-    // Không dùng IMDb ID của danh sách xếp hạng làm ID mở luồng,
-    // vì một bản ghi ghép nhầm có thể mở sang phim khác.
+    /*
+     * Nếu catalog đã có IMDb ID hợp lệ,
+     * dùng IMDb ID làm ID chung cho Stremio.
+     *
+     * Nếu chưa có IMDb ID,
+     * giữ nguyên ID vnwpsw hiện tại.
+     */
+
     const metaId =
-        "vnwpsw:" +
-        encodeURIComponent(
-            String(
-                item?.name ||
-                item?.origin_name ||
-                ""
-            )
-        );
+        /^tt\d+$/i.test(
+            String(imdbId)
+        )
+            ? String(imdbId)
+            : (
+                "vnwpsw:" +
+                encodeURIComponent(
+                    String(
+                        item?.name ||
+                        item?.origin_name ||
+                        ""
+                    )
+                )
+            );
 
     console.log(
-        "[CATALOG META]",
-        JSON.stringify({
-            name: item?.name || item?.origin_name || "Unknown",
-            imdbId: imdbId || "NONE",
-            finalId: metaId,
-            idMode: /^tt\d+$/i.test(imdbId)
-                ? "imdb"
-                : "vnwpsw"
-        })
+        "[CATALOG META] Name:",
+        item?.name ||
+        item?.origin_name ||
+        "Unknown"
     );
 
-    const rawDescription =
-        item?.content ||
-        item?.description ||
-        item?.overview ||
-        "";
+    console.log(
+        "[CATALOG META] IMDb:",
+        imdbId ||
+        "NONE"
+    );
 
-    const localDescription =
-        typeof rawDescription === "string"
-            ? rawDescription
-                .replace(/<[^>]*>/g, " ")
-                .replace(/&nbsp;/gi, " ")
-                .replace(/&amp;/gi, "&")
-                .replace(/&quot;/gi, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/\s+/g, " ")
-                .trim()
-            : "";
-
-    const localGenres = Array.isArray(item?.category)
-        ? item.category
-            .map(category =>
-                typeof category === "string"
-                    ? category
-                    : category?.name
-            )
-            .filter(Boolean)
-        : [];
-
-    const localCast = Array.isArray(item?.actor)
-        ? item.actor
-            .map(person =>
-                typeof person === "string"
-                    ? person
-                    : person?.name
-            )
-            .filter(Boolean)
-        : [];
-
-    const localDirectors = Array.isArray(item?.director)
-        ? item.director
-            .map(person =>
-                typeof person === "string"
-                    ? person
-                    : person?.name
-            )
-            .filter(Boolean)
-        : [];
+    console.log(
+        "[CATALOG META] Final ID:",
+        metaId
+    );
 
     return {
-        id: metaId,
-        type,
+
+        id:
+            metaId,
+
+        type:
+            type,
+
         name:
             item?.name ||
             item?.origin_name ||
             "Unknown",
-        poster,
-        posterShape: "poster",
 
-        releaseInfo: item?.year
-            ? String(item.year)
-            : undefined,
+        poster:
+            poster,
+
+        posterShape:
+            "poster",
+
+        releaseInfo:
+            item?.year
+                ? String(
+                    item.year
+                )
+                : undefined,
 
         imdbRating:
             imdbRating !== null
                 ? imdbRating
-                : undefined,
-
-        ...(localDescription
-            ? { description: localDescription }
-            : {}),
-
-        ...(localGenres.length
-            ? { genres: localGenres }
-            : {}),
-
-        ...(localCast.length
-            ? { cast: localCast }
-            : {}),
-
-        ...(localDirectors.length
-            ? { director: localDirectors }
-            : {})
+                : undefined
     };
-}
 
-/* ============================================================
-   [STREMIO-012.01] [PROVIDERS: MOVINA]
-   CINEMETA CATALOG PREVIEW ENRICHMENT
-   Chỉ phục vụ Phim lẻ - Trending ở bước gọi bên dưới.
-   ============================================================ */
-
-const MOVINA_CINEMETA_PREVIEW_CACHE = new Map();
-
-const MOVINA_CINEMETA_PREVIEW_TTL =
-    6 * 60 * 60 * 1000;
-
-const MOVINA_CINEMETA_PREVIEW_FAIL_TTL =
-    10 * 60 * 1000;
-
-function movinaCinemetaPreviewYear(meta) {
-    const raw =
-        meta?.year ||
-        meta?.releaseInfo ||
-        meta?.released ||
-        "";
-
-    const match = String(raw).match(/\b(19|20)\d{2}\b/);
-
-    return match ? Number(match[0]) : 0;
-}
-
-function movinaCinemetaPreviewFields(meta) {
-    if (!meta || typeof meta !== "object") {
-        return {};
-    }
-
-    const result = {};
-
-    if (
-        typeof meta.description === "string" &&
-        meta.description.trim()
-    ) {
-        result.description = meta.description.trim();
-    }
-
-    if (
-        Array.isArray(meta.genres) &&
-        meta.genres.length
-    ) {
-        result.genres = meta.genres.filter(
-            value => typeof value === "string" && value.trim()
-        );
-    }
-
-    if (
-        Array.isArray(meta.cast) &&
-        meta.cast.length
-    ) {
-        result.cast = meta.cast.filter(
-            value => typeof value === "string" && value.trim()
-        );
-    }
-
-    if (
-        Array.isArray(meta.director) &&
-        meta.director.length
-    ) {
-        result.director = meta.director.filter(
-            value => typeof value === "string" && value.trim()
-        );
-    }
-
-    const rating = Number(meta.imdbRating);
-
-    if (Number.isFinite(rating) && rating > 0) {
-        result.imdbRating = rating;
-    }
-
-    if (
-        typeof meta.runtime === "string" &&
-        meta.runtime.trim()
-    ) {
-        result.runtime = meta.runtime.trim();
-    }
-
-    if (
-        typeof meta.background === "string" &&
-        meta.background.trim()
-    ) {
-        result.background = meta.background.trim();
-    }
-
-    return result;
-}
-
-async function movinaFetchCinemetaPreview(item, type = "movie") {
-    const slug = String(item?.slug || "").trim();
-
-    if (!slug) {
-        return {};
-    }
-
-    const cacheKey = "phimapi:detail:" + slug;
-    const cached = MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey);
-
-    if (cached && cached.expiresAt > Date.now()) {
-        return cached.promise;
-    }
-
-    const requestPromise = (async () => {
-        try {
-            const response = await axios.get(
-                "https://phimapi.com/v1/api/phim/" +
-                    encodeURIComponent(slug),
-                {
-                    timeout: 1800,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
-                }
-            );
-
-            const detail =
-                response.data?.data?.item ||
-                response.data?.item ||
-                {};
-
-            const rawDescription =
-                detail.content ||
-                detail.description ||
-                detail.overview ||
-                "";
-
-            const description =
-                typeof rawDescription === "string"
-                    ? rawDescription
-                        .replace(/<br\s*\/?>/gi, "\n")
-                        .replace(/<\/p>/gi, "\n")
-                        .replace(/<[^>]*>/g, " ")
-                        .replace(/&nbsp;/gi, " ")
-                        .replace(/&amp;/gi, "&")
-                        .replace(/&quot;/gi, '"')
-                        .replace(/&#39;/g, "'")
-                        .replace(/\s+/g, " ")
-                        .trim()
-                    : "";
-
-            const genres = Array.isArray(detail.category)
-                ? detail.category
-                    .map(value =>
-                        typeof value === "string"
-                            ? value
-                            : value?.name
-                    )
-                    .filter(Boolean)
-                : [];
-
-            const cast = Array.isArray(detail.actor)
-                ? detail.actor
-                    .map(value =>
-                        typeof value === "string"
-                            ? value
-                            : value?.name
-                    )
-                    .filter(Boolean)
-                : [];
-
-            const director = Array.isArray(detail.director)
-                ? detail.director
-                    .map(value =>
-                        typeof value === "string"
-                            ? value
-                            : value?.name
-                    )
-                    .filter(Boolean)
-                : [];
-
-                        const runtime =
-                detail.time ||
-                detail.runtime ||
-                "";
-
-            const rawRating =
-                detail.imdb?.vote_average ??
-                detail.imdb?.rating ??
-                detail.imdbRating ??
-                detail.imdb_rating ??
-                null;
-
-            const rating = Number(rawRating);
-
-            const rawImdbId =
-                detail.imdb?.id ||
-                detail.imdb_id ||
-                detail.imdbId ||
-                "";
-
-            const imdbId =
-                /^tt\d+$/i.test(String(rawImdbId).trim())
-                    ? String(rawImdbId).trim()
-                    : "";
-
-            return {
-                ...(description ? { description } : {}),
-                ...(genres.length ? { genres } : {}),
-                ...(cast.length ? { cast } : {}),
-                ...(director.length ? { director } : {}),
-                ...(runtime ? { runtime: String(runtime) } : {}),
-                ...(imdbId ? { imdbId } : {}),
-                ...(Number.isFinite(rating) && rating > 0 && rating <= 10
-                    ? { imdbRating: Math.round(rating * 10) / 10 }
-                    : {})
-            };
-
-        } catch (error) {
-            console.log(
-                "[PHIMAPI PREVIEW DETAIL]",
-                slug,
-                error?.response?.status || error?.message || error
-            );
-
-            return {};
-        }
-    })();
-
-    MOVINA_CINEMETA_PREVIEW_CACHE.set(cacheKey, {
-        expiresAt: Date.now() + MOVINA_CINEMETA_PREVIEW_TTL,
-        promise: requestPromise
-    });
-
-    const fields = await requestPromise;
-
-    if (!Object.keys(fields).length) {
-        MOVINA_CINEMETA_PREVIEW_CACHE.set(cacheKey, {
-            expiresAt: Date.now() + MOVINA_CINEMETA_PREVIEW_FAIL_TTL,
-            promise: Promise.resolve({})
-        });
-    }
-
-    return fields;
-}
-
-/* ============================================================
-   [STREMIO-012.02] [PROVIDERS: MOVINA]
-   CINEMETA IMDb RATING FALLBACK
-   Chỉ gọi khi thiếu điểm IMDb và có IMDb ID hợp lệ.
-   ============================================================ */
-
-const MOVINA_CINEMETA_RATING_CACHE = new Map();
-
-const MOVINA_CINEMETA_RATING_TTL =
-    6 * 60 * 60 * 1000;
-
-const MOVINA_CINEMETA_RATING_FAIL_TTL =
-    10 * 60 * 1000;
-
-async function movinaFetchCinemetaRating(imdbId, type = "movie") {
-    const id = String(imdbId || "").trim();
-
-    if (!/^tt\d+$/i.test(id)) {
-        return null;
-    }
-
-    const safeType = type === "series" ? "series" : "movie";
-    const cacheKey = safeType + ":" + id;
-    const now = Date.now();
-
-    const cached = MOVINA_CINEMETA_RATING_CACHE.get(cacheKey);
-
-    if (cached && cached.expiresAt > now) {
-        return cached.promise;
-    }
-
-    const requestPromise = (async () => {
-        try {
-            const response = await axios.get(
-                "https://v3-cinemeta.strem.io/meta/" +
-                    safeType + "/" +
-                    encodeURIComponent(id) +
-                    ".json",
-                {
-                    timeout: 1000,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
-                }
-            );
-
-            const meta = response.data?.meta;
-
-            // Không chấp nhận dữ liệu nếu Cinemeta trả về
-            // một IMDb ID khác với ID đang yêu cầu.
-            if (
-                meta?.imdb_id &&
-                String(meta.imdb_id).trim() !== id
-            ) {
-                console.warn(
-                    "[MOVINA CINEMETA RATING] IMDb ID mismatch:",
-                    JSON.stringify({
-                        requested: id,
-                        returned: meta.imdb_id
-                    })
-                );
-
-                return null;
-            }
-
-            const rating = Number(meta?.imdbRating);
-
-            if (
-                !Number.isFinite(rating) ||
-                rating <= 0 ||
-                rating > 10
-            ) {
-                return null;
-            }
-
-            return Math.round(rating * 10) / 10;
-        } catch (error) {
-            console.log(
-                "[MOVINA CINEMETA RATING]",
-                id,
-                error?.response?.status ||
-                    error?.code ||
-                    error?.message ||
-                    "Unknown error"
-            );
-
-            return null;
-        }
-    })();
-
-    MOVINA_CINEMETA_RATING_CACHE.set(cacheKey, {
-        expiresAt: now + MOVINA_CINEMETA_RATING_TTL,
-        promise: requestPromise
-    });
-
-    const rating = await requestPromise;
-
-    if (rating === null) {
-        MOVINA_CINEMETA_RATING_CACHE.set(cacheKey, {
-            expiresAt:
-                Date.now() + MOVINA_CINEMETA_RATING_FAIL_TTL,
-            promise: Promise.resolve(null)
-        });
-    }
-
-    return rating;
-}
-
-async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
-    type = type === "series" ? "series" : "movie";
-
-    const sourceItems = (items || []).slice(0, CATALOG_TARGET);
-    const metas = new Array(sourceItems.length);
-
-    let nextIndex = 0;
-    let detailRequests = 0;
-    let detailCacheHits = 0;
-
-    // Giới hạn số phim cần truy vấn chi tiết trong một lượt catalog.
-    // Các phim còn lại vẫn giữ dữ liệu có sẵn từ nguồn.
-    const MAX_DETAIL_REQUESTS = 50;
-    const WORKERS = Math.min(8, sourceItems.length);
-
-    async function worker() {
-        while (true) {
-            const index = nextIndex++;
-
-            if (index >= sourceItems.length) {
-                return;
-            }
-
-            const item = sourceItems[index];
-            const preview = makeCatalogMeta(item, type);
-
-            if (!preview?.id || !preview?.name) {
-                metas[index] = null;
-                continue;
-            }
-
-            const hasDescription =
-                typeof preview.description === "string" &&
-                preview.description.trim().length > 0;
-
-            const hasRating =
-                Number.isFinite(Number(preview.imdbRating)) &&
-                Number(preview.imdbRating) > 0;
-
-                        let extra = {};
-
-            // Bước 1: Giữ nguyên cơ chế lấy preview từ PhimAPI.
-            // Chỉ dùng cache hoặc truy vấn khi thiếu mô tả
-            // hay thiếu điểm IMDb.
-            if (!hasDescription || !hasRating) {
-                const slug = String(item?.slug || "").trim();
-
-                const cacheKey = slug
-                    ? "phimapi:detail:" + slug
-                    : "";
-
-                const cached = cacheKey
-                    ? MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey)
-                    : null;
-
-                const cacheIsValid =
-                    cached && cached.expiresAt > Date.now();
-
-                if (cacheIsValid) {
-                    detailCacheHits++;
-
-                    extra = await movinaFetchCinemetaPreview(
-                        item,
-                        type
-                    );
-                } else if (
-                    slug &&
-                    detailRequests < MAX_DETAIL_REQUESTS
-                ) {
-                    detailRequests++;
-
-                    extra = await movinaFetchCinemetaPreview(
-                        item,
-                        type
-                    );
-                }
-            }
-
-            // Bước 2: Chỉ gọi Cinemeta nếu vẫn thiếu điểm IMDb.
-            // Ưu tiên IMDb ID thật; không tìm bằng tên phim,
-            // không đoán ID và không gọi nếu ID không hợp lệ.
-            let cinemetaRating = null;
-
-            const ratingAlreadyAvailable =
-                hasRating ||
-                (
-                    Number.isFinite(Number(extra.imdbRating)) &&
-                    Number(extra.imdbRating) > 0
-                );
-
-            if (!ratingAlreadyAvailable) {
-                    const candidateImdbId =
-                    item?.__movinaClassicImdbId ||
-                    item?.imdb?.id ||
-                    item?.imdb_id ||
-                    extra?.imdbId ||
-                    (
-                        /^tt\d+$/i.test(String(preview.id || ""))
-                            ? preview.id
-                            : ""
-                    );
-
-                if (/^tt\d+$/i.test(String(candidateImdbId || ""))) {
-                    cinemetaRating = await movinaFetchCinemetaRating(
-                        candidateImdbId,
-                        type
-                    );
-
-                    if (cinemetaRating !== null) {
-                        console.log(
-                            "[MOVINA CINEMETA RATING] Recovered:",
-                            JSON.stringify({
-                                id: candidateImdbId,
-                                name: preview.name,
-                                rating: cinemetaRating
-                            })
-                        );
-                    }
-                }
-            }
-
-            metas[index] = {
-                ...preview,
-
-                ...(!hasDescription && extra.description
-                    ? { description: extra.description }
-                    : {}),
-
-                                // Ưu tiên điểm đã có trong catalog.
-                // Nếu thiếu, dùng điểm PhimAPI; cuối cùng mới dùng Cinemeta.
-                ...(hasRating
-    ? { imdbRating: preview.imdbRating }
-    : (
-        Number.isFinite(Number(extra.imdbRating)) &&
-        Number(extra.imdbRating) > 0 &&
-        Number(extra.imdbRating) <= 10
-            ? { imdbRating: Number(extra.imdbRating) }
-            : (
-                Number.isFinite(Number(cinemetaRating)) &&
-                Number(cinemetaRating) > 0 &&
-                Number(cinemetaRating) <= 10
-                    ? { imdbRating: Number(cinemetaRating) }
-                    : {}
-            )
-    )
-),
-
-                id: preview.id,
-                type,
-                name: preview.name,
-                poster: preview.poster,
-                posterShape: preview.posterShape
-            };
-        }
-    }
-
-    await Promise.all(
-        Array.from({ length: WORKERS }, () => worker())
-    );
-
-    const result = metas.filter(
-        meta => meta?.id && meta?.name
-    );
-
-    console.log(
-        "[MOVINA VIETNAMESE PREVIEW]",
-        JSON.stringify({
-            type,
-            input: sourceItems.length,
-            output: result.length,
-            workers: WORKERS,
-            detailRequests,
-            detailCacheHits,
-            maxDetailRequests: MAX_DETAIL_REQUESTS,
-            cacheSize: MOVINA_CINEMETA_PREVIEW_CACHE.size
-        })
-    );
-
-    return result;
-}
-
-/* ============================================================
-   [CORE-003.06] [PROVIDERS: MOVINA]
-   FINAL CATALOG RESULT CACHE
-   ============================================================ */
-
-const MOVINA_FINAL_CATALOG_CACHE = new Map();
-const MOVINA_FINAL_CATALOG_TTL = 2 * 60 * 1000;
-
-function movinaFinalCatalogCacheKey(args) {
-    return JSON.stringify({
-        type: args?.type || "",
-        id: args?.id || "",
-        extra: args?.extra || {}
-    });
 }
 
 /* ============================================================
@@ -7107,34 +6373,6 @@ builder.defineCatalogHandler(
                     args.extra?.search ||
                     ""
                 ).trim();
-
-const finalCacheEligible = [
-  "pa_movies_trending",
-  "pa_series_trending",
-  "pa_tvb",
-  "pa_daily",
-  "pa_animation_new"
-].includes(args.id) && !searchQuery;
-
-const finalCacheKey = finalCacheEligible
-  ? movinaFinalCatalogCacheKey(args)
-  : "";
-
-if (finalCacheKey) {
-  const cached = MOVINA_FINAL_CATALOG_CACHE.get(finalCacheKey);
-
-  if (cached && cached.expiresAt > Date.now()) {
-    console.log("[MOVINA FINAL CATALOG CACHE] HIT:", args.id);
-
-    return {
-      metas: cached.metas.map(meta => ({ ...meta }))
-    };
-  }
-
-  if (cached) {
-    MOVINA_FINAL_CATALOG_CACHE.delete(finalCacheKey);
-  }
-}
 
 /* ============================================================
    12.0 MOVINA TV / IPTV HUB
@@ -8154,66 +7392,29 @@ forcedType = "series";
                     );
 
             }
-            
 
-/* ========================================================
-   12.8 BUILD METAS
-   ======================================================== */
+            /* ========================================================
+               12.8 BUILD METAS
+               ======================================================== */
 
-const selectedGenre = String(
-    args?.extra?.genre ||
-    args?.genre ||
-    ""
-).trim();
-
-let previewType = "movie";
-let enableCinemetaPreview = args.id === "pa_daily";
-
-if (args.id === "pa_movies_trending") {
-    previewType = "movie";
-    enableCinemetaPreview = true;
-}
-
-else if (args.id === "pa_series_trending") {
-    previewType = "series";
-    enableCinemetaPreview = true;
-}
-
-else if (args.id === "pa_animation_new") {
-    previewType = /HH bộ$/i.test(selectedGenre)
-        ? "series"
-        : "movie";
-
-    enableCinemetaPreview = true;
-}
-
-else if (args.id === "pa_tvb") {
-    previewType = /Phim bộ TVB/i.test(selectedGenre)
-        ? "series"
-        : "movie";
-
-    enableCinemetaPreview = true;
-}
-
-let metas;
-
-if (enableCinemetaPreview) {
-    metas = await movinaEnrichMovieTrendingPreviews(
-        items,
-        previewType
-    );
-} else {
-    metas = items
-        .slice(0, CATALOG_TARGET)
-        .map(item =>
-            makeCatalogMeta(item, forcedType)
-        )
-        .filter(
-            meta =>
-                meta.id &&
-                meta.name
-        );
-}
+            const metas =
+                items
+                    .slice(
+                        0,
+                        CATALOG_TARGET
+                    )
+                    .map(
+                        item =>
+                            makeCatalogMeta(
+                                item,
+                                forcedType
+                            )
+                    )
+                    .filter(
+                        meta =>
+                            meta.id &&
+                            meta.name
+                    );
 
             /* ========================================================
                12.9 LOG
@@ -8253,14 +7454,9 @@ if (enableCinemetaPreview) {
                 ).length
             );
 
-            if (finalCacheKey) {
-  MOVINA_FINAL_CATALOG_CACHE.set(finalCacheKey, {
-    expiresAt: Date.now() + MOVINA_FINAL_CATALOG_TTL,
-    metas: metas.map(meta => ({ ...meta }))
-  });
-}
-
-return { metas };
+            return {
+                metas
+            };
 
         } catch (e) {
 
@@ -9054,40 +8250,26 @@ if (
             searchUrl
         );
 
-        let items = [];
-
-        try {
-            const searchRes = await axios.get(
+        const searchRes =
+            await axios.get(
                 searchUrl,
                 {
                     timeout: 8000,
+
                     headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
+                        "User-Agent":
+                            "Mozilla/5.0",
+
+                        "Accept":
+                            "application/json"
                     }
                 }
             );
 
-            const searchItems =
-                searchRes.data?.data?.items ||
-                searchRes.data?.items ||
-                [];
-
-            items = Array.isArray(searchItems)
-                ? searchItems
-                : [];
-
-        } catch (error) {
-            console.warn(
-                "[META SEARCH FALLBACK]",
-                JSON.stringify({
-                    title: movieName,
-                    status: error?.response?.status || 0,
-                    error: error?.message || String(error),
-                    fallback: "minimal-metadata"
-                })
-            );
-        }
+        const items =
+            searchRes.data?.data?.items ||
+            searchRes.data?.items ||
+            [];
 
         console.log(
             "[META] Search items:",
@@ -9210,7 +8392,21 @@ if (
 
             }
 
-           }
+            // -------------------------------------------------
+            // D. KHÔNG CÓ KHỚP TUYỆT ĐỐI
+            // -------------------------------------------------
+
+            if (
+                !item &&
+                items.length > 0
+            ) {
+
+                item =
+                    items[0];
+
+            }
+
+        }
 
         if (!item) {
 
@@ -9430,11 +8626,13 @@ if (
             ).trim();
 
         if (
-    imdbId.startsWith("tt") &&
-    !rawId.startsWith("vnwpsw:")
-) {
-    metaId = imdbId;
-}
+            imdbId.startsWith("tt")
+        ) {
+
+            metaId =
+                imdbId;
+
+        }
 
         // =====================================================
         // [STREMIO-013.14] [PROVIDERS: ALL] CINEMETA IMDB FALLBACK
@@ -10198,11 +9396,13 @@ if (
         // [STREMIO-013.18] [PROVIDERS: ALL] SERIES META AND VIDEOS OUTPUT
         // =====================================================
 
-        
         const meta = {
-            id: metaId,
 
-            type: metaType,
+            id:
+                metaId,
+
+            type:
+                metaType,
 
             name:
                 detail?.name ||
@@ -10224,96 +9424,17 @@ if (
 
             releaseInfo:
                 detail?.year
-                    ? String(detail.year)
+                    ? String(
+                        detail.year
+                    )
                     : (
                         item?.year
-                            ? String(item.year)
+                            ? String(
+                                item.year
+                            )
                             : undefined
-                    ),
+                    )
 
-            // Điểm IMDb đã được xử lý ở block phía trên.
-            imdbRating:
-                imdbRating !== null
-                    ? imdbRating
-                    : undefined,
-
-            // Thể loại đã được chuẩn hóa ở STREMIO-013.16.
-            genres:
-                Array.isArray(genres) && genres.length
-                    ? genres
-                    : undefined,
-
-            // PhimAPI thường trả thời lượng qua detail.time.
-            runtime:
-                detail?.time ||
-                detail?.duration ||
-                item?.time ||
-                item?.duration ||
-                undefined,
-
-            // Chuẩn hóa danh sách diễn viên.
-            cast: (() => {
-                const raw =
-                    detail?.actor ??
-                    detail?.actors ??
-                    item?.actor ??
-                    item?.actors;
-
-                if (Array.isArray(raw)) {
-                    return raw
-                        .map(x =>
-                            typeof x === "string"
-                                ? x.trim()
-                                : String(
-                                    x?.name ||
-                                    x?.title ||
-                                    ""
-                                ).trim()
-                        )
-                        .filter(Boolean);
-                }
-
-                if (typeof raw === "string" && raw.trim()) {
-                    return raw
-                        .split(",")
-                        .map(x => x.trim())
-                        .filter(Boolean);
-                }
-
-                return undefined;
-            })(),
-
-            // Chuẩn hóa tên đạo diễn.
-            director: (() => {
-                const raw =
-                    detail?.director ??
-                    detail?.directors ??
-                    item?.director ??
-                    item?.directors;
-
-                if (Array.isArray(raw)) {
-                    return raw
-                        .map(x =>
-                            typeof x === "string"
-                                ? x.trim()
-                                : String(
-                                    x?.name ||
-                                    x?.title ||
-                                    ""
-                                ).trim()
-                        )
-                        .filter(Boolean);
-                }
-
-                if (typeof raw === "string" && raw.trim()) {
-                    return raw
-                        .split(",")
-                        .map(x => x.trim())
-                        .filter(Boolean);
-                }
-
-                return undefined;
-            })()
         };
 
         if (
@@ -15881,81 +15002,53 @@ if (
             imdbMovie?.episodes ||
             null;
 
-                if (imdbMovie) {
-            const requestedTitle =
-                kkphimNormalizeTitle(movieName);
+        if (
+            imdbMovie
+        ) {
 
-            const candidateTitles = [
-                imdbMovie?.name,
-                imdbMovie?.origin_name,
-                imdbMovie?.original_name
-            ]
-                .filter(Boolean)
-                .map(kkphimNormalizeTitle);
+            movie =
+                imdbMovie;
 
-            const titleMatches =
-                candidateTitles.some(title =>
-                    title === requestedTitle ||
-                    (
-                        requestedTitle.length >= 5 &&
-                        title.length >= 5 &&
-                        (
-                            title.includes(requestedTitle) ||
-                            requestedTitle.includes(title)
-                        )
-                    )
-                );
-
-            const requestedYear = Number(movieYear) || 0;
-            const candidateYear = Number(imdbMovie?.year) || 0;
-
-            const yearMatches =
-                !requestedYear ||
-                !candidateYear ||
-                requestedYear === candidateYear;
-
-            if (titleMatches && yearMatches) {
-                movie = imdbMovie;
-
-                imdbEpisodes = Array.isArray(directEpisodes)
+            imdbEpisodes =
+                Array.isArray(
+                    directEpisodes
+                )
                     ? directEpisodes
                     : null;
 
-                console.log(
-                    "[KKPHIM] IMDb MATCH:",
-                    JSON.stringify({
-                        name: movie?.name,
-                        origin_name: movie?.origin_name,
-                        slug: movie?.slug,
-                        year: movie?.year,
-                        type: movie?.type,
-                        episodes: Array.isArray(imdbEpisodes)
+            console.log(
+                "[KKPHIM] IMDb MATCH:",
+                JSON.stringify({
+                    name:
+                        movie?.name,
+
+                    origin_name:
+                        movie?.origin_name,
+
+                    slug:
+                        movie?.slug,
+
+                    year:
+                        movie?.year,
+
+                    type:
+                        movie?.type,
+
+                    episodes:
+                        Array.isArray(
+                            imdbEpisodes
+                        )
                             ? imdbEpisodes.length
                             : 0
-                    })
-                );
-            } else {
-                console.warn(
-                    "[KKPHIM] IMDb MISMATCH REJECTED:",
-                    JSON.stringify({
-                        requestedTitle: movieName,
-                        requestedYear,
-                        candidateName: imdbMovie?.name,
-                        candidateOriginName: imdbMovie?.origin_name,
-                        candidateYear,
-                        titleMatches,
-                        yearMatches,
-                        imdbId
-                    })
-                );
+                })
+            );
 
-                movie = null;
-                imdbEpisodes = null;
-            }
         } else {
+
             console.log(
                 "[KKPHIM] IMDb lookup returned no movie"
             );
+
         }
 
     } catch (e) {
@@ -16042,75 +15135,27 @@ if (
             yearItems.length
         ) {
 
-            const requestedTitle =
-    kkphimNormalizeTitle(movieName);
+            const imdbMatched =
+                yearItems.find(
+                    item => {
 
-const requestedYear =
-    Number(movieYear) || 0;
+                        const itemImdb =
+                            item?.imdb?.id ||
+                            item?.imdb_id ||
+                            item?.imdbId ||
+                            "";
 
-const imdbMatched =
-    yearItems.find(item => {
-        const itemImdb =
-            item?.imdb?.id ||
-            item?.imdb_id ||
-            item?.imdbId ||
-            "";
+                        return (
+                            String(
+                                itemImdb
+                            ).trim().toLowerCase() ===
+                            String(
+                                imdbId
+                            ).trim().toLowerCase()
+                        );
 
-        const imdbMatches =
-            String(itemImdb).trim().toLowerCase() ===
-            String(imdbId).trim().toLowerCase();
-
-        if (!imdbMatches) {
-            return false;
-        }
-
-        const candidateTitles = [
-            item?.name,
-            item?.origin_name,
-            item?.original_name
-        ]
-            .filter(Boolean)
-            .map(kkphimNormalizeTitle);
-
-        const titleMatches =
-            candidateTitles.some(title =>
-                title === requestedTitle ||
-                (
-                    requestedTitle.length >= 5 &&
-                    title.length >= 5 &&
-                    (
-                        title.includes(requestedTitle) ||
-                        requestedTitle.includes(title)
-                    )
-                )
-            );
-
-        const candidateYear =
-            Number(item?.year) || 0;
-
-        const yearMatches =
-            !requestedYear ||
-            !candidateYear ||
-            requestedYear === candidateYear;
-
-        if (!titleMatches || !yearMatches) {
-            console.warn(
-                "[KKPHIM] YEAR + IMDb MISMATCH REJECTED:",
-                {
-                    requestedTitle: movieName,
-                    requestedYear,
-                    candidateName: item?.name,
-                    candidateOriginName: item?.origin_name,
-                    candidateYear,
-                    imdbId
-                }
-            );
-
-            return false;
-        }
-
-        return true;
-    });
+                    }
+                );
 
             if (
                 imdbMatched
@@ -35508,91 +34553,27 @@ const kkphimPromise = (async () => {
           );
           return [];
       }
-  })();  // Thu gom kết quả với thời hạn chờ riêng cho từng nhóm.
-  // Provider chạy lâu vẫn tiếp tục xử lý nền, nhưng không
-  // giữ toàn bộ request stream phải chờ theo.
+  })();
+
+  // Thu gom toàn bộ kết quả; không trả sớm khi mới có một nguồn.
   let providerResults = [];
   let longtiengResult = [];
-  let kkphimResult = [];
-
-  function movinaWaitForResult(promise, timeoutMs, fallback, label) {
-      let timeoutHandle;
-
-      const timeoutPromise = new Promise(resolve => {
-          timeoutHandle = setTimeout(() => {
-              console.warn(
-                  "[STREAM COLLECT TIMEOUT]",
-                  JSON.stringify({
-                      provider: label,
-                      timeoutMs
-                  })
-              );
-
-              resolve(fallback);
-          }, timeoutMs);
-      });
-
-      return Promise.race([
-          Promise.resolve(promise).catch(error => {
-              console.warn(
-                  "[STREAM COLLECT ERROR]",
-                  JSON.stringify({
-                      provider: label,
-                      error: error?.message || String(error)
-                  })
-              );
-
-              return fallback;
-          }),
-          timeoutPromise
-      ]).finally(() => {
-          if (timeoutHandle) {
-              clearTimeout(timeoutHandle);
-          }
-      });
-  }
 
   try {
       const [
           settledProviders,
-          settledKkphim,
+          kkphimResult,
           settledLongtieng
       ] = await Promise.all([
-          movinaWaitForResult(
-              providerResultsPromise,
-              12000,
-              [
-                  { status: "fulfilled", value: [] },
-                  { status: "fulfilled", value: [] },
-                  { status: "fulfilled", value: [] }
-              ],
-              "NguonC / VSMov / PhimHDCS"
-          ),
-
-          movinaWaitForResult(
-              kkphimPromise,
-              10000,
-              [],
-              "KKPhim"
-          ),
-
-          movinaWaitForResult(
-              longtiengPromise,
-              12000,
-              [],
-              "PhimLongTieng"
-          )
+          providerResultsPromise,
+          kkphimPromise,
+          longtiengPromise
       ]);
 
-      providerResults = Array.isArray(settledProviders)
-          ? settledProviders
+      providerResults = settledProviders;
+      kkphim = Array.isArray(kkphimResult)
+          ? kkphimResult
           : [];
-
-      kkphim = Array.isArray(settledKkphim)
-          ? settledKkphim
-          : [];
-
-      kkphimResult = kkphim;
 
       longtiengResult = Array.isArray(settledLongtieng)
           ? settledLongtieng
