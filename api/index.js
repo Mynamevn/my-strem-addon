@@ -9107,11 +9107,6 @@ if (
             );
         }
 
-        const items =
-            searchRes.data?.data?.items ||
-            searchRes.data?.items ||
-            [];
-
         console.log(
             "[META] Search items:",
             Array.isArray(items)
