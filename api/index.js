@@ -575,11 +575,14 @@ return [...items]
    ============================================================ */
 
 // [CORE-004.01] [PROVIDERS: ALL] CATALOG POSTER RESOLUTION
-function catalogPoster(item) {
 
+function catalogPoster(item) {
+    // Ưu tiên ảnh thumbnail để giảm dung lượng tải
+    // trên các giao diện danh mục, đặc biệt khi có nhiều poster.
     const raw =
-        item?.poster_url ||
         item?.thumb_url ||
+        item?.thumb ||
+        item?.poster_url ||
         item?.poster ||
         "";
 
@@ -587,69 +590,26 @@ function catalogPoster(item) {
         return "";
     }
 
-    const value =
-        String(raw).trim();
+    const value = String(raw).trim();
 
-    /*
-       Đã là URL đầy đủ.
-    */
-
-    if (
-        /^https?:\/\//i.test(value)
-    ) {
+    if (/^https?:\/\//i.test(value)) {
         return value;
     }
 
-    /*
-       Protocol-relative URL.
-    */
-
-    if (
-        value.startsWith("//")
-    ) {
+    if (value.startsWith("//")) {
         return "https:" + value;
     }
 
-    /*
-       Poster dạng uploads/movies/...
-       thường thuộc phimapi.com.
-    */
-
-    if (
-        value.startsWith(
-            "uploads/movies/"
-        )
-    ) {
-        return (
-            "https://phimapi.com/" +
-            value
-        );
+    if (value.startsWith("uploads/movies/")) {
+        return "https://phimapi.com/" + value;
     }
 
-    /*
-       Poster dạng upload/vod/...
-       thường thuộc phimimg.com.
-    */
-
-    if (
-        value.startsWith(
-            "upload/vod/"
-        )
-    ) {
-        return (
-            "https://phimimg.com/" +
-            value
-        );
+    if (value.startsWith("upload/vod/")) {
+        return "https://phimimg.com/" + value;
     }
 
-    /*
-       Fallback.
-    */
-
-    return (
-        "https://phimimg.com/" +
-        value.replace(/^\/+/, "")
-    );
+    return "https://phimimg.com/" +
+        value.replace(/^\/+/, "");
 }
 
 
@@ -6376,11 +6336,11 @@ async function fetchAnimationByFilter(selectedFilter) {
 11. CATALOG META
 ============================================================ */
 
+
 function makeCatalogMeta(
     item,
     forcedType = null
 ) {
-
     const type =
         forcedType ||
         (
@@ -6389,18 +6349,18 @@ function makeCatalogMeta(
                 : "movie"
         );
 
-    const poster =
-        catalogPoster(item);
+    const poster = catalogPoster(item);
 
-    const imdbId =
-    item?.__movinaClassicImdbId ||
-    item?.imdb?.id ||
-    item?.imdb_id ||
-    "";
+    const imdbId = String(
+        item?.__movinaClassicImdbId ||
+        item?.imdb?.id ||
+        item?.imdb_id ||
+        ""
+    ).trim();
 
     let imdbRating = null;
 
-        const rawRating =
+    const rawRating =
         item?.__movinaIMDbRating ??
         item?.imdbRating ??
         item?.imdb_rating ??
@@ -6413,61 +6373,41 @@ function makeCatalogMeta(
         rawRating !== undefined &&
         rawRating !== ""
     ) {
-
-        const parsed =
-            Number(
-                rawRating
-            );
+        const parsed = Number(rawRating);
 
         if (
             Number.isFinite(parsed) &&
-            parsed > 0
+            parsed > 0 &&
+            parsed <= 10
         ) {
-
-            imdbRating =
-                Math.round(
-                    parsed * 10
-                ) / 10;
+            imdbRating = Math.round(parsed * 10) / 10;
         }
     }
 
-    /*
-     * Nếu catalog đã có IMDb ID hợp lệ,
-     * dùng IMDb ID làm ID chung cho Stremio.
-     *
-     * Nếu chưa có IMDb ID,
-     * giữ nguyên ID vnwpsw hiện tại.
-     */
-
-    const metaId =
-    "vnwpsw:" +
-    encodeURIComponent(
-        String(
-            item?.name ||
-            item?.origin_name ||
-            ""
-        )
-    );
+    // Ưu tiên IMDb ID hợp lệ làm ID mở phim.
+    // Chỉ dùng ID nội bộ khi không có IMDb ID.
+    const metaId = /^tt\d+$/i.test(imdbId)
+        ? imdbId
+        : "vnwpsw:" + encodeURIComponent(
+            String(
+                item?.name ||
+                item?.origin_name ||
+                ""
+            )
+        );
 
     console.log(
-        "[CATALOG META] Name:",
-        item?.name ||
-        item?.origin_name ||
-        "Unknown"
+        "[CATALOG META]",
+        JSON.stringify({
+            name: item?.name || item?.origin_name || "Unknown",
+            imdbId: imdbId || "NONE",
+            finalId: metaId,
+            idMode: /^tt\d+$/i.test(imdbId)
+                ? "imdb"
+                : "vnwpsw"
+        })
     );
 
-    console.log(
-        "[CATALOG META] IMDb:",
-        imdbId ||
-        "NONE"
-    );
-
-    console.log(
-        "[CATALOG META] Final ID:",
-        metaId
-    );
-
-    
     const rawDescription =
         item?.content ||
         item?.description ||
@@ -6552,7 +6492,6 @@ function makeCatalogMeta(
             : {})
     };
 }
-
 
 /* ============================================================
    [STREMIO-012.01] [PROVIDERS: MOVINA]
