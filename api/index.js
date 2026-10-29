@@ -9072,21 +9072,40 @@ if (
             searchUrl
         );
 
-        const searchRes =
-            await axios.get(
+        let items = [];
+
+        try {
+            const searchRes = await axios.get(
                 searchUrl,
                 {
                     timeout: 8000,
-
                     headers: {
-                        "User-Agent":
-                            "Mozilla/5.0",
-
-                        "Accept":
-                            "application/json"
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
                     }
                 }
             );
+
+            const searchItems =
+                searchRes.data?.data?.items ||
+                searchRes.data?.items ||
+                [];
+
+            items = Array.isArray(searchItems)
+                ? searchItems
+                : [];
+
+        } catch (error) {
+            console.warn(
+                "[META SEARCH FALLBACK]",
+                JSON.stringify({
+                    title: movieName,
+                    status: error?.response?.status || 0,
+                    error: error?.message || String(error),
+                    fallback: "minimal-metadata"
+                })
+            );
+        }
 
         const items =
             searchRes.data?.data?.items ||
