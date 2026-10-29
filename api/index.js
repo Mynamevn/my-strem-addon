@@ -2452,6 +2452,7 @@ function movinaClassicFindExactMatch(title, items) {
     return null;
 }
 
+
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
         type,
@@ -2490,10 +2491,102 @@ async function movinaClassicSearchPhimAPI(title, type) {
             response.data?.items ||
             [];
 
-        const match = movinaClassicFindExactMatch(
+        let match = movinaClassicFindExactMatch(
             title,
             Array.isArray(items) ? items : []
         );
+
+        /*
+         * PHIM LẺ:
+         * Nếu tìm bằng tên không thành công, thử tra cứu
+         * bằng IMDb ID. Chỉ dùng kết quả nếu không phát hiện
+         * IMDb ID mâu thuẫn hoặc loại nội dung không phù hợp.
+         */
+        if (
+            !match &&
+            type === "movie" &&
+            title.imdbId
+        ) {
+            try {
+                const imdbResponse = await axios.get(
+                    "https://phimapi.com/imdb/title/" +
+                    encodeURIComponent(title.imdbId),
+                    {
+                        timeout: 2200,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
+                        }
+                    }
+                );
+
+                const data = imdbResponse.data || {};
+
+                const candidate =
+                    data?.movie ||
+                    data?.data?.movie ||
+                    data?.data?.item ||
+                    data?.item ||
+                    null;
+
+                if (
+                    candidate &&
+                    typeof candidate === "object" &&
+                    candidate.slug &&
+                    candidate.name
+                ) {
+                    const candidateIMDbId =
+                        movinaClassicItemIMDbId(candidate);
+
+                    const candidateType = String(
+                        candidate?.type ||
+                        candidate?.tmdb?.type ||
+                        ""
+                    ).trim().toLowerCase();
+
+                    const isExplicitSeries = [
+                        "series",
+                        "tv",
+                        "tvshow",
+                        "tvshows"
+                    ].includes(candidateType);
+
+                    const expectedYear =
+                        Number(title.year) || 0;
+
+                    const actualYear = itemYear(candidate);
+
+                    const yearMatches =
+                        !expectedYear ||
+                        !actualYear ||
+                        Math.abs(expectedYear - actualYear) <= 1;
+
+                    const idMatches =
+                        !candidateIMDbId ||
+                        candidateIMDbId === title.imdbId;
+
+                    if (
+                        !isExplicitSeries &&
+                        idMatches &&
+                        yearMatches
+                    ) {
+                        match = {
+                            ...candidate,
+                            __catalogType: "movie"
+                        };
+                    }
+                }
+            } catch (error) {
+                console.warn(
+                    "[MOVINA CLASSIC MOVIE IMDb FALLBACK]",
+                    JSON.stringify({
+                        title: title.title,
+                        imdbId: title.imdbId,
+                        error: error?.message || String(error)
+                    })
+                );
+            }
+        }
 
         MOVINA_CLASSIC_SEARCH_CACHE.set(cacheKey, {
             time: Date.now(),
@@ -2517,8 +2610,6 @@ async function movinaClassicSearchPhimAPI(title, type) {
         return null;
     }
 }
-
-
 
 async function movinaFetchClassicCatalog(type) {
     const rankedTitles =
@@ -2594,6 +2685,7 @@ const FALLBACK_CONCURRENCY = 3;
     // Khi đủ 50 tựa, không cấp thêm request mới.
     const discoveredKeys = new Set();
 
+    
     async function lookupByIMDbId(ranked) {
         if (!ranked?.imdbId) {
             return null;
@@ -2617,35 +2709,68 @@ const FALLBACK_CONCURRENCY = 3;
             const data = response.data || {};
 
             const item =
-    data?.movie ||
-    data?.data?.movie ||
-    data?.data?.item ||
-    data?.item ||
-    null;
+                data?.movie ||
+                data?.data?.movie ||
+                data?.data?.item ||
+                data?.item ||
+                null;
 
-if (
-    !item ||
-    typeof item !== "object" ||
-    !item.slug ||
-    !item.name
-) {
-    return null;
-}
+            if (
+                !item ||
+                typeof item !== "object" ||
+                !item.slug ||
+                !item.name
+            ) {
+                return null;
+            }
 
-if (isAnimation(item)) {
-    return null;
-}
+            const candidateIMDbId =
+                movinaClassicItemIMDbId(item);
 
-return {
-    ...item,
-    __catalogType: "series"
-};
+            // Không chấp nhận bản ghi có IMDb ID mâu thuẫn.
+            if (
+                candidateIMDbId &&
+                candidateIMDbId !== ranked.imdbId
+            ) {
+                return null;
+            }
+
+            // Nếu nguồn không trả IMDb ID, xác minh tên phim.
+            const expectedTitle =
+                movinaClassicNormalize(ranked.title);
+
+            const candidateNames = [
+                item?.origin_name,
+                item?.original_name,
+                item?.name,
+                item?.title
+            ]
+                .map(movinaClassicNormalize)
+                .filter(Boolean);
+
+            if (
+                !candidateIMDbId &&
+                !candidateNames.includes(expectedTitle)
+            ) {
+                return null;
+            }
+
+            // Loại hoạt hình khỏi Kinh điển phim bộ.
+            if (isAnimation(item)) {
+                return null;
+            }
+
+            return {
+                ...item,
+                __catalogType: "series"
+            };
 
         } catch (error) {
             lookupErrors++;
             return null;
         }
     }
+
 
     /*
      * GIAI ĐOẠN 1:
@@ -2873,9 +2998,14 @@ fallbackConcurrency: FALLBACK_CONCURRENCY,
                     "movie"
                 );
 
-                if (item && matchedByKey.size < TARGET) {
+                
+                // Giữ mọi kết quả đã được worker cấp việc.
+                // Cuối hàm sẽ sắp xếp theo hạng IMDb và cắt 50 phim,
+                // không loại phim hạng cao chỉ vì worker khác chạy nhanh hơn.
+                if (item) {
                     addMatch(ranked, item);
                 }
+
             } catch (error) {
                 console.warn(
                     "[MOVINA CLASSIC MOVIE WORKER ERROR]",
