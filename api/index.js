@@ -2662,12 +2662,12 @@ function addMatch(ranked, sourceItem) {
      * những phim IMDb còn thiếu.
      */
     
-
 if (type === "series") {
-    const LOOKUP_CONCURRENCY = 32;
-const LOOKUP_TIMEOUT = 2200;
-const MAX_FALLBACK_SEARCHES = 12;
-const FALLBACK_CONCURRENCY = 3;
+
+    const LOOKUP_CONCURRENCY = 4;
+    const LOOKUP_TIMEOUT = 4000;
+    const MAX_FALLBACK_SEARCHES = 12;
+    const FALLBACK_CONCURRENCY = 3;
 
     const SEARCH_TIMEOUT_NOTE =
         "Direct IMDb lookup failed; fallback to exact title/year search.";
