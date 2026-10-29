@@ -6307,12 +6307,13 @@ function makeCatalogMeta(
 
     let imdbRating = null;
 
-    const rawRating =
-    item?.__movinaIMDbRating ??
-    item?.imdb?.vote_average ??
-    item?.imdb?.rating ??
-    item?.tmdb?.vote_average ??
-    null;
+        const rawRating =
+        item?.__movinaIMDbRating ??
+        item?.imdbRating ??
+        item?.imdb_rating ??
+        item?.imdb?.vote_average ??
+        item?.imdb?.rating ??
+        null;
 
     if (
         rawRating !== null &&
@@ -6644,10 +6645,12 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
                 detail.runtime ||
                 "";
 
-            const rawRating =
+                const rawRating =
                 detail.imdb?.vote_average ??
                 detail.imdb?.rating ??
-                detail.tmdb?.vote_average;
+                detail.imdbRating ??
+                detail.imdb_rating ??
+                null;
 
             const rating = Number(rawRating);
 
