@@ -2726,12 +2726,12 @@ if (type === "series") {
      * 4. Giới hạn tìm dự phòng để tránh bắn 250 request.
      */
 
-    const PAGE_SIZE = 64;
-    const INVENTORY_PAGES = 8;
+        const PAGE_SIZE = 64;
+    const INVENTORY_PAGES = 20;
     const INVENTORY_CONCURRENCY = 8;
 
-    const MAX_FALLBACK_SEARCHES = 40;
-    const SEARCH_CONCURRENCY = 6;
+    const MAX_FALLBACK_SEARCHES = 100;
+    const SEARCH_CONCURRENCY = 8;
 
     let inventoryRequests = 0;
     let fallbackSearches = 0;
@@ -6426,17 +6426,23 @@ function makeCatalogMeta(
         }
     }
 
-        // Giữ ID nội bộ để MOVINA tìm đúng phim trên PhimAPI.
-    // Không dùng IMDb ID của danh sách xếp hạng làm ID mở luồng,
-    // vì một bản ghi ghép nhầm có thể mở sang phim khác.
+         // Với phim lẻ, mang theo năm để phân biệt các phim trùng tên.
+    // Với phim bộ, giữ định dạng ID cũ để không làm hỏng ID tập.
+    const catalogName = String(
+        item?.name ||
+        item?.origin_name ||
+        ""
+    );
+
+    const catalogYear = Number(item?.year) || 0;
+
     const metaId =
         "vnwpsw:" +
-        encodeURIComponent(
-            String(
-                item?.name ||
-                item?.origin_name ||
-                ""
-            )
+        encodeURIComponent(catalogName) +
+        (
+            type === "movie" && catalogYear > 0
+                ? ":" + catalogYear
+                : ""
         );
 
     console.log(
@@ -34785,16 +34791,32 @@ let episodeNumber = 0;
                     -2
                 );
 
-            movieName =
-                decodeURIComponent(
-                    nameParts.join(":")
+                        // ID phim lẻ có thể mang dạng:
+            // vnwpsw:Tên phim:2021
+            // Tách năm cuối nếu đúng định dạng năm.
+            const movieIdMatch = movinaRaw.match(
+                /^(.*):((?:19|20)\d{2})$/
+            );
+
+            if (movieIdMatch) {
+                movieName = decodeURIComponent(
+                    movieIdMatch[1]
                 );
 
+                movieYear = Number(movieIdMatch[2]);
+            } else {
+                movieName = decodeURIComponent(movinaRaw);
+            }
+
             console.log(
-                "[STREAM] MOVINA series name:",
+                "[STREAM] MOVINA movie name:",
                 movieName
             );
 
+            console.log(
+                "[STREAM] MOVINA movie year:",
+                movieYear
+            );
             console.log(
                 "[STREAM] MOVINA season:",
                 seasonNumber
@@ -35508,49 +35530,13 @@ const kkphimPromise = (async () => {
           );
           return [];
       }
-  })();  // Thu gom kết quả với thời hạn chờ riêng cho từng nhóm.
-  // Provider chạy lâu vẫn tiếp tục xử lý nền, nhưng không
-  // giữ toàn bộ request stream phải chờ theo.
+  })();  
+
+  // Thu gom kết quả thật của từng provider.
+  // Không thay kết quả chưa kịp hoàn tất bằng mảng rỗng,
+  // tránh làm biến mất các luồng của addon khác.
   let providerResults = [];
   let longtiengResult = [];
-  let kkphimResult = [];
-
-  function movinaWaitForResult(promise, timeoutMs, fallback, label) {
-      let timeoutHandle;
-
-      const timeoutPromise = new Promise(resolve => {
-          timeoutHandle = setTimeout(() => {
-              console.warn(
-                  "[STREAM COLLECT TIMEOUT]",
-                  JSON.stringify({
-                      provider: label,
-                      timeoutMs
-                  })
-              );
-
-              resolve(fallback);
-          }, timeoutMs);
-      });
-
-      return Promise.race([
-          Promise.resolve(promise).catch(error => {
-              console.warn(
-                  "[STREAM COLLECT ERROR]",
-                  JSON.stringify({
-                      provider: label,
-                      error: error?.message || String(error)
-                  })
-              );
-
-              return fallback;
-          }),
-          timeoutPromise
-      ]).finally(() => {
-          if (timeoutHandle) {
-              clearTimeout(timeoutHandle);
-          }
-      });
-  }
 
   try {
       const [
@@ -35558,30 +35544,9 @@ const kkphimPromise = (async () => {
           settledKkphim,
           settledLongtieng
       ] = await Promise.all([
-          movinaWaitForResult(
-              providerResultsPromise,
-              12000,
-              [
-                  { status: "fulfilled", value: [] },
-                  { status: "fulfilled", value: [] },
-                  { status: "fulfilled", value: [] }
-              ],
-              "NguonC / VSMov / PhimHDCS"
-          ),
-
-          movinaWaitForResult(
-              kkphimPromise,
-              10000,
-              [],
-              "KKPhim"
-          ),
-
-          movinaWaitForResult(
-              longtiengPromise,
-              12000,
-              [],
-              "PhimLongTieng"
-          )
+          providerResultsPromise,
+          kkphimPromise,
+          longtiengPromise
       ]);
 
       providerResults = Array.isArray(settledProviders)
@@ -35592,15 +35557,13 @@ const kkphimPromise = (async () => {
           ? settledKkphim
           : [];
 
-      kkphimResult = kkphim;
-
       longtiengResult = Array.isArray(settledLongtieng)
           ? settledLongtieng
           : [];
-  } catch (e) {
+  } catch (error) {
       console.error(
           "[STREAM] PROVIDER COLLECTION ERROR:",
-          e?.stack || e?.message || e
+          error?.stack || error?.message || error
       );
   }
 
