@@ -15628,53 +15628,81 @@ if (
             imdbMovie?.episodes ||
             null;
 
-        if (
-            imdbMovie
-        ) {
+                if (imdbMovie) {
+            const requestedTitle =
+                kkphimNormalizeTitle(movieName);
 
-            movie =
-                imdbMovie;
+            const candidateTitles = [
+                imdbMovie?.name,
+                imdbMovie?.origin_name,
+                imdbMovie?.original_name
+            ]
+                .filter(Boolean)
+                .map(kkphimNormalizeTitle);
 
-            imdbEpisodes =
-                Array.isArray(
-                    directEpisodes
-                )
+            const titleMatches =
+                candidateTitles.some(title =>
+                    title === requestedTitle ||
+                    (
+                        requestedTitle.length >= 5 &&
+                        title.length >= 5 &&
+                        (
+                            title.includes(requestedTitle) ||
+                            requestedTitle.includes(title)
+                        )
+                    )
+                );
+
+            const requestedYear = Number(movieYear) || 0;
+            const candidateYear = Number(imdbMovie?.year) || 0;
+
+            const yearMatches =
+                !requestedYear ||
+                !candidateYear ||
+                requestedYear === candidateYear;
+
+            if (titleMatches && yearMatches) {
+                movie = imdbMovie;
+
+                imdbEpisodes = Array.isArray(directEpisodes)
                     ? directEpisodes
                     : null;
 
-            console.log(
-                "[KKPHIM] IMDb MATCH:",
-                JSON.stringify({
-                    name:
-                        movie?.name,
-
-                    origin_name:
-                        movie?.origin_name,
-
-                    slug:
-                        movie?.slug,
-
-                    year:
-                        movie?.year,
-
-                    type:
-                        movie?.type,
-
-                    episodes:
-                        Array.isArray(
-                            imdbEpisodes
-                        )
+                console.log(
+                    "[KKPHIM] IMDb MATCH:",
+                    JSON.stringify({
+                        name: movie?.name,
+                        origin_name: movie?.origin_name,
+                        slug: movie?.slug,
+                        year: movie?.year,
+                        type: movie?.type,
+                        episodes: Array.isArray(imdbEpisodes)
                             ? imdbEpisodes.length
                             : 0
-                })
-            );
+                    })
+                );
+            } else {
+                console.warn(
+                    "[KKPHIM] IMDb MISMATCH REJECTED:",
+                    JSON.stringify({
+                        requestedTitle: movieName,
+                        requestedYear,
+                        candidateName: imdbMovie?.name,
+                        candidateOriginName: imdbMovie?.origin_name,
+                        candidateYear,
+                        titleMatches,
+                        yearMatches,
+                        imdbId
+                    })
+                );
 
+                movie = null;
+                imdbEpisodes = null;
+            }
         } else {
-
             console.log(
                 "[KKPHIM] IMDb lookup returned no movie"
             );
-
         }
 
     } catch (e) {
