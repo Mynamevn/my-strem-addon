@@ -2379,10 +2379,39 @@ async function movinaClassicGetRankedTitles(type) {
     return [];
 }
 
+
 function movinaClassicFindExactMatch(title, items) {
     const expectedName = movinaClassicNormalize(title?.title);
 
     if (!expectedName) return null;
+
+    // Nhận diện tên gốc có hậu tố mùa:
+    // "Breaking Bad (Season 1)" -> "breaking bad"
+    // "Tập làm người xấu (Phần 1)" -> "tap lam nguoi xau"
+    const normalizeSeriesBaseName = value =>
+        movinaClassicNormalize(value)
+            .replace(/\s+(?:season|phan|part)\s+\d+\s*$/i, "")
+            .trim();
+
+    const getSeasonNumber = item => {
+        const names = [
+            item?.origin_name,
+            item?.original_name,
+            item?.name,
+            item?.title
+        ];
+
+        for (const value of names) {
+            const normalized = movinaClassicNormalize(value);
+            const match = normalized.match(
+                /(?:^|\s)(?:season|phan|part)\s+(\d+)\s*$/
+            );
+
+            if (match) return Number(match[1]);
+        }
+
+        return 0;
+    };
 
     const exactCandidates = (items || []).filter(item => {
         const names = [
@@ -2391,10 +2420,21 @@ function movinaClassicFindExactMatch(title, items) {
             item?.name,
             item?.title
         ]
-            .map(movinaClassicNormalize)
-            .filter(Boolean);
+            .map(value => ({
+                exact: movinaClassicNormalize(value),
+                base: normalizeSeriesBaseName(value)
+            }))
+            .filter(value => value.exact);
 
-        if (!names.includes(expectedName)) {
+        const exactNameMatches = names.some(
+            value => value.exact === expectedName
+        );
+
+        const seasonBaseMatches = names.some(
+            value => value.base === expectedName
+        );
+
+        if (!exactNameMatches && !seasonBaseMatches) {
             return false;
         }
 
@@ -2402,26 +2442,30 @@ function movinaClassicFindExactMatch(title, items) {
         const candidateYear = itemYear(item);
 
         if (expectedYear && candidateYear) {
-            return Math.abs(expectedYear - candidateYear) <= 1;
+            if (Math.abs(expectedYear - candidateYear) > 1) {
+                return false;
+            }
         }
 
         return true;
     });
 
+    if (!exactCandidates.length) return null;
+
     // Ưu tiên tuyệt đối mã IMDb trùng khớp.
     if (title.imdbId) {
-        const idMatches = exactCandidates.filter(item =>
-            movinaClassicItemIMDbId(item) === title.imdbId
+        const idMatches = exactCandidates.filter(
+            item =>
+                movinaClassicItemIMDbId(item) === title.imdbId
         );
 
         if (idMatches.length === 1) {
             return idMatches[0];
         }
 
-        // Nếu tên khớp nhưng bản ghi có IMDb ID khác,
-        // không ghép nhầm sang một phim khác cùng tên.
-        const candidatesWithId = exactCandidates.filter(item =>
-            movinaClassicItemIMDbId(item)
+        // Không ghép nếu tên trùng nhưng IMDb ID mâu thuẫn.
+        const candidatesWithId = exactCandidates.filter(
+            item => movinaClassicItemIMDbId(item)
         );
 
         if (candidatesWithId.length > 0) {
@@ -2429,17 +2473,28 @@ function movinaClassicFindExactMatch(title, items) {
         }
     }
 
-    // Không có ID để xác minh: chỉ nhận duy nhất một kết quả
-    // có tên gốc/tên phim khớp chính xác.
+    // Nếu chỉ có một bản ghi tên phù hợp, nhận bản ghi đó.
     if (exactCandidates.length === 1) {
         return exactCandidates[0];
     }
 
-    // Nếu nhiều bản cùng tên và có năm phát hành,
-    // chỉ nhận khi năm xác định được đúng một bản ghi.
+    // Khi có nhiều mùa, ưu tiên Phần 1 nếu năm không phân biệt
+    // được duy nhất một bản ghi.
+    if (!title.year) {
+        const seasonOne = exactCandidates.filter(
+            item => getSeasonNumber(item) === 1
+        );
+
+        if (seasonOne.length === 1) {
+            return seasonOne[0];
+        }
+    }
+
+    // Nếu có năm IMDb, ưu tiên các bản ghi khớp năm.
     if (title.year) {
         const sameYear = exactCandidates.filter(item => {
             const year = itemYear(item);
+
             return year &&
                 Math.abs(year - Number(title.year)) <= 1;
         });
@@ -2447,11 +2502,21 @@ function movinaClassicFindExactMatch(title, items) {
         if (sameYear.length === 1) {
             return sameYear[0];
         }
+
+        if (sameYear.length > 1) {
+            const seasonOne = sameYear.filter(
+                item => getSeasonNumber(item) === 1
+            );
+
+            if (seasonOne.length === 1) {
+                return seasonOne[0];
+            }
+        }
     }
 
+    // Không tự chọn ngẫu nhiên khi vẫn còn nhiều bản ghi mơ hồ.
     return null;
 }
-
 
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
