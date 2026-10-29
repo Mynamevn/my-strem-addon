@@ -6692,6 +6692,115 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
     return fields;
 }
 
+/* ============================================================
+   [STREMIO-012.02] [PROVIDERS: MOVINA]
+   CINEMETA IMDb RATING FALLBACK
+   Chỉ gọi khi thiếu điểm IMDb và có IMDb ID hợp lệ.
+   ============================================================ */
+
+const MOVINA_CINEMETA_RATING_CACHE = new Map();
+
+const MOVINA_CINEMETA_RATING_TTL =
+    6 * 60 * 60 * 1000;
+
+const MOVINA_CINEMETA_RATING_FAIL_TTL =
+    10 * 60 * 1000;
+
+async function movinaFetchCinemetaRating(imdbId, type = "movie") {
+    const id = String(imdbId || "").trim();
+
+    if (!/^tt\d+$/i.test(id)) {
+        return null;
+    }
+
+    const safeType = type === "series" ? "series" : "movie";
+    const cacheKey = safeType + ":" + id;
+    const now = Date.now();
+
+    const cached = MOVINA_CINEMETA_RATING_CACHE.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+        return cached.promise;
+    }
+
+    const requestPromise = (async () => {
+        try {
+            const response = await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                    safeType + "/" +
+                    encodeURIComponent(id) +
+                    ".json",
+                {
+                    timeout: 1000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+            const meta = response.data?.meta;
+
+            // Không chấp nhận dữ liệu nếu Cinemeta trả về
+            // một IMDb ID khác với ID đang yêu cầu.
+            if (
+                meta?.imdb_id &&
+                String(meta.imdb_id).trim() !== id
+            ) {
+                console.warn(
+                    "[MOVINA CINEMETA RATING] IMDb ID mismatch:",
+                    JSON.stringify({
+                        requested: id,
+                        returned: meta.imdb_id
+                    })
+                );
+
+                return null;
+            }
+
+            const rating = Number(meta?.imdbRating);
+
+            if (
+                !Number.isFinite(rating) ||
+                rating <= 0 ||
+                rating > 10
+            ) {
+                return null;
+            }
+
+            return Math.round(rating * 10) / 10;
+        } catch (error) {
+            console.log(
+                "[MOVINA CINEMETA RATING]",
+                id,
+                error?.response?.status ||
+                    error?.code ||
+                    error?.message ||
+                    "Unknown error"
+            );
+
+            return null;
+        }
+    })();
+
+    MOVINA_CINEMETA_RATING_CACHE.set(cacheKey, {
+        expiresAt: now + MOVINA_CINEMETA_RATING_TTL,
+        promise: requestPromise
+    });
+
+    const rating = await requestPromise;
+
+    if (rating === null) {
+        MOVINA_CINEMETA_RATING_CACHE.set(cacheKey, {
+            expiresAt:
+                Date.now() + MOVINA_CINEMETA_RATING_FAIL_TTL,
+            promise: Promise.resolve(null)
+        });
+    }
+
+    return rating;
+}
+
 async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
     type = type === "series" ? "series" : "movie";
 
@@ -6731,35 +6840,84 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
                 Number.isFinite(Number(preview.imdbRating)) &&
                 Number(preview.imdbRating) > 0;
 
-            let extra = {};
+                        let extra = {};
 
-            // Không gọi API khi đã có cả mô tả lẫn điểm IMDb.
-            // Nếu thiếu một trong hai, thử lấy dữ liệu chi tiết,
-            // nhưng giới hạn tổng số phim được truy vấn mỗi lượt.
+            // Bước 1: Giữ nguyên cơ chế lấy preview từ PhimAPI.
+            // Chỉ dùng cache hoặc truy vấn khi thiếu mô tả
+            // hay thiếu điểm IMDb.
             if (!hasDescription || !hasRating) {
                 const slug = String(item?.slug || "").trim();
+
                 const cacheKey = slug
                     ? "phimapi:detail:" + slug
                     : "";
 
-                const cached =
-                    cacheKey
-                        ? MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey)
-                        : null;
+                const cached = cacheKey
+                    ? MOVINA_CINEMETA_PREVIEW_CACHE.get(cacheKey)
+                    : null;
 
                 const cacheIsValid =
                     cached && cached.expiresAt > Date.now();
 
                 if (cacheIsValid) {
                     detailCacheHits++;
-                    extra = await movinaFetchCinemetaPreview(item, type);
+
+                    extra = await movinaFetchCinemetaPreview(
+                        item,
+                        type
+                    );
                 } else if (
                     slug &&
                     detailRequests < MAX_DETAIL_REQUESTS
                 ) {
-                    // Không tăng bộ đếm nếu không còn suất truy vấn.
                     detailRequests++;
-                    extra = await movinaFetchCinemetaPreview(item, type);
+
+                    extra = await movinaFetchCinemetaPreview(
+                        item,
+                        type
+                    );
+                }
+            }
+
+            // Bước 2: Chỉ gọi Cinemeta nếu vẫn thiếu điểm IMDb.
+            // Ưu tiên IMDb ID thật; không tìm bằng tên phim,
+            // không đoán ID và không gọi nếu ID không hợp lệ.
+            let cinemetaRating = null;
+
+            const ratingAlreadyAvailable =
+                hasRating ||
+                (
+                    Number.isFinite(Number(extra.imdbRating)) &&
+                    Number(extra.imdbRating) > 0
+                );
+
+            if (!ratingAlreadyAvailable) {
+                const candidateImdbId =
+                    item?.__movinaClassicImdbId ||
+                    item?.imdb?.id ||
+                    item?.imdb_id ||
+                    (
+                        /^tt\d+$/i.test(String(preview.id || ""))
+                            ? preview.id
+                            : ""
+                    );
+
+                if (/^tt\d+$/i.test(String(candidateImdbId || ""))) {
+                    cinemetaRating = await movinaFetchCinemetaRating(
+                        candidateImdbId,
+                        type
+                    );
+
+                    if (cinemetaRating !== null) {
+                        console.log(
+                            "[MOVINA CINEMETA RATING] Recovered:",
+                            JSON.stringify({
+                                id: candidateImdbId,
+                                name: preview.name,
+                                rating: cinemetaRating
+                            })
+                        );
+                    }
                 }
             }
 
@@ -6770,10 +6928,16 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
                     ? { description: extra.description }
                     : {}),
 
-                // Chỉ bổ sung rating khi rating hiện tại bị thiếu.
+                                // Ưu tiên điểm đã có trong catalog.
+                // Nếu thiếu, dùng điểm PhimAPI; cuối cùng mới dùng Cinemeta.
                 imdbRating: hasRating
                     ? preview.imdbRating
-                    : extra.imdbRating,
+                    : (
+                        Number.isFinite(Number(extra.imdbRating)) &&
+                        Number(extra.imdbRating) > 0
+                            ? Number(extra.imdbRating)
+                            : cinemetaRating
+                    ),
 
                 id: preview.id,
                 type,
