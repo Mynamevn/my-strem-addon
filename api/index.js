@@ -6640,12 +6640,12 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
                     .filter(Boolean)
                 : [];
 
-            const runtime =
+                        const runtime =
                 detail.time ||
                 detail.runtime ||
                 "";
 
-                const rawRating =
+            const rawRating =
                 detail.imdb?.vote_average ??
                 detail.imdb?.rating ??
                 detail.imdbRating ??
@@ -6654,16 +6654,29 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
 
             const rating = Number(rawRating);
 
+            const rawImdbId =
+                detail.imdb?.id ||
+                detail.imdb_id ||
+                detail.imdbId ||
+                "";
+
+            const imdbId =
+                /^tt\d+$/i.test(String(rawImdbId).trim())
+                    ? String(rawImdbId).trim()
+                    : "";
+
             return {
                 ...(description ? { description } : {}),
                 ...(genres.length ? { genres } : {}),
                 ...(cast.length ? { cast } : {}),
                 ...(director.length ? { director } : {}),
                 ...(runtime ? { runtime: String(runtime) } : {}),
-                ...(Number.isFinite(rating) && rating > 0
+                ...(imdbId ? { imdbId } : {}),
+                ...(Number.isFinite(rating) && rating > 0 && rating <= 10
                     ? { imdbRating: Math.round(rating * 10) / 10 }
                     : {})
             };
+
         } catch (error) {
             console.log(
                 "[PHIMAPI PREVIEW DETAIL]",
@@ -6892,10 +6905,11 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
                 );
 
             if (!ratingAlreadyAvailable) {
-                const candidateImdbId =
+                    const candidateImdbId =
                     item?.__movinaClassicImdbId ||
                     item?.imdb?.id ||
                     item?.imdb_id ||
+                    extra?.imdbId ||
                     (
                         /^tt\d+$/i.test(String(preview.id || ""))
                             ? preview.id
