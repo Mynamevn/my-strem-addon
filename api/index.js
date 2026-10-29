@@ -2691,15 +2691,6 @@ async function movinaFetchClassicCatalog(type) {
 function addMatch(ranked, sourceItem) {
     if (!ranked || !sourceItem) return;
 
-    // Kinh điển phim bộ không nhận phim hoạt hình.
-    // Không tính anime vào chỉ tiêu 50 phim.
-    if (
-        type === "series" &&
-        isAnimation(sourceItem)
-    ) {
-        return;
-    }
-
     const key = catalogKey(sourceItem);
 
     if (!key) return;
@@ -2728,41 +2719,140 @@ function addMatch(ranked, sourceItem) {
      */
     
 
-
 if (type === "series") {
     /*
-     * MOVINA CLASSIC SERIES — SEARCH-FIRST OPTIMIZED
+     * MOVINA CLASSIC SERIES — INVENTORY FIRST
      *
-     * - Tìm theo tên, không gọi hàng loạt IMDb direct-ID.
-     * - Thêm kết quả ngay khi tìm được.
-     * - Dừng cấp request mới khi đạt 50 tựa khác nhau.
-     * - Sắp xếp cuối cùng theo thứ hạng IMDb.
+     * 1. Tải danh sách phim bộ theo trang.
+     * 2. Đối chiếu Top IMDb ngay trong bộ nhớ.
+     * 3. Chỉ tìm theo tên cho các tựa chưa ghép được.
+     * 4. Giới hạn tìm dự phòng để tránh bắn 250 request.
      */
 
-    const SEARCH_CONCURRENCY = 5;
-    const MAX_SEARCHES = rankedTitles.length;
+    const PAGE_SIZE = 64;
+    const INVENTORY_PAGES = 8;
+    const INVENTORY_CONCURRENCY = 3;
 
-    let searched = 0;
-    let matchedSearches = 0;
-    let searchErrors = 0;
-    let nextIndex = 0;
+    const MAX_FALLBACK_SEARCHES = 60;
+    const SEARCH_CONCURRENCY = 2;
 
-    const searchResults = [];
+    let inventoryRequests = 0;
+    let fallbackSearches = 0;
+    let fallbackMatches = 0;
+    let nextFallbackIndex = 0;
 
-    async function classicSeriesSearchWorker() {
+    /*
+     * Bước 1: Lấy kho phim bộ theo trang.
+     * catalogFetch đã có cache theo URL.
+     */
+    const inventoryPages = new Array(INVENTORY_PAGES);
+    let nextPage = 1;
+
+    async function classicSeriesInventoryWorker() {
+        while (nextPage <= INVENTORY_PAGES) {
+            const page = nextPage++;
+
+            const url =
+                "https://phimapi.com/v1/api/danh-sach/phim-bo" +
+                "?page=" + page +
+                "&limit=" + PAGE_SIZE;
+
+            inventoryRequests++;
+
+            try {
+                const items = await catalogFetch(url);
+
+                inventoryPages[page - 1] = (
+                    Array.isArray(items) ? items : []
+                ).map(item => ({
+                    ...item,
+                    __catalogType: "series"
+                }));
+            } catch (error) {
+                inventoryPages[page - 1] = [];
+
+                console.warn(
+                    "[MOVINA CLASSIC SERIES INVENTORY ERROR]",
+                    JSON.stringify({
+                        page,
+                        error: error?.message || String(error)
+                    })
+                );
+            }
+        }
+    }
+
+    await Promise.all(
+        Array.from(
+            {
+                length: Math.min(
+                    INVENTORY_CONCURRENCY,
+                    INVENTORY_PAGES
+                )
+            },
+            () => classicSeriesInventoryWorker()
+        )
+    );
+
+    const inventory = inventoryPages.flat();
+    const inventoryKeys = new Set();
+
+    /*
+     * Bước 2: Ghép các tựa IMDb với kho phim đã tải.
+     * Duyệt theo thứ hạng IMDb, không theo thứ tự API.
+     */
+    let inventoryMatches = 0;
+
+    for (const ranked of rankedTitles) {
+        if (!ranked?.title) continue;
+
+        const item = movinaClassicFindExactMatch(
+            ranked,
+            inventory
+        );
+
+        if (!item) continue;
+
+        const key = catalogKey(item);
+
+        if (!key || inventoryKeys.has(key)) {
+            continue;
+        }
+
+        inventoryKeys.add(key);
+
+        addMatch(ranked, {
+            ...item,
+            __catalogType: "series"
+        });
+
+        inventoryMatches++;
+    }
+
+    /*
+     * Bước 3: Tìm dự phòng cho các tựa IMDb chưa ghép.
+     * Chỉ xét một phần danh sách đầu bảng để giới hạn tải.
+     */
+    const fallbackTitles = rankedTitles
+        .filter(ranked => {
+            if (!ranked?.title) return false;
+
+            return !movinaClassicFindExactMatch(
+                ranked,
+                inventory
+            );
+        })
+        .slice(0, MAX_FALLBACK_SEARCHES);
+
+    async function classicSeriesFallbackWorker() {
         while (
-            nextIndex < MAX_SEARCHES &&
+            nextFallbackIndex < fallbackTitles.length &&
             matchedByKey.size < TARGET
         ) {
-            const index = nextIndex++;
+            const index = nextFallbackIndex++;
+            const ranked = fallbackTitles[index];
 
-            const ranked = rankedTitles[index];
-
-            if (!ranked || !ranked.title) {
-                continue;
-            }
-
-            searched++;
+            fallbackSearches++;
 
             try {
                 const item = await movinaClassicSearchPhimAPI(
@@ -2770,28 +2860,25 @@ if (type === "series") {
                     "series"
                 );
 
-                searchResults[index] = {
-                    ranked,
-                    item
-                };
+                if (!item) continue;
 
-                if (!item) {
-                    continue;
+                const key = catalogKey(item);
+
+                if (!key) continue;
+
+                const before = matchedByKey.size;
+
+                addMatch(ranked, {
+                    ...item,
+                    __catalogType: "series"
+                });
+
+                if (matchedByKey.size > before) {
+                    fallbackMatches++;
                 }
-
-                matchedSearches++;
-
-                /*
-                 * Thêm ngay khi có kết quả để các worker
-                 * nhìn thấy tiến độ và dừng sớm khi đủ 50.
-                 */
-                addMatch(ranked, item);
-
             } catch (error) {
-                searchErrors++;
-
                 console.warn(
-                    "[MOVINA CLASSIC SERIES SEARCH WORKER ERROR]",
+                    "[MOVINA CLASSIC SERIES FALLBACK ERROR]",
                     JSON.stringify({
                         title: ranked.title,
                         error: error?.message || String(error)
@@ -2806,10 +2893,10 @@ if (type === "series") {
             {
                 length: Math.min(
                     SEARCH_CONCURRENCY,
-                    MAX_SEARCHES
+                    fallbackTitles.length
                 )
             },
-            () => classicSeriesSearchWorker()
+            () => classicSeriesFallbackWorker()
         )
     );
 
@@ -2821,25 +2908,27 @@ if (type === "series") {
         .slice(0, TARGET);
 
     console.log(
-        "[MOVINA CLASSIC SERIES SEARCH-FIRST SUMMARY]",
+        "[MOVINA CLASSIC SERIES INVENTORY SUMMARY]",
         JSON.stringify({
             rankedTitles: rankedTitles.length,
-            searched,
-            searchConcurrency: SEARCH_CONCURRENCY,
-            matchedSearches,
-            searchErrors,
+            inventoryPages: INVENTORY_PAGES,
+            inventoryRequests,
+            inventoryItems: inventory.length,
+            inventoryMatches,
+            fallbackLimit: MAX_FALLBACK_SEARCHES,
+            fallbackSearches,
+            fallbackMatches,
             returned: result.length,
             target: TARGET,
-            directIMDbLookups: 0,
-            earlyStop: matchedByKey.size >= TARGET,
-            strategy: "incremental-search-first"
+            inventoryConcurrency: INVENTORY_CONCURRENCY,
+            searchConcurrency: SEARCH_CONCURRENCY,
+            strategy: "inventory-first"
         })
     );
 
     return result;
 }
-
-  
+ 
     /*
      * PHIM LẺ:
      * Worker pool chạy liên tục thay vì chờ từng đợt 32 phim.
@@ -3481,7 +3570,10 @@ if (normalizedGenre === "kinh dien") {
  */
 const allowAnimation =
     isAnimationGenre ||
-    (isClassic && type === "movie");
+    (
+        isClassic &&
+        (type === "movie" || type === "series")
+    );
 
 if (!allowAnimation) {
     const beforeAnimationFilter = items.length;
