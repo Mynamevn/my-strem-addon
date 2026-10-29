@@ -576,14 +576,13 @@ return [...items]
 
 // [CORE-004.01] [PROVIDERS: ALL] CATALOG POSTER RESOLUTION
 
+
 function catalogPoster(item) {
-    // Ưu tiên ảnh thumbnail để giảm dung lượng tải
-    // trên các giao diện danh mục, đặc biệt khi có nhiều poster.
     const raw =
-        item?.thumb_url ||
-        item?.thumb ||
         item?.poster_url ||
         item?.poster ||
+        item?.thumb_url ||
+        item?.thumb ||
         "";
 
     if (!raw) {
@@ -592,26 +591,37 @@ function catalogPoster(item) {
 
     const value = String(raw).trim();
 
-    if (/^https?:\/\//i.test(value)) {
+    let originalUrl = "";
+
+    try {
+        originalUrl = new URL(
+            value.startsWith("//")
+                ? "https:" + value
+                : value.startsWith("http://") ||
+                    value.startsWith("https://")
+                    ? value
+                    : value.startsWith("uploads/movies/")
+                        ? "https://phimapi.com/" + value
+                        : value.startsWith("upload/vod/")
+                            ? "https://phimimg.com/" + value
+                            : "https://phimimg.com/" +
+                                value.replace(/^\/+/, "")
+        ).href;
+    } catch (_) {
         return value;
     }
 
-    if (value.startsWith("//")) {
-        return "https:" + value;
-    }
+    // Dùng poster đầy đủ, nhờ dịch vụ ảnh giảm kích thước
+    // và nén trước khi Stremio tải ảnh về.
+    const proxyUrl =
+        "https://images.weserv.nl/?" +
+        "url=" + encodeURIComponent(
+            originalUrl.replace(/^https?:\/\//i, "")
+        ) +
+        "&w=300&q=78&output=webp";
 
-    if (value.startsWith("uploads/movies/")) {
-        return "https://phimapi.com/" + value;
-    }
-
-    if (value.startsWith("upload/vod/")) {
-        return "https://phimimg.com/" + value;
-    }
-
-    return "https://phimimg.com/" +
-        value.replace(/^\/+/, "");
+    return proxyUrl;
 }
-
 
 /* ============================================================
    [CORE-005] [PROVIDERS: ALL] MOVIE / SERIES CLASSIFICATION
@@ -3493,23 +3503,31 @@ if (normalizedGenre === "kinh dien") {
 
 
 } else if (!isLatest) {
-    const trustGenreSource =
-        type === "series" &&
-        normalizedGenre === "kinh di";
+    // Nếu bản ghi đến từ đúng API thể loại đang chọn,
+    // tin cậy nguồn đó thay vì bắt category phải lặp lại
+    // cùng thông tin một lần nữa.
+    const requestedGenreSlugs =
+        MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
     items = items.filter(item => {
-        /*
-         * API thể loại đã xác nhận phim thuộc Kinh dị.
-         * Không bắt buộc metadata category phải lặp lại
-         * cùng thông tin lần thứ hai.
-         */
-        if (
-            trustGenreSource &&
-            item.__genreApiSlug === "kinh-di"
-        ) {
+        const sourceSlug = catalogNormalize(
+            item?.__genreApiSlug || ""
+        );
+
+        const sourceConfirmsGenre =
+            sourceSlug &&
+            requestedGenreSlugs.some(
+                slug =>
+                    catalogNormalize(slug) === sourceSlug
+            );
+
+        // API thể loại đã xác nhận thể loại của phim.
+        if (sourceConfirmsGenre) {
             return true;
         }
 
+        // Các bản ghi bổ sung từ danh sách chung vẫn phải
+        // có thể loại phù hợp trong metadata.
         return movinaTrendingGenreMatches(
             item,
             genre
@@ -6386,9 +6404,11 @@ function makeCatalogMeta(
 
     // Ưu tiên IMDb ID hợp lệ làm ID mở phim.
     // Chỉ dùng ID nội bộ khi không có IMDb ID.
-    const metaId = /^tt\d+$/i.test(imdbId)
-        ? imdbId
-        : "vnwpsw:" + encodeURIComponent(
+        // Giữ ID nội bộ để MOVINA tìm đúng phim trên PhimAPI.
+    // IMDb ID chỉ dùng để đối chiếu metadata, không thay ID mở luồng.
+    const metaId =
+        "vnwpsw:" +
+        encodeURIComponent(
             String(
                 item?.name ||
                 item?.origin_name ||
