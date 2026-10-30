@@ -2380,37 +2380,9 @@ async function movinaClassicGetRankedTitles(type) {
 }
 
 function movinaClassicFindExactMatch(title, items) {
-    const expectedName = movinaClassicNormalize(
-        title?.title
-    );
+    const expectedName = movinaClassicNormalize(title?.title);
 
     if (!expectedName) return null;
-
-    // Bỏ hậu tố chỉ mùa phim để nhận diện cùng một series.
-    // Ví dụ:
-    // Breaking Bad
-    // Breaking Bad (Season 1)
-    // Breaking Bad - Season 2
-    // đều được chuẩn hóa về Breaking Bad.
-    function normalizeSeriesTitle(value) {
-        return movinaClassicNormalize(value)
-            .replace(
-                /\s+(?:season|series|temporada|staffel|saison)\s*\d+\s*$/i,
-                ""
-            )
-            .replace(
-                /\s+s\d{1,2}\s*$/i,
-                ""
-            )
-            .replace(
-                /\s*\(\s*(?:19|20)\d{2}\s*\)\s*$/i,
-                ""
-            )
-            .trim();
-    }
-
-    const expectedSeriesName =
-        normalizeSeriesTitle(title?.title);
 
     const exactCandidates = (items || []).filter(item => {
         const names = [
@@ -2422,23 +2394,7 @@ function movinaClassicFindExactMatch(title, items) {
             .map(movinaClassicNormalize)
             .filter(Boolean);
 
-        const seriesNames = [
-            item?.origin_name,
-            item?.original_name,
-            item?.name,
-            item?.title
-        ]
-            .map(normalizeSeriesTitle)
-            .filter(Boolean);
-
-        const nameMatches =
-            names.includes(expectedName) ||
-            (
-                expectedSeriesName &&
-                seriesNames.includes(expectedSeriesName)
-            );
-
-        if (!nameMatches) {
+        if (!names.includes(expectedName)) {
             return false;
         }
 
@@ -2446,15 +2402,13 @@ function movinaClassicFindExactMatch(title, items) {
         const candidateYear = itemYear(item);
 
         if (expectedYear && candidateYear) {
-            return Math.abs(
-                expectedYear - candidateYear
-            ) <= 1;
+            return Math.abs(expectedYear - candidateYear) <= 1;
         }
 
         return true;
     });
 
-    // Ưu tiên tuyệt đối IMDb ID trùng khớp.
+    // Ưu tiên tuyệt đối mã IMDb trùng khớp.
     if (title.imdbId) {
         const idMatches = exactCandidates.filter(item =>
             movinaClassicItemIMDbId(item) === title.imdbId
@@ -2464,7 +2418,8 @@ function movinaClassicFindExactMatch(title, items) {
             return idMatches[0];
         }
 
-        // Không ghép nhầm nếu tên giống nhưng IMDb ID khác.
+        // Nếu tên khớp nhưng bản ghi có IMDb ID khác,
+        // không ghép nhầm sang một phim khác cùng tên.
         const candidatesWithId = exactCandidates.filter(item =>
             movinaClassicItemIMDbId(item)
         );
@@ -2474,16 +2429,17 @@ function movinaClassicFindExactMatch(title, items) {
         }
     }
 
-    // Không có IMDb ID: chỉ nhận duy nhất một ứng viên.
+    // Không có ID để xác minh: chỉ nhận duy nhất một kết quả
+    // có tên gốc/tên phim khớp chính xác.
     if (exactCandidates.length === 1) {
         return exactCandidates[0];
     }
 
-    // Nếu có nhiều ứng viên, dùng năm để phân biệt.
+    // Nếu nhiều bản cùng tên và có năm phát hành,
+    // chỉ nhận khi năm xác định được đúng một bản ghi.
     if (title.year) {
         const sameYear = exactCandidates.filter(item => {
             const year = itemYear(item);
-
             return year &&
                 Math.abs(year - Number(title.year)) <= 1;
         });
@@ -2495,6 +2451,7 @@ function movinaClassicFindExactMatch(title, items) {
 
     return null;
 }
+
 
 async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
@@ -2669,15 +2626,6 @@ async function movinaFetchClassicCatalog(type) {
 function addMatch(ranked, sourceItem) {
     if (!ranked || !sourceItem) return;
 
-    // Kinh điển phim bộ không nhận phim hoạt hình.
-    // Không tính anime vào chỉ tiêu 50 phim.
-    if (
-        type === "series" &&
-        isAnimation(sourceItem)
-    ) {
-        return;
-    }
-
     const key = catalogKey(sourceItem);
 
     if (!key) return;
@@ -2706,30 +2654,41 @@ function addMatch(ranked, sourceItem) {
      */
     
 
+
 if (type === "series") {
-    // Tìm bằng tên trước, không gọi IMDb trực tiếp hàng loạt.
-    // Cách này tránh tạo đợt request lớn gây lỗi 429.
-    const SEARCH_CONCURRENCY = 5;
-    const MAX_SEARCHES = rankedTitles.length;
+    /*
+     * MOVINA CLASSIC SERIES — SEARCH-FIRST
+     *
+     * Không gọi hàng loạt /imdb/title/{id}:
+     * endpoint này thường không có bản ghi tương ứng và
+     * khiến các lượt tìm theo tên tiếp theo bị HTTP 429.
+     *
+     * Ưu tiên tìm tên theo thứ hạng IMDb, giữ đúng thứ tự
+     * khi trả kết quả và ngừng cấp request mới khi bị 429.
+     */
 
-    const searchResults = new Array(rankedTitles.length);
-    const discoveredKeys = new Set();
+    const SEARCH_CONCURRENCY = 2;
+    const MAX_SEARCHES = Math.min(100, rankedTitles.length);
 
-    let nextIndex = 0;
     let searched = 0;
-    let searchErrors = 0;
     let matchedSearches = 0;
-    let earlyStop = false;
+    let searchErrors = 0;
+    let rateLimited = false;
+    let nextIndex = 0;
+
+    const searchResults = new Array(MAX_SEARCHES);
 
     async function classicSeriesSearchWorker() {
         while (
             nextIndex < MAX_SEARCHES &&
-            discoveredKeys.size < TARGET
+            matchedByKey.size < TARGET &&
+            !rateLimited
         ) {
             const index = nextIndex++;
             const ranked = rankedTitles[index];
 
-            if (!ranked?.title) {
+            if (!ranked || !ranked.title) {
+                searchResults[index] = null;
                 continue;
             }
 
@@ -2747,11 +2706,7 @@ if (type === "series") {
                 };
 
                 if (item) {
-                    const key = catalogKey(item);
-
-                    if (key) {
-                        discoveredKeys.add(key);
-                    }
+                    matchedSearches++;
                 }
             } catch (error) {
                 searchErrors++;
@@ -2764,73 +2719,61 @@ if (type === "series") {
         }
     }
 
-    const workerCount = Math.min(
-        SEARCH_CONCURRENCY,
-        MAX_SEARCHES
-    );
-
     await Promise.all(
         Array.from(
-            { length: workerCount },
+            {
+                length: Math.min(
+                    SEARCH_CONCURRENCY,
+                    MAX_SEARCHES
+                )
+            },
             () => classicSeriesSearchWorker()
         )
     );
 
-    // Ghép theo thứ hạng IMDb ban đầu,
-    // không theo thứ tự request hoàn thành.
-    searchResults
-        .filter(Boolean)
-        .sort(
-            (a, b) =>
-                a.ranked.rank - b.ranked.rank
-        )
-        .forEach(result => {
-            if (!result.item) {
-                return;
-            }
+    /*
+     * Ghi nhận kết quả theo thứ hạng IMDb gốc,
+     * không theo thứ tự các request hoàn tất.
+     */
+    for (const result of searchResults) {
+        if (!result || !result.ranked || !result.item) {
+            continue;
+        }
 
-            const before = matchedByKey.size;
+        addMatch(result.ranked, result.item);
+    }
 
-            addMatch(
-                result.ranked,
-                result.item
-            );
-
-            if (matchedByKey.size > before) {
-                matchedSearches++;
-            }
-        });
-
-    earlyStop = nextIndex < MAX_SEARCHES;
-
-    const result = Array.from(
-        matchedByKey.values()
-    )
-        .sort(
-            (a, b) =>
-                (a.__movinaClassicRank || 9999) -
-                (b.__movinaClassicRank || 9999)
-        )
-        .slice(0, TARGET);
-
+    /*
+     * Báo cáo chẩn đoán.
+     *
+     * HTTP 429 được ghi nhận trong
+     * movinaClassicSearchPhimAPI(). Không tiếp tục gọi
+     * endpoint IMDb trực tiếp để tránh tạo thêm tải.
+     */
     console.log(
         "[MOVINA CLASSIC SERIES SEARCH-FIRST SUMMARY]",
         JSON.stringify({
             rankedTitles: rankedTitles.length,
+            searchLimit: MAX_SEARCHES,
             searched,
             searchConcurrency: SEARCH_CONCURRENCY,
             matchedSearches,
-            searchErrors,
-            matched: matchedByKey.size,
-            returned: result.length,
+            returned: matchedByKey.size,
             target: TARGET,
-            earlyStop,
-            directIMDbLookups: 0
+            directIMDbLookups: 0,
+            strategy: "search-first",
+            note: "Results sorted by original IMDb rank"
         })
     );
 
-    return result;
+    return Array.from(matchedByKey.values())
+        .sort((a, b) =>
+            (a.__movinaClassicRank || 9999) -
+            (b.__movinaClassicRank || 9999)
+        )
+        .slice(0, TARGET);
 }
+
     
     /*
      * PHIM LẺ:
@@ -3473,7 +3416,10 @@ if (normalizedGenre === "kinh dien") {
  */
 const allowAnimation =
     isAnimationGenre ||
-    (isClassic && type === "movie");
+    (
+        isClassic &&
+        (type === "movie" || type === "series")
+    );
 
 if (!allowAnimation) {
     const beforeAnimationFilter = items.length;
