@@ -1,3 +1,4 @@
+
 {
   "name": "stremio-vietnam-addon",
   "version": "1.0.0",
@@ -6,6 +7,7 @@
   "dependencies": {
     "stremio-addon-sdk": "^1.2.1",
     "axios": "^1.13.2",
-    "cheerio": "^1.0.0-rc.12"
+    "cheerio": "^1.0.0-rc.12",
+    "@vercel/functions": "^3.10.4"
   }
 }
