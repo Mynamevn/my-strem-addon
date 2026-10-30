@@ -9846,62 +9846,244 @@ if (
         );
 
         // =====================================================
-        // [STREMIO-013.08] [PROVIDERS: ALL] MOVIE DETAIL FETCH
-        // =====================================================
+// [STREMIO-013.08] [PROVIDERS: ALL] MOVIE DETAIL FETCH
+// CACHE-FIRST PREVIEW REUSE
+// =====================================================
 
-        let detail =
-            item;
+let detail = item;
 
-        const slug =
-            item.slug ||
-            "";
+const slug =
+    String(item?.slug || "").trim();
 
-        if (slug) {
+const previewCacheKey =
+    slug
+        ? "phimapi:detail:" + slug
+        : "";
 
-            try {
+const cachedPreview =
+    previewCacheKey
+        ? MOVINA_CINEMETA_PREVIEW_CACHE.get(
+            previewCacheKey
+        )
+        : null;
 
-                const detailRes =
-                    await axios.get(
-                        "https://phimapi.com/v1/api/phim/" +
-                        encodeURIComponent(
-                            slug
-                        ),
-                        {
-                            timeout: 10000,
+const cachedPreviewFields =
+    (
+        cachedPreview &&
+        cachedPreview.settled === true &&
+        cachedPreview.expiresAt > Date.now()
+    )
+        ? (cachedPreview.value || {})
+        : {};
 
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
+const hasCachedPreview =
+    Object.keys(cachedPreviewFields).length > 0;
 
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
+const expectedSeries =
+    args.type === "series" ||
+    ["series", "tvshows"].includes(
+        String(item?.type || "").toLowerCase()
+    );
 
-                detail =
-                    detailRes.data?.data?.item ||
-                    detailRes.data?.item ||
-                    detail;
+let detailRequestSkipped = false;
 
-                console.log(
-                    "[META] Detail OK:",
-                    detail?.name ||
-                    item.name
-                );
+if (
+    hasCachedPreview &&
+    !expectedSeries
+) {
+    // Phim lẻ: preview cache đã đủ cho metadata,
+    // không cần tải lại detail từ PhimAPI.
+    detailRequestSkipped = true;
 
-            } catch (e) {
+    detail = {
+        ...item,
 
-                console.log(
-                    "[META DETAIL ERROR]",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
+        content:
+            item?.content ||
+            item?.description ||
+            cachedPreviewFields.description ||
+            "",
 
-            }
+        category:
+            Array.isArray(item?.category) &&
+            item.category.length
+                ? item.category
+                : (
+                    cachedPreviewFields.genres || []
+                ),
 
+        actor:
+            item?.actor ||
+            item?.actors ||
+            cachedPreviewFields.cast ||
+            [],
+
+        director:
+            item?.director ||
+            item?.directors ||
+            cachedPreviewFields.director ||
+            [],
+
+        time:
+            item?.time ||
+            item?.duration ||
+            cachedPreviewFields.runtime ||
+            "",
+
+        imdb: {
+            ...(item?.imdb || {}),
+
+            id:
+                item?.imdb?.id ||
+                cachedPreviewFields.imdbId ||
+                "",
+
+            vote_average:
+                item?.imdb?.vote_average ??
+                cachedPreviewFields.imdbRating ??
+                null
         }
+    };
+
+    console.log(
+        "[META PREVIEW CACHE] HIT:",
+        JSON.stringify({
+            slug,
+            mode: "movie-cache-only",
+            fields: Object.keys(cachedPreviewFields)
+        })
+    );
+} else if (slug) {
+    // Phim bộ vẫn cần detail đầy đủ để tạo danh sách tập.
+    // Phim lẻ chưa có cache cũng tiếp tục lấy detail như cũ.
+    try {
+        const detailRes =
+            await axios.get(
+                "https://phimapi.com/v1/api/phim/" +
+                encodeURIComponent(slug),
+                {
+                    timeout: 10000,
+
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        detail =
+            detailRes.data?.data?.item ||
+            detailRes.data?.item ||
+            detail;
+
+        console.log(
+            "[META] Detail OK:",
+            detail?.name ||
+            item.name
+        );
+    } catch (e) {
+        console.log(
+            "[META DETAIL ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+    }
+
+    if (hasCachedPreview) {
+        console.log(
+            "[META PREVIEW CACHE] HIT:",
+            JSON.stringify({
+                slug,
+                mode: expectedSeries
+                    ? "series-detail-plus-cache"
+                    : "movie-detail-plus-cache",
+                fields: Object.keys(cachedPreviewFields)
+            })
+        );
+    }
+}
+
+// Bổ sung các trường preview còn thiếu.
+// Không ghi đè dữ liệu detail đầy đủ đã có.
+if (hasCachedPreview) {
+    const preview = cachedPreviewFields;
+
+    const detailHasCategory =
+        Array.isArray(detail?.category) &&
+        detail.category.length > 0;
+
+    const detailHasActor =
+        Array.isArray(detail?.actor)
+            ? detail.actor.length > 0
+            : Boolean(detail?.actor);
+
+    const detailHasDirector =
+        Array.isArray(detail?.director)
+            ? detail.director.length > 0
+            : Boolean(detail?.director);
+
+    detail = {
+        ...detail,
+
+        content:
+            detail?.content ||
+            detail?.description ||
+            preview.description ||
+            "",
+
+        category:
+            detailHasCategory
+                ? detail.category
+                : (preview.genres || []),
+
+        actor:
+            detailHasActor
+                ? detail.actor
+                : (preview.cast || []),
+
+        director:
+            detailHasDirector
+                ? detail.director
+                : (preview.director || []),
+
+        time:
+            detail?.time ||
+            detail?.duration ||
+            preview.runtime ||
+            "",
+
+        imdb: {
+            ...(detail?.imdb || {}),
+
+            id:
+                detail?.imdb?.id ||
+                preview.imdbId ||
+                "",
+
+            vote_average:
+                detail?.imdb?.vote_average ??
+                detail?.imdb?.rating ??
+                preview.imdbRating ??
+                null
+        }
+    };
+}
+
+console.log(
+    "[META PREVIEW CACHE RESULT]",
+    JSON.stringify({
+        slug,
+        cacheHit: hasCachedPreview,
+        detailRequestSkipped,
+        description: Boolean(
+            detail?.content ||
+            detail?.description
+        ),
+        imdbId: Boolean(detail?.imdb?.id),
+        imdbRating: detail?.imdb?.vote_average ?? null
+    })
+);
 
         // =====================================================
         // [STREMIO-013.09] [PROVIDERS: ALL] MOVIE AND SERIES TYPE RESOLUTION
@@ -10397,132 +10579,81 @@ if (
         }
 
         // =====================================================
-        // [STREMIO-013.15] [PROVIDERS: ALL] IMDB RATING EXTRACTION
-        // =====================================================
+// [STREMIO-013.15] [PROVIDERS: ALL] IMDB RATING EXTRACTION
+// CACHE-FIRST CINEMETA RATING
+// =====================================================
 
-        let imdbRating = null;
+let imdbRating = null;
 
-        const rawImdbRating =
-            detail?.imdb?.vote_average ??
-            item?.imdb?.vote_average ??
-            null;
+const rawImdbRating =
+    detail?.imdb?.vote_average ??
+    detail?.imdb?.rating ??
+    detail?.imdbRating ??
+    detail?.imdb_rating ??
+    item?.imdb?.vote_average ??
+    item?.imdb?.rating ??
+    item?.imdbRating ??
+    item?.imdb_rating ??
+    null;
 
-        if (
-            rawImdbRating !== null &&
-            rawImdbRating !== undefined &&
-            rawImdbRating !== ""
-        ) {
+if (
+    rawImdbRating !== null &&
+    rawImdbRating !== undefined &&
+    rawImdbRating !== ""
+) {
+    const parsed =
+        Number(rawImdbRating);
 
-            const parsed =
-                Number(
-                    rawImdbRating
-                );
+    if (
+        Number.isFinite(parsed) &&
+        parsed > 0 &&
+        parsed <= 10
+    ) {
+        imdbRating =
+            Math.round(parsed * 10) / 10;
+    }
+}
 
-            if (
-                Number.isFinite(parsed) &&
-                parsed > 0
-            ) {
-
-                imdbRating =
-                    Math.round(
-                        parsed * 10
-                    ) / 10;
-
-            }
-
-        }
-
-        // -----------------------------------------------------
-        // Nếu đã có IMDb nhưng PhimAPI không có rating,
-        // lấy rating từ Cinemeta.
-        // -----------------------------------------------------
-
-        if (
-            imdbId &&
-            imdbRating === null
-        ) {
-
-            try {
-
-                const cmRes =
-                    await axios.get(
-                        "https://v3-cinemeta.strem.io/meta/" +
-                        metaType +
-                        "/" +
-                        encodeURIComponent(
-                            imdbId
-                        ) +
-                        ".json",
-                        {
-                            timeout: 8000,
-
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
-
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
-
-                const cmMeta =
-                    cmRes.data?.meta ||
-                    {};
-
-                const cmRating =
-                    Number(
-                        cmMeta.imdbRating
-                    );
-
-                if (
-                    Number.isFinite(
-                        cmRating
-                    ) &&
-                    cmRating > 0
-                ) {
-
-                    imdbRating =
-                        cmRating;
-
-                }
-
-            } catch (e) {
-
-                console.log(
-                    "[META IMDb ERROR]",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
-
-            }
-
-        }
-
-        console.log(
-            "[META] IMDb:",
-            imdbId ||
-            "N/A",
-            "| rating:",
-            imdbRating ??
-            "N/A"
-        );
-
-        console.log(
-            "[META] Final meta ID:",
-            metaId
-        );
-
-        if (
-            imdbResolvedByCinemeta
-        ) {
-
-            console.log(
-                "[META] IMDb resolved through Cinemeta"
+// Nếu nguồn PhimAPI đã có rating thì giữ nguyên.
+// Nếu chưa có, sử dụng hàm Cinemeta đã có cache.
+// Hàm này sẽ tái sử dụng cache nếu còn hạn,
+// chỉ tạo request mới khi thực sự chưa có cache.
+if (
+    imdbId &&
+    imdbRating === null
+) {
+    try {
+        imdbRating =
+            await movinaFetchCinemetaRating(
+                imdbId,
+                metaType
             );
 
-        }
+    } catch (error) {
+        console.log(
+            "[META IMDb CACHE ERROR]",
+            imdbId,
+            error?.message || error
+        );
+    }
+}
+
+console.log(
+    "[META] IMDb:",
+    imdbId || "N/A",
+    "| rating:",
+    imdbRating ?? "N/A",
+    "| source:",
+    rawImdbRating !== null &&
+    rawImdbRating !== undefined &&
+    rawImdbRating !== ""
+        ? "PHIMAPI"
+        : (
+            imdbRating !== null
+                ? "CINEMETA_CACHE_OR_FETCH"
+                : "UNAVAILABLE"
+        )
+);
 
         // =====================================================
         // [STREMIO-013.16] [PROVIDERS: ALL] GENRE EXTRACTION
