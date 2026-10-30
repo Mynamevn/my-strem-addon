@@ -27,6 +27,7 @@ Ví dụ nhiều nguồn: [CORE-014.01] [PROVIDERS: ANIMET, ONFLIX]
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { waitUntil } = require('@vercel/functions');
 
 const crypto = require('crypto');
 const http2 = require('http2');
@@ -7077,46 +7078,61 @@ async function movinaFetchCinemetaRating(imdbId, type = "movie") {
 }
 
 
+
 /* ============================================================
-   [STREMIO-012.03] [PROVIDERS: MOVINA]
-   FAST CATALOG ENRICHMENT
-   - Ưu tiên IMDb rating.
-   - Dùng preview cache nếu đã có.
-   - Hoãn preview mới sang lượt truy cập sau.
-   - Áp dụng cho toàn bộ catalog VOD và thể loại.
+   [STREMIO-012.04] [PROVIDERS: MOVINA]
+   BACKGROUND PREVIEW + IMDb COMPLETION
+
+   - Hoàn thiện preview cho tối đa 50 phim mỗi catalog.
+   - Bổ sung IMDb rating khi có IMDb ID hợp lệ.
+   - Dùng waitUntil của Vercel.
+   - Giới hạn 2 worker nền để tránh gây áp lực lên PhimAPI.
+   - Chống chạy trùng cùng một danh sách.
+   - Hỗ trợ catalog chứa cả movie và series.
    ============================================================ */
 
-// Ghi nhận phim đã xuất hiện nhưng chưa có preview cache.
-// Lần đầu: không chờ request chi tiết.
-// Lần sau: cho phép bổ sung preview.
-const MOVINA_PREVIEW_DEFERRED_ITEMS = new Map();
+const MOVINA_PREVIEW_BACKGROUND_JOBS = new Map();
 
-const MOVINA_PREVIEW_DEFER_DELAY = 60 * 1000;
+const MOVINA_PREVIEW_BACKGROUND_WORKERS = 2;
 
-// Giới hạn số request lấy chi tiết trong một lượt catalog.
-// Không ảnh hưởng giới hạn queue PhimAPI hiện tại.
-const MOVINA_PREVIEW_MAX_DETAIL_REQUESTS = 12;
-
-async function movinaEnrichMovieTrendingPreviews(
+function movinaSchedulePreviewCompletion(
     items,
-    type = "movie",
-    options = {}
+    catalogId,
+    resolveType
 ) {
-    type = type === "series" ? "series" : "movie";
+    const sourceItems = (Array.isArray(items) ? items : [])
+        .slice(0, CATALOG_TARGET)
+        .filter(item => String(item?.slug || "").trim());
 
-    const sourceItems = (items || []).slice(0, CATALOG_TARGET);
-    const metas = new Array(sourceItems.length);
+    if (!sourceItems.length) {
+        return;
+    }
+
+    const jobKey =
+        String(catalogId || "movina") +
+        ":" +
+        sourceItems
+            .map(item => String(item.slug || "").trim())
+            .sort()
+            .join("|");
+
+    if (MOVINA_PREVIEW_BACKGROUND_JOBS.has(jobKey)) {
+        console.log(
+            "[MOVINA PREVIEW BACKGROUND] ALREADY RUNNING:",
+            catalogId,
+            "| Items:",
+            sourceItems.length
+        );
+        return;
+    }
 
     let nextIndex = 0;
-    let detailRequests = 0;
-    let detailCacheHits = 0;
-    let deferredDetails = 0;
+    let completed = 0;
+    let previewRequests = 0;
     let ratingRequests = 0;
-    let ratingCacheHits = 0;
+    let skipped = 0;
 
-    const WORKERS = Math.min(8, sourceItems.length);
-
-    function getValidRating(value) {
+    const getValidRating = value => {
         const rating = Number(value);
 
         return (
@@ -7126,9 +7142,9 @@ async function movinaEnrichMovieTrendingPreviews(
         )
             ? Math.round(rating * 10) / 10
             : null;
-    }
+    };
 
-    function getImdbId(...values) {
+    const getImdbId = (...values) => {
         for (const value of values) {
             const id = String(value || "").trim();
 
@@ -7138,9 +7154,9 @@ async function movinaEnrichMovieTrendingPreviews(
         }
 
         return "";
-    }
+    };
 
-    async function worker() {
+    const worker = async () => {
         while (true) {
             const index = nextIndex++;
 
@@ -7149,249 +7165,149 @@ async function movinaEnrichMovieTrendingPreviews(
             }
 
             const item = sourceItems[index];
-            const preview = makeCatalogMeta(item, type);
 
-            if (!preview?.id || !preview?.name) {
-                metas[index] = null;
-                continue;
-            }
-
-            const sourceRating = getValidRating(
-                preview.imdbRating
-            );
+            const itemType =
+                resolveType(item) === "series"
+                    ? "series"
+                    : "movie";
 
             const slug = String(item?.slug || "").trim();
 
-            const previewCacheKey = slug
-                ? "phimapi:detail:" + slug
-                : "";
-
-            const cachedPreview = previewCacheKey
-                ? MOVINA_CINEMETA_PREVIEW_CACHE.get(
-                    previewCacheKey
-                )
-                : null;
-
-            const previewCacheValid =
-                cachedPreview &&
-                cachedPreview.expiresAt > Date.now();
-
-            let extra = {};
-
-            /*
-             * BƯỚC 1:
-             * Dùng preview cache nếu đã có.
-             *
-             * Nếu chưa có cache:
-             * - Lần đầu: ghi nhận và bỏ qua request chi tiết.
-             * - Lần sau: mới cho phép lấy preview.
-             */
-            if (previewCacheValid) {
-                detailCacheHits++;
-
-                extra = await movinaFetchCinemetaPreview(
-                    item,
-                    type
-                );
-
-            } else if (slug) {
-                const now = Date.now();
-
-                const deferred =
-                    MOVINA_PREVIEW_DEFERRED_ITEMS.get(slug);
-
-                if (!deferred) {
-                    MOVINA_PREVIEW_DEFERRED_ITEMS.set(
-                        slug,
-                        {
-                            firstSeenAt: now,
-                            lastAttemptAt: 0
-                        }
-                    );
-
-                    deferredDetails++;
-
-                } else {
-                    const elapsed =
-                        now - deferred.firstSeenAt;
-
-                    const retryElapsed =
-                        !deferred.lastAttemptAt ||
-                        now - deferred.lastAttemptAt >=
-                            MOVINA_PREVIEW_DEFER_DELAY;
-
-                    if (
-                        elapsed >= MOVINA_PREVIEW_DEFER_DELAY &&
-                        retryElapsed &&
-                        detailRequests <
-                            MOVINA_PREVIEW_MAX_DETAIL_REQUESTS
-                    ) {
-                        deferred.lastAttemptAt = now;
-                        detailRequests++;
-
-                        extra = await movinaFetchCinemetaPreview(
-                            item,
-                            type
-                        );
-                    } else {
-                        deferredDetails++;
-                    }
-                }
+            if (!slug) {
+                skipped++;
+                continue;
             }
 
-            /*
-             * BƯỚC 2:
-             * Ưu tiên rating đã có.
-             * Nếu thiếu, tra Cinemeta trực tiếp bằng IMDb ID.
-             *
-             * Không cần lấy preview PhimAPI trước.
-             * Không tìm IMDb ID bằng tên phim.
-             * Không tự tạo hoặc đoán IMDb ID.
-             */
-            let cinemetaRating = null;
+            try {
+                const previewCacheKey =
+                    "phimapi:detail:" + slug;
 
-            const cachedDetailRating =
-                getValidRating(extra?.imdbRating);
-
-            const availableRating =
-                sourceRating ||
-                cachedDetailRating;
-
-            const candidateImdbId = getImdbId(
-                item?.__movinaClassicImdbId,
-                item?.imdb?.id,
-                item?.imdb_id,
-                item?.imdbId,
-                extra?.imdbId,
-                /^tt\d+$/i.test(String(preview.id || ""))
-                    ? preview.id
-                    : ""
-            );
-
-            if (!availableRating && candidateImdbId) {
-                const ratingCacheKey =
-                    (type === "series" ? "series:" : "movie:") +
-                    candidateImdbId;
-
-                const ratingCached =
-                    MOVINA_CINEMETA_RATING_CACHE.get(
-                        ratingCacheKey
+                const cachedPreview =
+                    MOVINA_CINEMETA_PREVIEW_CACHE.get(
+                        previewCacheKey
                     );
+
+                let detail = {};
 
                 if (
-                    ratingCached &&
-                    ratingCached.expiresAt > Date.now()
+                    cachedPreview &&
+                    cachedPreview.expiresAt > Date.now()
                 ) {
-                    ratingCacheHits++;
+                    detail = await cachedPreview.promise;
                 } else {
+                    previewRequests++;
+
+                    detail = await movinaFetchCinemetaPreview(
+                        item,
+                        itemType
+                    );
+                }
+
+                detail = detail || {};
+
+                const sourceRating = getValidRating(
+                    item?.imdb?.vote_average ??
+                    item?.imdb?.rating ??
+                    item?.imdbRating ??
+                    item?.imdb_rating
+                );
+
+                const detailRating = getValidRating(
+                    detail?.imdbRating
+                );
+
+                const imdbId = getImdbId(
+                    item?.__movinaClassicImdbId,
+                    item?.imdb?.id,
+                    item?.imdb_id,
+                    item?.imdbId,
+                    detail?.imdbId
+                );
+
+                if (
+                    !sourceRating &&
+                    !detailRating &&
+                    imdbId
+                ) {
                     ratingRequests++;
-                }
 
-                cinemetaRating =
                     await movinaFetchCinemetaRating(
-                        candidateImdbId,
-                        type
-                    );
-
-                if (cinemetaRating !== null) {
-                    console.log(
-                        "[MOVINA CINEMETA RATING] Recovered:",
-                        JSON.stringify({
-                            id: candidateImdbId,
-                            name: preview.name,
-                            rating: cinemetaRating
-                        })
+                        imdbId,
+                        itemType
                     );
                 }
+
+                completed++;
+
+            } catch (error) {
+                skipped++;
+
+                console.warn(
+                    "[MOVINA PREVIEW BACKGROUND ITEM ERROR]",
+                    slug,
+                    error?.message || error
+                );
             }
-
-            const finalRating =
-                sourceRating ||
-                cachedDetailRating ||
-                getValidRating(cinemetaRating);
-
-            /*
-             * BƯỚC 3:
-             * Dựng metadata ngay.
-             *
-             * Preview chưa có thì không chặn catalog.
-             * Preview đã cache thì dùng ngay.
-             */
-            metas[index] = {
-                ...preview,
-
-                ...(
-                    !preview.description &&
-                    extra.description
-                        ? {
-                            description: extra.description
-                        }
-                        : {}
-                ),
-
-                ...(finalRating !== null
-                    ? {
-                        imdbRating: finalRating
-                    }
-                    : {}),
-
-                id: preview.id,
-                type,
-                name: preview.name,
-                poster: preview.poster,
-                posterShape: preview.posterShape
-            };
         }
-    }
+    };
 
-    await Promise.all(
+    const task = Promise.all(
         Array.from(
-            { length: WORKERS },
+            {
+                length: Math.min(
+                    MOVINA_PREVIEW_BACKGROUND_WORKERS,
+                    sourceItems.length
+                )
+            },
             () => worker()
         )
-    );
-
-    const result = metas.filter(
-        meta => meta?.id && meta?.name
-    );
-
-    /*
-     * Dọn các dấu mốc trì hoãn quá cũ để tránh Map tăng mãi.
-     */
-    if (MOVINA_PREVIEW_DEFERRED_ITEMS.size > 5000) {
-        const cutoff = Date.now() - 60 * 60 * 1000;
-
-        for (const [slug, entry] of
-            MOVINA_PREVIEW_DEFERRED_ITEMS.entries()) {
-
-            if (entry.firstSeenAt < cutoff) {
-                MOVINA_PREVIEW_DEFERRED_ITEMS.delete(slug);
-            }
-        }
-    }
-
-    console.log(
-        "[MOVINA FAST CATALOG ENRICHMENT]",
-        JSON.stringify({
-            type,
-            input: sourceItems.length,
-            output: result.length,
-            workers: WORKERS,
-            ratingRequests,
-            ratingCacheHits,
-            detailRequests,
-            detailCacheHits,
-            deferredDetails,
-            maxDetailRequests:
-                MOVINA_PREVIEW_MAX_DETAIL_REQUESTS,
-            previewCacheSize:
-                MOVINA_CINEMETA_PREVIEW_CACHE.size,
-            ratingCacheSize:
-                MOVINA_CINEMETA_RATING_CACHE.size
+    )
+        .then(() => {
+            console.log(
+                "[MOVINA PREVIEW BACKGROUND] COMPLETED",
+                JSON.stringify({
+                    catalog: catalogId,
+                    total: sourceItems.length,
+                    completed,
+                    previewRequests,
+                    ratingRequests,
+                    skipped
+                })
+            );
         })
-    );
+        .catch(error => {
+            console.error(
+                "[MOVINA PREVIEW BACKGROUND ERROR]",
+                catalogId,
+                error?.message || error
+            );
+        })
+        .finally(() => {
+            MOVINA_PREVIEW_BACKGROUND_JOBS.delete(jobKey);
+        });
 
-    return result;
+    MOVINA_PREVIEW_BACKGROUND_JOBS.set(jobKey, task);
+
+    try {
+        waitUntil(task);
+
+        console.log(
+            "[MOVINA PREVIEW BACKGROUND] SCHEDULED:",
+            catalogId,
+            "| Items:",
+            sourceItems.length,
+            "| Workers:",
+            MOVINA_PREVIEW_BACKGROUND_WORKERS
+        );
+
+    } catch (error) {
+        MOVINA_PREVIEW_BACKGROUND_JOBS.delete(jobKey);
+
+        console.error(
+            "[MOVINA PREVIEW BACKGROUND] WAITUNTIL ERROR:",
+            error?.message || error
+        );
+    }
 }
 
 
@@ -8550,6 +8466,45 @@ if (enableCinemetaPreview) {
                 meta.id &&
                 meta.name
         );
+}
+// ========================================================
+// [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
+// ========================================================
+
+// Chỉ áp dụng cho 5 catalog VOD đã bật enrichment.
+// Không áp dụng cho Search MOVINA và IPTV.
+
+if (
+    enableCinemetaPreview &&
+    !searchQuery &&
+    [
+        "pa_movies_trending",
+        "pa_series_trending",
+        "pa_tvb",
+        "pa_daily",
+        "pa_animation_new"
+    ].includes(args.id)
+) {
+    const resolveBackgroundType = item => {
+        // Catalog có type cố định.
+        if (
+            forcedType === "movie" ||
+            forcedType === "series"
+        ) {
+            return forcedType;
+        }
+
+        // Catalog hỗn hợp: xác định riêng từng phim.
+        return isSeriesItem(item)
+            ? "series"
+            : "movie";
+    };
+
+    movinaSchedulePreviewCompletion(
+        items,
+        args.id,
+        resolveBackgroundType
+    );
 }
 
             /* ========================================================
