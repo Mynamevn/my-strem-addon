@@ -8279,13 +8279,14 @@ else if (args.id === "pa_animation_new") {
     enableCinemetaPreview = true;
 }
 
-else if (args.id === "pa_tvb") {
-    previewType = /Phim bộ TVB/i.test(selectedGenre)
-        ? "series"
-        : "movie";
 
-    enableCinemetaPreview = true;
+else if (args.id === "pa_tvb") {
+    // TVB đã có dữ liệu catalog và poster từ nguồn.
+    // Không chờ truy vấn PhimAPI/Cinemeta cho từng phim.
+    // Giữ nguyên forcedType đã xác định ở nhánh TVB phía trên.
+    enableCinemetaPreview = false;
 }
+
 
 let metas;
 
