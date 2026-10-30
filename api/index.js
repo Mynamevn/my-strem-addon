@@ -459,7 +459,7 @@ return result;
    ============================================================ */
 
 const MOVINA_PHIMAPI_MAX_CONCURRENT = 4;
-const MOVINA_PHIMAPI_MIN_START_GAP = 250;
+const MOVINA_PHIMAPI_MIN_START_GAP = 100;
 const MOVINA_PHIMAPI_DEFAULT_COOLDOWN = 6000;
 const MOVINA_PHIMAPI_MAX_RETRY_AFTER = 30000;
 
