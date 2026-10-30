@@ -452,7 +452,151 @@ return result;
 
 }
 
-// [CORE-003.04] [PROVIDERS: ALL] CATALOG API FETCH
+
+/* ============================================================
+   [CORE-003.04] [PROVIDERS: ALL] PHIMAPI REQUEST COORDINATOR
+   Điều phối request chung, giãn nhịp và xử lý HTTP 429.
+   ============================================================ */
+
+const MOVINA_PHIMAPI_MAX_CONCURRENT = 4;
+const MOVINA_PHIMAPI_MIN_START_GAP = 250;
+const MOVINA_PHIMAPI_DEFAULT_COOLDOWN = 6000;
+const MOVINA_PHIMAPI_MAX_RETRY_AFTER = 30000;
+
+const MOVINA_PHIMAPI_QUEUE = [];
+
+let MOVINA_PHIMAPI_ACTIVE = 0;
+let MOVINA_PHIMAPI_LAST_START = 0;
+let MOVINA_PHIMAPI_COOLDOWN_UNTIL = 0;
+let MOVINA_PHIMAPI_PUMP_TIMER = null;
+
+function movinaPhimApiGet(url, config = {}, retries = 1) {
+    return new Promise((resolve, reject) => {
+        MOVINA_PHIMAPI_QUEUE.push({
+            url,
+            config,
+            retriesLeft: Math.max(0, Number(retries) || 0),
+            resolve,
+            reject
+        });
+
+        movinaPhimApiPump();
+    });
+}
+
+function movinaPhimApiPump() {
+    if (
+        MOVINA_PHIMAPI_PUMP_TIMER ||
+        MOVINA_PHIMAPI_ACTIVE >= MOVINA_PHIMAPI_MAX_CONCURRENT ||
+        MOVINA_PHIMAPI_QUEUE.length === 0
+    ) {
+        return;
+    }
+
+    const now = Date.now();
+
+    const waitUntil = Math.max(
+        MOVINA_PHIMAPI_COOLDOWN_UNTIL,
+        MOVINA_PHIMAPI_LAST_START +
+            MOVINA_PHIMAPI_MIN_START_GAP
+    );
+
+    const waitMs = waitUntil - now;
+
+    if (waitMs > 0) {
+        MOVINA_PHIMAPI_PUMP_TIMER = setTimeout(() => {
+            MOVINA_PHIMAPI_PUMP_TIMER = null;
+            movinaPhimApiPump();
+        }, waitMs);
+
+        return;
+    }
+
+    const job = MOVINA_PHIMAPI_QUEUE.shift();
+
+    if (!job) return;
+
+    MOVINA_PHIMAPI_ACTIVE++;
+    MOVINA_PHIMAPI_LAST_START = Date.now();
+
+    axios.get(job.url, job.config)
+        .then(response => {
+            job.resolve(response);
+        })
+        .catch(error => {
+            const status = Number(error?.response?.status || 0);
+
+            if (status === 429) {
+                const headers = error?.response?.headers || {};
+                const retryAfter =
+                    headers["retry-after"] ||
+                    headers["Retry-After"] ||
+                    "";
+
+                let cooldownMs =
+                    MOVINA_PHIMAPI_DEFAULT_COOLDOWN;
+
+                const retrySeconds = Number(retryAfter);
+
+                if (
+                    Number.isFinite(retrySeconds) &&
+                    retrySeconds > 0
+                ) {
+                    cooldownMs = retrySeconds * 1000;
+                } else if (retryAfter) {
+                    const retryDate = Date.parse(retryAfter);
+
+                    if (Number.isFinite(retryDate)) {
+                        cooldownMs = retryDate - Date.now();
+                    }
+                }
+
+                cooldownMs = Math.max(
+                    1000,
+                    Math.min(
+                        MOVINA_PHIMAPI_MAX_RETRY_AFTER,
+                        cooldownMs
+                    )
+                );
+
+                MOVINA_PHIMAPI_COOLDOWN_UNTIL = Math.max(
+                    MOVINA_PHIMAPI_COOLDOWN_UNTIL,
+                    Date.now() + cooldownMs
+                );
+
+                console.warn(
+                    "[MOVINA PHIMAPI COOLDOWN]",
+                    JSON.stringify({
+                        cooldownMs,
+                        queued: MOVINA_PHIMAPI_QUEUE.length,
+                        active: MOVINA_PHIMAPI_ACTIVE,
+                        retry: job.retriesLeft > 0
+                    })
+                );
+
+                if (job.retriesLeft > 0) {
+                    job.retriesLeft--;
+                    MOVINA_PHIMAPI_QUEUE.push(job);
+                } else {
+                    job.reject(error);
+                }
+            } else {
+                job.reject(error);
+            }
+        })
+        .finally(() => {
+            MOVINA_PHIMAPI_ACTIVE--;
+            movinaPhimApiPump();
+        });
+
+    // Cấp request tiếp theo sau khoảng giãn tối thiểu.
+    movinaPhimApiPump();
+}
+
+
+/* ============================================================
+   CATALOG FETCH CACHE
+   ============================================================ */
 
 const MOVINA_CATALOG_FETCH_CACHE = new Map();
 const MOVINA_CATALOG_FETCH_TTL = 5 * 60 * 1000;
@@ -471,13 +615,16 @@ async function catalogFetch(url) {
         try {
             console.log("[CATALOG API] Request:", url);
 
-            const response = await axios.get(url, {
-                timeout: 3000,
-                headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json"
+            const response = await movinaPhimApiGet(
+                url,
+                {
+                    timeout: 3000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
                 }
-            });
+            );
 
             const items =
                 response.data?.data?.items ??
@@ -505,8 +652,6 @@ async function catalogFetch(url) {
         }
     })();
 
-    // Lưu Promise ngay lập tức để các request cùng URL
-    // không tạo nhiều lượt gọi mạng trùng nhau.
     MOVINA_CATALOG_FETCH_CACHE.set(cacheKey, {
         expiresAt: now + MOVINA_CATALOG_FETCH_TTL,
         promise: requestPromise
@@ -2535,22 +2680,22 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 
     try {
-        const response = await axios.get(
-            "https://phimapi.com/v1/api/tim-kiem",
-            {
-                params: {
-                    keyword: title.title,
-                    page: 1,
-                    limit: 20,
-                    filterType: type === "series" ? "series" : "single"
-                },
-                timeout: 4000,
-                headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json"
-                }
-            }
-        );
+        const response = await movinaPhimApiGet(
+    "https://phimapi.com/v1/api/tim-kiem",
+    {
+        params: {
+            keyword: title.title,
+            page: 1,
+            limit: 20,
+            filterType: type === "series" ? "series" : "single"
+        },
+        timeout: 4000,
+        headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
+        }
+    }
+);
 
         const items =
             response.data?.data?.items ||
@@ -2574,17 +2719,17 @@ async function movinaClassicSearchPhimAPI(title, type) {
             title.imdbId
         ) {
             try {
-                const imdbResponse = await axios.get(
-                    "https://phimapi.com/imdb/title/" +
-                    encodeURIComponent(title.imdbId),
-                    {
-                        timeout: 2200,
-                        headers: {
-                            "User-Agent": "Mozilla/5.0",
-                            "Accept": "application/json"
-                        }
-                    }
-                );
+                const imdbResponse = await movinaPhimApiGet(
+    "https://phimapi.com/imdb/title/" +
+        encodeURIComponent(title.imdbId),
+    {
+        timeout: 2200,
+        headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
+        }
+    }
+);
 
                 const data = imdbResponse.data || {};
 
@@ -6569,19 +6714,20 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
         return cached.promise;
     }
 
+    let rateLimited = false;
     const requestPromise = (async () => {
         try {
-            const response = await axios.get(
-                "https://phimapi.com/v1/api/phim/" +
-                    encodeURIComponent(slug),
-                {
-                    timeout: 1800,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
-                }
-            );
+            const response = await movinaPhimApiGet(
+    "https://phimapi.com/v1/api/phim/" +
+        encodeURIComponent(slug),
+    {
+        timeout: 1800,
+        headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
+        }
+    }
+);
 
             const detail =
                 response.data?.data?.item ||
@@ -6674,8 +6820,9 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
                     ? { imdbRating: Math.round(rating * 10) / 10 }
                     : {})
             };
-
+        
         } catch (error) {
+            rateLimited = Number(error?.response?.status || 0) === 429;
             console.log(
                 "[PHIMAPI PREVIEW DETAIL]",
                 slug,
@@ -6694,11 +6841,15 @@ async function movinaFetchCinemetaPreview(item, type = "movie") {
     const fields = await requestPromise;
 
     if (!Object.keys(fields).length) {
-        MOVINA_CINEMETA_PREVIEW_CACHE.set(cacheKey, {
-            expiresAt: Date.now() + MOVINA_CINEMETA_PREVIEW_FAIL_TTL,
-            promise: Promise.resolve({})
-        });
-    }
+    MOVINA_CINEMETA_PREVIEW_CACHE.set(cacheKey, {
+        expiresAt: Date.now() + (
+            rateLimited
+                ? 15 * 1000
+                : MOVINA_CINEMETA_PREVIEW_FAIL_TTL
+        ),
+        promise: Promise.resolve({})
+    });
+}
 
     return fields;
 }
