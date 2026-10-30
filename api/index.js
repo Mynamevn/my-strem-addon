@@ -3914,9 +3914,6 @@ async function fetchTVB(selectedType = "") {
        ========================================================
     */
 
-    const tvbSelectedType =
-        String(selectedType || "").trim();
-
     if (
         tvbSelectedType === "Phim lẻ TVB" ||
         tvbSelectedType === "Phim bộ TVB"
