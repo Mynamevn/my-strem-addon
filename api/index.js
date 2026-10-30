@@ -2732,7 +2732,7 @@ if (type === "series") {
      * khi trả kết quả và ngừng cấp request mới khi bị 429.
      */
 
-    const SEARCH_CONCURRENCY = 4;
+    const SEARCH_CONCURRENCY = 2;
     const MAX_SEARCHES = Math.min(100, rankedTitles.length);
 
     let searched = 0;
