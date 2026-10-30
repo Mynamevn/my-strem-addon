@@ -3833,33 +3833,48 @@ async function fetchTVB(selectedType = "") {
        - Cũ = các năm trước đó
     */
 
+        const tvbSelectedType =
+        String(selectedType || "").trim();
+
+    const needSeries =
+        !tvbSelectedType ||
+        tvbSelectedType === "Phim bộ TVB";
+
+    const needMovies =
+        !tvbSelectedType ||
+        tvbSelectedType === "Phim lẻ TVB";
+
     for (
         let page = 1;
         page <= 6;
         page++
     ) {
 
-        seriesPages.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-bo" +
-                "?country=hong-kong" +
-                "&page=" +
-                page +
-                "&limit=24"
-            )
-        );
+        if (needSeries) {
+            seriesPages.push(
+                catalogFetch(
+                    "https://phimapi.com/v1/api/" +
+                    "danh-sach/phim-bo" +
+                    "?country=hong-kong" +
+                    "&page=" +
+                    page +
+                    "&limit=24"
+                )
+            );
+        }
 
-        moviePages.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-le" +
-                "?country=hong-kong" +
-                "&page=" +
-                page +
-                "&limit=24"
-            )
-        );
+        if (needMovies) {
+            moviePages.push(
+                catalogFetch(
+                    "https://phimapi.com/v1/api/" +
+                    "danh-sach/phim-le" +
+                    "?country=hong-kong" +
+                    "&page=" +
+                    page +
+                    "&limit=24"
+                )
+            );
+        }
     }
 
     const [
