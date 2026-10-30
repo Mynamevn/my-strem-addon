@@ -2822,7 +2822,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 }
 
-async function movinaFetchClassicCatalog(type) {
+async function movinaFetchClassicCatalogUncached(type) {
     const rankedTitles =
         await movinaClassicGetRankedTitles(type);
 
@@ -2877,7 +2877,7 @@ if (type === "series") {
      * khi trả kết quả và ngừng cấp request mới khi bị 429.
      */
 
-    const SEARCH_CONCURRENCY = 2;
+    const SEARCH_CONCURRENCY = 4;
     const MAX_SEARCHES = Math.min(100, rankedTitles.length);
 
     let searched = 0;
@@ -3067,6 +3067,107 @@ if (type === "series") {
     return result;
 }
 
+
+/* ============================================================
+   [CLASSIC-001.01] [MOVINA]
+   COMPLETE CLASSIC CATALOG CACHE
+   - Cache danh sách đã ghép IMDb Top 250 + PhimAPI.
+   - Chống nhiều request cùng lúc chạy lại cùng một catalog.
+   - Cache riêng movie và series.
+   ============================================================ */
+
+const MOVINA_CLASSIC_CATALOG_CACHE = new Map();
+
+const MOVINA_CLASSIC_CATALOG_CACHE_TTL =
+    6 * 60 * 60 * 1000;
+
+async function movinaFetchClassicCatalog(type) {
+    const key = type === "series"
+        ? "series"
+        : "movie";
+
+    const now = Date.now();
+    const cached = MOVINA_CLASSIC_CATALOG_CACHE.get(key);
+
+    // Đã có kết quả hoàn chỉnh còn hạn.
+    if (
+        cached?.items &&
+        cached.expiresAt > now
+    ) {
+        console.log(
+            "[MOVINA CLASSIC CATALOG CACHE] HIT:",
+            key,
+            "| Items:",
+            cached.items.length
+        );
+
+        return cached.items.map(item => ({ ...item }));
+    }
+
+    // Một request khác đang xây dựng cùng catalog.
+    // Dùng chung Promise, không tìm kiếm trùng lặp.
+    if (cached?.promise) {
+        console.log(
+            "[MOVINA CLASSIC CATALOG CACHE] IN-FLIGHT:",
+            key
+        );
+
+        const items = await cached.promise;
+
+        return items.map(item => ({ ...item }));
+    }
+
+    console.log(
+        "[MOVINA CLASSIC CATALOG CACHE] MISS:",
+        key
+    );
+
+    const requestPromise = movinaFetchClassicCatalogUncached(key)
+        .then(items => {
+            const result = Array.isArray(items)
+                ? items
+                : [];
+
+            if (result.length > 0) {
+                MOVINA_CLASSIC_CATALOG_CACHE.set(key, {
+                    expiresAt:
+                        Date.now() +
+                        MOVINA_CLASSIC_CATALOG_CACHE_TTL,
+                    items: result.map(item => ({ ...item }))
+                });
+
+                console.log(
+                    "[MOVINA CLASSIC CATALOG CACHE] STORED:",
+                    key,
+                    "| Items:",
+                    result.length,
+                    "| TTL: 6h"
+                );
+            } else {
+                MOVINA_CLASSIC_CATALOG_CACHE.delete(key);
+
+                console.warn(
+                    "[MOVINA CLASSIC CATALOG CACHE] EMPTY:",
+                    key,
+                    "| Will retry next request."
+                );
+            }
+
+            return result;
+        })
+        .catch(error => {
+            MOVINA_CLASSIC_CATALOG_CACHE.delete(key);
+            throw error;
+        });
+
+    MOVINA_CLASSIC_CATALOG_CACHE.set(key, {
+        promise: requestPromise
+    });
+
+    const result = await requestPromise;
+
+    return result.map(item => ({ ...item }));
+}
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
