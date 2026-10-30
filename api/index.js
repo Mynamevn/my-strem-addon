@@ -6975,7 +6975,11 @@ async function movinaFetchCinemetaRating(imdbId, type = "movie") {
     return rating;
 }
 
-async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
+async function movinaEnrichMovieTrendingPreviews(
+    items,
+    type = "movie",
+    options = {}
+) {
     type = type === "series" ? "series" : "movie";
 
     const sourceItems = (items || []).slice(0, CATALOG_TARGET);
@@ -7016,10 +7020,23 @@ async function movinaEnrichMovieTrendingPreviews(items, type = "movie") {
 
                         let extra = {};
 
-            // Bước 1: Giữ nguyên cơ chế lấy preview từ PhimAPI.
-            // Chỉ dùng cache hoặc truy vấn khi thiếu mô tả
-            // hay thiếu điểm IMDb.
-            if (!hasDescription || !hasRating) {
+                        // Bước 1: Chỉ lấy dữ liệu chi tiết khi thực sự cần.
+            const sourceImdbId =
+                item?.__movinaClassicImdbId ||
+                item?.imdb?.id ||
+                item?.imdb_id ||
+                "";
+
+            const hasSourceImdbId =
+                /^tt\d+$/i.test(
+                    String(sourceImdbId).trim()
+                );
+
+            const shouldFetchDetail = options.tvbFastMode
+                ? (!hasDescription || !hasSourceImdbId)
+                : (!hasDescription || !hasRating);
+
+            if (shouldFetchDetail) {
                 const slug = String(item?.slug || "").trim();
 
                 const cacheKey = slug
@@ -8281,10 +8298,12 @@ else if (args.id === "pa_animation_new") {
 
 
 else if (args.id === "pa_tvb") {
-    // TVB đã có dữ liệu catalog và poster từ nguồn.
-    // Không chờ truy vấn PhimAPI/Cinemeta cho từng phim.
-    // Giữ nguyên forcedType đã xác định ở nhánh TVB phía trên.
-    enableCinemetaPreview = false;
+    previewType =
+        forcedType === "series"
+            ? "series"
+            : "movie";
+
+    enableCinemetaPreview = true;
 }
 
 
@@ -8293,7 +8312,10 @@ let metas;
 if (enableCinemetaPreview) {
     metas = await movinaEnrichMovieTrendingPreviews(
         items,
-        previewType
+        previewType,
+        {
+            tvbFastMode: args.id === "pa_tvb"
+        }
     );
 } else {
     metas = items
