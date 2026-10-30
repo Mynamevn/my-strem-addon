@@ -2823,7 +2823,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 }
 
-async function movinaFetchClassicCatalogUncached(type) {
+async function movinaFetchClassicCatalog(type) {
     const rankedTitles =
         await movinaClassicGetRankedTitles(type);
 
@@ -2878,7 +2878,7 @@ if (type === "series") {
      * khi trả kết quả và ngừng cấp request mới khi bị 429.
      */
 
-    const SEARCH_CONCURRENCY = 4;
+    const SEARCH_CONCURRENCY = 2;
     const MAX_SEARCHES = Math.min(100, rankedTitles.length);
 
     let searched = 0;
@@ -3068,107 +3068,6 @@ if (type === "series") {
     return result;
 }
 
-
-/* ============================================================
-   [CLASSIC-001.01] [MOVINA]
-   COMPLETE CLASSIC CATALOG CACHE
-   - Cache danh sách đã ghép IMDb Top 250 + PhimAPI.
-   - Chống nhiều request cùng lúc chạy lại cùng một catalog.
-   - Cache riêng movie và series.
-   ============================================================ */
-
-const MOVINA_CLASSIC_CATALOG_CACHE = new Map();
-
-const MOVINA_CLASSIC_CATALOG_CACHE_TTL =
-    6 * 60 * 60 * 1000;
-
-async function movinaFetchClassicCatalog(type) {
-    const key = type === "series"
-        ? "series"
-        : "movie";
-
-    const now = Date.now();
-    const cached = MOVINA_CLASSIC_CATALOG_CACHE.get(key);
-
-    // Đã có kết quả hoàn chỉnh còn hạn.
-    if (
-        cached?.items &&
-        cached.expiresAt > now
-    ) {
-        console.log(
-            "[MOVINA CLASSIC CATALOG CACHE] HIT:",
-            key,
-            "| Items:",
-            cached.items.length
-        );
-
-        return cached.items.map(item => ({ ...item }));
-    }
-
-    // Một request khác đang xây dựng cùng catalog.
-    // Dùng chung Promise, không tìm kiếm trùng lặp.
-    if (cached?.promise) {
-        console.log(
-            "[MOVINA CLASSIC CATALOG CACHE] IN-FLIGHT:",
-            key
-        );
-
-        const items = await cached.promise;
-
-        return items.map(item => ({ ...item }));
-    }
-
-    console.log(
-        "[MOVINA CLASSIC CATALOG CACHE] MISS:",
-        key
-    );
-
-    const requestPromise = movinaFetchClassicCatalogUncached(key)
-        .then(items => {
-            const result = Array.isArray(items)
-                ? items
-                : [];
-
-            if (result.length > 0) {
-                MOVINA_CLASSIC_CATALOG_CACHE.set(key, {
-                    expiresAt:
-                        Date.now() +
-                        MOVINA_CLASSIC_CATALOG_CACHE_TTL,
-                    items: result.map(item => ({ ...item }))
-                });
-
-                console.log(
-                    "[MOVINA CLASSIC CATALOG CACHE] STORED:",
-                    key,
-                    "| Items:",
-                    result.length,
-                    "| TTL: 6h"
-                );
-            } else {
-                MOVINA_CLASSIC_CATALOG_CACHE.delete(key);
-
-                console.warn(
-                    "[MOVINA CLASSIC CATALOG CACHE] EMPTY:",
-                    key,
-                    "| Will retry next request."
-                );
-            }
-
-            return result;
-        })
-        .catch(error => {
-            MOVINA_CLASSIC_CATALOG_CACHE.delete(key);
-            throw error;
-        });
-
-    MOVINA_CLASSIC_CATALOG_CACHE.set(key, {
-        promise: requestPromise
-    });
-
-    const result = await requestPromise;
-
-    return result.map(item => ({ ...item }));
-}
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
@@ -7078,6 +6977,323 @@ async function movinaFetchCinemetaRating(imdbId, type = "movie") {
 }
 
 
+/* ============================================================
+   [STREMIO-012.03] [PROVIDERS: MOVINA]
+   FAST CATALOG ENRICHMENT
+   - Ưu tiên IMDb rating.
+   - Dùng preview cache nếu đã có.
+   - Hoãn preview mới sang lượt truy cập sau.
+   - Áp dụng cho toàn bộ catalog VOD và thể loại.
+   ============================================================ */
+
+// Ghi nhận phim đã xuất hiện nhưng chưa có preview cache.
+// Lần đầu: không chờ request chi tiết.
+// Lần sau: cho phép bổ sung preview.
+const MOVINA_PREVIEW_DEFERRED_ITEMS = new Map();
+
+const MOVINA_PREVIEW_DEFER_DELAY = 60 * 1000;
+
+// Giới hạn số request lấy chi tiết trong một lượt catalog.
+// Không ảnh hưởng giới hạn queue PhimAPI hiện tại.
+const MOVINA_PREVIEW_MAX_DETAIL_REQUESTS = 12;
+
+async function movinaEnrichMovieTrendingPreviews(
+    items,
+    type = "movie",
+    options = {}
+) {
+    type = type === "series" ? "series" : "movie";
+
+    const sourceItems = (items || []).slice(0, CATALOG_TARGET);
+    const metas = new Array(sourceItems.length);
+
+    let nextIndex = 0;
+    let detailRequests = 0;
+    let detailCacheHits = 0;
+    let deferredDetails = 0;
+    let ratingRequests = 0;
+    let ratingCacheHits = 0;
+
+    const WORKERS = Math.min(8, sourceItems.length);
+
+    function getValidRating(value) {
+        const rating = Number(value);
+
+        return (
+            Number.isFinite(rating) &&
+            rating > 0 &&
+            rating <= 10
+        )
+            ? Math.round(rating * 10) / 10
+            : null;
+    }
+
+    function getImdbId(...values) {
+        for (const value of values) {
+            const id = String(value || "").trim();
+
+            if (/^tt\d+$/i.test(id)) {
+                return id;
+            }
+        }
+
+        return "";
+    }
+
+    async function worker() {
+        while (true) {
+            const index = nextIndex++;
+
+            if (index >= sourceItems.length) {
+                return;
+            }
+
+            const item = sourceItems[index];
+            const preview = makeCatalogMeta(item, type);
+
+            if (!preview?.id || !preview?.name) {
+                metas[index] = null;
+                continue;
+            }
+
+            const sourceRating = getValidRating(
+                preview.imdbRating
+            );
+
+            const slug = String(item?.slug || "").trim();
+
+            const previewCacheKey = slug
+                ? "phimapi:detail:" + slug
+                : "";
+
+            const cachedPreview = previewCacheKey
+                ? MOVINA_CINEMETA_PREVIEW_CACHE.get(
+                    previewCacheKey
+                )
+                : null;
+
+            const previewCacheValid =
+                cachedPreview &&
+                cachedPreview.expiresAt > Date.now();
+
+            let extra = {};
+
+            /*
+             * BƯỚC 1:
+             * Dùng preview cache nếu đã có.
+             *
+             * Nếu chưa có cache:
+             * - Lần đầu: ghi nhận và bỏ qua request chi tiết.
+             * - Lần sau: mới cho phép lấy preview.
+             */
+            if (previewCacheValid) {
+                detailCacheHits++;
+
+                extra = await movinaFetchCinemetaPreview(
+                    item,
+                    type
+                );
+
+            } else if (slug) {
+                const now = Date.now();
+
+                const deferred =
+                    MOVINA_PREVIEW_DEFERRED_ITEMS.get(slug);
+
+                if (!deferred) {
+                    MOVINA_PREVIEW_DEFERRED_ITEMS.set(
+                        slug,
+                        {
+                            firstSeenAt: now,
+                            lastAttemptAt: 0
+                        }
+                    );
+
+                    deferredDetails++;
+
+                } else {
+                    const elapsed =
+                        now - deferred.firstSeenAt;
+
+                    const retryElapsed =
+                        !deferred.lastAttemptAt ||
+                        now - deferred.lastAttemptAt >=
+                            MOVINA_PREVIEW_DEFER_DELAY;
+
+                    if (
+                        elapsed >= MOVINA_PREVIEW_DEFER_DELAY &&
+                        retryElapsed &&
+                        detailRequests <
+                            MOVINA_PREVIEW_MAX_DETAIL_REQUESTS
+                    ) {
+                        deferred.lastAttemptAt = now;
+                        detailRequests++;
+
+                        extra = await movinaFetchCinemetaPreview(
+                            item,
+                            type
+                        );
+                    } else {
+                        deferredDetails++;
+                    }
+                }
+            }
+
+            /*
+             * BƯỚC 2:
+             * Ưu tiên rating đã có.
+             * Nếu thiếu, tra Cinemeta trực tiếp bằng IMDb ID.
+             *
+             * Không cần lấy preview PhimAPI trước.
+             * Không tìm IMDb ID bằng tên phim.
+             * Không tự tạo hoặc đoán IMDb ID.
+             */
+            let cinemetaRating = null;
+
+            const cachedDetailRating =
+                getValidRating(extra?.imdbRating);
+
+            const availableRating =
+                sourceRating ||
+                cachedDetailRating;
+
+            const candidateImdbId = getImdbId(
+                item?.__movinaClassicImdbId,
+                item?.imdb?.id,
+                item?.imdb_id,
+                item?.imdbId,
+                extra?.imdbId,
+                /^tt\d+$/i.test(String(preview.id || ""))
+                    ? preview.id
+                    : ""
+            );
+
+            if (!availableRating && candidateImdbId) {
+                const ratingCacheKey =
+                    (type === "series" ? "series:" : "movie:") +
+                    candidateImdbId;
+
+                const ratingCached =
+                    MOVINA_CINEMETA_RATING_CACHE.get(
+                        ratingCacheKey
+                    );
+
+                if (
+                    ratingCached &&
+                    ratingCached.expiresAt > Date.now()
+                ) {
+                    ratingCacheHits++;
+                } else {
+                    ratingRequests++;
+                }
+
+                cinemetaRating =
+                    await movinaFetchCinemetaRating(
+                        candidateImdbId,
+                        type
+                    );
+
+                if (cinemetaRating !== null) {
+                    console.log(
+                        "[MOVINA CINEMETA RATING] Recovered:",
+                        JSON.stringify({
+                            id: candidateImdbId,
+                            name: preview.name,
+                            rating: cinemetaRating
+                        })
+                    );
+                }
+            }
+
+            const finalRating =
+                sourceRating ||
+                cachedDetailRating ||
+                getValidRating(cinemetaRating);
+
+            /*
+             * BƯỚC 3:
+             * Dựng metadata ngay.
+             *
+             * Preview chưa có thì không chặn catalog.
+             * Preview đã cache thì dùng ngay.
+             */
+            metas[index] = {
+                ...preview,
+
+                ...(
+                    !preview.description &&
+                    extra.description
+                        ? {
+                            description: extra.description
+                        }
+                        : {}
+                ),
+
+                ...(finalRating !== null
+                    ? {
+                        imdbRating: finalRating
+                    }
+                    : {}),
+
+                id: preview.id,
+                type,
+                name: preview.name,
+                poster: preview.poster,
+                posterShape: preview.posterShape
+            };
+        }
+    }
+
+    await Promise.all(
+        Array.from(
+            { length: WORKERS },
+            () => worker()
+        )
+    );
+
+    const result = metas.filter(
+        meta => meta?.id && meta?.name
+    );
+
+    /*
+     * Dọn các dấu mốc trì hoãn quá cũ để tránh Map tăng mãi.
+     */
+    if (MOVINA_PREVIEW_DEFERRED_ITEMS.size > 5000) {
+        const cutoff = Date.now() - 60 * 60 * 1000;
+
+        for (const [slug, entry] of
+            MOVINA_PREVIEW_DEFERRED_ITEMS.entries()) {
+
+            if (entry.firstSeenAt < cutoff) {
+                MOVINA_PREVIEW_DEFERRED_ITEMS.delete(slug);
+            }
+        }
+    }
+
+    console.log(
+        "[MOVINA FAST CATALOG ENRICHMENT]",
+        JSON.stringify({
+            type,
+            input: sourceItems.length,
+            output: result.length,
+            workers: WORKERS,
+            ratingRequests,
+            ratingCacheHits,
+            detailRequests,
+            detailCacheHits,
+            deferredDetails,
+            maxDetailRequests:
+                MOVINA_PREVIEW_MAX_DETAIL_REQUESTS,
+            previewCacheSize:
+                MOVINA_CINEMETA_PREVIEW_CACHE.size,
+            ratingCacheSize:
+                MOVINA_CINEMETA_RATING_CACHE.size
+        })
+    );
+
+    return result;
+}
+
 
 /* ============================================================
    [STREMIO-012.04] [PROVIDERS: MOVINA]
@@ -7309,7 +7525,6 @@ function movinaSchedulePreviewCompletion(
         );
     }
 }
-
 
 /* ============================================================
    [CORE-003.06] [PROVIDERS: MOVINA]
@@ -8467,6 +8682,7 @@ if (enableCinemetaPreview) {
                 meta.name
         );
 }
+
 // ========================================================
 // [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
 // ========================================================
