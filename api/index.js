@@ -2823,7 +2823,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
     }
 }
 
-async function movinaFetchClassicCatalog(type) {
+async function movinaFetchClassicCatalogUncached(type) {
     const rankedTitles =
         await movinaClassicGetRankedTitles(type);
 
@@ -3068,6 +3068,95 @@ if (type === "series") {
     return result;
 }
 
+/* ============================================================
+   [STREMIO-012.05] [PROVIDERS: MOVINA]
+   CLASSIC CATALOG RESULT CACHE
+   - Cache riêng movie / series.
+   - Giữ nguyên thứ hạng và kết quả ghép.
+   - Chống nhiều request cùng lúc dò lại Top IMDb.
+   ============================================================ */
+
+const MOVINA_CLASSIC_CATALOG_CACHE = new Map();
+const MOVINA_CLASSIC_CATALOG_INFLIGHT = new Map();
+
+const MOVINA_CLASSIC_CATALOG_TTL = 6 * 60 * 60 * 1000;
+
+async function movinaFetchClassicCatalog(type) {
+    const normalizedType =
+        type === "series" ? "series" : "movie";
+
+    const now = Date.now();
+    const cached =
+        MOVINA_CLASSIC_CATALOG_CACHE.get(normalizedType);
+
+    if (cached && cached.expiresAt > now) {
+        console.log(
+            "[MOVINA CLASSIC CATALOG CACHE] HIT:",
+            normalizedType,
+            "| Items:",
+            cached.items.length
+        );
+
+        return cached.items.map(item => ({ ...item }));
+    }
+
+    if (cached) {
+        MOVINA_CLASSIC_CATALOG_CACHE.delete(normalizedType);
+    }
+
+    const running =
+        MOVINA_CLASSIC_CATALOG_INFLIGHT.get(normalizedType);
+
+    if (running) {
+        console.log(
+            "[MOVINA CLASSIC CATALOG CACHE] IN-FLIGHT:",
+            normalizedType
+        );
+
+        const items = await running;
+        return items.map(item => ({ ...item }));
+    }
+
+    const task = movinaFetchClassicCatalogUncached(
+        normalizedType
+    );
+
+    MOVINA_CLASSIC_CATALOG_INFLIGHT.set(
+        normalizedType,
+        task
+    );
+
+    try {
+        const items = await task;
+
+        if (Array.isArray(items) && items.length > 0) {
+            MOVINA_CLASSIC_CATALOG_CACHE.set(
+                normalizedType,
+                {
+                    expiresAt:
+                        Date.now() + MOVINA_CLASSIC_CATALOG_TTL,
+                    items: items.map(item => ({ ...item }))
+                }
+            );
+        }
+
+        console.log(
+            "[MOVINA CLASSIC CATALOG CACHE] STORED:",
+            normalizedType,
+            "| Items:",
+            Array.isArray(items) ? items.length : 0
+        );
+
+        return Array.isArray(items) ? items : [];
+
+    } finally {
+        if (
+            MOVINA_CLASSIC_CATALOG_INFLIGHT.get(normalizedType) === task
+        ) {
+            MOVINA_CLASSIC_CATALOG_INFLIGHT.delete(normalizedType);
+        }
+    }
+}
 
 // Ngày Việt Nam: thay đổi danh sách theo ngày.
 function movinaTrendingDaySeed() {
@@ -6991,10 +7080,10 @@ async function movinaFetchCinemetaRating(imdbId, type = "movie") {
 // Lần sau: cho phép bổ sung preview.
 const MOVINA_PREVIEW_DEFERRED_ITEMS = new Map();
 
-const MOVINA_PREVIEW_DEFER_DELAY = 60 * 1000;
+// Không trì hoãn preview theo số lần người dùng mở catalog.
+// Tác vụ nền STREMIO-012.04 sẽ đảm nhiệm phần hoàn thiện còn thiếu.
 
-// Giới hạn số request lấy chi tiết trong một lượt catalog.
-// Không ảnh hưởng giới hạn queue PhimAPI hiện tại.
+// Giới hạn request chi tiết ở lượt catalog chính.
 const MOVINA_PREVIEW_MAX_DETAIL_REQUESTS = 12;
 
 async function movinaEnrichMovieTrendingPreviews(
@@ -7078,13 +7167,11 @@ async function movinaEnrichMovieTrendingPreviews(
 
             let extra = {};
 
-            /*
+                        /*
              * BƯỚC 1:
              * Dùng preview cache nếu đã có.
-             *
-             * Nếu chưa có cache:
-             * - Lần đầu: ghi nhận và bỏ qua request chi tiết.
-             * - Lần sau: mới cho phép lấy preview.
+             * Nếu chưa có, thử lấy ngay trong giới hạn request.
+             * Phần còn thiếu sẽ được tác vụ nền hoàn thiện.
              */
             if (previewCacheValid) {
                 detailCacheHits++;
@@ -7094,49 +7181,19 @@ async function movinaEnrichMovieTrendingPreviews(
                     type
                 );
 
+            } else if (
+                slug &&
+                detailRequests < MOVINA_PREVIEW_MAX_DETAIL_REQUESTS
+            ) {
+                detailRequests++;
+
+                extra = await movinaFetchCinemetaPreview(
+                    item,
+                    type
+                );
+
             } else if (slug) {
-                const now = Date.now();
-
-                const deferred =
-                    MOVINA_PREVIEW_DEFERRED_ITEMS.get(slug);
-
-                if (!deferred) {
-                    MOVINA_PREVIEW_DEFERRED_ITEMS.set(
-                        slug,
-                        {
-                            firstSeenAt: now,
-                            lastAttemptAt: 0
-                        }
-                    );
-
-                    deferredDetails++;
-
-                } else {
-                    const elapsed =
-                        now - deferred.firstSeenAt;
-
-                    const retryElapsed =
-                        !deferred.lastAttemptAt ||
-                        now - deferred.lastAttemptAt >=
-                            MOVINA_PREVIEW_DEFER_DELAY;
-
-                    if (
-                        elapsed >= MOVINA_PREVIEW_DEFER_DELAY &&
-                        retryElapsed &&
-                        detailRequests <
-                            MOVINA_PREVIEW_MAX_DETAIL_REQUESTS
-                    ) {
-                        deferred.lastAttemptAt = now;
-                        detailRequests++;
-
-                        extra = await movinaFetchCinemetaPreview(
-                            item,
-                            type
-                        );
-                    } else {
-                        deferredDetails++;
-                    }
-                }
+                deferredDetails++;
             }
 
             /*
@@ -7498,8 +7555,23 @@ function movinaSchedulePreviewCompletion(
                 error?.message || error
             );
         })
-        .finally(() => {
+                .finally(() => {
             MOVINA_PREVIEW_BACKGROUND_JOBS.delete(jobKey);
+
+            // Xóa kết quả catalog cũ để lần tải kế tiếp
+            // lấy metadata đã được hoàn thiện từ preview cache.
+            for (const [cacheKey, cached] of
+                MOVINA_FINAL_CATALOG_CACHE.entries()) {
+
+                if (cached?.catalogId === catalogId) {
+                    MOVINA_FINAL_CATALOG_CACHE.delete(cacheKey);
+                }
+            }
+
+            console.log(
+                "[MOVINA PREVIEW BACKGROUND] CATALOG CACHE INVALIDATED:",
+                catalogId
+            );
         });
 
     MOVINA_PREVIEW_BACKGROUND_JOBS.set(jobKey, task);
@@ -8762,10 +8834,11 @@ if (
             );
 
             if (finalCacheKey) {
-  MOVINA_FINAL_CATALOG_CACHE.set(finalCacheKey, {
-    expiresAt: Date.now() + MOVINA_FINAL_CATALOG_TTL,
-    metas: metas.map(meta => ({ ...meta }))
-  });
+    MOVINA_FINAL_CATALOG_CACHE.set(finalCacheKey, {
+        catalogId: args.id,
+        expiresAt: Date.now() + MOVINA_FINAL_CATALOG_TTL,
+        metas: metas.map(meta => ({ ...meta }))
+    });
 }
 
 return { metas };
