@@ -7540,28 +7540,6 @@ function movinaIdentityRemember(
             updatedAt: Date.now()
         });
     }    
-    
-    // Persist cả kết quả xác thực lẫn kết quả từ chối.
-    // Đăng ký với Vercel để tác vụ không bị dừng
-    // ngay khi HTTP response hoàn tất.
-    if (
-        typeof movinaIdentityPersistRecord === "function"
-    ) {
-        const persistTask =
-            movinaIdentityPersistRecord(record);
-
-        try {
-            waitUntil(persistTask);
-        } catch (error) {
-            // Fallback khi chạy ngoài Vercel request context.
-            void persistTask;
-
-            console.warn(
-                "[MOVINA IDENTITY KV WAITUNTIL]",
-                error?.message || error
-            );
-        }
-    }
 
     console.log(
         "[MOVINA IMDb IDENTITY CACHE]",
@@ -7600,286 +7578,6 @@ function movinaIdentityGetSource(imdbId) {
     return MOVINA_IMDB_SOURCE_BY_ID.get(id) || null;
 }
 
-/* ============================================================
-   [STREMIO-012.07] [PROVIDERS: MOVINA]
-   PERSISTENT IMDb IDENTITY STORAGE
-   - Optional Upstash Redis REST.
-   - RAM remains the fast cache.
-   - Shared storage survives Vercel cold starts.
-   ============================================================ */
-
-const MOVINA_IDENTITY_KV_PREFIX =
-    "movina:identity:v1:";
-
-const MOVINA_IDENTITY_KV_TIMEOUT = 2500;
-
-let MOVINA_IDENTITY_KV_DISABLED = false;
-
-function movinaIdentityKvConfig() {
-    const url = String(
-        process.env.MOVINA_IDENTITY_KV_URL ||
-        process.env.KV_REST_API_URL ||
-        process.env.UPSTASH_REDIS_REST_URL ||
-        ""
-    ).trim().replace(/\/+$/, "");
-
-    const token = String(
-        process.env.MOVINA_IDENTITY_KV_TOKEN ||
-        process.env.KV_REST_API_TOKEN ||
-        process.env.UPSTASH_REDIS_REST_TOKEN ||
-        ""
-    ).trim();
-
-    if (!url || !token) return null;
-
-    return { url, token };
-}
-
-async function movinaIdentityKvCommand(command) {
-    if (MOVINA_IDENTITY_KV_DISABLED) return null;
-
-    const config = movinaIdentityKvConfig();
-
-    if (!config) return null;
-
-    try {
-        const response = await axios.post(
-            config.url,
-            command,
-            {
-                timeout: MOVINA_IDENTITY_KV_TIMEOUT,
-                headers: {
-                    "Authorization": "Bearer " + config.token,
-                    "Content-Type": "application/json"
-                }
-            }
-        );
-
-        return response.data?.result ?? null;
-
-    } catch (error) {
-        const status =
-            Number(error?.response?.status || 0);
-
-        if (
-            status === 401 ||
-            status === 403 ||
-            status === 404
-        ) {
-            MOVINA_IDENTITY_KV_DISABLED = true;
-        }
-
-        console.warn(
-            "[MOVINA IDENTITY KV ERROR]",
-            JSON.stringify({
-                status,
-                message: error?.message || ""
-            })
-        );
-
-        return null;
-    }
-}
-
-async function movinaIdentityKvGet(key) {
-    if (MOVINA_IDENTITY_KV_DISABLED) return null;
-
-    const config = movinaIdentityKvConfig();
-
-    if (!config || !key) return null;
-
-    try {
-        const response = await axios.get(
-            config.url +
-                "/get/" +
-                encodeURIComponent(key),
-            {
-                timeout: MOVINA_IDENTITY_KV_TIMEOUT,
-                headers: {
-                    "Authorization": "Bearer " + config.token
-                }
-            }
-        );
-
-        const value = response.data?.result;
-
-        if (!value) return null;
-
-        return typeof value === "string"
-            ? JSON.parse(value)
-            : value;
-
-    } catch (error) {
-        const status =
-            Number(error?.response?.status || 0);
-
-        if (
-            status === 401 ||
-            status === 403 ||
-            status === 404
-        ) {
-            MOVINA_IDENTITY_KV_DISABLED = true;
-        }
-
-        console.warn(
-            "[MOVINA IDENTITY KV READ ERROR]",
-            JSON.stringify({
-                status,
-                message: error?.message || ""
-            })
-        );
-
-        return null;
-    }
-}
-
-async function movinaIdentityPersistRecord(record) {
-    if (!record?.key) return false;
-
-    const ttlSeconds = Math.max(
-        60,
-        Math.ceil(
-            (Number(record.expiresAt || 0) - Date.now()) /
-            1000
-        )
-    );
-
-    if (ttlSeconds <= 0) return false;
-
-    const itemKey =
-        MOVINA_IDENTITY_KV_PREFIX +
-        "item:" +
-        encodeURIComponent(record.key);
-
-    const itemResult =
-        await movinaIdentityKvCommand([
-            "SET",
-            itemKey,
-            JSON.stringify(record),
-            "EX",
-            String(ttlSeconds)
-        ]);
-
-    let sourceResult = null;
-
-    if (
-        record.verified === true &&
-        /^tt\d+$/i.test(
-            String(record.imdbCandidate || "")
-        )
-    ) {
-        const imdbId =
-            String(record.imdbCandidate).trim();
-
-        const sourceKey =
-            MOVINA_IDENTITY_KV_PREFIX +
-            "source:" +
-            imdbId;
-
-        const sourceRecord = {
-            ...record.source,
-            imdbId,
-            verified: true,
-            updatedAt: Date.now()
-        };
-
-        sourceResult =
-            await movinaIdentityKvCommand([
-                "SET",
-                sourceKey,
-                JSON.stringify(sourceRecord),
-                "EX",
-                String(ttlSeconds)
-            ]);
-    }
-
-    return itemResult === "OK" &&
-        (
-            record.verified !== true ||
-            sourceResult === "OK"
-        );
-}
-
-async function movinaIdentityRestoreItem(item, type) {
-    const key = movinaIdentityKey(item, type);
-
-    if (!key) return null;
-
-    const cached =
-        movinaIdentityGet(item, type);
-
-    if (cached) return cached;
-
-    const storageKey =
-        MOVINA_IDENTITY_KV_PREFIX +
-        "item:" +
-        encodeURIComponent(key);
-
-    const record =
-        await movinaIdentityKvGet(storageKey);
-
-    if (
-        !record ||
-        record.expiresAt <= Date.now() ||
-        record.key !== key
-    ) {
-        return null;
-    }
-
-    MOVINA_IMDB_IDENTITY_CACHE.set(key, record);
-
-    if (
-        record.verified === true &&
-        /^tt\d+$/i.test(
-            String(record.imdbCandidate || "")
-        )
-    ) {
-        MOVINA_IMDB_SOURCE_BY_ID.set(
-            record.imdbCandidate,
-            {
-                ...record.source,
-                imdbId: record.imdbCandidate,
-                verified: true,
-                updatedAt: record.updatedAt
-            }
-        );
-    }
-
-    return record;
-}
-
-async function movinaIdentityRestoreSource(imdbId) {
-    const id = String(imdbId || "").trim();
-
-    if (!/^tt\d+$/i.test(id)) return null;
-
-    const cached =
-        movinaIdentityGetSource(id);
-
-    if (cached?.verified === true) {
-        return cached;
-    }
-
-    const storageKey =
-        MOVINA_IDENTITY_KV_PREFIX +
-        "source:" +
-        id;
-
-    const record =
-        await movinaIdentityKvGet(storageKey);
-
-    if (
-        !record ||
-        record.verified !== true ||
-        String(record.imdbId || "") !== id
-    ) {
-        return null;
-    }
-
-    MOVINA_IMDB_SOURCE_BY_ID.set(id, record);
-
-    return record;
-}
 
 /*
  * Fail-closed validation:
@@ -8053,9 +7751,17 @@ async function movinaVerifyImdbIdentity(
             verified: false,
             reason: "INVALID_IMDB_ID"
         };
-    }
+    }    
 
-    const cacheKey = safeType + ":" + id;
+    // Cache phải gắn với từng phim MOVINA cụ thể.
+    // Không dùng chung kết quả xác thực giữa hai phim
+    // chỉ vì chúng có cùng IMDb ID ứng viên.
+    const cacheKey = JSON.stringify([
+        safeType,
+        id,
+        movinaIdentityKey(source, safeType)
+    ]);
+
     const now = Date.now();
 
     const cached =
@@ -8642,22 +8348,9 @@ function movinaSchedulePreviewCompletion(
                 // Đối chiếu PhimAPI với metadata lấy từ Cinemeta.
                 // -------------------------------------------------
 
-                                // Khôi phục Identity từ Redis nếu RAM chưa có.
-                let existingIdentity =
+                // Đọc Identity Registry từ RAM.
+                const existingIdentity =
                     movinaIdentityGet(item, itemType);
-
-                if (
-                    !existingIdentity &&
-                    typeof movinaIdentityRestoreItem === "function"
-                ) {
-                    await movinaIdentityRestoreItem(
-                        item,
-                        itemType
-                    );
-
-                    existingIdentity =
-                        movinaIdentityGet(item, itemType);
-                }
 
                 let verifiedImdbId =
                     existingIdentity?.verified === true
