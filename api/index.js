@@ -7719,6 +7719,165 @@ function movinaValidateImdbCandidate(
     };
 }
 
+/* ============================================================
+   [STREMIO-012.06] [PROVIDERS: MOVINA]
+   CINEMETA IMDb IDENTITY VERIFICATION
+   - Resolve metadata using the candidate IMDb ID.
+   - Compare external title/year against PhimAPI source.
+   - Cache positive and negative results.
+   ============================================================ */
+
+const MOVINA_IMDB_VERIFY_CACHE = new Map();
+const MOVINA_IMDB_VERIFY_INFLIGHT = new Map();
+
+const MOVINA_IMDB_VERIFY_TTL =
+    6 * 60 * 60 * 1000;
+
+const MOVINA_IMDB_VERIFY_FAIL_TTL =
+    15 * 60 * 1000;
+
+async function movinaVerifyImdbIdentity(
+    source,
+    imdbId,
+    type = "movie"
+) {
+    const id = String(imdbId || "").trim();
+    const safeType =
+        type === "series" ? "series" : "movie";
+
+    if (!/^tt\d+$/i.test(id)) {
+        return {
+            verified: false,
+            reason: "INVALID_IMDB_ID"
+        };
+    }
+
+    const cacheKey = safeType + ":" + id;
+    const now = Date.now();
+
+    const cached =
+        MOVINA_IMDB_VERIFY_CACHE.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+        return cached.value;
+    }
+
+    const inflight =
+        MOVINA_IMDB_VERIFY_INFLIGHT.get(cacheKey);
+
+    if (inflight) {
+        return inflight;
+    }
+
+    const requestPromise = (async () => {
+        try {
+            const response = await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                    safeType + "/" +
+                    encodeURIComponent(id) +
+                    ".json",
+                {
+                    timeout: 3000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+            const meta = response.data?.meta;
+
+            if (!meta || typeof meta !== "object") {
+                return {
+                    verified: false,
+                    reason: "CINEMETA_META_MISSING"
+                };
+            }
+
+            if (
+                meta.imdb_id &&
+                String(meta.imdb_id).trim() !== id
+            ) {
+                return {
+                    verified: false,
+                    reason: "CINEMETA_ID_MISMATCH"
+                };
+            }
+
+            const candidate = {
+                id,
+                type: safeType,
+                name: meta.name || "",
+                original_name:
+                    meta.original_name ||
+                    meta.originalName ||
+                    "",
+                year:
+                    meta.year ||
+                    meta.releaseInfo ||
+                    meta.released ||
+                    "",
+                aliases: Array.isArray(meta.aliases)
+                    ? meta.aliases
+                    : []
+            };
+
+            const validation =
+                movinaValidateImdbCandidate(
+                    source,
+                    candidate,
+                    safeType
+                );
+
+            return {
+                ...validation,
+                imdbId: id,
+                candidate
+            };
+
+        } catch (error) {
+            console.warn(
+                "[MOVINA IMDb VERIFY ERROR]",
+                JSON.stringify({
+                    id,
+                    type: safeType,
+                    status: error?.response?.status || 0,
+                    message: error?.message || ""
+                })
+            );
+
+            return {
+                verified: false,
+                reason: "CINEMETA_REQUEST_FAILED"
+            };
+        }
+    })();
+
+    MOVINA_IMDB_VERIFY_INFLIGHT.set(
+        cacheKey,
+        requestPromise
+    );
+
+    try {
+        const result = await requestPromise;
+
+        MOVINA_IMDB_VERIFY_CACHE.set(cacheKey, {
+            value: result,
+            expiresAt:
+                Date.now() + (
+                    result.verified
+                        ? MOVINA_IMDB_VERIFY_TTL
+                        : MOVINA_IMDB_VERIFY_FAIL_TTL
+                )
+        });
+
+        return result;
+
+    } finally {
+        MOVINA_IMDB_VERIFY_INFLIGHT.delete(cacheKey);
+    }
+}
+
 async function movinaFetchCinemetaRating(imdbId, type = "movie") {
     const id = String(imdbId || "").trim();
 
@@ -36321,9 +36480,10 @@ let episodeNumber = 0;
 
     }
 
-        // =====================================================
+         // =====================================================
     // B + C. IMDb SERIES / MOVIE
-    // REVERSE MAPPING FIRST + CINEMETA FALLBACK
+    // MOVINA REVERSE MAPPING FIRST
+    // CINEMETA + IMDb SUGGESTION FALLBACK
     // =====================================================
 
     else if (rawId.startsWith("tt")) {
@@ -36331,11 +36491,16 @@ let episodeNumber = 0;
         const idParts = rawId.split(":");
         const imdbId = idParts[0];
 
-        const isSeries = streamType === "series";
-        const requestedType = isSeries ? "series" : "movie";
+        const requestedType =
+            streamType === "series"
+                ? "series"
+                : "movie";
 
-        // Giữ nguyên season / episode từ IMDb video ID.
-        if (isSeries) {
+        // -------------------------------------------------
+        // 1. GIỮ NGUYÊN SEASON / EPISODE
+        // -------------------------------------------------
+
+        if (requestedType === "series") {
             seasonNumber =
                 Number(idParts[1]) || 1;
 
@@ -36344,24 +36509,21 @@ let episodeNumber = 0;
         }
 
         console.log(
-            "[STREAM] IMDb ID:",
-            imdbId,
-            "| Type:",
-            requestedType,
-            "| Season:",
-            seasonNumber,
-            "| Episode:",
-            episodeNumber
+            "[STREAM IMDb]",
+            JSON.stringify({
+                imdbId,
+                type: requestedType,
+                season: seasonNumber,
+                episode: episodeNumber
+            })
         );
 
         // -------------------------------------------------
-        // 1. ƯU TIÊN MOVINA REVERSE MAPPING
+        // 2. ƯU TIÊN MOVINA REVERSE MAPPING
         // -------------------------------------------------
 
         const mappedSource =
-            typeof movinaIdentityGetSource === "function"
-                ? movinaIdentityGetSource(imdbId)
-                : null;
+            movinaIdentityGetSource(imdbId);
 
         const mappedType =
             String(mappedSource?.type || "").toLowerCase();
@@ -36377,9 +36539,8 @@ let episodeNumber = 0;
             Number(mappedSource?.year || 0);
 
         const mappingValid =
-            mappedSource &&
-            mappedSource.verified === true &&
-            mappedName &&
+            mappedSource?.verified === true &&
+            mappedName.length > 0 &&
             mappedType === requestedType;
 
         if (mappingValid) {
@@ -36390,6 +36551,10 @@ let episodeNumber = 0;
             resolvedMetadata = {
                 name:
                     mappedSource.name ||
+                    mappedName,
+
+                original_name:
+                    mappedSource.origin_name ||
                     mappedName,
 
                 year:
@@ -36414,6 +36579,10 @@ let episodeNumber = 0;
 
         } else {
 
+            // -------------------------------------------------
+            // 3. CINEMETA FALLBACK
+            // -------------------------------------------------
+
             console.log(
                 "[STREAM IMDb REVERSE MAP] MISS:",
                 JSON.stringify({
@@ -36422,10 +36591,6 @@ let episodeNumber = 0;
                     mappedType: mappedType || "NONE"
                 })
             );
-
-            // -------------------------------------------------
-            // 2. CINEMETA FALLBACK
-            // -------------------------------------------------
 
             try {
 
@@ -36451,7 +36616,8 @@ let episodeNumber = 0;
                 const cinemetaMeta =
                     metaRes.data?.meta || {};
 
-                resolvedMetadata = cinemetaMeta;
+                resolvedMetadata =
+                    cinemetaMeta;
 
                 movieName =
                     cinemetaMeta.name || "";
@@ -36484,11 +36650,14 @@ let episodeNumber = 0;
             }
 
             // -------------------------------------------------
-            // 3. IMDb SUGGESTION FALLBACK
-            // Chỉ cần thiết khi không lấy được tên phim.
+            // 4. IMDb SUGGESTION FALLBACK
+            // Giữ hành vi cũ cho phim lẻ.
             // -------------------------------------------------
 
-            if (!movieName) {
+            if (
+                requestedType === "movie" &&
+                !movieName
+            ) {
 
                 try {
 
@@ -36514,7 +36683,7 @@ let episodeNumber = 0;
                             ? imdbRes.data.d
                             : [];
 
-                    const imdbItem =
+                    const imdbMovie =
                         imdbItems.find(
                             item =>
                                 String(item?.id || "") === imdbId
@@ -36522,11 +36691,14 @@ let episodeNumber = 0;
                         imdbItems[0];
 
                     movieName =
-                        imdbItem?.l || "";
+                        imdbMovie?.l || "";
 
-                    if (!movieYear && imdbItem?.y) {
+                    if (
+                        !movieYear &&
+                        imdbMovie?.y
+                    ) {
                         movieYear =
-                            Number(imdbItem.y) || 0;
+                            Number(imdbMovie.y) || 0;
                     }
 
                 } catch (e) {
