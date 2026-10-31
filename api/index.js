@@ -7437,6 +7437,7 @@ const MOVINA_IMDB_IDENTITY_FAIL_TTL =
     24 * 60 * 60 * 1000;
 
 const MOVINA_IMDB_IDENTITY_CACHE_MAX = 5000;
+const MOVINA_IMDB_SOURCE_BY_ID_MAX = 5000;
 
 function movinaNormalizeIdentityTitle(value) {
     return String(value || "")
@@ -7533,13 +7534,29 @@ function movinaIdentityRemember(
     MOVINA_IMDB_IDENTITY_CACHE.set(key, record);
 
     if (verified && imdbId) {
+
+        // Giới hạn dung lượng reverse mapping.
+        if (
+            !MOVINA_IMDB_SOURCE_BY_ID.has(imdbId) &&
+            MOVINA_IMDB_SOURCE_BY_ID.size >=
+                MOVINA_IMDB_SOURCE_BY_ID_MAX
+        ) {
+            const oldestId =
+                MOVINA_IMDB_SOURCE_BY_ID.keys().next().value;
+
+            if (oldestId) {
+                MOVINA_IMDB_SOURCE_BY_ID.delete(oldestId);
+            }
+        }
+
         MOVINA_IMDB_SOURCE_BY_ID.set(imdbId, {
             ...record.source,
             imdbId,
             verified: true,
-            updatedAt: Date.now()
+            updatedAt: Date.now(),
+            expiresAt: record.expiresAt
         });
-    }    
+    }  
 
     console.log(
         "[MOVINA IMDb IDENTITY CACHE]",
@@ -7570,14 +7587,49 @@ function movinaIdentityGet(item, type) {
     return record;
 }
 
+
 function movinaIdentityGetSource(imdbId) {
-    const id = String(imdbId || "").trim();
 
-    if (!/^tt\d+$/i.test(id)) return null;
+    const id =
+        String(imdbId || "").trim();
 
-    return MOVINA_IMDB_SOURCE_BY_ID.get(id) || null;
+    if (!/^tt\d+$/i.test(id)) {
+        return null;
+    }
+
+    const record =
+        MOVINA_IMDB_SOURCE_BY_ID.get(id);
+
+    if (!record) {
+        return null;
+    }
+
+    // Không sử dụng reverse mapping đã hết hạn.
+    if (
+        !record.expiresAt ||
+        record.expiresAt <= Date.now()
+    ) {
+        MOVINA_IMDB_SOURCE_BY_ID.delete(id);
+
+        console.log(
+            "[MOVINA IMDb REVERSE MAP] EXPIRED:",
+            id
+        );
+
+        return null;
+    }
+
+    if (
+        record.verified !== true ||
+        !record.slug ||
+        !record.type
+    ) {
+        MOVINA_IMDB_SOURCE_BY_ID.delete(id);
+        return null;
+    }
+
+    return record;
 }
-
 
 /*
  * Fail-closed validation:
