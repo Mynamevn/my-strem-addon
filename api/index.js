@@ -36815,15 +36815,13 @@ let episodeNumber = 0;
 
             }
 
-            // -------------------------------------------------
+                        // -------------------------------------------------
             // 4. IMDb SUGGESTION FALLBACK
-            // Giữ hành vi cũ cho phim lẻ.
+            // Áp dụng cho cả movie và series.
+            // Chỉ chạy khi Cinemeta không lấy được tên.
             // -------------------------------------------------
 
-            if (
-                requestedType === "movie" &&
-                !movieName
-            ) {
+            if (!movieName) {
 
                 try {
 
@@ -36854,17 +36852,31 @@ let episodeNumber = 0;
                             item =>
                                 String(item?.id || "") === imdbId
                         ) ||
-                        imdbItems[0];
+                        null;
 
-                    movieName =
-                        imdbMovie?.l || "";
+                    if (imdbMovie) {
 
-                    if (
-                        !movieYear &&
-                        imdbMovie?.y
-                    ) {
-                        movieYear =
-                            Number(imdbMovie.y) || 0;
+                        movieName =
+                            imdbMovie.l || "";
+
+                        if (
+                            !movieYear &&
+                            imdbMovie.y
+                        ) {
+                            movieYear =
+                                Number(imdbMovie.y) || 0;
+                        }
+
+                        console.log(
+                            "[STREAM IMDb SUGGESTION FALLBACK]",
+                            JSON.stringify({
+                                imdbId,
+                                movieName,
+                                movieYear,
+                                type: requestedType
+                            })
+                        );
+
                     }
 
                 } catch (e) {
@@ -36877,6 +36889,7 @@ let episodeNumber = 0;
                     );
 
                 }
+
             }
         }
 
