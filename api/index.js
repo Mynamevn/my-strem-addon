@@ -7539,14 +7539,28 @@ function movinaIdentityRemember(
             verified: true,
             updatedAt: Date.now()
         });
-    }
-
-    // Persist cả kết quả xác thực lẫn kết quả từ chối
-    // để instance Vercel khác có thể khôi phục Registry.
+    }    
+    
+    // Persist cả kết quả xác thực lẫn kết quả từ chối.
+    // Đăng ký với Vercel để tác vụ không bị dừng
+    // ngay khi HTTP response hoàn tất.
     if (
         typeof movinaIdentityPersistRecord === "function"
     ) {
-        void movinaIdentityPersistRecord(record);
+        const persistTask =
+            movinaIdentityPersistRecord(record);
+
+        try {
+            waitUntil(persistTask);
+        } catch (error) {
+            // Fallback khi chạy ngoài Vercel request context.
+            void persistTask;
+
+            console.warn(
+                "[MOVINA IDENTITY KV WAITUNTIL]",
+                error?.message || error
+            );
+        }
     }
 
     console.log(
