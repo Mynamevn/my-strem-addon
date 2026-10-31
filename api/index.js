@@ -10506,6 +10506,8 @@ if (
         // ID cuối cùng dùng cho Meta + Video
         let metaId = rawId;
 
+        let mappedSourceForMeta = null;
+
         if (rawId.startsWith("vnwpsw:")) {
 
             movieName =
@@ -10523,8 +10525,11 @@ if (
             metaId =
                 imdbId;
 
-           const mappedSource =
+           mappedSourceForMeta =
     movinaIdentityGetSource(imdbId);
+
+const mappedSource =
+    mappedSourceForMeta;
 
             const mappedType =
                 String(
@@ -10639,36 +10644,61 @@ if (
         // [STREMIO-013.06] [PROVIDERS: ALL] PHIMAPI TITLE SEARCH
         // =====================================================
 
-        const searchUrl =
-            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-            encodeURIComponent(movieName) +
-            "&limit=10";
+        let items = [];
 
-        console.log(
-            "[META] Search URL:",
-            searchUrl
+if (
+    mappedSourceForMeta?.verified === true &&
+    mappedSourceForMeta?.slug
+) {
+
+    // Đã có định danh PhimAPI chính xác:
+    // không tìm kiếm lại bằng tên IMDb.
+    items = [mappedSourceForMeta];
+
+    console.log(
+        "[META] REVERSE SLUG HIT:",
+        JSON.stringify({
+            imdbId,
+            slug: mappedSourceForMeta.slug,
+            name: mappedSourceForMeta.name,
+            year: mappedSourceForMeta.year,
+            type: mappedSourceForMeta.type
+        })
+    );
+
+} else {
+
+    const searchUrl =
+        "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+        encodeURIComponent(movieName) +
+        "&limit=10";
+
+    console.log(
+        "[META] Search URL:",
+        searchUrl
+    );
+
+    const searchRes =
+        await axios.get(
+            searchUrl,
+            {
+                timeout: 8000,
+
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0",
+
+                    "Accept":
+                        "application/json"
+                }
+            }
         );
 
-        const searchRes =
-            await axios.get(
-                searchUrl,
-                {
-                    timeout: 8000,
-
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0",
-
-                        "Accept":
-                            "application/json"
-                    }
-                }
-            );
-
-        const items =
-            searchRes.data?.data?.items ||
-            searchRes.data?.items ||
-            [];
+    items =
+        searchRes.data?.data?.items ||
+        searchRes.data?.items ||
+        [];
+}
 
         console.log(
             "[META] Search items:",
@@ -10747,14 +10777,22 @@ if (
                 })
                 : [];
 
-        let item = null;
+        let item =
+    (
+        mappedSourceForMeta?.verified === true &&
+        mappedSourceForMeta?.slug
+    )
+        ? mappedSourceForMeta
+        : null;
 
-        // A. Tên Việt khớp chính xác.
-        item =
-            eligibleItems.find(candidate =>
-                normalizeTitle(candidate?.name) ===
-                normalizedName
-            ) || null;
+// A. Tên Việt khớp chính xác.
+if (!item) {
+    item =
+        eligibleItems.find(candidate =>
+            normalizeTitle(candidate?.name) ===
+            normalizedName
+        ) || null;
+}
 
         // B. Tên gốc khớp chính xác.
         if (!item) {
