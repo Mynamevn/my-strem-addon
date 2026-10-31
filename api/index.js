@@ -460,8 +460,8 @@ return result;
    FOREGROUND FIRST + BACKGROUND THROTTLING
    ============================================================ */
 
-const MOVINA_PHIMAPI_MAX_CONCURRENT = 4;
-const MOVINA_PHIMAPI_MIN_START_GAP = 100;
+const MOVINA_PHIMAPI_MAX_CONCURRENT = 5;
+const MOVINA_PHIMAPI_MIN_START_GAP = 80;
 const MOVINA_PHIMAPI_DEFAULT_COOLDOWN = 6000;
 const MOVINA_PHIMAPI_MAX_RETRY_AFTER = 30000;
 
@@ -669,7 +669,7 @@ function movinaPhimApiPump() {
    ============================================================ */
 
 const MOVINA_CATALOG_FETCH_CACHE = new Map();
-const MOVINA_CATALOG_FETCH_TTL = 5 * 60 * 1000;
+const MOVINA_CATALOG_FETCH_TTL = 15 * 60 * 1000;
 const MOVINA_CATALOG_FETCH_FAIL_TTL = 15 * 1000;
 
 async function catalogFetch(url) {
@@ -2945,7 +2945,7 @@ if (type === "series") {
      * - Không tiếp tục cấp việc khi đủ 50 phim.
      */
 
-    const SEARCH_CONCURRENCY = 3;
+    const SEARCH_CONCURRENCY = 5;
     const MAX_SEARCHES = Math.min(
         100,
         rankedTitles.length
@@ -3071,7 +3071,7 @@ if (type === "series") {
      * Worker pool chạy liên tục thay vì chờ từng đợt 32 phim.
      * Giữ nguyên đối chiếu tên/năm và thứ hạng IMDb.
      */
-    const CONCURRENCY = 4;
+    const CONCURRENCY = 5;
     let searched = 0;
     let nextIndex = 0;
 
@@ -4014,38 +4014,42 @@ async function fetchTVB(selectedType = "") {
         !tvbSelectedType ||
         tvbSelectedType === "Phim lẻ TVB";
 
-    for (
-        let page = 1;
-        page <= 6;
-        page++
-    ) {
+    const TVB_SOURCE_PAGES = 3;
+const TVB_SOURCE_LIMIT = 48;
 
-        if (needSeries) {
-            seriesPages.push(
-                catalogFetch(
-                    "https://phimapi.com/v1/api/" +
-                    "danh-sach/phim-bo" +
-                    "?country=hong-kong" +
-                    "&page=" +
-                    page +
-                    "&limit=24"
-                )
-            );
-        }
-
-        if (needMovies) {
-            moviePages.push(
-                catalogFetch(
-                    "https://phimapi.com/v1/api/" +
-                    "danh-sach/phim-le" +
-                    "?country=hong-kong" +
-                    "&page=" +
-                    page +
-                    "&limit=24"
-                )
-            );
-        }
+for (
+    let page = 1;
+    page <= TVB_SOURCE_PAGES;
+    page++
+) {
+    if (needSeries) {
+        seriesPages.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-bo" +
+                "?country=hong-kong" +
+                "&page=" +
+                page +
+                "&limit=" +
+                TVB_SOURCE_LIMIT
+            )
+        );
     }
+
+    if (needMovies) {
+        moviePages.push(
+            catalogFetch(
+                "https://phimapi.com/v1/api/" +
+                "danh-sach/phim-le" +
+                "?country=hong-kong" +
+                "&page=" +
+                page +
+                "&limit=" +
+                TVB_SOURCE_LIMIT
+            )
+        );
+    }
+}
 
     const [
         seriesGroups,
@@ -4497,52 +4501,46 @@ async function fetchDailyCatalog() {
 
     const normalSources = [];
 
-    for (
-        let page = 1;
-        page <= 5;
-        page++
-    ) {
+    const DAILY_NORMAL_PAGES = 3;
+const DAILY_NORMAL_LIMIT = 40;
 
-        normalSources.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-le" +
-                "?page=" +
-                page +
-                "&limit=24"
-            )
-                .then(
-                    items =>
-                        items.map(
-                            item => ({
-                                ...item,
-                                __catalogType:
-                                    "movie"
-                            })
-                        )
-                )
-        );
+for (
+    let page = 1;
+    page <= DAILY_NORMAL_PAGES;
+    page++
+) {
+    normalSources.push(
+        catalogFetch(
+            "https://phimapi.com/v1/api/" +
+            "danh-sach/phim-le" +
+            "?page=" +
+            page +
+            "&limit=" +
+            DAILY_NORMAL_LIMIT
+        ).then(items =>
+            items.map(item => ({
+                ...item,
+                __catalogType: "movie"
+            }))
+        )
+    );
 
-        normalSources.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/phim-bo" +
-                "?page=" +
-                page +
-                "&limit=24"
-            )
-                .then(
-                    items =>
-                        items.map(
-                            item => ({
-                                ...item,
-                                __catalogType:
-                                    "series"
-                            })
-                        )
-                )
-        );
-    }
+    normalSources.push(
+        catalogFetch(
+            "https://phimapi.com/v1/api/" +
+            "danh-sach/phim-bo" +
+            "?page=" +
+            page +
+            "&limit=" +
+            DAILY_NORMAL_LIMIT
+        ).then(items =>
+            items.map(item => ({
+                ...item,
+                __catalogType: "series"
+            }))
+        )
+    );
+}
 
     /*
    ========================================================
@@ -4561,44 +4559,35 @@ async function fetchDailyCatalog() {
 
 const animationSources = [];
 
+const DAILY_ANIMATION_PAGES = 2;
+const DAILY_ANIMATION_LIMIT = 36;
+
 for (
     let page = 1;
-    page <= 3;
+    page <= DAILY_ANIMATION_PAGES;
     page++
 ) {
-
     animationSources.push(
         catalogFetch(
             "https://phimapi.com/v1/api/" +
             "danh-sach/hoat-hinh" +
             "?page=" +
             page +
-            "&limit=24"
+            "&limit=" +
+            DAILY_ANIMATION_LIMIT
+        ).then(items =>
+            items.map(item => {
+                const series = isSeriesItem(item);
+
+                return {
+                    ...item,
+                    __catalogType: series
+                        ? "series"
+                        : "movie",
+                    __isAnimation: true
+                };
+            })
         )
-            .then(
-                items =>
-                    items.map(
-                        item => {
-
-                            const series =
-                                isSeriesItem(
-                                    item
-                                );
-
-                            return {
-                                ...item,
-
-                                __catalogType:
-                                    series
-                                        ? "series"
-                                        : "movie",
-
-                                __isAnimation:
-                                    true
-                            };
-                        }
-                    )
-            )
     );
 }
 
@@ -5378,22 +5367,25 @@ async function fetchAnimationNew() {
        rất ít dữ liệu.
     */
 
-    for (
-        let page = 1;
-        page <= 12;
-        page++
-    ) {
+    const ANIMATION_NEW_PAGES = 6;
+const ANIMATION_NEW_LIMIT = 48;
 
-        sources.push(
-            catalogFetch(
-                "https://phimapi.com/v1/api/" +
-                "danh-sach/hoat-hinh" +
-                "?page=" +
-                page +
-                "&limit=24"
-            )
-        );
-    }
+for (
+    let page = 1;
+    page <= ANIMATION_NEW_PAGES;
+    page++
+) {
+    sources.push(
+        catalogFetch(
+            "https://phimapi.com/v1/api/" +
+            "danh-sach/hoat-hinh" +
+            "?page=" +
+            page +
+            "&limit=" +
+            ANIMATION_NEW_LIMIT
+        )
+    );
+}
 
     const groups =
         await Promise.all(
@@ -6462,56 +6454,70 @@ async function fetchAnimationByFilter(selectedFilter) {
 
     const requests = [];
 
-    /*
-     * Nguồn hoạt hình chính.
-     * Giữ nhãn hoạt hình vì endpoint này chuyên biệt.
-     */
-    const ANIMATION_PAGES = 12;
+   /*
+ * Nguồn hoạt hình chính.
+ * Giữ nhãn hoạt hình vì endpoint này chuyên biệt.
+ */
+const ANIMATION_PAGES = 6;
 
-    for (let page = 1; page <= ANIMATION_PAGES; page++) {
-        const url =
-            "https://phimapi.com/v1/api/danh-sach/hoat-hinh" +
-            "?page=" + page +
-            "&limit=64";
+for (
+    let page = 1;
+    page <= ANIMATION_PAGES;
+    page++
+) {
+    const url =
+        "https://phimapi.com/v1/api/danh-sach/hoat-hinh" +
+        "?page=" + page +
+        "&limit=64";
 
-        requests.push(
-            catalogFetch(url).then(items =>
-                items.map(item => ({
-                    ...item,
-                    __isAnimation: true,
-                    __catalogType:
-                        isSeriesItem(item) ? "series" : "movie"
-                }))
-            )
-        );
-    }
+    requests.push(
+        catalogFetch(url).then(items =>
+            items.map(item => ({
+                ...item,
+                __isAnimation: true,
+                __catalogType:
+                    isSeriesItem(item) ? "series" : "movie"
+            }))
+        )
+    );
+}
 
     /*
      * Với thể loại cụ thể, lấy thêm danh sách theo thể loại
      * để tăng số ứng viên ngoài các trang hoạt hình chính.
      */
-    if (!isLatest) {
-        for (const slug of genreConfig.slugs) {
-            for (let page = 1; page <= 8; page++) {
-                const url =
-                    "https://phimapi.com/v1/api/the-loai/" +
-                    encodeURIComponent(slug) +
-                    "?page=" + page +
-                    "&limit=64";
+    /*
+ * Với thể loại cụ thể, lấy thêm danh sách theo thể loại.
+ * Giảm số trang để tránh tải quá nhiều ứng viên dư thừa.
+ */
+if (!isLatest) {
+    const ANIMATION_GENRE_PAGES = 4;
 
-                requests.push(
-                    catalogFetch(url).then(items =>
-                        items.map(item => ({
-                            ...item,
-                            __genreApiSlug: slug,
-                            __catalogType:
-                                isSeriesItem(item) ? "series" : "movie"
-                        }))
-                    )
-                );
-            }
+    for (const slug of genreConfig.slugs) {
+        for (
+            let page = 1;
+            page <= ANIMATION_GENRE_PAGES;
+            page++
+        ) {
+            const url =
+                "https://phimapi.com/v1/api/the-loai/" +
+                encodeURIComponent(slug) +
+                "?page=" + page +
+                "&limit=64";
+
+            requests.push(
+                catalogFetch(url).then(items =>
+                    items.map(item => ({
+                        ...item,
+                        __genreApiSlug: slug,
+                        __catalogType:
+                            isSeriesItem(item) ? "series" : "movie"
+                    }))
+                )
+            );
         }
     }
+}
 
     const groups = await Promise.all(requests);
 
@@ -7637,7 +7643,7 @@ function movinaSchedulePreviewCompletion(
    ============================================================ */
 
 const MOVINA_FINAL_CATALOG_CACHE = new Map();
-const MOVINA_FINAL_CATALOG_TTL = 2 * 60 * 1000;
+const MOVINA_FINAL_CATALOG_TTL = 5 * 60 * 1000;
 
 function movinaFinalCatalogCacheKey(args) {
     return JSON.stringify({
