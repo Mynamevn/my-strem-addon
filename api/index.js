@@ -17440,13 +17440,33 @@ async function fetchNguonC(
                         continue;
                     }
 
-                    if (
-                        actualSeason > 0 &&
-                        seasonNumber > 0 &&
-                        actualSeason !== Number(seasonNumber)
-                    ) {
-                        continue;
-                    }
+                    
+// Không có thông tin mùa thì chỉ chấp nhận cho mùa 1.
+// Với mùa 2 trở lên, bắt buộc phải xác định được đúng mùa.
+if (
+    Number(seasonNumber) > 1 &&
+    actualSeason <= 0
+) {
+    console.log(
+        "[NGUONC] SKIP EPISODE: SEASON NOT VERIFIED",
+        {
+            requestedSeason: seasonNumber,
+            episode: actualEpisode,
+            label: episodeIdentityText
+        }
+    );
+
+    continue;
+}
+
+// Nếu API có ghi mùa thì phải khớp tuyệt đối.
+if (
+    actualSeason > 0 &&
+    seasonNumber > 0 &&
+    actualSeason !== Number(seasonNumber)
+) {
+    continue;
+}
 
                     console.log(
                         "[NGUONC] VERIFIED EPISODE:",
