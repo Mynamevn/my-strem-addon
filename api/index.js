@@ -11124,35 +11124,103 @@ console.log(
 
         }
 
-        // =====================================================
+                // =====================================================
         // [STREMIO-013.13] [PROVIDERS: ALL] IMDB ID EXTRACTION
+        // VALIDATE SOURCE CANDIDATE BEFORE PUBLIC USE
         // =====================================================
 
-        if (!imdbId) {
+        if (rawId.startsWith("vnwpsw:")) {
 
-            imdbId =
-                detail?.imdb?.id ||
-                detail?.imdb_id ||
-                detail?.imdbId ||
-                item?.imdb?.id ||
-                item?.imdb_id ||
-                item?.imdbId ||
-                "";
+            // ID từ PhimAPI chỉ là candidate.
+            imdbId = "";
+
+            const sourceImdbCandidate =
+                String(
+                    detail?.imdb?.id ||
+                    detail?.imdb_id ||
+                    detail?.imdbId ||
+                    item?.imdb?.id ||
+                    item?.imdb_id ||
+                    item?.imdbId ||
+                    ""
+                ).trim();
+
+            if (/^tt\d+$/i.test(sourceImdbCandidate)) {
+
+                const validation =
+                    await movinaVerifyImdbIdentity(
+                        item,
+                        sourceImdbCandidate,
+                        metaType
+                    );
+
+                movinaIdentityRemember(
+                    item,
+                    metaType,
+                    sourceImdbCandidate,
+                    validation.verified === true,
+                    validation.reason
+                );
+
+                if (validation.verified === true) {
+
+                    imdbId = sourceImdbCandidate;
+                    metaId = sourceImdbCandidate;
+
+                    console.log(
+                        "[META SOURCE IMDb VERIFIED]",
+                        JSON.stringify({
+                            imdbId: sourceImdbCandidate,
+                            slug: item?.slug || "",
+                            reason: validation.reason
+                        })
+                    );
+
+                } else {
+
+                    console.log(
+                        "[META SOURCE IMDb REJECTED]",
+                        JSON.stringify({
+                            imdbId: sourceImdbCandidate,
+                            slug: item?.slug || "",
+                            reason: validation.reason
+                        })
+                    );
+
+                }
+
+            }
+
+        } else {
+
+            // Với ID không thuộc MOVINA, giữ nguyên
+            // hành vi lấy IMDb ID hiện tại.
+            if (!imdbId) {
+
+                imdbId =
+                    detail?.imdb?.id ||
+                    detail?.imdb_id ||
+                    detail?.imdbId ||
+                    item?.imdb?.id ||
+                    item?.imdb_id ||
+                    item?.imdbId ||
+                    "";
+
+            }
 
         }
 
         imdbId =
             String(
-                imdbId ||
-                ""
+                imdbId || ""
             ).trim();
 
         if (
-    imdbId.startsWith("tt") &&
-    !rawId.startsWith("vnwpsw:")
-) {
-    metaId = imdbId;
-}
+            imdbId.startsWith("tt") &&
+            !rawId.startsWith("vnwpsw:")
+        ) {
+            metaId = imdbId;
+        }
 
         // =====================================================
         // [STREMIO-013.14] [PROVIDERS: ALL] CINEMETA IMDB FALLBACK
@@ -11532,6 +11600,7 @@ console.log(
                         );
 
                         imdbId = resolvedId;
+                        metaId = resolvedId;
                         imdbResolvedByCinemeta = true;
 
                         console.log(
