@@ -10738,7 +10738,7 @@ if (
                 }) || null;
         }
 
-        console.log(
+                console.log(
             "[META PHIMAPI MATCH FILTER]",
             JSON.stringify({
                 requestedType:
@@ -10753,62 +10753,6 @@ if (
             })
         );
 
-
-            if (!item) {
-
-                item =
-                    items.find(x => {
-
-                        const origin =
-                            normalizeTitle(
-                                x?.origin_name ||
-                                x?.original_name
-                            );
-
-                        return (
-                            origin &&
-                            origin === normalizedName
-                        );
-
-                    });
-
-            }
-
-            // -------------------------------------------------
-            // C. alternative_names
-            // -------------------------------------------------
-
-            if (!item) {
-
-                item =
-                    items.find(x => {
-
-                        const alternatives =
-                            Array.isArray(
-                                x?.alternative_names
-                            )
-                                ? x.alternative_names
-                                : [];
-
-                        return alternatives.some(
-                            alt => {
-
-                                return (
-                                    normalizeTitle(
-                                        alt
-                                    ) ===
-                                    normalizedName
-                                );
-
-                            }
-                        );
-
-                    });
-
-            }
-
-           }
-
         if (!item) {
 
             console.log(
@@ -10818,19 +10762,14 @@ if (
 
             return {
                 meta: {
-                    id:
-                        metaId,
-
+                    id: metaId,
                     type:
                         args.type === "series"
                             ? "series"
                             : "movie",
-
-                    name:
-                        movieName
+                    name: movieName
                 }
             };
-
         }
 
         console.log(
