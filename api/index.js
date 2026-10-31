@@ -28957,77 +28957,84 @@ async function fetchOnflixProvider(
         // Phải đúng tên + loại + năm trước khi tải detail.
         // -------------------------------------------------
 
-        const requestedType =
-            String(streamType || "movie")
-                .trim()
-                .toLowerCase();
+        
+const requestedType =
+    String(streamType || "movie")
+        .trim()
+        .toLowerCase() === "series"
+            ? "series"
+            : "movie";
 
-        const eligibleCandidates =
-            candidates.filter(item => {
+const eligibleCandidates =
+    candidates.filter(item => {
 
-                const candidateTitle =
-                    normalize(item?.title);
+        const candidateTitle =
+            normalize(item?.title);
 
-                const candidateYear =
-                    Number(item?.year) || 0;
+        const candidateYear =
+            Number(item?.year) || 0;
 
-                const candidateType =
-                    normalize(item?.type);
+        const candidateType =
+            normalize(item?.type);
 
-                // 1. Xác thực loại nội dung.
-                const isSeries =
-                    /^(series|tvshows|tvshow|phim bo)$/
-                        .test(candidateType);
+        // Chỉ loại khi API xác định rõ loại phim
+        // và loại đó thực sự trái với yêu cầu.
+        const isSeries =
+            /^(series|tv|tv series|tvshows|tvshow|television|phim bo)$/
+                .test(candidateType);
 
-                const isMovie =
-                    /^(single|movie|phim le)$/
-                        .test(candidateType);
+        const isMovie =
+            /^(single|movie|movies|film|phim le)$/
+                .test(candidateType);
 
-                const typeMatches =
-                    requestedType === "series"
-                        ? isSeries
-                        : isMovie;
+        const knownCandidateType =
+            isSeries || isMovie;
 
-                if (!typeMatches) {
-                    return false;
-                }
+        if (
+            knownCandidateType &&
+            (
+                (requestedType === "series" && !isSeries) ||
+                (requestedType === "movie" && !isMovie)
+            )
+        ) {
+            return false;
+        }
 
-                // 2. Xác thực tên phim.
-                const exactTitle =
-                    candidateTitle === wanted;
+        // Không nhận kết quả không có tên.
+        if (!candidateTitle) {
+            return false;
+        }
 
-                const partialTitle =
-                    wanted.length >= 6 &&
-                    candidateTitle.length >= 6 &&
-                    (
-                        candidateTitle.includes(wanted) ||
-                        wanted.includes(candidateTitle)
-                    );
+        const exactTitle =
+            candidateTitle === wanted;
 
-                if (!exactTitle && !partialTitle) {
-                    return false;
-                }
+        const partialTitle =
+            wanted.length >= 6 &&
+            candidateTitle.length >= 6 &&
+            (
+                candidateTitle.includes(wanted) ||
+                wanted.includes(candidateTitle)
+            );
 
-                // 3. Nếu có năm mục tiêu thì bắt buộc
-                // ứng viên phải có năm và chênh lệch tối đa 1.
-                if (movieYear) {
+        if (!exactTitle && !partialTitle) {
+            return false;
+        }
 
-                    if (!candidateYear) {
-                        return false;
-                    }
+        // Chỉ kiểm tra năm khi cả hai phía đều có năm.
+        // Không loại ứng viên chỉ vì API thiếu trường year.
+        if (
+            movieYear &&
+            candidateYear &&
+            Math.abs(
+                candidateYear - Number(movieYear)
+            ) > 1
+        ) {
+            return false;
+        }
 
-                    if (
-                        Math.abs(
-                            candidateYear -
-                            Number(movieYear)
-                        ) > 1
-                    ) {
-                        return false;
-                    }
-                }
+        return true;
+    });
 
-                return true;
-            });
 
         // Ưu tiên tên khớp chính xác, sau đó ưu tiên năm gần nhất.
         eligibleCandidates.sort((a, b) => {
