@@ -36336,269 +36336,161 @@ let episodeNumber = 0;
 
     }
 
-    // =====================================================
-    // B. IMDb SERIES
-    //
-    // Ví dụ:
-    //
-    // tt1234567:1:6
+        // =====================================================
+    // B + C. IMDb SERIES / MOVIE
+    // REVERSE MAPPING FIRST + CINEMETA FALLBACK
     // =====================================================
 
-    else if (
-        streamType === "series" &&
-        rawId.startsWith("tt")
-    ) {
+    else if (rawId.startsWith("tt")) {
 
-        const idParts =
-            rawId.split(":");
+        const idParts = rawId.split(":");
+        const imdbId = idParts[0];
 
-        seasonNumber =
-            Number(
-                idParts[1]
-            ) || 1;
+        const isSeries = streamType === "series";
+        const requestedType = isSeries ? "series" : "movie";
 
-        episodeNumber =
-            Number(
-                idParts[2]
-            ) || 1;
+        // Giữ nguyên season / episode từ IMDb video ID.
+        if (isSeries) {
+            seasonNumber =
+                Number(idParts[1]) || 1;
 
-        console.log(
-            "[STREAM] IMDb season:",
-            seasonNumber
-        );
-
-        console.log(
-            "[STREAM] IMDb episode:",
-            episodeNumber
-        );
-
-        const imdbId =
-            idParts[0];
-
-        // =================================================
-        // IMDb → CINEMETA
-        // =================================================
-
-        const cinemetaUrl =
-            "https://v3-cinemeta.strem.io/meta/" +
-            "series/" +
-            encodeURIComponent(
-                imdbId
-            ) +
-            ".json";
-
-        console.log(
-            "[STREAM] Cinemeta URL:",
-            cinemetaUrl
-        );
-
-        try {
-
-            const metaRes =
-                await axios.get(
-                    cinemetaUrl,
-                    {
-                        timeout: 4000,
-
-                        headers: {
-                            "User-Agent":
-                                "Mozilla/5.0",
-                            "Accept":
-                                "application/json"
-                        }
-                    }
-                );
-
-            const cinemetaMeta =
-                metaRes.data?.meta ||
-                {};
-        
-                    resolvedMetadata = cinemetaMeta;
-            movieName =
-                cinemetaMeta.name ||
-                "";
-
-            const rawYear =
-                cinemetaMeta.year ||
-                cinemetaMeta.releaseInfo ||
-                cinemetaMeta.released ||
-                "";
-
-            const yearMatch =
-                String(
-                    rawYear
-                ).match(
-                    /\b(19|20)\d{2}\b/
-                );
-
-            movieYear =
-                yearMatch
-                    ? Number(
-                        yearMatch[0]
-                    )
-                    : 0;
-
-        } catch (e) {
-
-            console.log(
-                "[STREAM] Cinemeta error:",
-                e?.response?.status ||
-                e?.message ||
-                e
-            );
-
+            episodeNumber =
+                Number(idParts[2]) || 1;
         }
-
-    }
-
-    // =====================================================
-    // C. IMDb MOVIE
-    // =====================================================
-
-    else if (
-        rawId.startsWith("tt")
-    ) {
-
-        const imdbId =
-            rawId.split(":")[0];
 
         console.log(
             "[STREAM] IMDb ID:",
-            imdbId
+            imdbId,
+            "| Type:",
+            requestedType,
+            "| Season:",
+            seasonNumber,
+            "| Episode:",
+            episodeNumber
         );
 
-        try {
+        // -------------------------------------------------
+        // 1. ƯU TIÊN MOVINA REVERSE MAPPING
+        // -------------------------------------------------
 
-            const cinemetaUrl =
-                "https://v3-cinemeta.strem.io/meta/" +
-                "movie/" +
-                encodeURIComponent(
-                    imdbId
-                ) +
-                ".json";
+        const mappedSource =
+            typeof movinaIdentityGetSource === "function"
+                ? movinaIdentityGetSource(imdbId)
+                : null;
 
-            const metaRes =
-                await axios.get(
-                    cinemetaUrl,
-                    {
-                        timeout: 4000,
+        const mappedType =
+            String(mappedSource?.type || "").toLowerCase();
 
-                        headers: {
-                            "User-Agent":
-                                "Mozilla/5.0",
-                            "Accept":
-                                "application/json"
-                        }
-                    }
-                );
+        const mappedName =
+            String(
+                mappedSource?.origin_name ||
+                mappedSource?.name ||
+                ""
+            ).trim();
 
-            const cinemetaMeta =
-                metaRes.data?.meta ||
-                {};
+        const mappedYear =
+            Number(mappedSource?.year || 0);
 
-                resolvedMetadata = cinemetaMeta;
-            movieName =
-                cinemetaMeta.name ||
-                "";
+        const mappingValid =
+            mappedSource &&
+            mappedSource.verified === true &&
+            mappedName &&
+            mappedType === requestedType;
 
-            const rawYear =
-                cinemetaMeta.year ||
-                cinemetaMeta.releaseInfo ||
-                cinemetaMeta.released ||
-                "";
+        if (mappingValid) {
 
-            const yearMatch =
-                String(
-                    rawYear
-                ).match(
-                    /\b(19|20)\d{2}\b/
-                );
+            movieName = mappedName;
+            movieYear = mappedYear;
 
-            movieYear =
-                yearMatch
-                    ? Number(
-                        yearMatch[0]
-                    )
-                    : 0;
+            resolvedMetadata = {
+                name:
+                    mappedSource.name ||
+                    mappedName,
 
-        } catch (e) {
+                year:
+                    mappedYear || undefined,
+
+                type:
+                    requestedType,
+
+                genres: []
+            };
 
             console.log(
-                "[STREAM] Cinemeta movie error:",
-                e?.response?.status ||
-                e?.message ||
-                e
+                "[STREAM IMDb REVERSE MAP] HIT:",
+                JSON.stringify({
+                    imdbId,
+                    movieName,
+                    movieYear,
+                    type: requestedType,
+                    slug: mappedSource.slug || ""
+                })
             );
 
-        }
+        } else {
 
-        // =================================================
-        // IMDb Suggestion fallback
-        // =================================================
+            console.log(
+                "[STREAM IMDb REVERSE MAP] MISS:",
+                JSON.stringify({
+                    imdbId,
+                    requestedType,
+                    mappedType: mappedType || "NONE"
+                })
+            );
 
-        if (!movieName) {
+            // -------------------------------------------------
+            // 2. CINEMETA FALLBACK
+            // -------------------------------------------------
 
             try {
 
-                const imdbSuggestionUrl =
-                    "https://v3.sg.media-imdb.com/suggestion/x/" +
-                    encodeURIComponent(
-                        imdbId
-                    ) +
+                const cinemetaUrl =
+                    "https://v3-cinemeta.strem.io/meta/" +
+                    requestedType +
+                    "/" +
+                    encodeURIComponent(imdbId) +
                     ".json";
 
-                const imdbRes =
+                const metaRes =
                     await axios.get(
-                        imdbSuggestionUrl,
+                        cinemetaUrl,
                         {
                             timeout: 4000,
-
                             headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
-                                "Accept":
-                                    "application/json"
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
                             }
                         }
                     );
 
-                const imdbItems =
-                    Array.isArray(
-                        imdbRes.data?.d
-                    )
-                        ? imdbRes.data.d
-                        : [];
+                const cinemetaMeta =
+                    metaRes.data?.meta || {};
 
-                const imdbMovie =
-                    imdbItems.find(
-                        item =>
-                            String(
-                                item?.id ||
-                                ""
-                            ) === imdbId
-                    ) ||
-                    imdbItems[0];
+                resolvedMetadata = cinemetaMeta;
 
                 movieName =
-                    imdbMovie?.l ||
+                    cinemetaMeta.name || "";
+
+                const rawYear =
+                    cinemetaMeta.year ||
+                    cinemetaMeta.releaseInfo ||
+                    cinemetaMeta.released ||
                     "";
 
-                if (
-                    !movieYear &&
-                    imdbMovie?.y
-                ) {
+                const yearMatch =
+                    String(rawYear).match(
+                        /\b(19|20)\d{2}\b/
+                    );
 
-                    movieYear =
-                        Number(
-                            imdbMovie.y
-                        ) || 0;
-
-                }
+                movieYear =
+                    yearMatch
+                        ? Number(yearMatch[0])
+                        : 0;
 
             } catch (e) {
 
                 console.log(
-                    "[STREAM] IMDb Suggestion error:",
+                    "[STREAM] Cinemeta error:",
                     e?.response?.status ||
                     e?.message ||
                     e
@@ -36606,7 +36498,79 @@ let episodeNumber = 0;
 
             }
 
+            // -------------------------------------------------
+            // 3. IMDb SUGGESTION FALLBACK
+            // Chỉ cần thiết khi không lấy được tên phim.
+            // -------------------------------------------------
+
+            if (!movieName) {
+
+                try {
+
+                    const imdbSuggestionUrl =
+                        "https://v3.sg.media-imdb.com/suggestion/x/" +
+                        encodeURIComponent(imdbId) +
+                        ".json";
+
+                    const imdbRes =
+                        await axios.get(
+                            imdbSuggestionUrl,
+                            {
+                                timeout: 4000,
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
+                            }
+                        );
+
+                    const imdbItems =
+                        Array.isArray(imdbRes.data?.d)
+                            ? imdbRes.data.d
+                            : [];
+
+                    const imdbItem =
+                        imdbItems.find(
+                            item =>
+                                String(item?.id || "") === imdbId
+                        ) ||
+                        imdbItems[0];
+
+                    movieName =
+                        imdbItem?.l || "";
+
+                    if (!movieYear && imdbItem?.y) {
+                        movieYear =
+                            Number(imdbItem.y) || 0;
+                    }
+
+                } catch (e) {
+
+                    console.log(
+                        "[STREAM] IMDb Suggestion error:",
+                        e?.response?.status ||
+                        e?.message ||
+                        e
+                    );
+
+                }
+            }
         }
+
+        console.log(
+            "[STREAM IMDb RESOLVED]",
+            JSON.stringify({
+                imdbId,
+                movieName,
+                movieYear,
+                type: requestedType,
+                season: seasonNumber,
+                episode: episodeNumber,
+                source: mappingValid
+                    ? "MOVINA_REVERSE_MAP"
+                    : "EXTERNAL_FALLBACK"
+            })
+        );
 
     }
 
