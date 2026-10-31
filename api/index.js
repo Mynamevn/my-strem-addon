@@ -10551,7 +10551,7 @@ if (
                                 cinemetaMeta.released
                         });
 
-                                } catch (e) {
+                } catch (e) {
                     console.log(
                         "[META CINEMETA ERROR]",
                         e?.response?.status ||
@@ -10559,8 +10559,8 @@ if (
                         e
                     );
                 }
-            }
-        } else {
+            } 
+                   } else {
 
             movieName =
                 decodeMovieName(
@@ -11490,17 +11490,15 @@ console.log(
             selectedCinemeta =
                 safeCinemetaCandidates[0] || null;
 
-            if (
-                selectedCinemeta
-            ) {
+                        if (selectedCinemeta) {
 
                 const resolvedId =
                     String(
-                        selectedCinemeta.candidate?.id ||
-                        ""
-                    ).trim();                if (
-                    /^tt\d+$/i.test(resolvedId)
-                ) {
+                        selectedCinemeta.candidate?.id || ""
+                    ).trim();
+
+                if (/^tt\d+$/i.test(resolvedId)) {
+
                     const candidateMeta =
                         selectedCinemeta.candidate || {};
 
@@ -11524,6 +11522,7 @@ console.log(
                         );
 
                     if (validation.verified === true) {
+
                         movinaIdentityRemember(
                             item,
                             metaType,
@@ -11533,7 +11532,6 @@ console.log(
                         );
 
                         imdbId = resolvedId;
-
                         imdbResolvedByCinemeta = true;
 
                         console.log(
@@ -11545,7 +11543,9 @@ console.log(
                                     validation.similarity
                             })
                         );
+
                     } else {
+
                         console.log(
                             "[META CINEMETA REJECTED]",
                             JSON.stringify({
@@ -11554,21 +11554,14 @@ console.log(
                                 reason: validation.reason
                             })
                         );
+
                     }
-                }
 
-                    imdbId =
-                        resolvedId;
-
-                    metaId =
-                        resolvedId;
-
-                    imdbResolvedByCinemeta =
-                        true;
+                } else {
 
                     console.log(
-                        "[META CINEMETA RESOLVED IMDb]:",
-                        imdbId
+                        "[META CINEMETA] Invalid IMDb ID:",
+                        resolvedId
                     );
 
                 }
@@ -11583,7 +11576,7 @@ console.log(
 
         }
 
-        // =====================================================
+// =====================================================
 // [STREMIO-013.15] [PROVIDERS: ALL] IMDB RATING EXTRACTION
 // CACHE-FIRST CINEMETA RATING
 // =====================================================
@@ -11591,6 +11584,7 @@ console.log(
 // ID lấy từ PhimAPI chỉ là candidate.
 // Với public MOVINA ID, chỉ dùng IMDb ID đã xác thực
 // trong Identity Registry.
+
 if (rawId.startsWith("vnwpsw:")) {
     const verifiedIdentity =
         movinaIdentityGet(item, metaType);
