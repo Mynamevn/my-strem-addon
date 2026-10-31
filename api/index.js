@@ -10551,7 +10551,7 @@ if (
                                 cinemetaMeta.released
                         });
 
-                } catch (e) {
+                                } catch (e) {
                     console.log(
                         "[META CINEMETA ERROR]",
                         e?.response?.status ||
@@ -10559,8 +10559,8 @@ if (
                         e
                     );
                 }
-            } 
-                   } else {
+            }
+        } else {
 
             movieName =
                 decodeMovieName(
