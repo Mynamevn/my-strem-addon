@@ -11588,8 +11588,6 @@ console.log(
 // CACHE-FIRST CINEMETA RATING
 // =====================================================
 
-let imdbRating = null;
-
 // ID lấy từ PhimAPI chỉ là candidate.
 // Với public MOVINA ID, chỉ dùng IMDb ID đã xác thực
 // trong Identity Registry.
@@ -11609,6 +11607,8 @@ if (rawId.startsWith("vnwpsw:")) {
             ? verifiedCandidate
             : "";
 }
+
+let imdbRating = null;
 
 const rawImdbRating =
     detail?.imdb?.vote_average ??
