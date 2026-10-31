@@ -21371,9 +21371,8 @@ const toStremioStream = stream => {
                             /\bs\d+\s*e\d+\b/i.test(episodeName)
                         );
                     });
-
                 
-const targetSeason =
+const kkTargetSeason =
     Number(seasonNumber) > 0
         ? Number(seasonNumber)
         : 1;
@@ -21414,7 +21413,7 @@ const matchedEpisode =
         if (seasonEpisodeMatch) {
 
             return (
-                Number(seasonEpisodeMatch[1]) === targetSeason &&
+                Number(seasonEpisodeMatch[1]) === kktargetSeason &&
                 Number(seasonEpisodeMatch[2]) === targetEpisode
             );
 
@@ -21423,14 +21422,14 @@ const matchedEpisode =
         if (compactMatch) {
 
             return (
-                Number(compactMatch[1]) === targetSeason &&
+                Number(compactMatch[1]) === kktargetSeason &&
                 Number(compactMatch[2]) === targetEpisode
             );
 
         }
 
         // Tập không ghi mùa: chỉ chấp nhận ở mùa 1.
-        if (targetSeason > 1) {
+        if (kktargetSeason > 1) {
             return false;
         }
 
