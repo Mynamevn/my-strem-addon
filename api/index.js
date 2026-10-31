@@ -11963,11 +11963,19 @@ if (isSeries) {
 
             } else {
 
-                // Tập 1 / Episode 1 / Ep 1
-                const episodeMatch =
-                    rawEpisodeName.match(
-                        /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
-                    );
+// Chỉ nhận số tập có nhãn rõ ràng,
+// hoặc tên tập chỉ gồm một số.
+// Tránh lấy nhầm năm phát hành làm số tập.
+const episodeMatch =
+    rawEpisodeName.match(
+        /(?:^|[\s._-])(?:tập|tap|episode|ep)[\s._-]*0*(\d+)(?:\b|$)/i
+    ) ||
+    rawEpisodeName.match(
+        /^(?:0*)(\d+)$/
+    ) ||
+    rawEpisodeName.match(
+        /(?:^|[-_])(?:tap|episode|ep)[-_]?0*(\d+)(?:[-_]|$)/i
+    );
 
                 if (!episodeMatch) {
                     continue;
