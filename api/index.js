@@ -20840,7 +20840,7 @@ const toStremioStream = stream => {
                 .filter(Boolean);
 
         // =====================================================
-        // [PRV-VSMOV.11] [PROVIDERS: VSMOV] CANDIDATE RANKING
+        // [PRV-VSMOV.11] [PROVIDERS: VSMOV] STRICT CANDIDATE RANKING
         // =====================================================
 
         const ranked =
@@ -20848,9 +20848,7 @@ const toStremioStream = stream => {
                 .map(item => {
 
                     const name =
-                        String(
-                            item?.name || ""
-                        ).trim();
+                        String(item?.name || "").trim();
 
                     const originName =
                         String(
@@ -20860,9 +20858,7 @@ const toStremioStream = stream => {
                         ).trim();
 
                     const itemSlug =
-                        String(
-                            item?.slug || ""
-                        ).trim();
+                        String(item?.slug || "").trim();
 
                     const normalizedName =
                         cleanTitle(name);
@@ -20873,55 +20869,96 @@ const toStremioStream = stream => {
                     const normalizedSlug =
                         cleanTitle(itemSlug);
 
+                    const exactNameMatch =
+                        normalizedName === inputTitle ||
+                        normalizedOrigin === inputTitle;
+
+                    const partialNameMatch =
+                        inputTitle.length >= 5 &&
+                        (
+                            (
+                                normalizedName.length >= 5 &&
+                                (
+                                    normalizedName.includes(inputTitle) ||
+                                    inputTitle.includes(normalizedName)
+                                )
+                            ) ||
+                            (
+                                normalizedOrigin.length >= 5 &&
+                                (
+                                    normalizedOrigin.includes(inputTitle) ||
+                                    inputTitle.includes(normalizedOrigin)
+                                )
+                            )
+                        );
+
+                    const titleMatched =
+                        exactNameMatch || partialNameMatch;
+
+                    const itemYear =
+                        Number(
+                            item?.year ||
+                            item?.release_year ||
+                            item?.releaseYear ||
+                            0
+                        ) || 0;
+
+                    const yearMatched =
+                        !movieYear ||
+                        itemYear === Number(movieYear);
+
+                    const rawType =
+                        String(
+                            item?.type ||
+                            item?.type_name ||
+                            item?.content_type ||
+                            ""
+                        )
+                            .trim()
+                            .toLowerCase();
+
+                    const candidateIsSeries =
+                        /series|tvshows|tvshow|phim[\s_-]*bo|phimbo/.test(
+                            rawType
+                        );
+
+                    const candidateIsMovie =
+                        /movie|single|phim[\s_-]*le|phimle/.test(
+                            rawType
+                        );
+
+                    const knownCandidateType =
+                        candidateIsSeries || candidateIsMovie;
+
+                    const typeMatched =
+                        !knownCandidateType ||
+                        (
+                            streamType === "series"
+                                ? candidateIsSeries
+                                : candidateIsMovie
+                        );
+
                     let score = 0;
 
-                    if (
-                        normalizedName ===
-                        inputTitle
-                    ) {
+                    if (exactNameMatch) {
                         score += 1000;
-                    }
-
-                    if (
-                        normalizedOrigin ===
-                        inputTitle
-                    ) {
-                        score += 950;
-                    }
-
-                    if (
-                        normalizedName.includes(
-                            inputTitle
-                        )
-                    ) {
+                    } else if (partialNameMatch) {
                         score += 500;
                     }
 
-                    if (
-                        inputTitle.includes(
-                            normalizedName
-                        )
-                    ) {
-                        score += 400;
+                    if (itemYear && movieYear) {
+                        score += yearMatched ? 1000 : -1000;
                     }
 
-                    if (
-                        normalizedOrigin.includes(
-                            inputTitle
-                        )
-                    ) {
-                        score += 450;
+                    if (knownCandidateType) {
+                        score += typeMatched ? 200 : -500;
                     }
 
                     let overlap = 0;
 
-                    for (
-                        const word of inputWords
-                    ) {
+                    for (const word of inputWords) {
 
-                        if (
-                            word.length < 2
-                        ) {
+                        if (word.length < 2) {
                             continue;
                         }
 
@@ -20934,38 +20971,18 @@ const toStremioStream = stream => {
                         }
                     }
 
-                    score +=
-                        overlap * 25;
-
-                    const itemYear =
-                        Number(
-                            item?.year ||
-                            item?.release_year ||
-                            item?.releaseYear ||
-                            0
-                        ) || 0;
-
-                    if (
-                        movieYear &&
-                        itemYear
-                    ) {
-
-                        if (
-                            itemYear ===
-                            Number(movieYear)
-                        ) {
-                            score += 1000;
-                        } else {
-                            score -= 700;
-                        }
-                    }
+                    score += overlap * 10;
 
                     return {
                         item,
                         score,
                         itemYear,
                         normalizedName,
-                        normalizedOrigin
+                        normalizedOrigin,
+                        rawType,
+                        titleMatched,
+                        yearMatched,
+                        typeMatched
                     };
 
                 })
@@ -20988,64 +21005,89 @@ const toStremioStream = stream => {
                     row.item?.name || "",
                     "|",
                     row.item?.origin_name || "",
+                    "| type:",
+                    row.rawType || "UNKNOWN",
+                    "| title:",
+                    row.titleMatched,
+                    "| year:",
+                    row.yearMatched,
+                    "| typeMatch:",
+                    row.typeMatched,
                     "| score:",
                     row.score
                 );
 
             });
 
+
         // =====================================================
-        // [PRV-VSMOV.12] [PROVIDERS: VSMOV] CANDIDATE SELECTION
+        // [PRV-VSMOV.12] [PROVIDERS: VSMOV] STRICT CANDIDATE SELECTION
         // =====================================================
+
+        const eligibleCandidates =
+            ranked.filter(row =>
+                row.titleMatched &&
+                row.yearMatched &&
+                row.typeMatched &&
+                Boolean(row.item?.slug)
+            );
 
         let selected = null;
 
-        if (movieYear) {
+        if (eligibleCandidates.length === 1) {
 
-            const yearMatches =
-                ranked.filter(
-                    row =>
-                        Number(
-                            row.itemYear
-                        ) ===
-                        Number(movieYear)
-                );
+            selected =
+                eligibleCandidates[0];
 
-            console.log(
-                "[VSMOV] Year matches:",
-                yearMatches.length
-            );
+        } else if (eligibleCandidates.length > 1) {
 
-            if (yearMatches.length) {
+            const first =
+                eligibleCandidates[0];
 
-                selected =
-                    yearMatches[0];
+            const second =
+                eligibleCandidates[1];
+
+            // Nếu hai ứng viên đầu có cùng điểm,
+            // không tự đoán phiên bản nào là đúng.
+            if (first.score !== second.score) {
+
+                selected = first;
 
             } else {
 
-                console.log(
-                    "[VSMOV] NO EXACT YEAR MATCH:",
-                    movieYear
+                console.warn(
+                    "[VSMOV] AMBIGUOUS CANDIDATES — STOP:",
+                    JSON.stringify(
+                        eligibleCandidates.slice(0, 5).map(row => ({
+                            name: row.item?.name,
+                            origin_name: row.item?.origin_name,
+                            year: row.itemYear,
+                            type: row.rawType,
+                            slug: row.item?.slug,
+                            score: row.score
+                        }))
+                    )
                 );
+
             }
-        }
 
-        if (
-            !selected &&
-            !movieYear
-        ) {
-
-            selected =
-                ranked[0] || null;
         }
 
         if (!selected) {
 
-            console.log(
-                "[VSMOV] REFUSING MISMATCHED VERSION"
+            console.warn(
+                "[VSMOV] NO SAFE CANDIDATE:",
+                JSON.stringify({
+                    movieName,
+                    movieYear,
+                    streamType,
+                    totalCandidates: uniqueCandidates.length,
+                    eligibleCandidates: eligibleCandidates.length
+                })
             );
 
             return streams;
+
         }
 
         const selectedMovie =
