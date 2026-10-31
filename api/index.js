@@ -785,13 +785,332 @@ return [...items]
 
 }
 
+
 /* ============================================================
    [CORE-004] [PROVIDERS: ALL] CATALOG POSTER HELPERS
+   SMALL TMDB POSTER CACHE — PROGRESSIVE BACKGROUND
    ============================================================ */
 
+const MOVINA_SMALL_POSTER_CACHE = new Map();
+const MOVINA_SMALL_POSTER_INFLIGHT = new Map();
+
+const MOVINA_SMALL_POSTER_TTL =
+    30 * 24 * 60 * 60 * 1000;
+
+const MOVINA_SMALL_POSTER_FAIL_TTL =
+    12 * 60 * 60 * 1000;
+
+const MOVINA_SMALL_POSTER_ERROR_TTL =
+    30 * 60 * 1000;
+
+const MOVINA_SMALL_POSTER_CACHE_MAX = 3000;
+
+// Mỗi lượt chỉ xử lý tối đa 10 poster.
+// Ưu tiên theo đúng thứ tự catalog.
+const MOVINA_SMALL_POSTER_BACKGROUND_BATCH = 10;
+
+
+function movinaSmallPosterCacheKey(item) {
+    return String(item?.slug || "").trim();
+}
+
+
+function movinaSetSmallPosterCache(
+    slug,
+    url,
+    ttl = MOVINA_SMALL_POSTER_TTL
+) {
+    if (!slug) return;
+
+    if (
+        !MOVINA_SMALL_POSTER_CACHE.has(slug) &&
+        MOVINA_SMALL_POSTER_CACHE.size >=
+            MOVINA_SMALL_POSTER_CACHE_MAX
+    ) {
+        const oldestKey =
+            MOVINA_SMALL_POSTER_CACHE.keys().next().value;
+
+        if (oldestKey) {
+            MOVINA_SMALL_POSTER_CACHE.delete(oldestKey);
+        }
+    }
+
+    MOVINA_SMALL_POSTER_CACHE.set(slug, {
+        url: String(url || ""),
+        expiresAt: Date.now() + ttl
+    });
+}
+
+
+function movinaGetCachedSmallPoster(item) {
+    const slug = movinaSmallPosterCacheKey(item);
+
+    if (!slug) return "";
+
+    const cached =
+        MOVINA_SMALL_POSTER_CACHE.get(slug);
+
+    if (!cached) return "";
+
+    if (cached.expiresAt <= Date.now()) {
+        MOVINA_SMALL_POSTER_CACHE.delete(slug);
+        return "";
+    }
+
+    return cached.url || "";
+}
+
+
+function movinaHasSmallPosterCache(item) {
+    const slug = movinaSmallPosterCacheKey(item);
+
+    if (!slug) return false;
+
+    const cached =
+        MOVINA_SMALL_POSTER_CACHE.get(slug);
+
+    if (!cached) return false;
+
+    if (cached.expiresAt <= Date.now()) {
+        MOVINA_SMALL_POSTER_CACHE.delete(slug);
+        return false;
+    }
+
+    // Kể cả kết quả không tìm được ảnh cũng được cache
+    // để tránh gọi API lặp đi lặp lại.
+    return true;
+}
+
+
+function movinaIsSmallPosterUrl(url) {
+    return /\/w(?:92|154|185|342)\//i.test(
+        String(url || "")
+    );
+}
+
+
+/*
+ * Tìm poster TMDB kích thước w342.
+ *
+ * Chỉ lấy URL ảnh, không tải bytes ảnh về Vercel.
+ * Trình duyệt Stremio sẽ tải ảnh trực tiếp từ TMDB.
+ */
+async function movinaFetchSmallPoster(item) {
+    const slug = movinaSmallPosterCacheKey(item);
+
+    if (!slug) return "";
+
+    const cached =
+        MOVINA_SMALL_POSTER_CACHE.get(slug);
+
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.url || "";
+    }
+
+    if (cached) {
+        MOVINA_SMALL_POSTER_CACHE.delete(slug);
+    }
+
+    const inflight =
+        MOVINA_SMALL_POSTER_INFLIGHT.get(slug);
+
+    if (inflight) {
+        return inflight;
+    }
+
+    const requestPromise = (async () => {
+        try {
+            const response = await movinaPhimApiGet(
+                "https://phimapi.com/v1/api/phim/" +
+                    encodeURIComponent(slug) +
+                    "/images",
+                {
+                    timeout: 2500,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                },
+                0,
+                "background"
+            );
+
+            const data =
+                response.data?.data ||
+                response.data ||
+                {};
+
+            const rawImages = data.images;
+
+            let imageList = [];
+
+            if (Array.isArray(rawImages)) {
+                imageList = rawImages;
+            } else if (
+                Array.isArray(rawImages?.posters)
+            ) {
+                imageList = rawImages.posters;
+            } else if (
+                Array.isArray(rawImages?.poster)
+            ) {
+                imageList = rawImages.poster;
+            }
+
+            const posterCandidates =
+                imageList.filter(image => {
+                    const filePath =
+                        image?.file_path ||
+                        image?.poster_path ||
+                        image?.path ||
+                        "";
+
+                    if (!filePath) return false;
+
+                    const imageType = String(
+                        image?.type ||
+                        image?.image_type ||
+                        image?.media_type ||
+                        image?.category ||
+                        ""
+                    ).toLowerCase();
+
+                    if (imageType.includes("poster")) {
+                        return true;
+                    }
+
+                    if (imageType.includes("backdrop")) {
+                        return false;
+                    }
+
+                    const width =
+                        Number(image?.width || 0);
+
+                    const height =
+                        Number(image?.height || 0);
+
+                    const aspectRatio =
+                        Number(image?.aspect_ratio) ||
+                        (
+                            width > 0 && height > 0
+                                ? width / height
+                                : 0
+                        );
+
+                    // Poster thường có tỷ lệ dọc.
+                    return (
+                        aspectRatio > 0 &&
+                        aspectRatio < 1.05
+                    );
+                });
+
+            posterCandidates.sort(
+                (a, b) =>
+                    Number(b?.vote_average || 0) -
+                    Number(a?.vote_average || 0)
+            );
+
+            const selectedPoster =
+                posterCandidates[0];
+
+            const filePath = String(
+                selectedPoster?.file_path ||
+                selectedPoster?.poster_path ||
+                selectedPoster?.path ||
+                ""
+            ).trim();
+
+            if (!filePath) {
+                movinaSetSmallPosterCache(
+                    slug,
+                    "",
+                    MOVINA_SMALL_POSTER_FAIL_TTL
+                );
+
+                return "";
+            }
+
+            const posterBase = String(
+                data?.image_sizes?.poster?.w342 ||
+                "https://image.tmdb.org/t/p/w342"
+            ).replace(/\/+$/, "");
+
+            let smallPosterUrl = "";
+
+            if (/^https?:\/\//i.test(filePath)) {
+                smallPosterUrl = filePath.replace(
+                    /\/(?:original|w\d+)\//i,
+                    "/w342/"
+                );
+            } else {
+                smallPosterUrl =
+                    posterBase +
+                    "/" +
+                    filePath.replace(/^\/+/, "");
+            }
+
+            if (!/^https?:\/\//i.test(smallPosterUrl)) {
+                movinaSetSmallPosterCache(
+                    slug,
+                    "",
+                    MOVINA_SMALL_POSTER_FAIL_TTL
+                );
+
+                return "";
+            }
+
+            movinaSetSmallPosterCache(
+                slug,
+                smallPosterUrl,
+                MOVINA_SMALL_POSTER_TTL
+            );
+
+            return smallPosterUrl;
+
+        } catch (error) {
+            const status =
+                Number(error?.response?.status || 0);
+
+            console.warn(
+                "[MOVINA SMALL POSTER ERROR]",
+                slug,
+                status || error?.code || error?.message
+            );
+
+            movinaSetSmallPosterCache(
+                slug,
+                "",
+                MOVINA_SMALL_POSTER_ERROR_TTL
+            );
+
+            return "";
+
+        } finally {
+            MOVINA_SMALL_POSTER_INFLIGHT.delete(slug);
+        }
+    })();
+
+    MOVINA_SMALL_POSTER_INFLIGHT.set(
+        slug,
+        requestPromise
+    );
+
+    return requestPromise;
+}
+
+
 // [CORE-004.01] [PROVIDERS: ALL] CATALOG POSTER RESOLUTION
+
 function catalogPoster(item) {
 
+    // 1. Ưu tiên poster nhỏ đã được cache.
+    const cachedSmallPoster =
+        movinaGetCachedSmallPoster(item);
+
+    if (cachedSmallPoster) {
+        return cachedSmallPoster;
+    }
+
+    // 2. Nếu chưa có poster nhỏ, dùng ảnh nguồn hiện tại.
     const raw =
         item?.poster_url ||
         item?.thumb_url ||
@@ -805,35 +1124,16 @@ function catalogPoster(item) {
     const value =
         String(raw).trim();
 
-    /*
-       Đã là URL đầy đủ.
-    */
-
-    if (
-        /^https?:\/\//i.test(value)
-    ) {
+    if (/^https?:\/\//i.test(value)) {
         return value;
     }
 
-    /*
-       Protocol-relative URL.
-    */
-
-    if (
-        value.startsWith("//")
-    ) {
+    if (value.startsWith("//")) {
         return "https:" + value;
     }
 
-    /*
-       Poster dạng uploads/movies/...
-       thường thuộc phimapi.com.
-    */
-
     if (
-        value.startsWith(
-            "uploads/movies/"
-        )
+        value.startsWith("uploads/movies/")
     ) {
         return (
             "https://phimapi.com/" +
@@ -841,25 +1141,14 @@ function catalogPoster(item) {
         );
     }
 
-    /*
-       Poster dạng upload/vod/...
-       thường thuộc phimimg.com.
-    */
-
     if (
-        value.startsWith(
-            "upload/vod/"
-        )
+        value.startsWith("upload/vod/")
     ) {
         return (
             "https://phimimg.com/" +
             value
         );
     }
-
-    /*
-       Fallback.
-    */
 
     return (
         "https://phimimg.com/" +
@@ -7464,8 +7753,60 @@ function movinaSchedulePreviewCompletion(
         return "";
     };
 
+
+    // ========================================================
+    // SMALL POSTER BACKGROUND QUEUE
+    // Chọn tối đa 10 poster chưa có bản nhỏ trong cache.
+    // Giữ nguyên thứ tự phim từ trên xuống dưới.
+    // ========================================================
+
+    const smallPosterCandidates = sourceItems
+        .filter(item => {
+            if (movinaHasSmallPosterCache(item)) {
+                return false;
+            }
+
+            const currentPoster =
+                catalogPoster(item);
+
+            return !movinaIsSmallPosterUrl(
+                currentPoster
+            );
+        })
+        .slice(
+            0,
+            MOVINA_SMALL_POSTER_BACKGROUND_BATCH
+        );
+
     const worker = async () => {
+
+        // Ưu tiên tìm poster nhỏ theo thứ tự catalog.
+        let smallPosterUpdated = 0;
+
+        for (const posterItem of smallPosterCandidates) {
+            const smallPosterUrl =
+                await movinaFetchSmallPoster(posterItem);
+
+            if (smallPosterUrl) {
+                smallPosterUpdated++;
+            }
+        }
+
+        if (smallPosterCandidates.length) {
+            console.log(
+                "[MOVINA SMALL POSTER BACKGROUND] COMPLETED",
+                JSON.stringify({
+                    catalog: catalogId,
+                    attempted: smallPosterCandidates.length,
+                    updated: smallPosterUpdated,
+                    batchLimit:
+                        MOVINA_SMALL_POSTER_BACKGROUND_BATCH
+                })
+            );
+        }
+
         while (true) {
+
             const index = nextIndex++;
 
             if (index >= sourceItems.length) {
