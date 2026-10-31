@@ -36809,8 +36809,10 @@ let episodeNumber = 0;
         // 2. ƯU TIÊN MOVINA REVERSE MAPPING
         // -------------------------------------------------
 
-        const mappedSource =
-            movinaIdentityGetSource(imdbId);
+                const mappedSource =
+            typeof movinaIdentityRestoreSource === "function"
+                ? await movinaIdentityRestoreSource(imdbId)
+                : movinaIdentityGetSource(imdbId);
 
         const mappedType =
             String(mappedSource?.type || "").toLowerCase();
