@@ -8336,7 +8336,7 @@ function movinaSchedulePreviewCompletion(
 
                                 // -------------------------------------------------
                 // IMDb IDENTITY VALIDATION
-                // Xác thực trước, chỉ lấy rating sau khi xác thực.
+                // Đối chiếu PhimAPI với metadata lấy từ Cinemeta.
                 // -------------------------------------------------
 
                 const existingIdentity =
@@ -8354,39 +8354,20 @@ function movinaSchedulePreviewCompletion(
                     item?.__movinaClassicImdbId,
                     item?.imdb?.id,
                     item?.imdb_id,
-                    item?.imdbId
+                    item?.imdbId,
+                    existingIdentity?.imdbCandidate
                 );
 
                 if (
                     !verifiedImdbId &&
                     candidateImdbId
                 ) {
-                    const candidateHasIdentity =
-                        Boolean(
-                            detail?.name ||
-                            detail?.origin_name
-                        ) &&
-                        Boolean(detail?.year);
-
-                    let validation = {
-                        verified: false,
-                        reason: "DETAIL_IDENTITY_INCOMPLETE"
-                    };
-
-                    if (candidateHasIdentity) {
-                        validation =
-                            movinaValidateImdbCandidate(
-                                item,
-                                {
-                                    id: candidateImdbId,
-                                    name: detail.name || "",
-                                    original_name:
-                                        detail.origin_name || "",
-                                    year: detail.year
-                                },
-                                itemType
-                            );
-                    }
+                    const validation =
+                        await movinaVerifyImdbIdentity(
+                            item,
+                            candidateImdbId,
+                            itemType
+                        );
 
                     movinaIdentityRemember(
                         item,
@@ -8407,9 +8388,12 @@ function movinaSchedulePreviewCompletion(
                                 slug,
                                 type: itemType,
                                 imdbId: verifiedImdbId,
+                                similarity:
+                                    validation.similarity,
                                 reason: validation.reason
                             })
                         );
+
                     } else {
                         console.log(
                             "[MOVINA IMDb IDENTITY] REJECTED:",
@@ -8425,7 +8409,7 @@ function movinaSchedulePreviewCompletion(
 
                 // -------------------------------------------------
                 // CINEMETA RATING
-                // Chỉ gọi khi IMDb ID đã được xác thực.
+                // Chỉ lấy rating sau khi xác thực thành công.
                 // -------------------------------------------------
 
                 if (
