@@ -8175,32 +8175,9 @@ function movinaSchedulePreviewCompletion(
                     detail?.imdbRating
                 );
 
-                const imdbId = getImdbId(
-                    item?.__movinaClassicImdbId,
-                    item?.imdb?.id,
-                    item?.imdb_id,
-                    item?.imdbId,
-                    detail?.imdbId
-                );
-
-                if (
-                    !sourceRating &&
-                    !detailRating &&
-                    imdbId
-                ) {
-                    ratingRequests++;
-
-                    await movinaFetchCinemetaRating(
-                        imdbId,
-                        itemType
-                    );
-                }
-
-                completed++;
-
-                // -------------------------------------------------
+                                // -------------------------------------------------
                 // IMDb IDENTITY VALIDATION
-                // Chỉ sử dụng IMDb ID sau khi xác minh danh tính.
+                // Xác thực trước, chỉ lấy rating sau khi xác thực.
                 // -------------------------------------------------
 
                 const existingIdentity =
@@ -8208,7 +8185,9 @@ function movinaSchedulePreviewCompletion(
 
                 let verifiedImdbId =
                     existingIdentity?.verified === true
-                        ? String(existingIdentity.imdbId || "")
+                        ? String(
+                            existingIdentity.imdbCandidate || ""
+                        )
                         : "";
 
                 const candidateImdbId = getImdbId(
@@ -8285,7 +8264,11 @@ function movinaSchedulePreviewCompletion(
                     }
                 }
 
-                // Chỉ lấy IMDb rating khi ID đã xác thực.
+                // -------------------------------------------------
+                // CINEMETA RATING
+                // Chỉ gọi khi IMDb ID đã được xác thực.
+                // -------------------------------------------------
+
                 if (
                     !sourceRating &&
                     !detailRating &&
@@ -8298,6 +8281,8 @@ function movinaSchedulePreviewCompletion(
                         itemType
                     );
                 }
+
+                completed++;
 
             } catch (error) {
                 skipped++;
