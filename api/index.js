@@ -10648,7 +10648,13 @@ const mappedSource =
 
 if (
     mappedSourceForMeta?.verified === true &&
-    mappedSourceForMeta?.slug
+    mappedSourceForMeta?.slug &&
+    mappedSourceForMeta?.type ===
+        (
+            String(args.type || "movie").toLowerCase() === "series"
+                ? "series"
+                : "movie"
+        )
 ) {
 
     // Đã có định danh PhimAPI chính xác:
@@ -10777,10 +10783,19 @@ if (
                 })
                 : [];
 
-        let item =
+        const mappedSourceTypeMatches =
+    mappedSourceForMeta?.type ===
+    (
+        String(args.type || "movie").toLowerCase() === "series"
+            ? "series"
+            : "movie"
+    );
+
+let item =
     (
         mappedSourceForMeta?.verified === true &&
-        mappedSourceForMeta?.slug
+        mappedSourceForMeta?.slug &&
+        mappedSourceTypeMatches
     )
         ? mappedSourceForMeta
         : null;
