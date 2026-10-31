@@ -10742,9 +10742,9 @@ if (
                 imdbId;
 
                         const mappedSource =
-                typeof movinaIdentityGetSource === "function"
-                    ? movinaIdentityGetSource(imdbId)
-                    : null;
+    typeof movinaIdentityRestoreSource === "function"
+        ? await movinaIdentityRestoreSource(imdbId)
+        : movinaIdentityGetSource(imdbId);
 
             const mappedType =
                 String(
