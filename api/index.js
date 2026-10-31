@@ -8121,14 +8121,6 @@ if (
     );
 }
 
-                    ratingRequests++;
-
-                    await movinaFetchCinemetaRating(
-                        imdbId,
-                        itemType
-                    );
-                }
-
                 completed++;
 
             } catch (error) {
