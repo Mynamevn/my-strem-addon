@@ -8628,8 +8628,22 @@ function movinaSchedulePreviewCompletion(
                 // Đối chiếu PhimAPI với metadata lấy từ Cinemeta.
                 // -------------------------------------------------
 
-                const existingIdentity =
+                                // Khôi phục Identity từ Redis nếu RAM chưa có.
+                let existingIdentity =
                     movinaIdentityGet(item, itemType);
+
+                if (
+                    !existingIdentity &&
+                    typeof movinaIdentityRestoreItem === "function"
+                ) {
+                    await movinaIdentityRestoreItem(
+                        item,
+                        itemType
+                    );
+
+                    existingIdentity =
+                        movinaIdentityGet(item, itemType);
+                }
 
                 let verifiedImdbId =
                     existingIdentity?.verified === true
