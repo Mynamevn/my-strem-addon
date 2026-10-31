@@ -17725,7 +17725,7 @@ if (
                     )
                 );
 
-            const r            const requestedYear =
+            const requestedYear =
                 Number(movieYear) || 0;
 
             const candidateYear =
