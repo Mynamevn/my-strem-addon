@@ -16792,7 +16792,13 @@ console.log(
 //
 // ============================================================
 
-async function fetchNguonC(movieName) {
+async function fetchNguonC(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 0,
+    streamType = "movie"
+) {
 
     const streams = [];
 
@@ -16937,68 +16943,149 @@ async function fetchNguonC(movieName) {
             normalizeTitle(
                 movieName
             );
-
         // =================================================
-        // 14.4. CHỌN PHIM
+        // 14.4. STRICT MOVIE IDENTITY MATCHING
         // =================================================
 
-        let selectedMovie =
-            null;
+        let selectedMovie = null;
 
-        // Exact normalized match
-        selectedMovie =
-            candidates.find(
-                function (item) {
+        const exactMatches = candidates.filter(item => {
 
-                    return (
-                        normalizeTitle(
-                            item?.name
-                        ) ===
-                        wantedTitle
-                    );
+            const candidateTitle =
+                normalizeTitle(
+                    item?.name
+                );
 
-                }
+            return (
+                candidateTitle &&
+                candidateTitle === wantedTitle
             );
 
-        // Nếu không có exact match,
-        // thử title chứa nhau
-        if (
-            !selectedMovie
-        ) {
+        });
+
+        const partialMatches = candidates.filter(item => {
+
+            const candidateTitle =
+                normalizeTitle(
+                    item?.name
+                );
+
+            if (
+                !candidateTitle ||
+                candidateTitle.length < 8 ||
+                wantedTitle.length < 8
+            ) {
+                return false;
+            }
+
+            return (
+                candidateTitle.includes(wantedTitle) ||
+                wantedTitle.includes(candidateTitle)
+            );
+
+        });
+
+        const titleMatches =
+            exactMatches.length > 0
+                ? exactMatches
+                : partialMatches;
+
+        const eligibleCandidates =
+            titleMatches.filter(item => {
+
+                const candidateYear =
+                    Number(
+                        String(
+                            item?.year || ""
+                        ).match(/\b(19|20)\d{2}\b/)?.[0] || 0
+                    );
+
+                // Có năm mục tiêu thì không nhận
+                // ứng viên thiếu năm hoặc sai năm.
+                if (
+                    movieYear &&
+                    candidateYear !== Number(movieYear)
+                ) {
+                    return false;
+                }
+
+                const candidateType =
+                    String(
+                        item?.type ||
+                        item?.type_name ||
+                        ""
+                    ).trim().toLowerCase();
+
+                const isSeries =
+                    /series|tvshows|tvshow|phim bo/.test(
+                        candidateType
+                    );
+
+                const isMovie =
+                    /single|movie|phim le/.test(
+                        candidateType
+                    );
+
+                // Nếu API cung cấp loại nội dung,
+                // bắt buộc loại đó phải phù hợp.
+                if (
+                    candidateType &&
+                    streamType === "series" &&
+                    !isSeries
+                ) {
+                    return false;
+                }
+
+                if (
+                    candidateType &&
+                    streamType !== "series" &&
+                    !isMovie
+                ) {
+                    return false;
+                }
+
+                return true;
+
+            });
+
+        // Không tự chọn candidates[0].
+        // Nếu còn nhiều ứng viên mơ hồ thì dừng.
+        if (eligibleCandidates.length === 1) {
 
             selectedMovie =
-                candidates.find(
-                    function (item) {
+                eligibleCandidates[0];
 
-                        const candidateTitle =
-                            normalizeTitle(
-                                item?.name
-                            );
+        } else if (eligibleCandidates.length > 1) {
 
-                        return (
-                            candidateTitle &&
-                            (
-                                candidateTitle.includes(
-                                    wantedTitle
-                                ) ||
-                                wantedTitle.includes(
-                                    candidateTitle
-                                )
-                            )
-                        );
-
-                    }
-                );
+            console.warn(
+                "[NGUONC] AMBIGUOUS MOVIE MATCH:",
+                JSON.stringify(
+                    eligibleCandidates.map(item => ({
+                        name: item?.name,
+                        year: item?.year,
+                        type: item?.type,
+                        slug: item?.slug
+                    }))
+                )
+            );
 
         }
 
-        // Cuối cùng dùng kết quả đầu tiên
-        if (
-            !selectedMovie
-        ) {
+        if (!selectedMovie) {
 
-            selectedMovie =
-                candidates[0];
+            console.warn(
+                "[NGUONC] NO SAFE MOVIE MATCH:",
+                JSON.stringify({
+                    wantedTitle,
+                    movieYear,
+                    streamType,
+                    totalCandidates: candidates.length,
+                    titleMatches: titleMatches.length,
+                    eligibleCandidates: eligibleCandidates.length
+                })
+            );
+
+            return streams;
 
         }
 
@@ -17185,6 +17272,87 @@ async function fetchNguonC(movieName) {
                         episode?.slug ||
                         "Full"
                     ).trim();
+
+                // -------------------------------------------------
+                // SERIES — STRICT EPISODE MATCHING
+                // -------------------------------------------------
+
+                if (streamType === "series") {
+
+                    const wantedEpisode =
+                        Math.max(
+                            1,
+                            Number.parseInt(
+                                episodeNumber,
+                                10
+                            ) || 1
+                        );
+
+                    const episodeIdentityText = [
+                        episode?.name,
+                        episode?.episode_name,
+                        episode?.slug
+                    ]
+                        .filter(Boolean)
+                        .join(" ");
+
+                    const episodeMatch =
+                        episodeIdentityText.match(
+                            /(?:tập|tap|episode|ep)\s*[-_: ]?\s*(\d+)|s(\d+)\s*e(\d+)/i
+                        );
+
+                    if (!episodeMatch) {
+
+                        console.log(
+                            "[NGUONC] SKIP UNVERIFIED EPISODE:",
+                            episodeIdentityText
+                        );
+
+                        continue;
+                    }
+
+                    let actualEpisode = 0;
+                    let actualSeason = 0;
+
+                    if (episodeMatch[3]) {
+
+                        actualSeason =
+                            Number(episodeMatch[2]);
+
+                        actualEpisode =
+                            Number(episodeMatch[3]);
+
+                    } else {
+
+                        actualEpisode =
+                            Number(episodeMatch[1]);
+
+                    }
+
+                    if (
+                        actualEpisode !== wantedEpisode
+                    ) {
+                        continue;
+                    }
+
+                    if (
+                        actualSeason > 0 &&
+                        seasonNumber > 0 &&
+                        actualSeason !== Number(seasonNumber)
+                    ) {
+                        continue;
+                    }
+
+                    console.log(
+                        "[NGUONC] VERIFIED EPISODE:",
+                        {
+                            season: seasonNumber,
+                            episode: wantedEpisode,
+                            label: episodeIdentityText
+                        }
+                    );
+
+                }
 
                 const embedUrl =
                     String(
@@ -37515,8 +37683,13 @@ const kkphimPromise = (async () => {
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
-      fetchNguonC(nguonCFallbackName),
-
+            fetchNguonC(
+          nguonCFallbackName,
+          movieYear,
+          seasonNumber,
+          episodeNumber,
+          streamType
+      ),
       fetchVSMov(
           movieName,
           movieYear,
