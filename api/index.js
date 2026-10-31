@@ -11879,244 +11879,236 @@ console.log(
                         : undefined
                 );
 
-        // =====================================================
-        // [STREMIO-013.17] [PROVIDERS: ALL] SERIES VIDEO METADATA
-        //
-        // Stremio:
-        //   video.id = metaId:season:episode
-        //
-        // Nếu Cinemeta resolve được IMDb:
-        //   tt26258200:1:1
-        //
-        // Nếu không:
-        //   vnwpsw:...:1:1
-        // =====================================================
+       // =====================================================
+// [STREMIO-013.17] [PROVIDERS: ALL] SERIES VIDEO METADATA
+// SEASON-AWARE EPISODE MAPPING
+// =====================================================
 
-        let videos =
-            undefined;
+let videos = undefined;
 
-        if (
-            isSeries
-        ) {
+if (isSeries) {
 
-            const episodeMap =
-                new Map();
+    const episodeMap = new Map();
 
-            const episodeGroups =
-                Array.isArray(
-                    detail?.episodes
-                )
-                    ? detail.episodes
-                    : [];
+    const episodeGroups =
+        Array.isArray(detail?.episodes)
+            ? detail.episodes
+            : [];
 
-            for (
-                const group
-                of episodeGroups
-            ) {
+    const sourceSeasonRaw =
+        Number(
+            detail?.tmdb?.season ??
+            item?.tmdb?.season ??
+            0
+        );
 
-                const serverData =
-                    Array.isArray(
-                        group?.server_data
+    const sourceSeason =
+        Number.isInteger(sourceSeasonRaw) &&
+        sourceSeasonRaw > 0
+            ? sourceSeasonRaw
+            : 1;
+
+    for (const group of episodeGroups) {
+
+        const serverData =
+            Array.isArray(group?.server_data)
+                ? group.server_data
+                : [];
+
+        for (const ep of serverData) {
+
+            const rawEpisodeName =
+                String(
+                    ep?.name ||
+                    ep?.slug ||
+                    ""
+                ).trim();
+
+            if (!rawEpisodeName) {
+                continue;
+            }
+
+            let seasonNumber = sourceSeason;
+            let episodeNumber = 0;
+
+            // S02E03 / Season 2 Episode 3
+            const seasonEpisodeMatch =
+                rawEpisodeName.match(
+                    /\bS(?:eason)?\s*0*(\d+)\s*[-._ ]*E(?:pisode)?\s*0*(\d+)\b/i
+                );
+
+            // 2x03
+            const compactSeasonEpisodeMatch =
+                !seasonEpisodeMatch
+                    ? rawEpisodeName.match(
+                        /\b(\d+)\s*x\s*0*(\d+)\b/i
                     )
-                        ? group.server_data
-                        : [];
+                    : null;
 
-                for (
-                    const ep
-                    of serverData
-                ) {
+            if (seasonEpisodeMatch) {
 
-                    const rawEpisodeName =
-                        String(
-                            ep?.name ||
-                            ep?.slug ||
-                            ""
-                        ).trim();
+                seasonNumber =
+                    Number(seasonEpisodeMatch[1]);
 
-                    if (
-                        !rawEpisodeName
-                    ) {
+                episodeNumber =
+                    Number(seasonEpisodeMatch[2]);
 
-                        continue;
+            } else if (compactSeasonEpisodeMatch) {
 
-                    }
+                seasonNumber =
+                    Number(compactSeasonEpisodeMatch[1]);
 
-                    const match =
-                        rawEpisodeName.match(
-                            /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
-                        );
+                episodeNumber =
+                    Number(compactSeasonEpisodeMatch[2]);
 
-                    if (
-                        !match
-                    ) {
+            } else {
 
-                        continue;
+                // Tập 1 / Episode 1 / Ep 1
+                const episodeMatch =
+                    rawEpisodeName.match(
+                        /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
+                    );
 
-                    }
-
-                    const episodeNumber =
-                        Number(
-                            match[1]
-                        );
-
-                    if (
-                        !Number.isFinite(
-                            episodeNumber
-                        ) ||
-                        episodeNumber <= 0
-                    ) {
-
-                        continue;
-
-                    }
-
-                    if (
-                        !episodeMap.has(
-                            episodeNumber
-                        )
-                    ) {
-
-                        episodeMap.set(
-                            episodeNumber,
-                            {
-                                number:
-                                    episodeNumber,
-
-                                name:
-                                    rawEpisodeName,
-
-                                released:
-                                    ep?.released ||
-                                    ep?.air_date ||
-                                    ep?.release_date ||
-                                    ep?.created_at ||
-                                    null
-                            }
-                        );
-
-                    }
-
+                if (!episodeMatch) {
+                    continue;
                 }
+
+                episodeNumber =
+                    Number(episodeMatch[1]);
+            }
+
+            if (
+                !Number.isInteger(seasonNumber) ||
+                seasonNumber <= 0 ||
+                !Number.isInteger(episodeNumber) ||
+                episodeNumber <= 0
+            ) {
+                continue;
+            }
+
+            const episodeKey =
+                seasonNumber + ":" + episodeNumber;
+
+            if (!episodeMap.has(episodeKey)) {
+
+                episodeMap.set(
+                    episodeKey,
+                    {
+                        season: seasonNumber,
+                        number: episodeNumber,
+                        name: rawEpisodeName,
+                        released:
+                            ep?.released ||
+                            ep?.air_date ||
+                            ep?.release_date ||
+                            ep?.created_at ||
+                            null
+                    }
+                );
 
             }
 
-            // -------------------------------------------------
-            // Năm fallback cho released
-            // -------------------------------------------------
-
-            const fallbackYear =
-                Number(
-                    detail?.year ||
-                    item?.year ||
-                    new Date().getFullYear()
-                );
-
-            const fallbackReleased =
-                Number.isFinite(
-                    fallbackYear
-                )
-                    ? new Date(
-                        Date.UTC(
-                            fallbackYear,
-                            0,
-                            1
-                        )
-                    ).toISOString()
-                    : new Date().toISOString();
-
-            videos =
-                Array.from(
-                    episodeMap.values()
-                )
-                    .sort(
-                        (a, b) =>
-                            a.number -
-                            b.number
-                    )
-                    .map(
-                        ep => {
-
-                            const videoId =
-                                metaId +
-                                ":1:" +
-                                ep.number;
-
-                            let released =
-                                ep.released;
-
-                            if (
-                                released
-                            ) {
-
-                                const parsedDate =
-                                    new Date(
-                                        released
-                                    );
-
-                                if (
-                                    !Number.isNaN(
-                                        parsedDate.getTime()
-                                    )
-                                ) {
-
-                                    released =
-                                        parsedDate.toISOString();
-
-                                } else {
-
-                                    released =
-                                        fallbackReleased;
-
-                                }
-
-                            } else {
-
-                                released =
-                                    fallbackReleased;
-
-                            }
-
-                            return {
-
-                                id:
-                                    videoId,
-
-                                title:
-                                    "Tập " +
-                                    ep.number,
-
-                                released:
-                                    released,
-
-                                season:
-                                    1,
-
-                                episode:
-                                    ep.number,
-
-                                number:
-                                    ep.number,
-
-                                name:
-                                    "Tập " +
-                                    ep.number
-
-                            };
-
-                        }
-                    );
-
-            console.log(
-                "[META] Series episodes:",
-                videos.length
-            );
-
-            console.log(
-                "[META] Video ID base:",
-                metaId
-            );
-
         }
+
+    }
+
+    const fallbackYear =
+        Number(
+            detail?.year ||
+            item?.year ||
+            new Date().getFullYear()
+        );
+
+    const fallbackReleased =
+        Number.isFinite(fallbackYear)
+            ? new Date(
+                Date.UTC(
+                    fallbackYear,
+                    0,
+                    1
+                )
+            ).toISOString()
+            : new Date().toISOString();
+
+    videos =
+        Array.from(episodeMap.values())
+            .sort((a, b) =>
+                a.season - b.season ||
+                a.number - b.number
+            )
+            .map(ep => {
+
+                const videoId =
+                    metaId +
+                    ":" +
+                    ep.season +
+                    ":" +
+                    ep.number;
+
+                let released =
+                    ep.released;
+
+                if (released) {
+
+                    const parsedDate =
+                        new Date(released);
+
+                    released =
+                        !Number.isNaN(parsedDate.getTime())
+                            ? parsedDate.toISOString()
+                            : fallbackReleased;
+
+                } else {
+
+                    released = fallbackReleased;
+
+                }
+
+                return {
+
+                    id: videoId,
+
+                    title:
+                        "Tập " +
+                        ep.number,
+
+                    released,
+
+                    season:
+                        ep.season,
+
+                    episode:
+                        ep.number,
+
+                    number:
+                        ep.number,
+
+                    name:
+                        "Tập " +
+                        ep.number
+
+                };
+
+            });
+
+    console.log(
+        "[META] Series episodes:",
+        videos.length
+    );
+
+    console.log(
+        "[META] Series seasons:",
+        [...new Set(
+            videos.map(video => video.season)
+        )]
+    );
+
+    console.log(
+        "[META] Video ID base:",
+        metaId
+    );
+
+}
 
         // =====================================================
         // [STREMIO-013.18] [PROVIDERS: ALL] SERIES META AND VIDEOS OUTPUT
