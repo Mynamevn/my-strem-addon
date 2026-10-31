@@ -6669,23 +6669,53 @@ function makeCatalogMeta(
         }
     }
 
-    /*
-     * Nếu catalog đã có IMDb ID hợp lệ,
-     * dùng IMDb ID làm ID chung cho Stremio.
-     *
-     * Nếu chưa có IMDb ID,
-     * giữ nguyên ID vnwpsw hiện tại.
-     */
+    
 
-    const metaId =
-    "vnwpsw:" +
-    encodeURIComponent(
-        String(
-            item?.name ||
-            item?.origin_name ||
-            ""
+/*
+ * Chỉ dùng IMDb ID đã được xác minh.
+ *
+ * Chưa xác minh hoặc FAIL:
+ *     giữ nguyên vnwpsw.
+ *
+ * Đã xác minh:
+ *     dùng tt... làm ID chung Stremio.
+ */
+
+const itemSlug =
+    String(item?.slug || "").trim();
+
+const verifiedImdbId =
+    itemSlug
+        ? (
+            MOVINA_VERIFIED_IMDB_BY_SLUG.get(
+                type + ":" + itemSlug
+            ) || ""
+        )
+        : "";
+
+const metaId =
+    verifiedImdbId ||
+    (
+        "vnwpsw:" +
+        encodeURIComponent(
+            String(
+                item?.name ||
+                item?.origin_name ||
+                ""
+            )
         )
     );
+
+console.log(
+    "[CATALOG META] IMDb:",
+    verifiedImdbId || "NOT VERIFIED"
+);
+
+console.log(
+    "[CATALOG META] Final ID:",
+    metaId
+);
+
 
     console.log(
         "[CATALOG META] Name:",
@@ -6809,6 +6839,522 @@ const MOVINA_IMDB_IDENTITY_CACHE_TTL =
 
 const MOVINA_IMDB_IDENTITY_FAIL_TTL =
     60 * 1000;
+
+
+// ============================================================
+// [STREMIO-012.01A] VERIFIED IMDb IDENTITY + META CACHE
+// ============================================================
+
+const MOVINA_VERIFIED_IMDB_BY_SLUG = new Map();
+
+const MOVINA_META_SEARCH_CACHE = new Map();
+const MOVINA_META_DETAIL_CACHE = new Map();
+
+const MOVINA_META_SEARCH_TTL =
+    10 * 60 * 1000;
+
+const MOVINA_META_DETAIL_TTL =
+    15 * 60 * 1000;
+
+function movinaIdentityNormalizeTitle(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/gi, "d")
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+// Cache có chống request trùng.
+// Nhiều lần mở cùng một phim sẽ dùng chung Promise.
+async function movinaMetaCachedLoad(
+    cache,
+    key,
+    loader,
+    ttl,
+    failTtl = 3000
+) {
+    const now = Date.now();
+    const cached = cache.get(key);
+
+    if (
+        cached &&
+        cached.expiresAt > now
+    ) {
+        return cached.promise;
+    }
+
+    const requestPromise = Promise.resolve()
+        .then(loader)
+        .catch(error => {
+            console.warn(
+                "[MOVINA META CACHE ERROR]",
+                key,
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+
+            return null;
+        });
+
+    cache.set(key, {
+        expiresAt: now + ttl,
+        promise: requestPromise
+    });
+
+    const result = await requestPromise;
+
+    cache.set(key, {
+        expiresAt:
+            Date.now() +
+            (
+                result !== null &&
+                result !== undefined
+                    ? ttl
+                    : failTtl
+            ),
+        promise: Promise.resolve(result)
+    });
+
+    return result;
+}
+
+function movinaIdentityGetYear(meta) {
+    const raw =
+        meta?.year ||
+        meta?.releaseInfo ||
+        meta?.released ||
+        "";
+
+    const match = String(raw).match(
+        /\b(19|20)\d{2}\b/
+    );
+
+    return match ? Number(match[0]) : 0;
+}
+
+function movinaIdentityTitles(item) {
+    const values = [
+        item?.name,
+        item?.origin_name,
+        item?.original_name,
+        item?.alternative_names,
+        item?.aliases
+    ];
+
+    return [
+        ...new Set(
+            values
+                .flatMap(value =>
+                    Array.isArray(value)
+                        ? value
+                        : [value]
+                )
+                .map(value =>
+                    typeof value === "object" && value
+                        ? value.name || value.title || ""
+                        : value
+                )
+                .map(movinaIdentityNormalizeTitle)
+                .filter(Boolean)
+        )
+    ];
+}
+
+function movinaIdentityMatches(
+    source,
+    candidate,
+    type
+) {
+    if (!candidate) return false;
+
+    const candidateId = String(
+        candidate.id || ""
+    ).trim().toLowerCase();
+
+    if (!/^tt\d+$/.test(candidateId)) {
+        return false;
+    }
+
+    const candidateType = String(
+        candidate.type || ""
+    ).trim().toLowerCase();
+
+    if (candidateType) {
+        const allowed =
+            type === "series"
+                ? ["series", "tv", "tvshow", "tvshows"]
+                : ["movie", "film"];
+
+        if (!allowed.includes(candidateType)) {
+            return false;
+        }
+    }
+
+    const sourceTitles =
+        movinaIdentityTitles(source);
+
+    const candidateTitles =
+        movinaIdentityTitles(candidate);
+
+    if (
+        !sourceTitles.some(title =>
+            candidateTitles.includes(title)
+        )
+    ) {
+        return false;
+    }
+
+    const sourceYear =
+        Number(source?.year || 0);
+
+    if (sourceYear) {
+        const candidateYear =
+            movinaIdentityGetYear(candidate);
+
+        if (candidateYear !== sourceYear) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Cập nhật các Catalog đã được cache.
+// Không thay đổi poster, tên hoặc thứ tự phim.
+function movinaPromoteCatalogIdentity(
+    item,
+    type,
+    imdbId
+) {
+    const slug =
+        String(item?.slug || "").trim();
+
+    if (!slug || !imdbId) return;
+
+    MOVINA_VERIFIED_IMDB_BY_SLUG.set(
+        type + ":" + slug,
+        imdbId
+    );
+
+    const internalId =
+        "vnwpsw:" +
+        encodeURIComponent(
+            String(
+                item?.name ||
+                item?.origin_name ||
+                ""
+            )
+        );
+
+    if (
+        typeof MOVINA_FINAL_CATALOG_CACHE === "undefined"
+    ) {
+        return;
+    }
+
+    for (
+        const cached of MOVINA_FINAL_CATALOG_CACHE.values()
+    ) {
+        if (!Array.isArray(cached?.metas)) {
+            continue;
+        }
+
+        cached.metas = cached.metas.map(meta => {
+            if (
+                meta.id === internalId &&
+                meta.type === type
+            ) {
+                return {
+                    ...meta,
+                    id: imdbId
+                };
+            }
+
+            return meta;
+        });
+    }
+
+    console.log(
+        "[MOVINA CATALOG ID PROMOTED]",
+        JSON.stringify({
+            slug,
+            type,
+            imdbId
+        })
+    );
+}
+
+// Xác minh IMDb bằng Cinemeta.
+async function movinaVerifyImdbIdentity(
+    item,
+    imdbId,
+    type
+) {
+    imdbId = String(imdbId || "")
+        .trim()
+        .toLowerCase();
+
+    if (!/^tt\d+$/.test(imdbId)) {
+        return "";
+    }
+
+    const cacheKey =
+        type + ":" + imdbId;
+
+    let candidate = null;
+
+    const cached =
+        MOVINA_IMDB_IDENTITY_CACHE.get(cacheKey);
+
+    if (
+        cached &&
+        cached.expiresAt > Date.now()
+    ) {
+        candidate = await cached.promise;
+
+    } else {
+        const requestPromise = (async () => {
+            try {
+                const response = await axios.get(
+                    "https://v3-cinemeta.strem.io/meta/" +
+                    type +
+                    "/" +
+                    encodeURIComponent(imdbId) +
+                    ".json",
+                    {
+                        timeout: 3500,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
+                        }
+                    }
+                );
+
+                return response.data?.meta || null;
+
+            } catch (error) {
+                console.log(
+                    "[MOVINA IMDb VERIFY ERROR]",
+                    imdbId,
+                    error?.response?.status ||
+                    error?.message
+                );
+
+                return null;
+            }
+        })();
+
+        MOVINA_IMDB_IDENTITY_CACHE.set(
+            cacheKey,
+            {
+                expiresAt:
+                    Date.now() +
+                    MOVINA_IMDB_IDENTITY_CACHE_TTL,
+                promise: requestPromise
+            }
+        );
+
+        candidate = await requestPromise;
+
+        MOVINA_IMDB_IDENTITY_CACHE.set(
+            cacheKey,
+            {
+                expiresAt:
+                    Date.now() +
+                    (
+                        candidate
+                            ? MOVINA_IMDB_IDENTITY_CACHE_TTL
+                            : MOVINA_IMDB_IDENTITY_FAIL_TTL
+                    ),
+                promise: Promise.resolve(candidate)
+            }
+        );
+    }
+
+    const source = {
+        ...item,
+        name:
+            item?.name ||
+            item?.origin_name ||
+            ""
+    };
+
+    if (
+        !movinaIdentityMatches(
+            source,
+            candidate,
+            type
+        )
+    ) {
+        console.log(
+            "[MOVINA IMDb VERIFY FAIL]",
+            imdbId,
+            source.name
+        );
+
+        return "";
+    }
+
+    movinaPromoteCatalogIdentity(
+        item,
+        type,
+        imdbId
+    );
+
+    console.log(
+        "[MOVINA IMDb VERIFY PASS]",
+        imdbId,
+        source.name
+    );
+
+    return imdbId;
+}
+
+// Tìm IMDb ID khi PhimAPI không cung cấp ID.
+// Chỉ chấp nhận duy nhất một ứng viên khớp.
+async function movinaResolveAndVerifyImdb(
+    item,
+    detail,
+    type
+) {
+    const source = {
+        ...item,
+        ...detail,
+
+        name:
+            detail?.name ||
+            item?.name ||
+            "",
+
+        origin_name:
+            detail?.origin_name ||
+            item?.origin_name ||
+            "",
+
+        year:
+            detail?.year ||
+            item?.year ||
+            0
+    };
+
+    const possibleIds = [
+        item?.__movinaClassicImdbId,
+        item?.imdb?.id,
+        item?.imdb_id,
+        item?.imdbId,
+        detail?.imdb?.id,
+        detail?.imdb_id,
+        detail?.imdbId
+    ];
+
+    for (const possibleId of possibleIds) {
+        if (!/^tt\d+$/i.test(String(possibleId || "").trim())) {
+            continue;
+        }
+
+        const verified =
+            await movinaVerifyImdbIdentity(
+                source,
+                possibleId,
+                type
+            );
+
+        if (verified) return verified;
+    }
+
+    const queries = [
+        ...new Set([
+            source.name,
+            source.origin_name,
+            source.original_name
+        ]
+            .map(value => String(value || "").trim())
+            .filter(Boolean))
+    ].slice(0, 2);
+
+    const results = await Promise.all(
+        queries.map(query =>
+            movinaMetaCachedLoad(
+                MOVINA_META_SEARCH_CACHE,
+                "identity:" +
+                    type +
+                    ":" +
+                    movinaIdentityNormalizeTitle(query),
+
+                async () => {
+                    const response = await axios.get(
+                        "https://v3-cinemeta.strem.io/catalog/" +
+                        type +
+                        "/top/search=" +
+                        encodeURIComponent(query) +
+                        ".json",
+                        {
+                            timeout: 3500,
+                            headers: {
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
+                            }
+                        }
+                    );
+
+                    return Array.isArray(
+                        response.data?.metas
+                    )
+                        ? response.data.metas
+                        : [];
+                },
+
+                MOVINA_META_SEARCH_TTL
+            )
+        )
+    );
+
+    const matched = new Map();
+
+    for (const candidate of results.flat()) {
+        if (
+            !movinaIdentityMatches(
+                source,
+                candidate,
+                type
+            )
+        ) {
+            continue;
+        }
+
+        matched.set(
+            String(candidate.id).toLowerCase(),
+            candidate
+        );
+    }
+
+    if (matched.size !== 1) {
+        console.log(
+            "[MOVINA IMDb SEARCH SAFE FAIL]",
+            JSON.stringify({
+                title: source.name,
+                year: source.year,
+                candidates: matched.size,
+                type
+            })
+        );
+
+        return "";
+    }
+
+    const candidate =
+        matched.values().next().value;
+
+    return movinaVerifyImdbIdentity(
+        source,
+        candidate.id,
+        type
+    );
+}
 
 const MOVINA_CINEMETA_PREVIEW_TTL =
     6 * 60 * 60 * 1000;
@@ -7540,11 +8086,41 @@ function movinaSchedulePreviewCompletion(
                     detail?.imdbId
                 );
 
-                if (
-                    !sourceRating &&
-                    !detailRating &&
-                    imdbId
-                ) {
+// Xác minh IMDb hoặc tìm IMDb mới nếu nguồn thiếu ID.
+// Chạy background, tuyệt đối không chặn Catalog foreground.
+
+const verifiedImdbId =
+    await movinaResolveAndVerifyImdb(
+        item,
+        detail,
+        itemType
+    );
+
+if (verifiedImdbId) {
+    console.log(
+        "[MOVINA BACKGROUND IMDb COMPLETE]",
+        JSON.stringify({
+            title: item?.name,
+            slug,
+            type: itemType,
+            imdbId: verifiedImdbId
+        })
+    );
+}
+
+if (
+    !sourceRating &&
+    !detailRating &&
+    verifiedImdbId
+) {
+    ratingRequests++;
+
+    await movinaFetchCinemetaRating(
+        verifiedImdbId,
+        itemType
+    );
+}
+
                     ratingRequests++;
 
                     await movinaFetchCinemetaRating(
@@ -9662,40 +10238,61 @@ if (
             return { meta: null };
         }
 
-        // =====================================================
-        // [STREMIO-013.06] [PROVIDERS: ALL] PHIMAPI TITLE SEARCH
-        // =====================================================
+        
+// =====================================================
+// [STREMIO-013.06] PHIMAPI TITLE SEARCH
+// CACHE-FIRST + REQUEST DEDUPLICATION
+// =====================================================
 
-        const searchUrl =
-            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-            encodeURIComponent(movieName) +
-            "&limit=10";
+const metaSearchKey =
+    "phimapi:" +
+    movinaIdentityNormalizeTitle(movieName);
 
-        console.log(
-            "[META] Search URL:",
-            searchUrl
-        );
+const items =
+    await movinaMetaCachedLoad(
+        MOVINA_META_SEARCH_CACHE,
+        metaSearchKey,
 
-        const searchRes =
-            await axios.get(
-                searchUrl,
-                {
-                    timeout: 8000,
+        async () => {
+            const searchUrl =
+                "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                encodeURIComponent(movieName) +
+                "&limit=10";
 
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0",
-
-                        "Accept":
-                            "application/json"
+            const searchRes =
+                await axios.get(
+                    searchUrl,
+                    {
+                        timeout: 5000,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
+                        }
                     }
-                }
-            );
+                );
 
-        const items =
-            searchRes.data?.data?.items ||
-            searchRes.data?.items ||
-            [];
+            const found =
+                searchRes.data?.data?.items ||
+                searchRes.data?.items ||
+                [];
+
+            return Array.isArray(found)
+                ? found
+                : [];
+        },
+
+        MOVINA_META_SEARCH_TTL,
+        3000
+    ) || [];
+
+console.log(
+    "[META SEARCH CACHE]",
+    JSON.stringify({
+        title: movieName,
+        results: items.length
+    })
+);
+
 
         console.log(
             "[META] Search items:",
@@ -9961,56 +10558,69 @@ if (
             fields: Object.keys(cachedPreviewFields)
         })
     );
-} else if (slug) {
-    // Phim bộ vẫn cần detail đầy đủ để tạo danh sách tập.
-    // Phim lẻ chưa có cache cũng tiếp tục lấy detail như cũ.
-    try {
-        const detailRes =
-            await axios.get(
-                "https://phimapi.com/v1/api/phim/" +
-                encodeURIComponent(slug),
-                {
-                    timeout: 10000,
 
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
-                }
+
+} else if (slug) {
+
+    // Phim bộ cần detail đầy đủ để tạo danh sách tập.
+    // Phim lẻ chưa có preview cũng sử dụng cache này.
+
+    try {
+        const cachedDetail =
+            await movinaMetaCachedLoad(
+                MOVINA_META_DETAIL_CACHE,
+                "phimapi:detail:" + slug,
+
+                async () => {
+                    const detailRes =
+                        await axios.get(
+                            "https://phimapi.com/v1/api/phim/" +
+                            encodeURIComponent(slug),
+                            {
+                                timeout: 7000,
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
+                            }
+                        );
+
+                    return (
+                        detailRes.data?.data?.item ||
+                        detailRes.data?.item ||
+                        null
+                    );
+                },
+
+                MOVINA_META_DETAIL_TTL,
+                3000
             );
 
-        detail =
-            detailRes.data?.data?.item ||
-            detailRes.data?.item ||
-            detail;
+        if (cachedDetail) {
+            detail = cachedDetail;
+        }
 
         console.log(
-            "[META] Detail OK:",
-            detail?.name ||
-            item.name
-        );
-    } catch (e) {
-        console.log(
-            "[META DETAIL ERROR]",
-            e?.response?.status ||
-            e?.message ||
-            e
-        );
-    }
-
-    if (hasCachedPreview) {
-        console.log(
-            "[META PREVIEW CACHE] HIT:",
+            "[META DETAIL CACHE]",
             JSON.stringify({
                 slug,
-                mode: expectedSeries
-                    ? "series-detail-plus-cache"
-                    : "movie-detail-plus-cache",
-                fields: Object.keys(cachedPreviewFields)
+                success: Boolean(cachedDetail),
+                series: expectedSeries,
+                episodes:
+                    detail?.episodes?.length || 0
             })
         );
+
+    } catch (error) {
+        console.log(
+            "[META DETAIL CACHE ERROR]",
+            slug,
+            error?.message || error
+        );
     }
+
 }
+
 
 // Bổ sung các trường preview còn thiếu.
 // Không ghi đè dữ liệu detail đầy đủ đã có.
@@ -10635,6 +11245,24 @@ console.log(
     })
 );
 
+// Đồng bộ IMDb PASS vào Catalog cache.
+// Lần mở Discover tiếp theo sẽ dùng tt... thay vì vnwpsw.
+
+if (
+    imdbId &&
+    slug &&
+    /^tt\d+$/i.test(imdbId)
+) {
+    movinaPromoteCatalogIdentity(
+        {
+            ...item,
+            ...detail,
+            slug
+        },
+        metaType,
+        imdbId
+    );
+}
 
         // =====================================================
 // [STREMIO-013.15] [PROVIDERS: ALL] IMDB RATING EXTRACTION
