@@ -21372,89 +21372,76 @@ const toStremioStream = stream => {
                         );
                     });
                 
-const kkTargetSeason =
-    Number(seasonNumber) > 0
-        ? Number(seasonNumber)
-        : 1;
-
-const targetEpisode =
-    Number(episodeNumber) > 0
-        ? Number(episodeNumber)
-        : 1;
-
 const matchedEpisode =
-    serverData.find(ep => {
+    hasExplicitEpisodeNumbers
+        ? serverData.find(ep => {
 
-        const episodeName =
-            String(
-                ep?.name ||
-                ep?.slug ||
-                ""
-            ).trim();
+            const episodeName =
+                String(
+                    ep?.name ||
+                    ep?.filename ||
+                    ep?.slug ||
+                    ""
+                ).trim();
 
-        if (!episodeName) {
-            return false;
-        }
+            if (!episodeName) {
+                return false;
+            }
 
-        // Nhận dạng S02E03 hoặc Season 2 Episode 3.
-        const seasonEpisodeMatch =
-            episodeName.match(
-                /\bS(?:eason)?\s*0*(\d+)\s*[-._ ]*E(?:pisode)?\s*0*(\d+)\b/i
-            );
+            const seasonEpisodeMatch =
+                episodeName.match(
+                    /\bS(?:eason)?\s*0*(\d+)\s*[-._ ]*E(?:pisode)?\s*0*(\d+)\b/i
+                );
 
-        // Nhận dạng 2x03.
-        const compactMatch =
-            !seasonEpisodeMatch
-                ? episodeName.match(
-                    /\b(\d+)\s*x\s*0*(\d+)\b/i
-                )
-                : null;
+            const compactMatch =
+                !seasonEpisodeMatch
+                    ? episodeName.match(
+                        /\b(\d+)\s*x\s*0*(\d+)\b/i
+                    )
+                    : null;
 
-        if (seasonEpisodeMatch) {
+            if (seasonEpisodeMatch) {
+                return (
+                    Number(seasonEpisodeMatch[1]) === targetSeason &&
+                    Number(seasonEpisodeMatch[2]) === targetEpisode
+                );
+            }
 
-            return (
-                Number(seasonEpisodeMatch[1]) === kktargetSeason &&
-                Number(seasonEpisodeMatch[2]) === targetEpisode
-            );
+            if (compactMatch) {
+                return (
+                    Number(compactMatch[1]) === targetSeason &&
+                    Number(compactMatch[2]) === targetEpisode
+                );
+            }
 
-        }
+            // Không có thông tin mùa:
+            // chỉ cho phép đối chiếu ở mùa 1.
+            if (targetSeason > 1) {
+                return false;
+            }
 
-        if (compactMatch) {
+            const episodeMatch =
+                episodeName.match(
+                    /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*(\d+)/i
+                );
 
-            return (
-                Number(compactMatch[1]) === kktargetSeason &&
-                Number(compactMatch[2]) === targetEpisode
-            );
+            if (episodeMatch) {
+                return Number(episodeMatch[1]) === targetEpisode;
+            }
 
-        }
+            const numericOnly =
+                episodeName.match(/^\s*0*(\d+)\s*$/);
 
-        // Tập không ghi mùa: chỉ chấp nhận ở mùa 1.
-        if (kktargetSeason > 1) {
-            return false;
-        }
+            return numericOnly
+                ? Number(numericOnly[1]) === targetEpisode
+                : false;
 
-        const episodeMatch =
-            episodeName.match(
-                /(?:tập|tap|episode|ep\.?|part)\s*0*(\d+)/i
-            );
-
-        if (episodeMatch) {
-            return Number(episodeMatch[1]) === targetEpisode;
-        }
-
-        // Tên chỉ có số, ví dụ "03".
-        const numericOnly =
-            episodeName.match(/^0*(\d+)$/);
-
-        if (numericOnly) {
-            return Number(numericOnly[1]) === targetEpisode;
-        }
-
-        // Không fallback theo vị trí mảng:
-        // tránh phát nhầm tập khi API không ghi số rõ ràng.
-        return false;
-
-    });
+        })
+        : (
+            targetSeason <= 1
+                ? serverData[targetEpisode - 1] || null
+                : null
+        );
 
                 if (!matchedEpisode) {
 
