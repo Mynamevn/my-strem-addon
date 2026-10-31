@@ -7541,6 +7541,14 @@ function movinaIdentityRemember(
         });
     }
 
+    // Persist cả kết quả xác thực lẫn kết quả từ chối
+    // để instance Vercel khác có thể khôi phục Registry.
+    if (
+        typeof movinaIdentityPersistRecord === "function"
+    ) {
+        void movinaIdentityPersistRecord(record);
+    }
+
     console.log(
         "[MOVINA IMDb IDENTITY CACHE]",
         JSON.stringify({
