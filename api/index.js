@@ -21178,75 +21178,119 @@ const toStremioStream = stream => {
                 streamType ===
                 "series"
             ) {
-
                 const targetEpisode =
-                    Number(episodeNumber) ||
-                    1;
+                    Number(episodeNumber) || 1;
+
+                const targetSeason =
+                    Number(seasonNumber) || 0;
+
+                // Kiểm tra danh sách có số tập tường minh không.
+                // Chỉ được fallback theo vị trí khi hoàn toàn
+                // không có số tập nào trong dữ liệu.
+                const hasExplicitEpisodeNumbers =
+                    serverData.some(ep => {
+
+                        const episodeName =
+                            String(
+                                ep?.name ||
+                                ep?.filename ||
+                                ep?.slug ||
+                                ""
+                            ).trim();
+
+                        return (
+                            /^\s*0*\d+\s*$/.test(episodeName) ||
+                            /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*\d+/i.test(episodeName) ||
+                            /\bs\d+\s*e\d+\b/i.test(episodeName)
+                        );
+                    });
 
                 const matchedEpisode =
-                    serverData.find(
-                        (ep, index) => {
+                    serverData.find((ep, index) => {
 
-                            const episodeName =
-                                String(
-                                    ep?.name ||
-                                    ep?.filename ||
-                                    ep?.slug ||
-                                    ""
-                                ).trim();
+                        const episodeName =
+                            String(
+                                ep?.name ||
+                                ep?.filename ||
+                                ep?.slug ||
+                                ""
+                            ).trim();
 
-                            let detectedEpisode =
-                                0;
+                        let detectedEpisode = 0;
+                        let detectedSeason = 0;
 
+                        // Dạng S01E06.
+                        const seasonEpisodeMatch =
+                            episodeName.match(
+                                /\bs0*(\d+)\s*e0*(\d+)\b/i
+                            );
+
+                        if (seasonEpisodeMatch) {
+
+                            detectedSeason =
+                                Number(seasonEpisodeMatch[1]) || 0;
+
+                            detectedEpisode =
+                                Number(seasonEpisodeMatch[2]) || 0;
+
+                        } else {
+
+                            // Dạng tên chỉ có số tập.
                             const directNumber =
                                 episodeName.match(
                                     /^\s*0*(\d+)\s*$/
                                 );
 
-                            if (
-                                directNumber
-                            ) {
+                            if (directNumber) {
 
                                 detectedEpisode =
-                                    Number(
-                                        directNumber[1]
-                                    ) || 0;
-                            }
+                                    Number(directNumber[1]) || 0;
 
-                            if (
-                                !detectedEpisode
-                            ) {
+                            } else {
 
                                 const episodeMatch =
                                     episodeName.match(
                                         /(?:tập|tap|episode|ep\.?|part|phần)[\s_-]*0*(\d+)/i
                                     );
 
-                                if (
-                                    episodeMatch
-                                ) {
+                                if (episodeMatch) {
 
                                     detectedEpisode =
-                                        Number(
-                                            episodeMatch[1]
-                                        ) || 0;
+                                        Number(episodeMatch[1]) || 0;
+
                                 }
+
                             }
 
-                            if (
-                                !detectedEpisode
-                            ) {
-
-                                detectedEpisode =
-                                    index + 1;
-                            }
-
-                            return (
-                                detectedEpisode ===
-                                targetEpisode
-                            );
                         }
-                    );
+
+                        // Chỉ dùng vị trí nếu toàn bộ danh sách
+                        // không có số tập tường minh.
+                        if (
+                            !detectedEpisode &&
+                            !hasExplicitEpisodeNumbers
+                        ) {
+                            detectedEpisode = index + 1;
+                        }
+
+                        if (
+                            detectedEpisode !== targetEpisode
+                        ) {
+                            return false;
+                        }
+
+                        // Nếu dữ liệu có mã mùa thì phải khớp.
+                        if (
+                            detectedSeason > 0 &&
+                            targetSeason > 0 &&
+                            detectedSeason !== targetSeason
+                        ) {
+                            return false;
+                        }
+
+                        return true;
+
+                    });
 
                 if (!matchedEpisode) {
 
