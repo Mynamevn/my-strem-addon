@@ -22859,36 +22859,85 @@ async function animeHayFindEpisode(
 
 
         // ----------------------------------------------------
-        // Fallback theo vị trí
+        // FALLBACK THEO VỊ TRÍ — CÓ ĐIỀU KIỆN
+        //
+        // Chỉ dùng vị trí nếu danh sách không có bất kỳ
+        // số tập tường minh nào.
+        // Nếu có số tập nhưng không tìm thấy tập yêu cầu,
+        // phải dừng thay vì phát nhầm tập.
         // ----------------------------------------------------
 
-        if (
-            !selected
-        ) {
+        const hasExplicitEpisodeNumbers =
+            episodes.some(ep => {
 
-            const index =
-                wanted - 1;
+                const text =
+                    String(ep.text || "");
 
+                const url =
+                    String(ep.url || "");
+
+                const textHasNumber =
+                    /(?:tập|tap|ep|episode)\s*[-_: ]?\s*\d+/i
+                        .test(text);
+
+                const urlHasNumber =
+                    /(?:tap|episode|ep)[-_]?\d+/i
+                        .test(url);
+
+                return textHasNumber || urlHasNumber;
+            });
+
+        if (!selected) {
+
+            if (hasExplicitEpisodeNumbers) {
+
+                console.warn(
+                    "[ANIMEHAY] EPISODE MISMATCH — STOP",
+                    {
+                        wanted,
+                        available: episodes.map(ep => ({
+                            text: ep.text,
+                            url: ep.url
+                        }))
+                    }
+                );
+
+                return null;
+
+            }
+
+            const index = wanted - 1;
 
             if (
                 index >= 0 &&
                 index < episodes.length
             ) {
 
-                selected =
-                    episodes[index];
+                selected = episodes[index];
+
+                console.log(
+                    "[ANIMEHAY] POSITIONAL EPISODE FALLBACK:",
+                    {
+                        wanted,
+                        index,
+                        url: selected.url
+                    }
+                );
+
             }
         }
 
-
-        if (
-            selected
-        ) {
+        if (selected) {
 
             console.log(
-                "[ANIMEHAY] EPISODE URL:",
-                selected.url
+                "[ANIMEHAY] VERIFIED EPISODE:",
+                {
+                    wanted,
+                    selected: selected.text,
+                    url: selected.url
+                }
             );
+
         }
 
 
