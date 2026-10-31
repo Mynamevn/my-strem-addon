@@ -17725,15 +17725,45 @@ if (
                     )
                 );
 
-            const requestedYear = Number(movieYear) || 0;
-            const candidateYear = Number(imdbMovie?.year) || 0;
+            const r            const requestedYear =
+                Number(movieYear) || 0;
+
+            const candidateYear =
+                Number(imdbMovie?.year) || 0;
 
             const yearMatches =
                 !requestedYear ||
                 !candidateYear ||
                 requestedYear === candidateYear;
 
-            if (titleMatches && yearMatches) {
+            const candidateType =
+                String(
+                    imdbMovie?.type || ""
+                ).trim().toLowerCase();
+
+            const candidateIsSeries =
+                [
+                    "series",
+                    "tvshows",
+                    "tvshow"
+                ].includes(candidateType);
+
+            const candidateIsMovie =
+                [
+                    "single",
+                    "movie"
+                ].includes(candidateType);
+
+            const typeMatches =
+                streamType === "series"
+                    ? candidateIsSeries
+                    : candidateIsMovie;
+
+            if (
+                titleMatches &&
+                yearMatches &&
+                typeMatches
+            ) {
                 movie = imdbMovie;
 
                 imdbEpisodes = Array.isArray(directEpisodes)
@@ -17764,6 +17794,8 @@ if (
                         candidateYear,
                         titleMatches,
                         yearMatches,
+                        candidateType,
+                        typeMatches,
                         imdbId
                     })
                 );
@@ -17904,7 +17936,7 @@ const imdbMatched =
                 )
             );
 
-        const candidateYear =
+                const candidateYear =
             Number(item?.year) || 0;
 
         const yearMatches =
@@ -17912,7 +17944,34 @@ const imdbMatched =
             !candidateYear ||
             requestedYear === candidateYear;
 
-        if (!titleMatches || !yearMatches) {
+        const candidateType =
+            String(
+                item?.type || ""
+            ).trim().toLowerCase();
+
+        const candidateIsSeries =
+            [
+                "series",
+                "tvshows",
+                "tvshow"
+            ].includes(candidateType);
+
+        const candidateIsMovie =
+            [
+                "single",
+                "movie"
+            ].includes(candidateType);
+
+        const typeMatches =
+            streamType === "series"
+                ? candidateIsSeries
+                : candidateIsMovie;
+
+        if (
+            !titleMatches ||
+            !yearMatches ||
+            !typeMatches
+        ) {
             console.warn(
                 "[KKPHIM] YEAR + IMDb MISMATCH REJECTED:",
                 {
@@ -17921,6 +17980,8 @@ const imdbMatched =
                     candidateName: item?.name,
                     candidateOriginName: item?.origin_name,
                     candidateYear,
+                    candidateType,
+                    typeMatches,
                     imdbId
                 }
             );
