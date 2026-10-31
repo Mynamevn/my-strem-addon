@@ -1102,7 +1102,7 @@ async function movinaFetchSmallPoster(item) {
 
 function catalogPoster(item) {
 
-    // 1. Ưu tiên poster nhỏ đã được cache.
+    // 1. Dùng poster nhỏ đã có trong cache nếu còn hợp lệ.
     const cachedSmallPoster =
         movinaGetCachedSmallPoster(item);
 
@@ -1110,10 +1110,11 @@ function catalogPoster(item) {
         return cachedSmallPoster;
     }
 
-    // 2. Nếu chưa có poster nhỏ, dùng ảnh nguồn hiện tại.
+    // 2. Ưu tiên thumb_url vì đây thường là ảnh thumbnail.
     const raw =
-        item?.poster_url ||
         item?.thumb_url ||
+        item?.thumb ||
+        item?.poster_url ||
         item?.poster ||
         "";
 
@@ -1121,8 +1122,7 @@ function catalogPoster(item) {
         return "";
     }
 
-    const value =
-        String(raw).trim();
+    const value = String(raw).trim();
 
     if (/^https?:\/\//i.test(value)) {
         return value;
@@ -1132,30 +1132,17 @@ function catalogPoster(item) {
         return "https:" + value;
     }
 
-    if (
-        value.startsWith("uploads/movies/")
-    ) {
-        return (
-            "https://phimapi.com/" +
-            value
-        );
+    if (value.startsWith("uploads/movies/")) {
+        return "https://phimapi.com/" + value;
     }
 
-    if (
-        value.startsWith("upload/vod/")
-    ) {
-        return (
-            "https://phimimg.com/" +
-            value
-        );
+    if (value.startsWith("upload/vod/")) {
+        return "https://phimimg.com/" + value;
     }
 
-    return (
-        "https://phimimg.com/" +
-        value.replace(/^\/+/, "")
-    );
+    return "https://phimimg.com/" +
+        value.replace(/^\/+/, "");
 }
-
 
 /* ============================================================
    [CORE-005] [PROVIDERS: ALL] MOVIE / SERIES CLASSIFICATION
@@ -7754,56 +7741,7 @@ function movinaSchedulePreviewCompletion(
     };
 
 
-    // ========================================================
-    // SMALL POSTER BACKGROUND QUEUE
-    // Chọn tối đa 10 poster chưa có bản nhỏ trong cache.
-    // Giữ nguyên thứ tự phim từ trên xuống dưới.
-    // ========================================================
-
-    const smallPosterCandidates = sourceItems
-        .filter(item => {
-            if (movinaHasSmallPosterCache(item)) {
-                return false;
-            }
-
-            const currentPoster =
-                catalogPoster(item);
-
-            return !movinaIsSmallPosterUrl(
-                currentPoster
-            );
-        })
-        .slice(
-            0,
-            MOVINA_SMALL_POSTER_BACKGROUND_BATCH
-        );
-
-    const worker = async () => {
-
-        // Ưu tiên tìm poster nhỏ theo thứ tự catalog.
-        let smallPosterUpdated = 0;
-
-        for (const posterItem of smallPosterCandidates) {
-            const smallPosterUrl =
-                await movinaFetchSmallPoster(posterItem);
-
-            if (smallPosterUrl) {
-                smallPosterUpdated++;
-            }
-        }
-
-        if (smallPosterCandidates.length) {
-            console.log(
-                "[MOVINA SMALL POSTER BACKGROUND] COMPLETED",
-                JSON.stringify({
-                    catalog: catalogId,
-                    attempted: smallPosterCandidates.length,
-                    updated: smallPosterUpdated,
-                    batchLimit:
-                        MOVINA_SMALL_POSTER_BACKGROUND_BATCH
-                })
-            );
-        }
+        const worker = async () => {
 
         while (true) {
 
@@ -7935,21 +7873,11 @@ function movinaSchedulePreviewCompletion(
                 error?.message || error
             );
         })
-                .finally(() => {
+                        .finally(() => {
             MOVINA_PREVIEW_BACKGROUND_JOBS.delete(jobKey);
 
-            // Xóa kết quả catalog cũ để lần tải kế tiếp
-            // lấy metadata đã được hoàn thiện từ preview cache.
-            for (const [cacheKey, cached] of
-                MOVINA_FINAL_CATALOG_CACHE.entries()) {
-
-                if (cached?.catalogId === catalogId) {
-                    MOVINA_FINAL_CATALOG_CACHE.delete(cacheKey);
-                }
-            }
-
             console.log(
-                "[MOVINA PREVIEW BACKGROUND] CATALOG CACHE INVALIDATED:",
+                "[MOVINA PREVIEW BACKGROUND] JOB RELEASED:",
                 catalogId
             );
         });
