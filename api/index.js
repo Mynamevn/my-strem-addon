@@ -10470,10 +10470,8 @@ if (
             metaId =
                 imdbId;
 
-                        const mappedSource =
-    typeof movinaIdentityRestoreSource === "function"
-        ? await movinaIdentityRestoreSource(imdbId)
-        : movinaIdentityGetSource(imdbId);
+           const mappedSource =
+    movinaIdentityGetSource(imdbId);
 
             const mappedType =
                 String(
@@ -10495,10 +10493,10 @@ if (
                 "";
 
             if (
-                mappedSource &&
-                mappedName &&
-                (!mappedType || mappedType === requestedType)
-            ) {
+    mappedSource?.verified === true &&
+    mappedName &&
+    mappedType === requestedType
+) {
                 movieName = mappedName;
 
                 console.log(
@@ -36517,9 +36515,7 @@ let episodeNumber = 0;
         // -------------------------------------------------
 
                 const mappedSource =
-            typeof movinaIdentityRestoreSource === "function"
-                ? await movinaIdentityRestoreSource(imdbId)
-                : movinaIdentityGetSource(imdbId);
+    movinaIdentityGetSource(imdbId);
 
         const mappedType =
             String(mappedSource?.type || "").toLowerCase();
