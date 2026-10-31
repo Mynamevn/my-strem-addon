@@ -18166,26 +18166,53 @@ if (!movie) {
     // =================================================
 
     
-    const ranked = items.map((item, index) => {
-        const name = normalizeTitle(item?.name);
-        const origin = normalizeTitle(item?.origin_name);
-        const year = Number(item?.year) || 0;
-        const type = String(item?.type || "").toLowerCase();
+        const ranked = items.map((item, index) => {
+
+        const name =
+            normalizeTitle(item?.name);
+
+        const origin =
+            normalizeTitle(item?.origin_name);
+
+        const year =
+            Number(item?.year) || 0;
+
+        const type =
+            String(item?.type || "").toLowerCase().trim();
+
+        // PhimAPI thường dùng:
+        // series = phim bộ
+        // single = phim lẻ
+        const typeMatches =
+            streamType === "series"
+                ? type === "series"
+                : (
+                    type === "single" ||
+                    type === "movie"
+                );
 
         const exactOriginMatch =
-            normalizedSearchTerms.some(term => origin === term);
+            normalizedSearchTerms.some(
+                term => origin === term
+            );
 
         const exactNameMatch =
-            normalizedSearchTerms.some(term => name === term);
+            normalizedSearchTerms.some(
+                term => name === term
+            );
 
         const partialOriginMatch =
-            normalizedSearchTerms.some(term =>
-                term.length >= 8 && origin.includes(term)
+            normalizedSearchTerms.some(
+                term =>
+                    term.length >= 8 &&
+                    origin.includes(term)
             );
 
         const partialNameMatch =
-            normalizedSearchTerms.some(term =>
-                term.length >= 8 && name.includes(term)
+            normalizedSearchTerms.some(
+                term =>
+                    term.length >= 8 &&
+                    name.includes(term)
             );
 
         const titleMatched =
@@ -18208,11 +18235,15 @@ if (!movie) {
 
         if (movieYear && year === movieYear) {
             score += 3000;
-        } else if (movieYear && year && year !== movieYear) {
+        } else if (
+            movieYear &&
+            year &&
+            year !== movieYear
+        ) {
             score -= 1500;
         }
 
-        if (streamType === "series" && type === "series") {
+        if (typeMatches) {
             score += 500;
         }
 
@@ -18220,15 +18251,25 @@ if (!movie) {
             item,
             score,
             index,
-            titleMatched
+            titleMatched,
+            type,
+            typeMatches
         };
+
     }).filter(candidate => {
-        // Không bao giờ chọn phim chỉ vì trùng năm.
+
+        // Không chọn sai loại nội dung.
+        if (!candidate.typeMatches) {
+            return false;
+        }
+
+        // Không chọn phim chỉ vì trùng năm.
         if (!candidate.titleMatched) {
             return false;
         }
 
         return true;
+
     });
 
     ranked.sort((a, b) => {
