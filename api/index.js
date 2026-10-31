@@ -10445,10 +10445,11 @@ if (
         // [STREMIO-013.05] [PROVIDERS: ALL] MOVIE TITLE DECODING
         // =====================================================
 
-        let movieName = "";
-
-        // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID
+        let movieName = "";        // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID
         let imdbId = "";
+
+        // Năm phát hành từ Cinemeta hoặc reverse mapping.
+        let imdbTargetYear = 0;
 
         // ID cuối cùng dùng cho Meta + Video
         let metaId = rawId;
@@ -10497,7 +10498,10 @@ if (
     mappedName &&
     mappedType === requestedType
 ) {
+
                 movieName = mappedName;
+                imdbTargetYear =
+                    Number(mappedSource?.year || 0);
 
                 console.log(
                     "[META IMDb REVERSE MAP] HIT:",
@@ -10533,8 +10537,19 @@ if (
                             }
                         );
 
+                    const cinemetaMeta =
+                        cinemetaRes.data?.meta || {};
+
                     movieName =
-                        cinemetaRes.data?.meta?.name || "";
+                        cinemetaMeta.name || "";
+
+                    imdbTargetYear =
+                        itemYear({
+                            year:
+                                cinemetaMeta.year ||
+                                cinemetaMeta.releaseInfo ||
+                                cinemetaMeta.released
+                        });
 
                 } catch (e) {
                     console.log(
@@ -10644,32 +10659,100 @@ if (
                 movieName
             );
 
+                const expectedSeries =
+            String(args.type || "movie").toLowerCase() ===
+            "series";
+
+        // Lọc đúng loại nội dung và năm trước khi so khớp tên.
+        // Nếu đã có năm IMDb thì không nhận ứng viên thiếu năm.
+        const eligibleItems =
+            Array.isArray(items)
+                ? items.filter(candidate => {
+                    const candidateIsSeries =
+                        isSeriesItem(candidate);
+
+                    if (
+                        candidateIsSeries !== expectedSeries
+                    ) {
+                        return false;
+                    }
+
+                    if (imdbTargetYear) {
+                        const candidateYear =
+                            itemYear(candidate);
+
+                        if (
+                            !candidateYear ||
+                            Math.abs(
+                                candidateYear - imdbTargetYear
+                            ) > 1
+                        ) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                })
+                : [];
+
         let item = null;
 
-        if (Array.isArray(items)) {
+        // A. Tên Việt khớp chính xác.
+        item =
+            eligibleItems.find(candidate =>
+                normalizeTitle(candidate?.name) ===
+                normalizedName
+            ) || null;
 
-            // -------------------------------------------------
-            // A. TÊN VIỆT KHỚP CHÍNH XÁC
-            // -------------------------------------------------
-
+        // B. Tên gốc khớp chính xác.
+        if (!item) {
             item =
-                items.find(x => {
-
-                    const name =
+                eligibleItems.find(candidate => {
+                    const origin =
                         normalizeTitle(
-                            x?.name
+                            candidate?.origin_name ||
+                            candidate?.original_name
                         );
 
                     return (
-                        name &&
-                        name === normalizedName
+                        origin &&
+                        origin === normalizedName
                     );
+                }) || null;
+        }
 
-                });
+        // C. Bí danh khớp chính xác.
+        if (!item) {
+            item =
+                eligibleItems.find(candidate => {
+                    const alternatives =
+                        Array.isArray(
+                            candidate?.alternative_names
+                        )
+                            ? candidate.alternative_names
+                            : [];
 
-            // -------------------------------------------------
-            // B. TÊN GỐC KHỚP CHÍNH XÁC
-            // -------------------------------------------------
+                    return alternatives.some(alt =>
+                        normalizeTitle(alt) === normalizedName
+                    );
+                }) || null;
+        }
+
+        console.log(
+            "[META PHIMAPI MATCH FILTER]",
+            JSON.stringify({
+                requestedType:
+                    expectedSeries ? "series" : "movie",
+                imdbTargetYear,
+                totalCandidates:
+                    Array.isArray(items) ? items.length : 0,
+                eligibleCandidates:
+                    eligibleItems.length,
+                selected:
+                    item?.slug || null
+            })
+        );
+
 
             if (!item) {
 
