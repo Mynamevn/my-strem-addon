@@ -10659,9 +10659,9 @@ if (
                 movieName
             );
 
-                const expectedSeries =
-            String(args.type || "movie").toLowerCase() ===
-            "series";
+                const expectedSeriesForMatch =
+    String(args.type || "movie").toLowerCase() ===
+    "series";
 
         // Lọc đúng loại nội dung và năm trước khi so khớp tên.
         // Nếu đã có năm IMDb thì không nhận ứng viên thiếu năm.
@@ -10672,7 +10672,7 @@ if (
                         isSeriesItem(candidate);
 
                     if (
-                        candidateIsSeries !== expectedSeries
+                        candidateIsSeries !== expectedSeriesForMatch
                     ) {
                         return false;
                     }
@@ -10742,7 +10742,7 @@ if (
             "[META PHIMAPI MATCH FILTER]",
             JSON.stringify({
                 requestedType:
-                    expectedSeries ? "series" : "movie",
+                    expectedSeriesForMatch ? "series" : "movie",
                 imdbTargetYear,
                 totalCandidates:
                     Array.isArray(items) ? items.length : 0,
