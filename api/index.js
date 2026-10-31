@@ -11442,35 +11442,53 @@ console.log(
             // phải khớp năm.
             // -------------------------------------------------
 
-            let selectedCinemeta =
-                null;
+                        let selectedCinemeta = null;
 
-            if (
-                targetYear
-            ) {
+            // Chỉ nhận ứng viên có tên khớp chính xác.
+            // Nếu có năm nguồn, năm Cinemeta cũng phải khớp.
+            const safeCinemetaCandidates =
+                cinemetaCandidates.filter(entry => {
+                    const candidate =
+                        entry?.candidate || {};
 
-                selectedCinemeta =
-                    cinemetaCandidates.find(
-                        x =>
-                            Number(
-                                String(
-                                    x.candidate?.releaseInfo ||
-                                    ""
-                                ).match(
-                                    /\d{4}/
-                                )?.[0] ||
-                                0
-                            ) ===
-                            targetYear
-                    );
+                    const candidateName =
+                        normalizeTitle(candidate.name);
 
-            } else {
+                    const exactTitle =
+                        (
+                            originName &&
+                            candidateName ===
+                                normalizeTitle(originName)
+                        ) ||
+                        (
+                            vietnameseName &&
+                            candidateName ===
+                                normalizeTitle(vietnameseName)
+                        );
 
-                selectedCinemeta =
-                    cinemetaCandidates[0] ||
-                    null;
+                    if (!exactTitle) {
+                        return false;
+                    }
 
-            }
+                    const candidateYear =
+                        Number(
+                            String(
+                                candidate.releaseInfo || ""
+                            ).match(/\b(19|20)\d{2}\b/)?.[0] || 0
+                        );
+
+                    if (
+                        targetYear &&
+                        candidateYear !== targetYear
+                    ) {
+                        return false;
+                    }
+
+                    return true;
+                });
+
+            selectedCinemeta =
+                safeCinemetaCandidates[0] || null;
 
             if (
                 selectedCinemeta
@@ -11480,13 +11498,64 @@ console.log(
                     String(
                         selectedCinemeta.candidate?.id ||
                         ""
-                    ).trim();
-
-                if (
-                    resolvedId.startsWith(
-                        "tt"
-                    )
+                    ).trim();                if (
+                    /^tt\d+$/i.test(resolvedId)
                 ) {
+                    const candidateMeta =
+                        selectedCinemeta.candidate || {};
+
+                    const identityCandidate = {
+                        id: resolvedId,
+                        type: metaType,
+                        name: candidateMeta.name || "",
+                        original_name:
+                            candidateMeta.original_name ||
+                            candidateMeta.name ||
+                            "",
+                        releaseInfo:
+                            candidateMeta.releaseInfo || ""
+                    };
+
+                    const validation =
+                        movinaValidateImdbCandidate(
+                            item,
+                            identityCandidate,
+                            metaType
+                        );
+
+                    if (validation.verified === true) {
+                        movinaIdentityRemember(
+                            item,
+                            metaType,
+                            resolvedId,
+                            true,
+                            validation.reason
+                        );
+
+                        imdbId = resolvedId;
+
+                        imdbResolvedByCinemeta = true;
+
+                        console.log(
+                            "[META CINEMETA VERIFIED]",
+                            JSON.stringify({
+                                imdbId: resolvedId,
+                                slug: item?.slug || "",
+                                similarity:
+                                    validation.similarity
+                            })
+                        );
+                    } else {
+                        console.log(
+                            "[META CINEMETA REJECTED]",
+                            JSON.stringify({
+                                imdbId: resolvedId,
+                                slug: item?.slug || "",
+                                reason: validation.reason
+                            })
+                        );
+                    }
+                }
 
                     imdbId =
                         resolvedId;
@@ -11520,6 +11589,26 @@ console.log(
 // =====================================================
 
 let imdbRating = null;
+
+// ID lấy từ PhimAPI chỉ là candidate.
+// Với public MOVINA ID, chỉ dùng IMDb ID đã xác thực
+// trong Identity Registry.
+if (rawId.startsWith("vnwpsw:")) {
+    const verifiedIdentity =
+        movinaIdentityGet(item, metaType);
+
+    const verifiedCandidate =
+        verifiedIdentity?.verified === true
+            ? String(
+                verifiedIdentity.imdbCandidate || ""
+            ).trim()
+            : "";
+
+    imdbId =
+        /^tt\d+$/i.test(verifiedCandidate)
+            ? verifiedCandidate
+            : "";
+}
 
 const rawImdbRating =
     detail?.imdb?.vote_average ??
