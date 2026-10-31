@@ -28540,22 +28540,130 @@ async function fetchOnflixProvider(
         const normalize = onflixNormalizeText;
         const wanted = normalize(query);
 
-        const candidate =
-            candidates.find(item =>
-                normalize(item.title) === wanted
-            ) ||
-            candidates.find(item => {
-                const title = normalize(item.title);
+                // -------------------------------------------------
+        // ONFLIX — STRICT IDENTITY MATCHING
+        // Phải đúng tên + loại + năm trước khi tải detail.
+        // -------------------------------------------------
 
-                return title &&
-                    (title.includes(wanted) || wanted.includes(title));
-            }) ||
-            candidates.find(item =>
-                movieYear &&
-                item.year &&
-                Number(item.year) === Number(movieYear)
-            ) ||
-            candidates[0];
+        const normalize = onflixNormalizeText;
+        const wanted = normalize(query);
+
+        const requestedType =
+            String(streamType || "movie")
+                .trim()
+                .toLowerCase();
+
+        const eligibleCandidates =
+            candidates.filter(item => {
+
+                const candidateTitle =
+                    normalize(item?.title);
+
+                const candidateYear =
+                    Number(item?.year) || 0;
+
+                const candidateType =
+                    normalize(item?.type);
+
+                // 1. Xác thực loại nội dung.
+                const isSeries =
+                    /^(series|tvshows|tvshow|phim bo)$/
+                        .test(candidateType);
+
+                const isMovie =
+                    /^(single|movie|phim le)$/
+                        .test(candidateType);
+
+                const typeMatches =
+                    requestedType === "series"
+                        ? isSeries
+                        : isMovie;
+
+                if (!typeMatches) {
+                    return false;
+                }
+
+                // 2. Xác thực tên phim.
+                const exactTitle =
+                    candidateTitle === wanted;
+
+                const partialTitle =
+                    wanted.length >= 6 &&
+                    candidateTitle.length >= 6 &&
+                    (
+                        candidateTitle.includes(wanted) ||
+                        wanted.includes(candidateTitle)
+                    );
+
+                if (!exactTitle && !partialTitle) {
+                    return false;
+                }
+
+                // 3. Nếu có năm mục tiêu thì bắt buộc
+                // ứng viên phải có năm và chênh lệch tối đa 1.
+                if (movieYear) {
+
+                    if (!candidateYear) {
+                        return false;
+                    }
+
+                    if (
+                        Math.abs(
+                            candidateYear -
+                            Number(movieYear)
+                        ) > 1
+                    ) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+        // Ưu tiên tên khớp chính xác, sau đó ưu tiên năm gần nhất.
+        eligibleCandidates.sort((a, b) => {
+
+            const aExact =
+                normalize(a?.title) === wanted;
+
+            const bExact =
+                normalize(b?.title) === wanted;
+
+            if (aExact !== bExact) {
+                return aExact ? -1 : 1;
+            }
+
+            const aYear =
+                Number(a?.year) || 0;
+
+            const bYear =
+                Number(b?.year) || 0;
+
+            return (
+                Math.abs(aYear - Number(movieYear || 0)) -
+                Math.abs(bYear - Number(movieYear || 0))
+            );
+
+        });
+
+        const candidate =
+            eligibleCandidates[0] || null;
+
+        console.info(TAG, "IDENTITY FILTER:", JSON.stringify({
+            query,
+            requestedYear: Number(movieYear) || 0,
+            requestedType,
+            totalCandidates: candidates.length,
+            eligibleCandidates: eligibleCandidates.length,
+            selected: candidate
+                ? {
+                    title: candidate.title,
+                    year: candidate.year,
+                    type: candidate.type,
+                    url: candidate.url
+                }
+                : null
+        }));
 
         if (!candidate?.url) {
             console.warn(TAG, "CANDIDATE URL MISSING");
