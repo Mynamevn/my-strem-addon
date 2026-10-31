@@ -10332,50 +10332,83 @@ if (
             metaId =
                 imdbId;
 
-            try {
+                        const mappedSource =
+                typeof movinaIdentityGetSource === "function"
+                    ? movinaIdentityGetSource(imdbId)
+                    : null;
 
-                const cinemetaRes =
-                    await axios.get(
-                        "https://v3-cinemeta.strem.io/meta/" +
-                        (
-                            args.type === "series"
-                                ? "series"
-                                : "movie"
-                        ) +
-                        "/" +
-                        encodeURIComponent(
-                            imdbId
-                        ) +
-                        ".json",
-                        {
-                            timeout: 8000,
+            const mappedType =
+                String(
+                    mappedSource?.type ||
+                    mappedSource?.source?.type ||
+                    ""
+                ).toLowerCase();
 
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
+            const requestedType =
+                String(args.type || "movie").toLowerCase();
 
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
+            const mappedName =
+                mappedSource?.name ||
+                mappedSource?.originName ||
+                mappedSource?.origin_name ||
+                mappedSource?.source?.name ||
+                mappedSource?.source?.originName ||
+                mappedSource?.source?.origin_name ||
+                "";
 
-                movieName =
-                    cinemetaRes.data?.meta?.name ||
-                    "";
-
-            } catch (e) {
+            if (
+                mappedSource &&
+                mappedName &&
+                (!mappedType || mappedType === requestedType)
+            ) {
+                movieName = mappedName;
 
                 console.log(
-                    "[META CINEMETA ERROR]",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
+                    "[META IMDb REVERSE MAP] HIT:",
+                    JSON.stringify({
+                        imdbId,
+                        movieName,
+                        type: requestedType,
+                        slug:
+                            mappedSource?.slug ||
+                            mappedSource?.source?.slug ||
+                            ""
+                    })
                 );
+            } else {
+                try {
+                    const cinemetaRes =
+                        await axios.get(
+                            "https://v3-cinemeta.strem.io/meta/" +
+                            (
+                                args.type === "series"
+                                    ? "series"
+                                    : "movie"
+                            ) +
+                            "/" +
+                            encodeURIComponent(imdbId) +
+                            ".json",
+                            {
+                                timeout: 8000,
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
+                            }
+                        );
 
-            }
+                    movieName =
+                        cinemetaRes.data?.meta?.name || "";
 
-        } else {
+                } catch (e) {
+                    console.log(
+                        "[META CINEMETA ERROR]",
+                        e?.response?.status ||
+                        e?.message ||
+                        e
+                    );
+                }
+            } else {
 
             movieName =
                 decodeMovieName(
