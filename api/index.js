@@ -28545,9 +28545,6 @@ async function fetchOnflixProvider(
         // Phải đúng tên + loại + năm trước khi tải detail.
         // -------------------------------------------------
 
-        const normalize = onflixNormalizeText;
-        const wanted = normalize(query);
-
         const requestedType =
             String(streamType || "movie")
                 .trim()
