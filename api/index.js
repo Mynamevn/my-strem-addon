@@ -2846,7 +2846,11 @@ function movinaClassicFindExactMatch(title, items) {
 }
 
 
-async function movinaClassicSearchPhimAPI(title, type) {
+async function movinaClassicSearchPhimAPI(
+    title,
+    type,
+    options = {}
+) {
     const cacheKey = [
         type,
         movinaClassicNormalize(title.title),
@@ -2861,23 +2865,35 @@ async function movinaClassicSearchPhimAPI(title, type) {
         return cached.item;
     }
 
+    const priority =
+        options.background === true
+            ? "background"
+            : "foreground";
+
+    const retries =
+        options.background === true ? 0 : 1;
+
     try {
         const response = await movinaPhimApiGet(
-    "https://phimapi.com/v1/api/tim-kiem",
-    {
-        params: {
-            keyword: title.title,
-            page: 1,
-            limit: 20,
-            filterType: type === "series" ? "series" : "single"
-        },
-        timeout: 4000,
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-    }
-);
+            "https://phimapi.com/v1/api/tim-kiem",
+            {
+                params: {
+                    keyword: title.title,
+                    page: 1,
+                    limit: 20,
+                    filterType: type === "series"
+                        ? "series"
+                        : "single"
+                },
+                timeout: 4000,
+                headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json"
+                }
+            },
+            retries,
+            priority
+        );
 
         const items =
             response.data?.data?.items ||
@@ -2889,12 +2905,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
             Array.isArray(items) ? items : []
         );
 
-        /*
-         * PHIM LẺ:
-         * Nếu tìm bằng tên không thành công, thử tra cứu
-         * bằng IMDb ID. Chỉ dùng kết quả nếu không phát hiện
-         * IMDb ID mâu thuẫn hoặc loại nội dung không phù hợp.
-         */
+        // Movie fallback: tra cứu trực tiếp bằng IMDb ID.
         if (
             !match &&
             type === "movie" &&
@@ -2902,16 +2913,18 @@ async function movinaClassicSearchPhimAPI(title, type) {
         ) {
             try {
                 const imdbResponse = await movinaPhimApiGet(
-    "https://phimapi.com/imdb/title/" +
-        encodeURIComponent(title.imdbId),
-    {
-        timeout: 2200,
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-    }
-);
+                    "https://phimapi.com/imdb/title/" +
+                        encodeURIComponent(title.imdbId),
+                    {
+                        timeout: 2200,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
+                        }
+                    },
+                    retries,
+                    priority
+                );
 
                 const data = imdbResponse.data || {};
 
@@ -2999,7 +3012,6 @@ async function movinaClassicSearchPhimAPI(title, type) {
             })
         );
 
-        // Không cache lỗi mạng; cho phép thử lại ở yêu cầu sau.
         return null;
     }
 }
@@ -7992,19 +8004,34 @@ function movinaSchedulePreviewCompletion(
     catalogId,
     resolveType
 ) {
+    
     const sourceItems = (Array.isArray(items) ? items : [])
         .slice(0, CATALOG_TARGET)
-        .filter(item => String(item?.slug || "").trim());
+        .filter(item =>
+            String(item?.slug || "").trim() ||
+            (
+                item?.__movinaClassicSource === "ranked-json" &&
+                /^tt\d+$/i.test(
+                    String(item?.__movinaClassicImdbId || "")
+                )
+            )
+        );
 
     if (!sourceItems.length) {
         return;
     }
 
-    const jobKey =
+        const jobKey =
         String(catalogId || "movina") +
         ":" +
         sourceItems
-            .map(item => String(item.slug || "").trim())
+            .map(item =>
+                String(item?.slug || "").trim() ||
+                (
+                    "classic:" +
+                    String(item?.__movinaClassicImdbId || "")
+                )
+            )
             .sort()
             .join("|");
 
@@ -8063,7 +8090,40 @@ function movinaSchedulePreviewCompletion(
                     ? "series"
                     : "movie";
 
-            const slug = String(item?.slug || "").trim();
+                        let workingItem = item;
+
+            let slug = String(
+                item?.slug || ""
+            ).trim();
+
+            const isClassicRanked =
+                item?.__movinaClassicSource === "ranked-json";
+
+            if (!slug && isClassicRanked) {
+                const match =
+                    await movinaClassicSearchPhimAPI(
+                        {
+                            title:
+                                item?.origin_name ||
+                                item?.name ||
+                                "",
+                            imdbId:
+                                item?.__movinaClassicImdbId ||
+                                "",
+                            year:
+                                Number(item?.year) || 0
+                        },
+                        itemType,
+                        {
+                            background: true
+                        }
+                    );
+
+                if (match?.slug) {
+                    workingItem = match;
+                    slug = String(match.slug).trim();
+                }
+            }
 
             if (!slug) {
                 skipped++;
@@ -8090,7 +8150,7 @@ function movinaSchedulePreviewCompletion(
                     previewRequests++;
 
                     detail = await movinaFetchCinemetaPreview(
-    item,
+    workingItem,,
     itemType,
     {
         background: true
@@ -8099,6 +8159,79 @@ function movinaSchedulePreviewCompletion(
                 }
 
                 detail = detail || {};
+
+                // =================================================
+                // CLASSIC — SAVE VIETNAMESE DESCRIPTION
+                // =================================================
+
+                const classicImdbId = String(
+                    item?.__movinaClassicImdbId || ""
+                ).trim().toLowerCase();
+
+                const classicDescription = String(
+                    detail?.description || ""
+                ).trim();
+
+                if (
+                    isClassicRanked &&
+                    /^tt\d+$/i.test(classicImdbId) &&
+                    classicDescription
+                ) {
+                    // 1. Cập nhật Classic Catalog Cache.
+                    const classicCache =
+                        MOVINA_CLASSIC_CATALOG_CACHE.get(itemType);
+
+                    if (Array.isArray(classicCache?.items)) {
+                        const cachedItem =
+                            classicCache.items.find(entry =>
+                                String(
+                                    entry?.__movinaClassicImdbId || ""
+                                ).trim().toLowerCase() === classicImdbId
+                            );
+
+                        if (cachedItem) {
+                            cachedItem.content = classicDescription;
+                            cachedItem.description = classicDescription;
+                        }
+                    }
+
+                    // 2. Cập nhật Final Catalog Cache.
+                    for (
+                        const cachedCatalog of
+                        MOVINA_FINAL_CATALOG_CACHE.values()
+                    ) {
+                        if (
+                            cachedCatalog?.catalogId !== catalogId ||
+                            cachedCatalog.expiresAt <= Date.now() ||
+                            !Array.isArray(cachedCatalog.metas)
+                        ) {
+                            continue;
+                        }
+
+                        const targetMeta =
+                            cachedCatalog.metas.find(meta =>
+                                meta?.type === itemType &&
+                                String(meta?.id || "")
+                                    .trim()
+                                    .toLowerCase() === classicImdbId
+                            );
+
+                        if (targetMeta) {
+                            targetMeta.description =
+                                classicDescription;
+                        }
+                    }
+
+                    console.log(
+                        "[MOVINA CLASSIC VI DESCRIPTION SAVED]",
+                        JSON.stringify({
+                            title: item?.name,
+                            imdbId: classicImdbId,
+                            type: itemType,
+                            length: classicDescription.length
+                        })
+                    );
+                }
 
                 const sourceRating = getValidRating(
     item?.__movinaIMDbRating ??
@@ -8124,11 +8257,13 @@ function movinaSchedulePreviewCompletion(
 // Chạy background, tuyệt đối không chặn Catalog foreground.
 
 const verifiedImdbId =
-    await movinaResolveAndVerifyImdb(
-        item,
-        detail,
-        itemType
-    );
+    isClassicRanked
+        ? getImdbId(item?.__movinaClassicImdbId)
+        : await movinaResolveAndVerifyImdb(
+            item,
+            detail,
+            itemType
+        );
 
 if (verifiedImdbId) {
     console.log(
@@ -9398,45 +9533,7 @@ if (enableCinemetaPreview) {
         );
 }
 
-// ========================================================
-// [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
-// ========================================================
 
-// Chỉ áp dụng cho 5 catalog VOD đã bật enrichment.
-// Không áp dụng cho Search MOVINA và IPTV.
-
-if (
-    enableCinemetaPreview &&
-    !searchQuery &&
-    [
-        "pa_movies_trending",
-        "pa_series_trending",
-        "pa_tvb",
-        "pa_daily",
-        "pa_animation_new"
-    ].includes(args.id)
-) {
-    const resolveBackgroundType = item => {
-        // Catalog có type cố định.
-        if (
-            forcedType === "movie" ||
-            forcedType === "series"
-        ) {
-            return forcedType;
-        }
-
-        // Catalog hỗn hợp: xác định riêng từng phim.
-        return isSeriesItem(item)
-            ? "series"
-            : "movie";
-    };
-
-    movinaSchedulePreviewCompletion(
-        items,
-        args.id,
-        resolveBackgroundType
-    );
-}
 
             /* ========================================================
                12.9 LOG
@@ -9482,6 +9579,46 @@ if (
         expiresAt: Date.now() + MOVINA_FINAL_CATALOG_TTL,
         metas: metas.map(meta => ({ ...meta }))
     });
+}
+
+// ========================================================
+// [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
+// ========================================================
+
+// Chỉ áp dụng cho 5 catalog VOD đã bật enrichment.
+// Không áp dụng cho Search MOVINA và IPTV.
+
+if (
+    enableCinemetaPreview &&
+    !searchQuery &&
+    [
+        "pa_movies_trending",
+        "pa_series_trending",
+        "pa_tvb",
+        "pa_daily",
+        "pa_animation_new"
+    ].includes(args.id)
+) {
+    const resolveBackgroundType = item => {
+        // Catalog có type cố định.
+        if (
+            forcedType === "movie" ||
+            forcedType === "series"
+        ) {
+            return forcedType;
+        }
+
+        // Catalog hỗn hợp: xác định riêng từng phim.
+        return isSeriesItem(item)
+            ? "series"
+            : "movie";
+    };
+
+    movinaSchedulePreviewCompletion(
+        items,
+        args.id,
+        resolveBackgroundType
+    );
 }
 
 return { metas };
