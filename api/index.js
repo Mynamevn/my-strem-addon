@@ -59,17 +59,18 @@ const manifest = {
         "MOVINA"
     ],
 
-    idPrefixes: [
-    "tt",
-    "vnwpsw:",
-    "vmttv:",
-    "coban:",
-    "coban-group:",
-    "movina-tv:",
-    "vmttv-group:",
-    "sportsiptv:",
-    "sportsiptv-group:"
-                ],
+        idPrefixes: [
+        "tt",
+        "vnwpsw:",
+        "movina-classic:",
+        "vmttv:",
+        "coban:",
+        "coban-group:",
+        "movina-tv:",
+        "vmttv-group:",
+        "sportsiptv:",
+        "sportsiptv-group:"
+    ],
 
     catalogs: [
 
@@ -6707,8 +6708,12 @@ const fallbackInternalId =
         );
 
 const metaId =
-    verifiedImdbId ||
-    fallbackInternalId;
+    rankedSourceImdbId
+        ? "movina-classic:" + rankedSourceImdbId
+        : (
+            verifiedImdbId ||
+            fallbackInternalId
+        );
 
 console.log(
     "[CATALOG META] IMDb:",
@@ -8209,12 +8214,19 @@ function movinaSchedulePreviewCompletion(
                         }
 
                         const targetMeta =
-                            cachedCatalog.metas.find(meta =>
-                                meta?.type === itemType &&
-                                String(meta?.id || "")
-                                    .trim()
-                                    .toLowerCase() === classicImdbId
-                            );
+    cachedCatalog.metas.find(meta => {
+        const metaId = String(
+            meta?.id || ""
+        ).trim().toLowerCase();
+
+        return (
+            meta?.type === itemType &&
+            (
+                metaId === classicImdbId ||
+                metaId === "movina-classic:" + classicImdbId
+            )
+        );
+    });
 
                         if (targetMeta) {
                             targetMeta.description =
@@ -10342,56 +10354,132 @@ if (
             )
         );
 
-        } else if (rawId.startsWith("tt")) {
+        } else if (rawId.startsWith("movina-classic:")) {
 
-            imdbId =
-                rawId.split(":")[0];
+    imdbId = rawId
+        .substring("movina-classic:".length)
+        .trim()
+        .toLowerCase();
 
-            metaId =
-                imdbId;
+    if (!/^tt\d+$/i.test(imdbId)) {
+        return { meta: null };
+    }
 
-            try {
+    // Ưu tiên lấy tên từ Classic Catalog Cache.
+    // Không cần gọi Cinemeta nếu cache đã có dữ liệu.
+    const classicType =
+        args.type === "series"
+            ? "series"
+            : "movie";
 
-                const cinemetaRes =
-                    await axios.get(
-                        "https://v3-cinemeta.strem.io/meta/" +
-                        (
-                            args.type === "series"
-                                ? "series"
-                                : "movie"
-                        ) +
-                        "/" +
-                        encodeURIComponent(
-                            imdbId
-                        ) +
-                        ".json",
-                        {
-                            timeout: 8000,
+    const classicCache =
+        MOVINA_CLASSIC_CATALOG_CACHE.get(classicType);
 
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
+    const classicItem =
+        Array.isArray(classicCache?.items)
+            ? classicCache.items.find(item =>
+                String(
+                    item?.__movinaClassicImdbId || ""
+                ).trim().toLowerCase() === imdbId
+            )
+            : null;
 
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
+    movieName =
+        classicItem?.name ||
+        classicItem?.origin_name ||
+        "";
 
-                movieName =
-                    cinemetaRes.data?.meta?.name ||
-                    "";
+    // Fallback khi Classic Catalog Cache không còn.
+    if (!movieName) {
+        try {
+            const cinemetaRes = await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                classicType +
+                "/" +
+                encodeURIComponent(imdbId) +
+                ".json",
+                {
+                    timeout: 4500,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
 
-            } catch (e) {
+            movieName =
+                cinemetaRes.data?.meta?.name || "";
 
-                console.log(
-                    "[META CINEMETA ERROR]",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
+        } catch (error) {
+            console.log(
+                "[META CLASSIC TITLE ERROR]",
+                imdbId,
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+        }
+    }
 
-            }
+    console.log(
+        "[META CLASSIC ID]",
+        JSON.stringify({
+            imdbId,
+            title: movieName,
+            cacheHit: Boolean(classicItem)
+        })
+    );
+
+} else if (rawId.startsWith("tt")) {
+
+    imdbId =
+        rawId.split(":")[0];
+
+    metaId =
+        imdbId;
+
+    try {
+
+        const cinemetaRes =
+            await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                (
+                    args.type === "series"
+                        ? "series"
+                        : "movie"
+                ) +
+                "/" +
+                encodeURIComponent(
+                    imdbId
+                ) +
+                ".json",
+                {
+                    timeout: 8000,
+
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0",
+
+                        "Accept":
+                            "application/json"
+                    }
+                }
+            );
+
+        movieName =
+            cinemetaRes.data?.meta?.name ||
+            "";
+
+    } catch (e) {
+
+        console.log(
+            "[META CINEMETA ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+    }
 
         } else {
 
