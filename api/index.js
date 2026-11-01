@@ -6784,13 +6784,9 @@ console.log(
             .filter(Boolean)
         : [];
 
-return {
-    id: metaId,
-    slug:
-        String(item?.slug || "").trim() ||
-        undefined,
-    type,
-
+    return {
+        id: metaId,
+        type,
         name:
             item?.name ||
             item?.origin_name ||
@@ -6940,26 +6936,11 @@ function movinaIdentityGetYear(meta) {
     return match ? Number(match[0]) : 0;
 }
 
-function movinaIdentityPrimaryTitles(item) {
+function movinaIdentityTitles(item) {
     const values = [
         item?.name,
         item?.origin_name,
-        item?.original_name
-    ];
-
-    return [
-        ...new Set(
-            values
-                .map(value =>
-                    movinaIdentityNormalizeTitle(value)
-                )
-                .filter(Boolean)
-        )
-    ];
-}
-
-function movinaIdentityAliasTitles(item) {
-    const values = [
+        item?.original_name,
         item?.alternative_names,
         item?.aliases
     ];
@@ -6977,20 +6958,9 @@ function movinaIdentityAliasTitles(item) {
                         ? value.name || value.title || ""
                         : value
                 )
-                .map(value =>
-                    movinaIdentityNormalizeTitle(value)
-                )
+                .map(movinaIdentityNormalizeTitle)
                 .filter(Boolean)
         )
-    ];
-}
-
-function movinaIdentityTitles(item) {
-    return [
-        ...new Set([
-            ...movinaIdentityPrimaryTitles(item),
-            ...movinaIdentityAliasTitles(item)
-        ])
     ];
 }
 
@@ -6999,23 +6969,19 @@ function movinaIdentityMatches(
     candidate,
     type
 ) {
-    if (!candidate) {
-        return false;
-    }
+    if (!candidate) return false;
 
-    const candidateId =
-        String(candidate.id || "")
-            .trim()
-            .toLowerCase();
+    const candidateId = String(
+        candidate.id || ""
+    ).trim().toLowerCase();
 
     if (!/^tt\d+$/.test(candidateId)) {
         return false;
     }
 
-    const candidateType =
-        String(candidate.type || "")
-            .trim()
-            .toLowerCase();
+    const candidateType = String(
+        candidate.type || ""
+    ).trim().toLowerCase();
 
     if (candidateType) {
         const allowed =
@@ -7028,80 +6994,33 @@ function movinaIdentityMatches(
         }
     }
 
-    /*
-     * YEAR FIRST:
-     *
-     * Nếu source biết năm thì candidate bắt buộc
-     * phải cùng năm.
-     *
-     * Điều này chặn:
-     *
-     * Bố Già 1972
-     * ≠
-     * Bố Già 2021
-     */
-    const sourceYear =
-        movinaIdentityGetYear(source);
+    const sourceTitles =
+        movinaIdentityTitles(source);
 
-    const candidateYear =
-        movinaIdentityGetYear(candidate);
+    const candidateTitles =
+        movinaIdentityTitles(candidate);
 
     if (
-        sourceYear &&
-        candidateYear &&
-        sourceYear !== candidateYear
+        !sourceTitles.some(title =>
+            candidateTitles.includes(title)
+        )
     ) {
         return false;
     }
 
-    /*
-     * PRIMARY TITLE MATCH.
-     *
-     * Ưu tiên name / origin_name / original_name.
-     * Không để alias cũ hoặc dữ liệu nhiễu
-     * phá identity chính.
-     */
-    const sourcePrimary =
-        movinaIdentityPrimaryTitles(source);
+    const sourceYear =
+        Number(source?.year || 0);
 
-    const candidatePrimary =
-        movinaIdentityPrimaryTitles(candidate);
+    if (sourceYear) {
+        const candidateYear =
+            movinaIdentityGetYear(candidate);
 
-    const primaryMatch =
-        sourcePrimary.some(title =>
-            candidatePrimary.includes(title)
-        );
-
-    if (primaryMatch) {
-        return true;
+        if (candidateYear !== sourceYear) {
+            return false;
+        }
     }
 
-    /*
-     * Alias chỉ là fallback.
-     *
-     * Alias phải khớp với primary title phía bên kia,
-     * không cho alias-vs-alias tự xác nhận lẫn nhau.
-     */
-    const sourceAliases =
-        movinaIdentityAliasTitles(source);
-
-    const candidateAliases =
-        movinaIdentityAliasTitles(candidate);
-
-    const sourceAliasMatch =
-        sourceAliases.some(title =>
-            candidatePrimary.includes(title)
-        );
-
-    const candidateAliasMatch =
-        candidateAliases.some(title =>
-            sourcePrimary.includes(title)
-        );
-
-    return (
-        sourceAliasMatch ||
-        candidateAliasMatch
-    );
+    return true;
 }
 
 // Cập nhật các Catalog đã được cache.
@@ -7144,31 +7063,19 @@ function movinaPromoteCatalogIdentity(
             continue;
         }
 
-       cached.metas = cached.metas.map(meta => {
-    const metaSlug =
-        String(meta?.slug || "").trim();
+        cached.metas = cached.metas.map(meta => {
+            if (
+                meta.id === internalId &&
+                meta.type === type
+            ) {
+                return {
+                    ...meta,
+                    id: imdbId
+                };
+            }
 
-    const sameInternalId =
-        meta.id === internalId;
-
-    const sameVerifiedSlug =
-        metaSlug === slug;
-
-    if (
-        meta?.type === type &&
-        (
-            sameInternalId ||
-            sameVerifiedSlug
-        )
-    ) {
-        return {
-            ...meta,
-            id: imdbId
-        };
-    }
-
-    return meta;
-});
+            return meta;
+        });
     }
 
     console.log(
@@ -7360,17 +7267,14 @@ async function movinaResolveAndVerifyImdb(
     }
 
     const queries = [
-    ...new Set([
-        source.origin_name,
-        source.original_name,
-        source.name
-    ]
-        .map(value =>
-            String(value || "").trim()
-        )
-        .filter(Boolean)
-    )
-].slice(0, 3);
+        ...new Set([
+            source.name,
+            source.origin_name,
+            source.original_name
+        ]
+            .map(value => String(value || "").trim())
+            .filter(Boolean))
+    ].slice(0, 2);
 
     const results = await Promise.all(
         queries.map(query =>
@@ -10580,89 +10484,135 @@ const expectedSeries =
 
 let detailRequestSkipped = false;
 
-/*
- * META DETAIL — STABLE CACHE FIRST
- *
- * Luôn ưu tiên detail đầy đủ nếu đã từng lấy thành công.
- *
- * Preview chỉ dùng để:
- * - trả metadata nhanh khi cần;
- * - bổ sung trường còn thiếu.
- *
- * Preview không được phép thay thế detail đầy đủ.
- */
+if (
+    hasCachedPreview &&
+    !expectedSeries
+) {
+    // Phim lẻ: preview cache đã đủ cho metadata,
+    // không cần tải lại detail từ PhimAPI.
+    detailRequestSkipped = true;
 
-let cachedFullDetail = null;
+    detail = {
+        ...item,
 
-if (slug) {
-    cachedFullDetail =
-        await movinaMetaCachedLoad(
-            MOVINA_META_DETAIL_CACHE,
-            "phimapi:full-detail:" + slug,
+        content:
+            item?.content ||
+            item?.description ||
+            cachedPreviewFields.description ||
+            "",
 
-            async () => {
-                const detailRes =
-                    await movinaPhimApiGet(
-                        "https://phimapi.com/v1/api/phim/" +
-                        encodeURIComponent(slug),
-                        {
-                            timeout: 5000,
-                            headers: {
-                                "User-Agent": "Mozilla/5.0",
-                                "Accept": "application/json"
+        category:
+            Array.isArray(item?.category) &&
+            item.category.length
+                ? item.category
+                : (
+                    cachedPreviewFields.genres || []
+                ),
+
+        actor:
+            item?.actor ||
+            item?.actors ||
+            cachedPreviewFields.cast ||
+            [],
+
+        director:
+            item?.director ||
+            item?.directors ||
+            cachedPreviewFields.director ||
+            [],
+
+        time:
+            item?.time ||
+            item?.duration ||
+            cachedPreviewFields.runtime ||
+            "",
+
+        imdb: {
+            ...(item?.imdb || {}),
+
+            id:
+                item?.imdb?.id ||
+                cachedPreviewFields.imdbId ||
+                "",
+
+            vote_average:
+                item?.imdb?.vote_average ??
+                cachedPreviewFields.imdbRating ??
+                null
+        }
+    };
+
+    console.log(
+        "[META PREVIEW CACHE] HIT:",
+        JSON.stringify({
+            slug,
+            mode: "movie-cache-only",
+            fields: Object.keys(cachedPreviewFields)
+        })
+    );
+
+
+} else if (slug) {
+
+    // Phim bộ cần detail đầy đủ để tạo danh sách tập.
+    // Phim lẻ chưa có preview cũng sử dụng cache này.
+
+    try {
+        const cachedDetail =
+            await movinaMetaCachedLoad(
+                MOVINA_META_DETAIL_CACHE,
+                "phimapi:detail:" + slug,
+
+                async () => {
+                    const detailRes =
+                        await axios.get(
+                            "https://phimapi.com/v1/api/phim/" +
+                            encodeURIComponent(slug),
+                            {
+                                timeout: 7000,
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
                             }
-                        },
-                        1,
-                        "foreground"
+                        );
+
+                    return (
+                        detailRes.data?.data?.item ||
+                        detailRes.data?.item ||
+                        null
                     );
+                },
 
-                return (
-                    detailRes.data?.data?.item ||
-                    detailRes.data?.item ||
-                    null
-                );
-            },
+                MOVINA_META_DETAIL_TTL,
+                3000
+            );
 
-            MOVINA_META_DETAIL_TTL,
-            5000
+        if (cachedDetail) {
+            detail = cachedDetail;
+        }
+
+        console.log(
+            "[META DETAIL CACHE]",
+            JSON.stringify({
+                slug,
+                success: Boolean(cachedDetail),
+                series: expectedSeries,
+                episodes:
+                    detail?.episodes?.length || 0
+            })
         );
 
-    if (cachedFullDetail) {
-        detail = cachedFullDetail;
+    } catch (error) {
+        console.log(
+            "[META DETAIL CACHE ERROR]",
+            slug,
+            error?.message || error
+        );
     }
+
 }
 
-/*
- * Chỉ đánh dấu skipped khi không cần request mới
- * vì full detail cache đã trả dữ liệu.
- */
-detailRequestSkipped =
-    Boolean(cachedFullDetail);
-
-/*
- * Nếu full detail chưa có nhưng preview có,
- * giữ preview để merge phía dưới.
- *
- * Không thay toàn bộ item bằng preview.
- * Làm vậy có thể làm mất slug/type/episodes
- * hoặc các trường identity.
- */
-if (!cachedFullDetail && hasCachedPreview) {
-    detail = {
-        ...item
-    };
-}
-
-console.log(
-    "[META DETAIL STABLE CACHE]",
-    JSON.stringify({
-        slug,
-        fullDetail: Boolean(cachedFullDetail),
-        preview: hasCachedPreview,
-        series: expectedSeries,
-        detailRequestSkipped
-    })
-);
 
 // Bổ sung các trường preview còn thiếu.
 // Không ghi đè dữ liệu detail đầy đủ đã có.
@@ -10684,90 +10634,51 @@ if (hasCachedPreview) {
             : Boolean(detail?.director);
 
     detail = {
-    ...item,
-    ...detail,
+        ...detail,
 
-    /*
-     * Description:
-     * detail đầy đủ luôn ưu tiên.
-     */
-    content:
-        detail?.content ||
-        detail?.description ||
-        item?.content ||
-        item?.description ||
-        preview.description ||
-        "",
-
-    category:
-        detailHasCategory
-            ? detail.category
-            : (
-                Array.isArray(item?.category) &&
-                item.category.length
-                    ? item.category
-                    : (preview.genres || [])
-            ),
-
-    actor:
-        detailHasActor
-            ? detail.actor
-            : (
-                item?.actor ||
-                item?.actors ||
-                preview.cast ||
-                []
-            ),
-
-    director:
-        detailHasDirector
-            ? detail.director
-            : (
-                item?.director ||
-                item?.directors ||
-                preview.director ||
-                []
-            ),
-
-    time:
-        detail?.time ||
-        detail?.duration ||
-        item?.time ||
-        item?.duration ||
-        preview.runtime ||
-        "",
-
-    /*
-     * IMDb:
-     * detail chính xác > item > preview
-     */
-    imdb: {
-        ...(item?.imdb || {}),
-        ...(detail?.imdb || {}),
-
-        id:
-            detail?.imdb?.id ||
-            detail?.imdb_id ||
-            detail?.imdbId ||
-            item?.imdb?.id ||
-            item?.imdb_id ||
-            item?.imdbId ||
-            preview.imdbId ||
+        content:
+            detail?.content ||
+            detail?.description ||
+            preview.description ||
             "",
 
-        vote_average:
-            detail?.imdb?.vote_average ??
-            detail?.imdb?.rating ??
-            detail?.imdbRating ??
-            detail?.imdb_rating ??
-            item?.imdb?.vote_average ??
-            item?.imdb?.rating ??
-            item?.imdbRating ??
-            item?.imdb_rating ??
-            preview.imdbRating ??
-            null
-    }
-};
+        category:
+            detailHasCategory
+                ? detail.category
+                : (preview.genres || []),
+
+        actor:
+            detailHasActor
+                ? detail.actor
+                : (preview.cast || []),
+
+        director:
+            detailHasDirector
+                ? detail.director
+                : (preview.director || []),
+
+        time:
+            detail?.time ||
+            detail?.duration ||
+            preview.runtime ||
+            "",
+
+        imdb: {
+            ...(detail?.imdb || {}),
+
+            id:
+                detail?.imdb?.id ||
+                preview.imdbId ||
+                "",
+
+            vote_average:
+                detail?.imdb?.vote_average ??
+                detail?.imdb?.rating ??
+                preview.imdbRating ??
+                null
+        }
+    };
+}
 
 console.log(
     "[META PREVIEW CACHE RESULT]",
@@ -10783,11 +10694,10 @@ console.log(
         imdbRating: detail?.imdb?.vote_average ?? null
     })
 );
-}
 
-// ============================================================
-// [STREMIO-013.09] [PROVIDERS: ALL] MOVIE AND SERIES TYPE RESOLUTION
-// ============================================================
+        // =====================================================
+        // [STREMIO-013.09] [PROVIDERS: ALL] MOVIE AND SERIES TYPE RESOLUTION
+        // =====================================================
 
         const sourceType =
             String(
@@ -10841,12 +10751,9 @@ console.log(
         // =====================================================
 
         let description =
-    detail?.content ||
-    detail?.description ||
-    item?.content ||
-    item?.description ||
-    cachedPreviewFields?.description ||
-    "";
+            detail?.content ||
+            item?.content ||
+            "";
 
         description =
             String(description || "")
