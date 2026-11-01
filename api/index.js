@@ -10211,9 +10211,6 @@ if (
         // ID cuối cùng dùng cho Meta + Video
         let metaId = rawId;
 
-let requestedSlug = "";
-let requestedSlugItem = null;
-
         if (rawId.startsWith("vnwpsw:")) {
 
             movieName =
