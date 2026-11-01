@@ -2846,11 +2846,7 @@ function movinaClassicFindExactMatch(title, items) {
 }
 
 
-async function movinaClassicSearchPhimAPI(
-    title,
-    type,
-    options = {}
-) {
+async function movinaClassicSearchPhimAPI(title, type) {
     const cacheKey = [
         type,
         movinaClassicNormalize(title.title),
@@ -2866,29 +2862,22 @@ async function movinaClassicSearchPhimAPI(
     }
 
     try {
-        
         const response = await movinaPhimApiGet(
-            "https://phimapi.com/v1/api/tim-kiem",
-            {
-                params: {
-                    keyword: title.title,
-                    page: 1,
-                    limit: 20,
-                    filterType: type === "series"
-                        ? "series"
-                        : "single"
-                },
-                timeout: 4000,
-                headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json"
-                }
-            },
-            1,
-            options.background === true
-                ? "background"
-                : "foreground"
-        );
+    "https://phimapi.com/v1/api/tim-kiem",
+    {
+        params: {
+            keyword: title.title,
+            page: 1,
+            limit: 20,
+            filterType: type === "series" ? "series" : "single"
+        },
+        timeout: 4000,
+        headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
+        }
+    }
+);
 
         const items =
             response.data?.data?.items ||
@@ -3216,203 +3205,6 @@ async function movinaFetchClassicCatalog(type) {
         ) {
             MOVINA_CLASSIC_CATALOG_INFLIGHT.delete(normalizedType);
         }
-    }
-}
-
-
-/* ============================================================
-   [STREMIO-012.06] [PROVIDERS: MOVINA]
-   CLASSIC VIETNAMESE DESCRIPTION COMPLETION
-
-   - Chỉ xử lý IMDb Classic catalog.
-   - Tìm PhimAPI bằng title + year + IMDb ID.
-   - Chỉ chạy background.
-   - Dùng lại PhimAPI detail preview cache.
-   - Cập nhật Final Catalog Cache tại chỗ.
-   ============================================================ */
-
-const MOVINA_CLASSIC_DESCRIPTION_JOBS = new Map();
-
-function movinaScheduleClassicDescriptionCompletion(
-    items,
-    catalogId,
-    type,
-    finalCacheKey = ""
-) {
-    const normalizedType =
-        type === "series" ? "series" : "movie";
-
-    const sourceItems = (Array.isArray(items) ? items : [])
-        .filter(item =>
-            item?.__movinaClassicRank !== undefined &&
-            /^tt\d+$/i.test(
-                String(item?.__movinaClassicImdbId || "")
-            )
-        )
-        .slice(0, CATALOG_TARGET);
-
-    if (!sourceItems.length) {
-        return;
-    }
-
-    const jobKey =
-        String(catalogId || "classic") +
-        ":" +
-        normalizedType +
-        ":" +
-        sourceItems
-            .map(item => item.__movinaClassicImdbId)
-            .join("|");
-
-    if (MOVINA_CLASSIC_DESCRIPTION_JOBS.has(jobKey)) {
-        return;
-    }
-
-    const task = (async () => {
-        let matched = 0;
-        let descriptions = 0;
-        let skipped = 0;
-
-        for (const item of sourceItems) {
-            const title = {
-                title: String(
-                    item?.origin_name ||
-                    item?.name ||
-                    ""
-                ).trim(),
-
-                imdbId: String(
-                    item?.__movinaClassicImdbId || ""
-                ).trim(),
-
-                year: Number(item?.year) || 0
-            };
-
-            if (!title.title || !title.imdbId) {
-                skipped++;
-                continue;
-            }
-
-            try {
-                // Tìm đúng bản ghi PhimAPI.
-                // Không chặn request foreground.
-                const match =
-                    await movinaClassicSearchPhimAPI(
-                        title,
-                        normalizedType,
-                        {
-                            background: true
-                        }
-                    );
-
-                if (!match?.slug) {
-                    skipped++;
-                    continue;
-                }
-
-                matched++;
-
-                // Lấy description tiếng Việt từ detail.
-                const preview =
-                    await movinaFetchCinemetaPreview(
-                        match,
-                        normalizedType,
-                        {
-                            background: true
-                        }
-                    );
-
-                const description = String(
-                    preview?.description || ""
-                ).trim();
-
-                if (!description) {
-                    skipped++;
-                    continue;
-                }
-
-                descriptions++;
-
-                // Cập nhật Final Catalog Cache tại chỗ.
-                // Không xóa cache, không tải lại danh sách.
-                if (finalCacheKey) {
-                    const cachedCatalog =
-                        MOVINA_FINAL_CATALOG_CACHE.get(
-                            finalCacheKey
-                        );
-
-                    if (
-                        cachedCatalog &&
-                        cachedCatalog.expiresAt > Date.now()
-                    ) {
-                        const targetMeta =
-                            cachedCatalog.metas.find(meta =>
-                                String(meta?.id || "").toLowerCase() ===
-                                title.imdbId.toLowerCase()
-                            );
-
-                        if (targetMeta) {
-                            targetMeta.description =
-                                description;
-                        }
-                    }
-                }
-
-            } catch (error) {
-                skipped++;
-
-                console.warn(
-                    "[MOVINA CLASSIC DESCRIPTION ITEM ERROR]",
-                    title.imdbId,
-                    error?.message || error
-                );
-            }
-        }
-
-        console.log(
-            "[MOVINA CLASSIC DESCRIPTION COMPLETED]",
-            JSON.stringify({
-                catalog: catalogId,
-                type: normalizedType,
-                total: sourceItems.length,
-                matched,
-                descriptions,
-                skipped
-            })
-        );
-    })()
-        .catch(error => {
-            console.error(
-                "[MOVINA CLASSIC DESCRIPTION ERROR]",
-                catalogId,
-                error?.message || error
-            );
-        })
-        .finally(() => {
-            MOVINA_CLASSIC_DESCRIPTION_JOBS.delete(jobKey);
-        });
-
-    MOVINA_CLASSIC_DESCRIPTION_JOBS.set(jobKey, task);
-
-    try {
-        waitUntil(task);
-
-        console.log(
-            "[MOVINA CLASSIC DESCRIPTION SCHEDULED]",
-            JSON.stringify({
-                catalog: catalogId,
-                type: normalizedType,
-                items: sourceItems.length
-            })
-        );
-
-    } catch (error) {
-        MOVINA_CLASSIC_DESCRIPTION_JOBS.delete(jobKey);
-
-        console.error(
-            "[MOVINA CLASSIC DESCRIPTION WAITUNTIL ERROR]",
-            error?.message || error
-        );
     }
 }
 
