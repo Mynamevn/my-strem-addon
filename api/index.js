@@ -6937,28 +6937,28 @@ function movinaIdentityGetYear(meta) {
 }
 
 function movinaIdentityTitles(item) {
+    /*
+     * Chỉ dùng title identity chính.
+     *
+     * Không dùng alternative_names / aliases ở đây,
+     * vì các field đó có thể chứa dữ liệu nhiễu hoặc
+     * alias thuộc phim khác.
+     *
+     * Alias sẽ được dùng cho SEARCH QUERY nếu cần,
+     * nhưng không được dùng để xác minh identity.
+     */
     const values = [
         item?.name,
         item?.origin_name,
-        item?.original_name,
-        item?.alternative_names,
-        item?.aliases
+        item?.original_name
     ];
 
     return [
         ...new Set(
             values
-                .flatMap(value =>
-                    Array.isArray(value)
-                        ? value
-                        : [value]
-                )
                 .map(value =>
-                    typeof value === "object" && value
-                        ? value.name || value.title || ""
-                        : value
+                    movinaIdentityNormalizeTitle(value)
                 )
-                .map(movinaIdentityNormalizeTitle)
                 .filter(Boolean)
         )
     ];
@@ -6969,19 +6969,23 @@ function movinaIdentityMatches(
     candidate,
     type
 ) {
-    if (!candidate) return false;
+    if (!candidate) {
+        return false;
+    }
 
-    const candidateId = String(
-        candidate.id || ""
-    ).trim().toLowerCase();
+    const candidateId =
+        String(candidate.id || "")
+            .trim()
+            .toLowerCase();
 
     if (!/^tt\d+$/.test(candidateId)) {
         return false;
     }
 
-    const candidateType = String(
-        candidate.type || ""
-    ).trim().toLowerCase();
+    const candidateType =
+        String(candidate.type || "")
+            .trim()
+            .toLowerCase();
 
     if (candidateType) {
         const allowed =
@@ -7008,14 +7012,39 @@ function movinaIdentityMatches(
         return false;
     }
 
+    /*
+     * QUAN TRỌNG:
+     * Lấy năm bằng helper thay vì Number(source.year).
+     *
+     * Như vậy:
+     *
+     * 1972
+     * "1972"
+     * "1972-01-01"
+     * releaseInfo: "1972"
+     *
+     * đều được nhận diện.
+     */
     const sourceYear =
-        Number(source?.year || 0);
+        movinaIdentityGetYear(source);
 
+    const candidateYear =
+        movinaIdentityGetYear(candidate);
+
+    /*
+     * Nếu source biết năm thì candidate phải có
+     * đúng năm đó.
+     *
+     * Không cho phép:
+     *
+     * Bố Già 1972
+     * → Bố Già 2021
+     */
     if (sourceYear) {
-        const candidateYear =
-            movinaIdentityGetYear(candidate);
-
-        if (candidateYear !== sourceYear) {
+        if (
+            !candidateYear ||
+            candidateYear !== sourceYear
+        ) {
             return false;
         }
     }
@@ -7040,33 +7069,34 @@ function movinaPromoteCatalogIdentity(
         imdbId
     );
 
-    const internalId =
-        "vnwpsw:" +
-        encodeURIComponent(
-            String(
-                item?.name ||
-                item?.origin_name ||
-                ""
-            )
-        );
+    const internalIds = new Set(
+    [
+        item?.name,
+        item?.origin_name,
+        item?.original_name
+    ]
+        .map(title =>
+            String(title || "").trim()
+        )
+        .filter(Boolean)
+        .map(title =>
+            "vnwpsw:" +
+            encodeURIComponent(title)
+        )
+);
 
-    if (
-        typeof MOVINA_FINAL_CATALOG_CACHE === "undefined"
-    ) {
-        return;
+for (
+    const cached of MOVINA_FINAL_CATALOG_CACHE.values()
+) {
+    if (!Array.isArray(cached?.metas)) {
+        continue;
     }
 
-    for (
-        const cached of MOVINA_FINAL_CATALOG_CACHE.values()
-    ) {
-        if (!Array.isArray(cached?.metas)) {
-            continue;
-        }
-
-        cached.metas = cached.metas.map(meta => {
+    cached.metas =
+        cached.metas.map(meta => {
             if (
-                meta.id === internalId &&
-                meta.type === type
+                meta?.type === type &&
+                internalIds.has(meta?.id)
             ) {
                 return {
                     ...meta,
@@ -7076,7 +7106,7 @@ function movinaPromoteCatalogIdentity(
 
             return meta;
         });
-    }
+}
 
     console.log(
         "[MOVINA CATALOG ID PROMOTED]",
@@ -7267,14 +7297,17 @@ async function movinaResolveAndVerifyImdb(
     }
 
     const queries = [
-        ...new Set([
-            source.name,
-            source.origin_name,
-            source.original_name
-        ]
-            .map(value => String(value || "").trim())
-            .filter(Boolean))
-    ].slice(0, 2);
+    ...new Set([
+        source.origin_name,
+        source.original_name,
+        source.name
+    ]
+        .map(value =>
+            String(value || "").trim()
+        )
+        .filter(Boolean)
+    )
+].slice(0, 3);
 
     const results = await Promise.all(
         queries.map(query =>
