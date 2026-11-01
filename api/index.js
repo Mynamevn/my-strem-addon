@@ -37893,6 +37893,73 @@ app.use(
     }
 );
 
+/* ============================================================
+   [ROUTE-001.01] [PROVIDERS: ALL]
+   VERCEL CDN CACHE — NO REDIS
+   ============================================================ */
+
+app.use((req, res, next) => {
+
+    if (req.method !== "GET") {
+        return next();
+    }
+
+    // Không cache request có xác thực hoặc cookie.
+    if (
+        req.headers.authorization ||
+        req.headers.cookie
+    ) {
+        return next();
+    }
+
+    const requestPath =
+        String(req.path || "");
+
+    // -------------------------------------------------
+    // CATALOG
+    // Cache ngắn để giữ tốc độ Discover và hỗ trợ
+    // cập nhật IMDb identity sau tác vụ nền.
+    // -------------------------------------------------
+
+    if (requestPath.startsWith("/catalog/")) {
+
+        res.setHeader(
+            "Vercel-CDN-Cache-Control",
+            "public, s-maxage=30, stale-while-revalidate=120"
+        );
+
+        res.setHeader(
+            "Cache-Control",
+            "public, max-age=0, must-revalidate"
+        );
+
+    }
+
+    // -------------------------------------------------
+    // META
+    // Cùng một ID phim sẽ dùng lại Meta response,
+    // kể cả khi request đến từ instance khác.
+    // -------------------------------------------------
+
+    else if (requestPath.startsWith("/meta/")) {
+
+        res.setHeader(
+            "Vercel-CDN-Cache-Control",
+            "public, s-maxage=900, stale-while-revalidate=3600"
+        );
+
+        res.setHeader(
+            "Cache-Control",
+            "public, max-age=0, must-revalidate"
+        );
+
+    }
+
+    // Không cache /stream vì dữ liệu stream có thể thay đổi.
+
+    next();
+
+});
 
 /* ============================================================
    [ROUTE-006] [PROVIDERS: NGUONC] NGUONC PLAYLIST PROXY ENDPOINT
