@@ -7091,21 +7091,30 @@ function movinaPromoteCatalogIdentity(
         imdbId
     );
 
-    const internalIds = new Set(
-    [
-        item?.name,
-        item?.origin_name,
-        item?.original_name
-    ]
-        .map(title =>
-            String(title || "").trim()
-        )
-        .filter(Boolean)
-        .map(title =>
-            "vnwpsw:" +
-            encodeURIComponent(title)
-        )
-);
+    const legacyInternalIds = [
+    item?.name,
+    item?.origin_name,
+    item?.original_name
+]
+    .map(title =>
+        String(title || "").trim()
+    )
+    .filter(Boolean)
+    .map(title =>
+        "vnwpsw:" +
+        encodeURIComponent(title)
+    );
+
+const internalIds = new Set([
+    ...legacyInternalIds,
+
+    ...(slug
+        ? [
+            "vnwpsw:slug:" +
+            encodeURIComponent(slug)
+        ]
+        : [])
+]);
 
 for (
     const cached of MOVINA_FINAL_CATALOG_CACHE.values()
@@ -10202,14 +10211,32 @@ if (
         // ID cuối cùng dùng cho Meta + Video
         let metaId = rawId;
 
-        if (rawId.startsWith("vnwpsw:")) {
+let requestedSlug = "";
+let requestedSlugItem = null;
 
-            movieName =
-                decodeURIComponent(
-                    rawId.substring(
-                        "vnwpsw:".length
-                    )
-                );
+        if (rawId.startsWith("vnwpsw:slug:")) {
+
+    const encodedSlug =
+        rawId.substring(
+            "vnwpsw:slug:".length
+        );
+
+    try {
+        requestedSlug =
+            decodeURIComponent(encodedSlug);
+    } catch (_) {
+        requestedSlug = encodedSlug;
+    }
+
+} else if (rawId.startsWith("vnwpsw:")) {
+
+    // Hỗ trợ ID cũ để không làm hỏng phim đã lưu.
+    movieName =
+        decodeURIComponent(
+            rawId.substring(
+                "vnwpsw:".length
+            )
+        );
 
         } else if (rawId.startsWith("tt")) {
 
@@ -10271,6 +10298,53 @@ if (
 
         }
 
+// -------------------------------------------------
+// INTERNAL SLUG ID — FETCH EXACT PHIMAPI ITEM
+// Không tìm lại bằng tên phim.
+// -------------------------------------------------
+
+if (requestedSlug) {
+
+    requestedSlugItem =
+        await movinaMetaCachedLoad(
+            MOVINA_META_DETAIL_CACHE,
+
+            "phimapi:detail:" + requestedSlug,
+
+            async () => {
+
+                const detailRes =
+                    await axios.get(
+                        "https://phimapi.com/v1/api/phim/" +
+                        encodeURIComponent(requestedSlug),
+                        {
+                            timeout: 7000,
+
+                            headers: {
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
+                            }
+                        }
+                    );
+
+                return (
+                    detailRes.data?.data?.item ||
+                    detailRes.data?.item ||
+                    null
+                );
+            },
+
+            MOVINA_META_DETAIL_TTL,
+            3000
+        );
+
+    movieName =
+        requestedSlugItem?.name ||
+        requestedSlugItem?.origin_name ||
+        "";
+
+}
+
         movieName =
             String(movieName || "")
                 .replace(/\s+/g, " ")
@@ -10295,41 +10369,46 @@ const metaSearchKey =
     "phimapi:" +
     movinaIdentityNormalizeTitle(movieName);
 
-const items =
-    await movinaMetaCachedLoad(
-        MOVINA_META_SEARCH_CACHE,
-        metaSearchKey,
+const items = requestedSlugItem
+    ? [requestedSlugItem]
+    : (
+        await movinaMetaCachedLoad(
+            MOVINA_META_SEARCH_CACHE,
+            metaSearchKey,
 
-        async () => {
-            const searchUrl =
-                "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-                encodeURIComponent(movieName) +
-                "&limit=10";
+            async () => {
 
-            const searchRes =
-                await axios.get(
-                    searchUrl,
-                    {
-                        timeout: 5000,
-                        headers: {
-                            "User-Agent": "Mozilla/5.0",
-                            "Accept": "application/json"
+                const searchUrl =
+                    "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                    encodeURIComponent(movieName) +
+                    "&limit=10";
+
+                const searchRes =
+                    await axios.get(
+                        searchUrl,
+                        {
+                            timeout: 5000,
+
+                            headers: {
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
+                            }
                         }
-                    }
-                );
+                    );
 
-            const found =
-                searchRes.data?.data?.items ||
-                searchRes.data?.items ||
-                [];
+                const found =
+                    searchRes.data?.data?.items ||
+                    searchRes.data?.items ||
+                    [];
 
-            return Array.isArray(found)
-                ? found
-                : [];
-        },
+                return Array.isArray(found)
+                    ? found
+                    : [];
+            },
 
-        MOVINA_META_SEARCH_TTL,
-        3000
+            MOVINA_META_SEARCH_TTL,
+            3000
+        )
     ) || [];
 
 console.log(
