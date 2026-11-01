@@ -10214,29 +10214,14 @@ if (
 let requestedSlug = "";
 let requestedSlugItem = null;
 
-        if (rawId.startsWith("vnwpsw:slug:")) {
+        if (rawId.startsWith("vnwpsw:")) {
 
-    const encodedSlug =
-        rawId.substring(
-            "vnwpsw:slug:".length
-        );
-
-    try {
-        requestedSlug =
-            decodeURIComponent(encodedSlug);
-    } catch (_) {
-        requestedSlug = encodedSlug;
-    }
-
-} else if (rawId.startsWith("vnwpsw:")) {
-
-    // Hỗ trợ ID cũ để không làm hỏng phim đã lưu.
-    movieName =
-        decodeURIComponent(
-            rawId.substring(
-                "vnwpsw:".length
-            )
-        );
+            movieName =
+                decodeURIComponent(
+                    rawId.substring(
+                        "vnwpsw:".length
+                    )
+                );
 
         } else if (rawId.startsWith("tt")) {
 
@@ -10297,7 +10282,6 @@ let requestedSlugItem = null;
                 );
 
         }
-
 
         movieName =
             String(movieName || "")
