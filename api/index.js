@@ -10181,14 +10181,29 @@ if (
         // ID cuối cùng dùng cho Meta + Video
         let metaId = rawId;
 
-        if (rawId.startsWith("vnwpsw:")) {
+        if (rawId.startsWith("vnwpsw:slug:")) {
 
-            movieName =
-                decodeURIComponent(
-                    rawId.substring(
-                        "vnwpsw:".length
-                    )
-                );
+    const encodedSlug =
+        rawId.substring(
+            "vnwpsw:slug:".length
+        );
+
+    try {
+        requestedSlug =
+            decodeURIComponent(encodedSlug);
+    } catch (_) {
+        requestedSlug = encodedSlug;
+    }
+
+} else if (rawId.startsWith("vnwpsw:")) {
+
+    // Hỗ trợ ID cũ để không làm hỏng phim đã lưu.
+    movieName =
+        decodeURIComponent(
+            rawId.substring(
+                "vnwpsw:".length
+            )
+        );
 
         } else if (rawId.startsWith("tt")) {
 
