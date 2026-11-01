@@ -10369,46 +10369,41 @@ const metaSearchKey =
     "phimapi:" +
     movinaIdentityNormalizeTitle(movieName);
 
-const items = requestedSlugItem
-    ? [requestedSlugItem]
-    : (
-        await movinaMetaCachedLoad(
-            MOVINA_META_SEARCH_CACHE,
-            metaSearchKey,
+const items =
+    await movinaMetaCachedLoad(
+        MOVINA_META_SEARCH_CACHE,
+        metaSearchKey,
 
-            async () => {
+        async () => {
+            const searchUrl =
+                "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                encodeURIComponent(movieName) +
+                "&limit=10";
 
-                const searchUrl =
-                    "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-                    encodeURIComponent(movieName) +
-                    "&limit=10";
-
-                const searchRes =
-                    await axios.get(
-                        searchUrl,
-                        {
-                            timeout: 5000,
-
-                            headers: {
-                                "User-Agent": "Mozilla/5.0",
-                                "Accept": "application/json"
-                            }
+            const searchRes =
+                await axios.get(
+                    searchUrl,
+                    {
+                        timeout: 5000,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
                         }
-                    );
+                    }
+                );
 
-                const found =
-                    searchRes.data?.data?.items ||
-                    searchRes.data?.items ||
-                    [];
+            const found =
+                searchRes.data?.data?.items ||
+                searchRes.data?.items ||
+                [];
 
-                return Array.isArray(found)
-                    ? found
-                    : [];
-            },
+            return Array.isArray(found)
+                ? found
+                : [];
+        },
 
-            MOVINA_META_SEARCH_TTL,
-            3000
-        )
+        MOVINA_META_SEARCH_TTL,
+        3000
     ) || [];
 
 console.log(
