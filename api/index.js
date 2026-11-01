@@ -7854,8 +7854,21 @@ function movinaEnrichMovieTrendingPreviews(
 }
         }
 
-        // Chỉ bổ sung trường còn thiếu; không ghi đè
-        // thông tin đã có trong metadata nguồn.
+        
+        // =====================================================
+        // PREVIEW FIELD MERGE
+        // =====================================================
+
+        // Kinh điển IMDb Top 250:
+        // Ưu tiên mô tả tiếng Việt từ PhimAPI nếu đã có
+        // trong background preview cache.
+        //
+        // Các catalog Trending khác vẫn giữ nguyên nguyên tắc:
+        // chỉ bổ sung trường còn thiếu, không ghi đè metadata.
+        const isClassicItem =
+            item?.__movinaClassicRank !== undefined &&
+            item?.__movinaClassicRank !== null;
+
         const previewFields = [
             "description",
             "genres",
@@ -7887,11 +7900,29 @@ function movinaEnrichMovieTrendingPreviews(
                         String(previewValue).trim() !== ""
                     );
 
-            if (!currentHasValue && previewHasValue) {
+            if (!previewHasValue) {
+                continue;
+            }
+
+            // Riêng mô tả phim kinh điển:
+            // PhimAPI được ưu tiên hơn mô tả IMDb/Cinemeta.
+            if (
+                field === "description" &&
+                isClassicItem
+            ) {
+                meta.description = previewValue;
+                previewFieldsMerged++;
+                continue;
+            }
+
+            // Những trường còn lại vẫn chỉ bổ sung
+            // khi metadata nguồn chưa có giá trị.
+            if (!currentHasValue) {
                 meta[field] = previewValue;
                 previewFieldsMerged++;
             }
         }
+
 
         // Rating có sẵn từ IMDb ranked list luôn được ưu tiên.
         let rating = getValidRating(meta.imdbRating);
