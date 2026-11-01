@@ -6672,39 +6672,61 @@ function makeCatalogMeta(
     
 
 /*
- * Chỉ dùng IMDb ID đã được xác minh.
+ * IMDb ID:
+ * - Classic ranked-json: ID lấy trực tiếp từ danh sách
+ *   IMDb Top 250 có phân loại movie / series.
+ * - Các nguồn khác: chỉ dùng ID đã được xác minh.
  *
- * Chưa xác minh hoặc FAIL:
- *     giữ nguyên vnwpsw.
- *
- * Đã xác minh:
- *     dùng tt... làm ID chung Stremio.
+ * Nếu chưa có IMDb:
+ * dùng slug PhimAPI thay vì chỉ dùng tên phim.
  */
 
 const itemSlug =
     String(item?.slug || "").trim();
 
+const rankedSourceImdbId =
+    item?.__movinaClassicSource === "ranked-json" &&
+    /^tt\d+$/i.test(
+        String(item?.__movinaClassicImdbId || "").trim()
+    )
+        ? String(item.__movinaClassicImdbId)
+            .trim()
+            .toLowerCase()
+        : "";
+
 const verifiedImdbId =
+    rankedSourceImdbId ||
+    (
+        itemSlug
+            ? (
+                MOVINA_VERIFIED_IMDB_BY_SLUG.get(
+                    type + ":" + itemSlug
+                ) || ""
+            )
+            : ""
+    );
+
+const fallbackTitle =
+    String(
+        item?.name ||
+        item?.origin_name ||
+        ""
+    );
+
+const fallbackInternalId =
     itemSlug
         ? (
-            MOVINA_VERIFIED_IMDB_BY_SLUG.get(
-                type + ":" + itemSlug
-            ) || ""
+            "vnwpsw:slug:" +
+            encodeURIComponent(itemSlug)
         )
-        : "";
+        : (
+            "vnwpsw:" +
+            encodeURIComponent(fallbackTitle)
+        );
 
 const metaId =
     verifiedImdbId ||
-    (
-        "vnwpsw:" +
-        encodeURIComponent(
-            String(
-                item?.name ||
-                item?.origin_name ||
-                ""
-            )
-        )
-    );
+    fallbackInternalId;
 
 console.log(
     "[CATALOG META] IMDb:",
@@ -37893,73 +37915,7 @@ app.use(
     }
 );
 
-/* ============================================================
-   [ROUTE-001.01] [PROVIDERS: ALL]
-   VERCEL CDN CACHE — NO REDIS
-   ============================================================ */
 
-app.use((req, res, next) => {
-
-    if (req.method !== "GET") {
-        return next();
-    }
-
-    // Không cache request có xác thực hoặc cookie.
-    if (
-        req.headers.authorization ||
-        req.headers.cookie
-    ) {
-        return next();
-    }
-
-    const requestPath =
-        String(req.path || "");
-
-    // -------------------------------------------------
-    // CATALOG
-    // Cache ngắn để giữ tốc độ Discover và hỗ trợ
-    // cập nhật IMDb identity sau tác vụ nền.
-    // -------------------------------------------------
-
-    if (requestPath.startsWith("/catalog/")) {
-
-        res.setHeader(
-            "Vercel-CDN-Cache-Control",
-            "public, s-maxage=30, stale-while-revalidate=120"
-        );
-
-        res.setHeader(
-            "Cache-Control",
-            "public, max-age=0, must-revalidate"
-        );
-
-    }
-
-    // -------------------------------------------------
-    // META
-    // Cùng một ID phim sẽ dùng lại Meta response,
-    // kể cả khi request đến từ instance khác.
-    // -------------------------------------------------
-
-    else if (requestPath.startsWith("/meta/")) {
-
-        res.setHeader(
-            "Vercel-CDN-Cache-Control",
-            "public, s-maxage=900, stale-while-revalidate=3600"
-        );
-
-        res.setHeader(
-            "Cache-Control",
-            "public, max-age=0, must-revalidate"
-        );
-
-    }
-
-    // Không cache /stream vì dữ liệu stream có thể thay đổi.
-
-    next();
-
-});
 
 /* ============================================================
    [ROUTE-006] [PROVIDERS: NGUONC] NGUONC PLAYLIST PROXY ENDPOINT
