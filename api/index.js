@@ -10265,6 +10265,53 @@ if (
 
         }
 
+// -------------------------------------------------
+// INTERNAL SLUG ID — FETCH EXACT PHIMAPI ITEM
+// Không tìm lại bằng tên phim.
+// -------------------------------------------------
+
+if (requestedSlug) {
+
+    requestedSlugItem =
+        await movinaMetaCachedLoad(
+            MOVINA_META_DETAIL_CACHE,
+
+            "phimapi:detail:" + requestedSlug,
+
+            async () => {
+
+                const detailRes =
+                    await axios.get(
+                        "https://phimapi.com/v1/api/phim/" +
+                        encodeURIComponent(requestedSlug),
+                        {
+                            timeout: 7000,
+
+                            headers: {
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
+                            }
+                        }
+                    );
+
+                return (
+                    detailRes.data?.data?.item ||
+                    detailRes.data?.item ||
+                    null
+                );
+            },
+
+            MOVINA_META_DETAIL_TTL,
+            3000
+        );
+
+    movieName =
+        requestedSlugItem?.name ||
+        requestedSlugItem?.origin_name ||
+        "";
+
+}
+
         movieName =
             String(movieName || "")
                 .replace(/\s+/g, " ")
