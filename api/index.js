@@ -36176,22 +36176,141 @@ let episodeNumber = 0;
     // =====================================================
 
     if (
-        rawId.startsWith("vnwpsw:")
-    ) {
+    rawId.startsWith("vnwpsw:")
+) {
 
-        const movinaRaw =
-            rawId.substring(
-                "vnwpsw:".length
+    const movinaRaw =
+        rawId.substring(
+            "vnwpsw:".length
+        );
+
+    // -------------------------------------------------
+    // NEW FORMAT:
+    // vnwpsw:slug:<slug>
+    // vnwpsw:slug:<slug>:season:episode
+    // -------------------------------------------------
+
+    if (movinaRaw.startsWith("slug:")) {
+
+        const rawParts =
+            movinaRaw
+                .substring("slug:".length)
+                .split(":");
+
+        let slugParts = rawParts;
+
+        // Series video ID: lấy season + episode ở cuối.
+        if (
+            streamType === "series" &&
+            rawParts.length >= 3
+        ) {
+
+            const episodePart =
+                rawParts[rawParts.length - 1];
+
+            const seasonPart =
+                rawParts[rawParts.length - 2];
+
+            if (
+                /^\d+$/.test(episodePart) &&
+                /^\d+$/.test(seasonPart)
+            ) {
+
+                episodeNumber =
+                    Number(episodePart) || 0;
+
+                seasonNumber =
+                    Number(seasonPart) || 1;
+
+                slugParts =
+                    rawParts.slice(0, -2);
+            }
+        }
+
+        const slug =
+            decodeURIComponent(
+                slugParts.join(":")
             );
+
+        const slugDetail =
+            await movinaMetaCachedLoad(
+                MOVINA_META_DETAIL_CACHE,
+
+                "phimapi:detail:" + slug,
+
+                async () => {
+
+                    const detailRes =
+                        await axios.get(
+                            "https://phimapi.com/v1/api/phim/" +
+                            encodeURIComponent(slug),
+                            {
+                                timeout: 7000,
+
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
+                            }
+                        );
+
+                    return (
+                        detailRes.data?.data?.item ||
+                        detailRes.data?.item ||
+                        null
+                    );
+                },
+
+                MOVINA_META_DETAIL_TTL,
+                3000
+            );
+
+        if (!slugDetail) {
+
+            console.log(
+                "[STREAM] SLUG DETAIL NOT FOUND:",
+                slug
+            );
+
+            return {
+                streams: []
+            };
+        }
+
+        movieName =
+            slugDetail.name ||
+            slugDetail.origin_name ||
+            "";
+
+        movieYear =
+            movinaIdentityGetYear(slugDetail);
+
+        resolvedMetadata =
+            slugDetail;
+
+        console.log(
+            "[STREAM] MOVINA SLUG:",
+            slug,
+            "| Name:",
+            movieName,
+            "| Year:",
+            movieYear,
+            "| Season:",
+            seasonNumber,
+            "| Episode:",
+            episodeNumber
+        );
+
+    } else {
+
+        // -------------------------------------------------
+        // LEGACY FORMAT — GIỮ TƯƠNG THÍCH
+        // vnwpsw:Tên phim
+        // vnwpsw:Tên phim:season:episode
+        // -------------------------------------------------
 
         const idParts =
             movinaRaw.split(":");
-
-        // -------------------------------------------------
-        // Nếu là series video:
-        //
-        // vnwpsw:Tên phim:season:episode
-        // -------------------------------------------------
 
         if (
             streamType === "series" &&
@@ -36199,76 +36318,38 @@ let episodeNumber = 0;
         ) {
 
             const episodePart =
-                idParts[
-                    idParts.length - 1
-                ];
+                idParts[idParts.length - 1];
 
             const seasonPart =
-                idParts[
-                    idParts.length - 2
-                ];
+                idParts[idParts.length - 2];
 
             episodeNumber =
-                Number(
-                    episodePart
-                ) || 0;
+                Number(episodePart) || 0;
 
             seasonNumber =
-                Number(
-                    seasonPart
-                ) || 1;
-
-            // Tên phim có thể chứa ":"
-            // nên ghép tất cả phần còn lại
-            // trước season + episode.
+                Number(seasonPart) || 1;
 
             const nameParts =
-                idParts.slice(
-                    0,
-                    -2
-                );
+                idParts.slice(0, -2);
 
             movieName =
                 decodeURIComponent(
                     nameParts.join(":")
                 );
 
-            console.log(
-                "[STREAM] MOVINA series name:",
-                movieName
-            );
-
-            console.log(
-                "[STREAM] MOVINA season:",
-                seasonNumber
-            );
-
-            console.log(
-                "[STREAM] MOVINA episode:",
-                episodeNumber
-            );
-
         } else {
 
-            // -------------------------------------------------
-            // MOVIE:
-            //
-            // vnwpsw:Tên phim
-            // -------------------------------------------------
-
             movieName =
-                decodeURIComponent(
-                    movinaRaw
-                );
-
-            console.log(
-                "[STREAM] MOVINA movie name:",
-                movieName
-            );
+                decodeURIComponent(movinaRaw);
 
         }
 
+        console.log(
+            "[STREAM] MOVINA LEGACY NAME:",
+            movieName
+        );
     }
+}
 
     // =====================================================
     // B. IMDb SERIES
