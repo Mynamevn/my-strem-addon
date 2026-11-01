@@ -6862,6 +6862,7 @@ function movinaIdentityNormalizeTitle(value) {
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/đ/gi, "d")
         .toLowerCase()
+        .replace(/\b(live[\s-]*action|live[\s-]*action[\s-]*series)\b/gi, " ")
         .replace(/[^\p{L}\p{N}]+/gu, " ")
         .replace(/\s+/g, " ")
         .trim();
@@ -10174,11 +10175,14 @@ if (
 
         let movieName = "";
 
-        // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID
-        let imdbId = "";
+// IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID
+let imdbId = "";
 
-        // ID cuối cùng dùng cho Meta + Video
-        let metaId = rawId;
+// Metadata Cinemeta để đối chiếu đúng năm phát hành.
+let cinemetaIdentityMeta = null;
+
+// ID cuối cùng dùng cho Meta + Video
+let metaId = rawId;
 
         if (rawId.startsWith("vnwpsw:")) {
 
@@ -10225,9 +10229,12 @@ if (
                         }
                     );
 
-                movieName =
-                    cinemetaRes.data?.meta?.name ||
-                    "";
+                cinemetaIdentityMeta =
+    cinemetaRes.data?.meta || null;
+
+movieName =
+    cinemetaIdentityMeta?.name ||
+    "";
 
             } catch (e) {
 
@@ -10330,118 +10337,87 @@ console.log(
         // [STREMIO-013.07] [PROVIDERS: ALL] MOVIE SEARCH RESULT MATCHING
         // =====================================================
 
-        const normalizeTitle =
-            value => {
+        const normalizeTitle = value =>
+    movinaIdentityNormalizeTitle(value);
 
-                return String(
-                    value ||
-                    ""
-                )
-                    .normalize("NFD")
-                    .replace(
-                        /[\u0300-\u036f]/g,
-                        ""
-                    )
-                    .toLowerCase()
-                    .replace(
-                        /[^a-z0-9]+/g,
-                        " "
-                    )
-                    .replace(
-                        /\s+/g,
-                        " "
-                    )
-                    .trim();
+const normalizedName =
+    normalizeTitle(movieName);
 
-            };
+// Nếu Meta ID là IMDb, lấy năm từ Cinemeta.
+// Nếu chưa có IMDb ID thì không tự đoán năm.
+const expectedCinemetaYear =
+    movinaIdentityGetYear(cinemetaIdentityMeta);
 
-        const normalizedName =
-            normalizeTitle(
-                movieName
+const candidateMatchesYear = candidate => {
+    if (!expectedCinemetaYear) {
+        return true;
+    }
+
+    const candidateYear =
+        movinaIdentityGetYear(candidate);
+
+    return candidateYear === expectedCinemetaYear;
+};
+
+let item = null;
+
+if (Array.isArray(items)) {
+
+    // -------------------------------------------------
+    // A. TÊN VIỆT KHỚP CHÍNH XÁC + ĐÚNG NĂM
+    // -------------------------------------------------
+
+    item = items.find(x => {
+        const name =
+            normalizeTitle(x?.name);
+
+        return (
+            name &&
+            name === normalizedName &&
+            candidateMatchesYear(x)
+        );
+    });
+
+    // -------------------------------------------------
+    // B. TÊN GỐC KHỚP CHÍNH XÁC + ĐÚNG NĂM
+    // -------------------------------------------------
+
+    if (!item) {
+        item = items.find(x => {
+            const origin =
+                normalizeTitle(
+                    x?.origin_name ||
+                    x?.original_name
+                );
+
+            return (
+                origin &&
+                origin === normalizedName &&
+                candidateMatchesYear(x)
             );
+        });
+    }
 
-        let item = null;
+    // -------------------------------------------------
+    // C. ALTERNATIVE NAME + ĐÚNG NĂM
+    // -------------------------------------------------
 
-        if (Array.isArray(items)) {
+    if (!item) {
+        item = items.find(x => {
+            const alternatives =
+                Array.isArray(x?.alternative_names)
+                    ? x.alternative_names
+                    : [];
 
-            // -------------------------------------------------
-            // A. TÊN VIỆT KHỚP CHÍNH XÁC
-            // -------------------------------------------------
-
-            item =
-                items.find(x => {
-
-                    const name =
-                        normalizeTitle(
-                            x?.name
-                        );
-
-                    return (
-                        name &&
-                        name === normalizedName
-                    );
-
-                });
-
-            // -------------------------------------------------
-            // B. TÊN GỐC KHỚP CHÍNH XÁC
-            // -------------------------------------------------
-
-            if (!item) {
-
-                item =
-                    items.find(x => {
-
-                        const origin =
-                            normalizeTitle(
-                                x?.origin_name ||
-                                x?.original_name
-                            );
-
-                        return (
-                            origin &&
-                            origin === normalizedName
-                        );
-
-                    });
-
-            }
-
-            // -------------------------------------------------
-            // C. alternative_names
-            // -------------------------------------------------
-
-            if (!item) {
-
-                item =
-                    items.find(x => {
-
-                        const alternatives =
-                            Array.isArray(
-                                x?.alternative_names
-                            )
-                                ? x.alternative_names
-                                : [];
-
-                        return alternatives.some(
-                            alt => {
-
-                                return (
-                                    normalizeTitle(
-                                        alt
-                                    ) ===
-                                    normalizedName
-                                );
-
-                            }
-                        );
-
-                    });
-
-            }
-
-           }
-
+            return (
+                candidateMatchesYear(x) &&
+                alternatives.some(alt =>
+                    normalizeTitle(alt) === normalizedName
+                )
+            );
+        });
+    }
+}
         if (!item) {
 
             console.log(
@@ -10784,9 +10760,14 @@ console.log(
         // =====================================================
 
         let description =
-            detail?.content ||
-            item?.content ||
-            "";
+    detail?.content ||
+    detail?.description ||
+    detail?.overview ||
+    item?.content ||
+    item?.description ||
+    item?.overview ||
+    cachedPreviewFields?.description ||
+    "";
 
         description =
             String(description || "")
