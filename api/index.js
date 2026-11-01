@@ -8150,7 +8150,7 @@ function movinaSchedulePreviewCompletion(
                     previewRequests++;
 
                     detail = await movinaFetchCinemetaPreview(
-    workingItem,,
+    workingItem,
     itemType,
     {
         background: true
