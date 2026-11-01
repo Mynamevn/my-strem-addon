@@ -10783,10 +10783,11 @@ console.log(
         imdbRating: detail?.imdb?.vote_average ?? null
     })
 );
+}
 
-        // =====================================================
-        // [STREMIO-013.09] [PROVIDERS: ALL] MOVIE AND SERIES TYPE RESOLUTION
-        // =====================================================
+// ============================================================
+// [STREMIO-013.09] [PROVIDERS: ALL] MOVIE AND SERIES TYPE RESOLUTION
+// ============================================================
 
         const sourceType =
             String(
