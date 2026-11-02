@@ -8817,22 +8817,27 @@ if (!slug) {
 // Xác minh IMDb hoặc tìm IMDb mới nếu nguồn thiếu ID.
 // Chạy background, tuyệt đối không chặn Catalog foreground.
 
+
 const verifiedImdbId =
     isClassicRanked
-        ? getImdbId(item?.__movinaClassicImdbId)
+        ? getImdbId(
+            item?.__movinaClassicImdbId
+        )
 
+        // IMDb ID đã được cấp trực tiếp bởi
+        // Cinemeta Catalog JSON.
+        // Không gọi lại Cinemeta Meta JSON.
         : isCinemetaCatalog
-            ? await movinaVerifyImdbIdentity(
-                item,
-                sourceImdbId,
-                itemType
-            )
+            ? getImdbId(sourceImdbId)
 
+            // Các nguồn PhimAPI thông thường vẫn
+            // phải xác minh IMDb như trước.
             : await movinaResolveAndVerifyImdb(
                 item,
                 detail,
                 itemType
             );
+
 
 // ============================================================
 // CINEMETA → PHIMAPI ENRICHMENT CACHE
