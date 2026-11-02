@@ -11137,9 +11137,6 @@ if (
 // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID.
 let imdbId = "";
 
-// Giữ bản ghi IMDb Ranked JSON để Meta handler
-// sử dụng trực tiếp, không phụ thuộc PhimAPI.
-let requestedClassicItem = null;
 
         // ID cuối cùng dùng cho Meta + Video
         let metaId = rawId;
@@ -11186,174 +11183,56 @@ let requestedClassicItem = null;
             ? "series"
             : "movie";
 
-    
-const classicCache =
-    MOVINA_CLASSIC_CATALOG_CACHE.get(classicType);
+    const classicCache =
+        MOVINA_CLASSIC_CATALOG_CACHE.get(classicType);
 
-const classicItem =
-    Array.isArray(classicCache?.items)
-        ? classicCache.items.find(item =>
-            String(
-                item?.__movinaClassicImdbId ||
-                item?.imdb?.id ||
-                ""
-            ).trim().toLowerCase() === imdbId
-        )
-        : null;
+    const classicItem =
+        Array.isArray(classicCache?.items)
+            ? classicCache.items.find(item =>
+                String(
+                    item?.__movinaClassicImdbId ||
+                    item?.imdb?.id ||
+                    ""
+                ).trim().toLowerCase() === imdbId
+            )
+            : null;
 
-// Giữ nguyên bản ghi IMDb Ranked JSON.
-requestedClassicItem =
-    classicItem
-        ? { ...classicItem }
-        : null;
+    movieName =
+        classicItem?.name ||
+        classicItem?.origin_name ||
+        "";
 
-movieName =
-    requestedClassicItem?.name ||
-    requestedClassicItem?.origin_name ||
-    "";
-
-// ------------------------------------------------------------
-// FALLBACK KHI CLASSIC CACHE KHÔNG CÒN
-// Lấy metadata trực tiếp từ Cinemeta theo IMDb ID.
-// Không bắt buộc phải tìm được bản ghi PhimAPI.
-// ------------------------------------------------------------
-
-if (!requestedClassicItem) {
-
-    try {
-
-        const cinemetaRes = await axios.get(
-            "https://v3-cinemeta.strem.io/meta/" +
-            classicType +
-            "/" +
-            encodeURIComponent(imdbId) +
-            ".json",
-            {
-                timeout: 6000,
-                headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json"
+    // Fallback khi Classic Catalog Cache không còn.
+    if (!movieName) {
+        try {
+            const cinemetaRes = await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                classicType +
+                "/" +
+                encodeURIComponent(imdbId) +
+                ".json",
+                {
+                    timeout: 4500,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
                 }
-            }
-        );
-
-        const classicMeta =
-            cinemetaRes.data?.meta || null;
-
-        if (classicMeta) {
-
-            movieName =
-                classicMeta.name || movieName;
-
-            const rawYear = String(
-                classicMeta.year ||
-                classicMeta.releaseInfo ||
-                classicMeta.released ||
-                ""
             );
 
-            const yearMatch =
-                rawYear.match(/\b(19|20)\d{2}\b/);
+            movieName =
+                cinemetaRes.data?.meta?.name || "";
 
-            const rating =
-                Number(classicMeta.imdbRating);
-
-            requestedClassicItem = {
-
-                name:
-                    classicMeta.name || movieName,
-
-                origin_name:
-                    classicMeta.name || movieName,
-
-                original_name:
-                    classicMeta.original_name ||
-                    classicMeta.name ||
-                    movieName,
-
-                type:
-                    classicType,
-
-                __catalogType:
-                    classicType,
-
-                poster_url:
-                    classicMeta.poster || "",
-
-                thumb_url:
-                    classicMeta.background || "",
-
-                content:
-                    classicMeta.description || "",
-
-                description:
-                    classicMeta.description || "",
-
-                year:
-                    yearMatch
-                        ? Number(yearMatch[0])
-                        : undefined,
-
-                imdb: {
-                    id: imdbId,
-
-                    vote_average:
-                        Number.isFinite(rating) &&
-                        rating > 0 &&
-                        rating <= 10
-                            ? rating
-                            : null
-                },
-
-                imdb_id:
-                    imdbId,
-
-                category:
-                    (classicMeta.genres || []).map(name => ({
-                        name
-                    })),
-
-                actor:
-                    (classicMeta.cast || []).map(name => ({
-                        name
-                    })),
-
-                director:
-                    (classicMeta.director || []).map(name => ({
-                        name
-                    })),
-
-                time:
-                    classicMeta.runtime || "",
-
-                __movinaClassicMetaFallback:
-                    true
-            };
+        } catch (error) {
+            console.log(
+                "[META CLASSIC TITLE ERROR]",
+                imdbId,
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
         }
-
-    } catch (error) {
-
-        console.log(
-            "[META CLASSIC CINEMETA FALLBACK ERROR]",
-            imdbId,
-            error?.response?.status ||
-            error?.message ||
-            error
-        );
     }
-}
-
-console.log(
-    "[META CLASSIC SOURCE]",
-    JSON.stringify({
-        imdbId,
-        title: movieName,
-        classicCacheHit: Boolean(classicItem),
-        fallbackAvailable: Boolean(requestedClassicItem),
-        poster: Boolean(requestedClassicItem?.poster_url),
-        description: Boolean(requestedClassicItem?.content)
-    })
-);
 
     console.log(
         "[META CLASSIC ID]",
@@ -11544,11 +11423,7 @@ if (
 const items =
     cachedPhimApiMatch
         ? [cachedPhimApiMatch]
-
-        : requestedClassicItem
-            ? []
-
-            : await movinaMetaCachedLoad(
+        : await movinaMetaCachedLoad(
                 MOVINA_META_SEARCH_CACHE,
                 metaSearchKey,
 
@@ -11639,7 +11514,6 @@ console.log(
         let item =
     requestedSlugItem ||
     cachedPhimApiMatch ||
-    requestedClassicItem ||
     null;
 
 if (
