@@ -11495,24 +11495,6 @@ const metaSearchKey =
     movinaIdentityNormalizeTitle(movieName);
 
 // ------------------------------------------------------------
-// [STREMIO-013.06A]
-// IMDb → PHIMAPI CACHE LOOKUP
-// Không tham chiếu metaType trước khi được khởi tạo.
-// ------------------------------------------------------------
-
-const requestedMetaType =
-    args.type === "series"
-        ? "series"
-        : "movie";
-
-const cachedMatchKey =
-    imdbId
-        ? requestedMetaType + ":" +
-            String(imdbId).trim().toLowerCase()
-        : "";
-
-
-// ------------------------------------------------------------
 // IMDb → PHIMAPI CACHE LOOKUP
 // Xác định loại phim ngay tại đây.
 // Không sử dụng metaType được khai báo phía dưới.
