@@ -7278,6 +7278,19 @@ const MOVINA_META_SEARCH_TTL =
 const MOVINA_META_DETAIL_TTL =
     15 * 60 * 1000;
 
+// ============================================================
+// [STREMIO-012.01B] CINEMETA IMDb → PHIMAPI MATCH CACHE
+// ============================================================
+// Lưu bản ghi PhimAPI đã được đối chiếu với IMDb ID.
+// Dùng lại khi người dùng mở Meta hoặc Stream bằng tt...
+// Không thay đổi ID của catalog.
+// ============================================================
+
+const MOVINA_PHIMAPI_MATCH_BY_IMDB = new Map();
+
+const MOVINA_PHIMAPI_MATCH_BY_IMDB_TTL =
+    6 * 60 * 60 * 1000;
+
 function movinaIdentityNormalizeTitle(value) {
     return String(value || "")
         .normalize("NFD")
@@ -7941,10 +7954,35 @@ async function movinaFetchCinemetaPreview(
         : "foreground"
 );
 
-            const detail =
-                response.data?.data?.item ||
-                response.data?.item ||
-                {};
+            
+const detail =
+    response.data?.data?.item ||
+    response.data?.item ||
+    {};
+
+// ------------------------------------------------------------
+// LƯU FULL PHIMAPI DETAIL
+// Để Meta handler sử dụng lại, đặc biệt với phim bộ.
+// Tránh gọi lại endpoint detail khi worker đã tải xong.
+// ------------------------------------------------------------
+
+if (
+    detail &&
+    typeof detail === "object" &&
+    Object.keys(detail).length
+) {
+    MOVINA_META_DETAIL_CACHE.set(
+        "phimapi:detail:" + slug,
+        {
+            expiresAt:
+                Date.now() + MOVINA_META_DETAIL_TTL,
+
+            promise:
+                Promise.resolve(detail)
+        }
+    );
+}
+
 
             const rawDescription =
                 detail.content ||
@@ -8423,35 +8461,78 @@ function movinaSchedulePreviewCompletion(
     resolveType
 ) {
     
-    const sourceItems = (Array.isArray(items) ? items : [])
-        .slice(0, CATALOG_TARGET)
-        .filter(item =>
-            String(item?.slug || "").trim() ||
-            (
-                item?.__movinaClassicSource === "ranked-json" &&
-                /^tt\d+$/i.test(
-                    String(item?.__movinaClassicImdbId || "")
-                )
-            )
+    
+const sourceItems = (Array.isArray(items) ? items : [])
+    .slice(0, CATALOG_TARGET)
+    .filter(item => {
+
+        const hasPhimApiSlug =
+            Boolean(String(item?.slug || "").trim());
+
+        const isClassicRanked =
+            item?.__movinaClassicSource === "ranked-json" &&
+            /^tt\d+$/i.test(
+                String(item?.__movinaClassicImdbId || "")
+                    .trim()
+            );
+
+        const isCinemetaCatalog =
+            item?.__movinaCinemetaSource === true &&
+            /^tt\d+$/i.test(
+                String(
+                    item?.__movinaCinemetaImdbId ||
+                    item?.imdb?.id ||
+                    item?.imdb_id ||
+                    ""
+                ).trim()
+            );
+
+        return (
+            hasPhimApiSlug ||
+            isClassicRanked ||
+            isCinemetaCatalog
         );
+    });
 
-    if (!sourceItems.length) {
-        return;
-    }
+if (!sourceItems.length) {
+    return;
+}
 
-        const jobKey =
-        String(catalogId || "movina") +
-        ":" +
-        sourceItems
-            .map(item =>
-                String(item?.slug || "").trim() ||
-                (
-                    "classic:" +
-                    String(item?.__movinaClassicImdbId || "")
-                )
-            )
-            .sort()
-            .join("|");
+const jobKey =
+    String(catalogId || "movina") +
+    ":" +
+    sourceItems
+        .map(item => {
+
+            const slug =
+                String(item?.slug || "").trim();
+
+            if (slug) {
+                return "slug:" + slug;
+            }
+
+            if (item?.__movinaCinemetaSource === true) {
+                return (
+                    "cinemeta:" +
+                    String(
+                        item?.__movinaCinemetaImdbId ||
+                        item?.imdb?.id ||
+                        item?.imdb_id ||
+                        ""
+                    ).trim().toLowerCase()
+                );
+            }
+
+            return (
+                "classic:" +
+                String(
+                    item?.__movinaClassicImdbId || ""
+                ).trim().toLowerCase()
+            );
+        })
+        .sort()
+        .join("|");
+
 
     if (MOVINA_PREVIEW_BACKGROUND_JOBS.has(jobKey)) {
         console.log(
@@ -8508,45 +8589,103 @@ function movinaSchedulePreviewCompletion(
                     ? "series"
                     : "movie";
 
-                        let workingItem = item;
+                        
+let workingItem = item;
 
-            let slug = String(
-                item?.slug || ""
-            ).trim();
+let slug = String(
+    item?.slug || ""
+).trim();
 
-            const isClassicRanked =
-                item?.__movinaClassicSource === "ranked-json";
+const isClassicRanked =
+    item?.__movinaClassicSource === "ranked-json";
 
-            if (!slug && isClassicRanked) {
-                const match =
-                    await movinaClassicSearchPhimAPI(
-                        {
-                            title:
-                                item?.origin_name ||
-                                item?.name ||
-                                "",
-                            imdbId:
-                                item?.__movinaClassicImdbId ||
-                                "",
-                            year:
-                                Number(item?.year) || 0
-                        },
-                        itemType,
-                        {
-                            background: true
-                        }
-                    );
+const isCinemetaCatalog =
+    item?.__movinaCinemetaSource === true;
 
-                if (match?.slug) {
-                    workingItem = match;
-                    slug = String(match.slug).trim();
-                }
+const sourceImdbId = String(
+    item?.__movinaCinemetaImdbId ||
+    item?.__movinaClassicImdbId ||
+    item?.imdb?.id ||
+    item?.imdb_id ||
+    item?.imdbId ||
+    ""
+).trim().toLowerCase();
+
+// ------------------------------------------------------------
+// CINEMETA / CLASSIC → PHIMAPI MATCH
+// Chỉ nhận kết quả khớp tên và năm.
+// Không tự chọn kết quả mơ hồ.
+// ------------------------------------------------------------
+
+if (
+    !slug &&
+    (
+        isClassicRanked ||
+        isCinemetaCatalog
+    )
+) {
+
+    const searchTitle = String(
+        item?.origin_name ||
+        item?.name ||
+        ""
+    ).trim();
+
+    const match =
+        await movinaClassicSearchPhimAPI(
+            {
+                title: searchTitle,
+
+                imdbId: sourceImdbId,
+
+                year:
+                    Number(item?.year) || 0
+            },
+            itemType,
+            {
+                background: true
             }
+        );
 
-            if (!slug) {
-                skipped++;
-                continue;
-            }
+    if (match?.slug) {
+
+        workingItem = match;
+
+        slug = String(
+            match.slug
+        ).trim();
+
+        console.log(
+            "[MOVINA CINEMETA → PHIMAPI MATCH]",
+            JSON.stringify({
+                title: item?.name,
+                matchedTitle: match?.name,
+                year: item?.year || 0,
+                matchedYear: match?.year || 0,
+                imdbId: sourceImdbId,
+                type: itemType,
+                slug
+            })
+        );
+
+    } else if (isCinemetaCatalog) {
+
+        console.log(
+            "[MOVINA CINEMETA → PHIMAPI NO MATCH]",
+            JSON.stringify({
+                title: item?.name,
+                year: item?.year || 0,
+                imdbId: sourceImdbId,
+                type: itemType
+            })
+        );
+    }
+}
+
+if (!slug) {
+    skipped++;
+    continue;
+}
 
             try {
                 const previewCacheKey =
@@ -8684,11 +8823,269 @@ function movinaSchedulePreviewCompletion(
 const verifiedImdbId =
     isClassicRanked
         ? getImdbId(item?.__movinaClassicImdbId)
-        : await movinaResolveAndVerifyImdb(
-            item,
-            detail,
-            itemType
+
+        : isCinemetaCatalog
+            ? await movinaVerifyImdbIdentity(
+                item,
+                sourceImdbId,
+                itemType
+            )
+
+            : await movinaResolveAndVerifyImdb(
+                item,
+                detail,
+                itemType
+            );
+
+// ============================================================
+// CINEMETA → PHIMAPI ENRICHMENT CACHE
+// ============================================================
+
+if (
+    isCinemetaCatalog &&
+    verifiedImdbId &&
+    workingItem?.slug
+) {
+
+    const normalizedImdbId =
+        String(verifiedImdbId)
+            .trim()
+            .toLowerCase();
+
+    const matchedSlug =
+        String(workingItem.slug).trim();
+
+    // --------------------------------------------------------
+    // 1. CACHE IMDb → PHIMAPI ITEM
+    // --------------------------------------------------------
+
+    const matchedItem = {
+        ...workingItem
+    };
+
+    MOVINA_PHIMAPI_MATCH_BY_IMDB.set(
+        itemType + ":" + normalizedImdbId,
+        {
+            expiresAt:
+                Date.now() +
+                MOVINA_PHIMAPI_MATCH_BY_IMDB_TTL,
+
+            item: matchedItem
+        }
+    );
+
+    // Đồng bộ IMDb đã xác minh với slug PhimAPI.
+    movinaPromoteCatalogIdentity(
+        matchedItem,
+        itemType,
+        normalizedImdbId
+    );
+
+    // --------------------------------------------------------
+    // 2. ĐỌC FULL DETAIL PHIMAPI ĐÃ CACHE
+    // --------------------------------------------------------
+
+    let fullDetail = {};
+
+    const fullDetailEntry =
+        MOVINA_META_DETAIL_CACHE.get(
+            "phimapi:detail:" + matchedSlug
         );
+
+    if (
+        fullDetailEntry &&
+        fullDetailEntry.expiresAt > Date.now()
+    ) {
+        try {
+            fullDetail =
+                await fullDetailEntry.promise || {};
+        } catch (_) {
+            fullDetail = {};
+        }
+    }
+
+    // --------------------------------------------------------
+    // 3. ƯU TIÊN POSTER DỌC GỐC TỪ PHIMAPI
+    // Không dùng thumb làm poster thay thế.
+    // --------------------------------------------------------
+
+    const rawOriginalPoster =
+        fullDetail?.poster_url ||
+        fullDetail?.poster ||
+        workingItem?.poster_url ||
+        workingItem?.poster ||
+        "";
+
+    const originalPoster =
+        rawOriginalPoster
+            ? makePosterUrl({
+                poster: rawOriginalPoster
+            })
+            : "";
+
+    const originalBackground =
+        fullDetail?.thumb_url ||
+        workingItem?.thumb_url ||
+        workingItem?.thumb ||
+        "";
+
+    // --------------------------------------------------------
+    // 4. CẬP NHẬT CINEMETA GENRE CACHE
+    // Để lần mở catalog tiếp theo có sẵn metadata tiếng Việt.
+    // --------------------------------------------------------
+
+    const genreName = String(
+        item?.__movinaCinemetaGenre || ""
+    ).trim();
+
+    if (genreName) {
+
+        const genreCacheKey =
+            itemType + "|" + genreName;
+
+        const genreCache =
+            MOVINA_CINEMETA_GENRE_CACHE.get(
+                genreCacheKey
+            );
+
+        if (Array.isArray(genreCache?.items)) {
+
+            const cachedGenreItem =
+                genreCache.items.find(entry =>
+                    String(
+                        entry?.__movinaCinemetaImdbId ||
+                        entry?.imdb?.id ||
+                        ""
+                    ).trim().toLowerCase() === normalizedImdbId
+                );
+
+            if (cachedGenreItem) {
+
+                cachedGenreItem.slug =
+                    matchedSlug;
+
+                if (detail?.description) {
+                    cachedGenreItem.content =
+                        detail.description;
+
+                    cachedGenreItem.description =
+                        detail.description;
+                }
+
+                if (originalPoster) {
+                    cachedGenreItem.poster_url =
+                        originalPoster;
+                }
+
+                if (originalBackground) {
+                    cachedGenreItem.thumb_url =
+                        originalBackground;
+                }
+
+                cachedGenreItem.__movinaPhimApiMatched =
+                    true;
+            }
+        }
+    }
+
+    // --------------------------------------------------------
+    // 5. CẬP NHẬT FINAL CATALOG CACHE
+    // Không thay đổi ID, tên phim hoặc thứ tự.
+    // --------------------------------------------------------
+
+    for (
+        const cachedCatalog of
+        MOVINA_FINAL_CATALOG_CACHE.values()
+    ) {
+
+        if (
+            cachedCatalog?.catalogId !== catalogId ||
+            cachedCatalog.expiresAt <= Date.now() ||
+            !Array.isArray(cachedCatalog.metas)
+        ) {
+            continue;
+        }
+
+        const targetMeta =
+            cachedCatalog.metas.find(meta =>
+                meta?.type === itemType &&
+                String(meta?.id || "")
+                    .trim()
+                    .toLowerCase() === normalizedImdbId
+            );
+
+        if (!targetMeta) {
+            continue;
+        }
+
+        // Mô tả tiếng Việt từ PhimAPI.
+        if (detail?.description) {
+            targetMeta.description =
+                detail.description;
+        }
+
+        // Poster gốc, chỉ khi PhimAPI có poster thật.
+        if (originalPoster) {
+            targetMeta.poster =
+                originalPoster;
+        }
+
+        if (originalBackground) {
+            targetMeta.background =
+                originalBackground;
+        }
+
+        if (
+            Array.isArray(detail?.cast) &&
+            detail.cast.length
+        ) {
+            targetMeta.cast =
+                detail.cast;
+        }
+
+        if (
+            Array.isArray(detail?.director) &&
+            detail.director.length
+        ) {
+            targetMeta.director =
+                detail.director;
+        }
+
+        if (
+            detail?.runtime &&
+            !targetMeta.runtime
+        ) {
+            targetMeta.runtime =
+                detail.runtime;
+        }
+
+        if (
+            detail?.genres?.length &&
+            !targetMeta.genres?.length
+        ) {
+            targetMeta.genres =
+                detail.genres;
+        }
+    }
+
+    console.log(
+        "[MOVINA CINEMETA ENRICHMENT SAVED]",
+        JSON.stringify({
+            title: item?.name,
+            imdbId: normalizedImdbId,
+            type: itemType,
+            slug: matchedSlug,
+            vietnameseDescription:
+                Boolean(detail?.description),
+            originalPoster:
+                Boolean(originalPoster),
+            background:
+                Boolean(originalBackground),
+            fullDetailCached:
+                Boolean(Object.keys(fullDetail).length)
+        })
+    );
+}
 
 if (verifiedImdbId) {
     console.log(
@@ -10973,42 +11370,79 @@ const metaSearchKey =
     "phimapi:" +
     movinaIdentityNormalizeTitle(movieName);
 
+
+// ------------------------------------------------------------
+// ƯU TIÊN PHIMAPI ITEM ĐÃ ĐƯỢC BACKGROUND WORKER GHÉP
+// Khi mở phim bằng IMDb ID.
+// ------------------------------------------------------------
+
+const cachedMatchEntry =
+    imdbId
+        ? MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
+            metaType + ":" +
+            String(imdbId).trim().toLowerCase()
+        )
+        : null;
+
+const cachedPhimApiMatch =
+    (
+        cachedMatchEntry &&
+        cachedMatchEntry.expiresAt > Date.now()
+    )
+        ? cachedMatchEntry.item
+        : null;
+
+if (
+    cachedMatchEntry &&
+    !cachedPhimApiMatch
+) {
+    MOVINA_PHIMAPI_MATCH_BY_IMDB.delete(
+        metaType + ":" +
+        String(imdbId).trim().toLowerCase()
+    );
+}
+
 const items =
-    await movinaMetaCachedLoad(
-        MOVINA_META_SEARCH_CACHE,
-        metaSearchKey,
+    cachedPhimApiMatch
+        ? [cachedPhimApiMatch]
 
-        async () => {
-            const searchUrl =
-                "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-                encodeURIComponent(movieName) +
-                "&limit=10";
+        : await movinaMetaCachedLoad(
+            MOVINA_META_SEARCH_CACHE,
+            metaSearchKey,
 
-            const searchRes =
-                await axios.get(
-                    searchUrl,
-                    {
-                        timeout: 5000,
-                        headers: {
-                            "User-Agent": "Mozilla/5.0",
-                            "Accept": "application/json"
+            async () => {
+
+                const searchUrl =
+                    "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                    encodeURIComponent(movieName) +
+                    "&limit=10";
+
+                const searchRes =
+                    await axios.get(
+                        searchUrl,
+                        {
+                            timeout: 5000,
+                            headers: {
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
+                            }
                         }
-                    }
-                );
+                    );
 
-            const found =
-                searchRes.data?.data?.items ||
-                searchRes.data?.items ||
-                [];
+                const found =
+                    searchRes.data?.data?.items ||
+                    searchRes.data?.items ||
+                    [];
 
-            return Array.isArray(found)
-                ? found
-                : [];
-        },
+                return Array.isArray(found)
+                    ? found
+                    : [];
+            },
 
-        MOVINA_META_SEARCH_TTL,
-        3000
-    ) || [];
+            MOVINA_META_SEARCH_TTL,
+            3000
+        ) || [];
+
 
 console.log(
     "[META SEARCH CACHE]",
@@ -11061,7 +11495,9 @@ console.log(
             );
 
         let item =
-    requestedSlugItem || null;
+    requestedSlugItem ||
+    cachedPhimApiMatch ||
+    null;
 
 if (
     !item &&
