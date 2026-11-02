@@ -3472,349 +3472,6 @@ function movinaTrendingBalancedDecades(
     );
 }
 
-
-/* ============================================================
-   [STREMIO-012.06] [PROVIDERS: MOVINA]
-   CINEMETA DIRECT GENRE CATALOG LOADER
-
-   - Một JSON request cho mỗi loại phim / thể loại.
-   - Lấy trực tiếp IMDb ID, poster, rating, description.
-   - Cache 15 phút + chống request trùng.
-   - Không cần TMDB API token.
-   - Không gọi PhimAPI trong foreground nếu thành công.
-   ============================================================ */
-
-const MOVINA_CINEMETA_GENRE_MAP = {
-    "kinh di": "Horror",
-    "hai": "Comedy",
-    "hanh dong": "Action",
-    "giat gan": "Thriller",
-    "hinh su": "Crime",
-    "gia dinh": "Family",
-    "gia tuong": "Fantasy",
-    "bi an": "Mystery",
-    "vien tuong": "Sci-Fi",
-    "phieu luu": "Adventure",
-    "tinh cam": "Romance",
-    "lang man": "Romance",
-    "the thao": "Sport",
-    "chien tranh": "War",
-    "lich su": "History",
-    "tai lieu": "Documentary",
-    "hoat hinh": "Animation"
-};
-
-const MOVINA_CINEMETA_GENRE_CACHE = new Map();
-const MOVINA_CINEMETA_GENRE_INFLIGHT = new Map();
-
-const MOVINA_CINEMETA_GENRE_TTL =
-    15 * 60 * 1000;
-
-
-async function movinaFetchCinemetaGenreCatalog(
-    type,
-    genre
-) {
-    const normalizedType =
-        type === "series" ? "series" : "movie";
-
-    const normalizedGenre =
-        String(genre || "").trim();
-
-    if (!normalizedGenre) {
-        return null;
-    }
-
-    const cacheKey =
-        normalizedType + "|" + normalizedGenre;
-
-    const now = Date.now();
-
-    // --------------------------------------------------------
-    // 1. CACHE HIT
-    // --------------------------------------------------------
-
-    const cached =
-        MOVINA_CINEMETA_GENRE_CACHE.get(cacheKey);
-
-    if (
-        cached &&
-        cached.expiresAt > now &&
-        Array.isArray(cached.items)
-    ) {
-        console.log(
-            "[MOVINA CINEMETA GENRE] CACHE HIT",
-            JSON.stringify({
-                type: normalizedType,
-                genre: normalizedGenre,
-                items: cached.items.length
-            })
-        );
-
-        return cached.items.map(item => ({
-            ...item,
-            imdb: item.imdb
-                ? { ...item.imdb }
-                : undefined,
-            category: Array.isArray(item.category)
-                ? item.category.map(x => ({ ...x }))
-                : []
-        }));
-    }
-
-    if (cached) {
-        MOVINA_CINEMETA_GENRE_CACHE.delete(cacheKey);
-    }
-
-    // --------------------------------------------------------
-    // 2. IN-FLIGHT DEDUPLICATION
-    // --------------------------------------------------------
-
-    const running =
-        MOVINA_CINEMETA_GENRE_INFLIGHT.get(cacheKey);
-
-    if (running) {
-        return running;
-    }
-
-    // --------------------------------------------------------
-    // 3. DIRECT CINEMETA JSON REQUEST
-    // --------------------------------------------------------
-
-    const task = (async () => {
-        const startedAt = Date.now();
-
-        const url =
-            "https://v3-cinemeta.strem.io/catalog/" +
-            normalizedType +
-            "/top/genre=" +
-            encodeURIComponent(normalizedGenre) +
-            ".json";
-
-        try {
-            const response = await axios.get(
-                url,
-                {
-                    timeout: 5000,
-                    maxRedirects: 3,
-                    headers: {
-                        "User-Agent": "MOVINA/1.0",
-                        "Accept": "application/json"
-                    }
-                }
-            );
-
-            const metas =
-                Array.isArray(response.data?.metas)
-                    ? response.data.metas
-                    : [];
-
-            if (!metas.length) {
-                console.warn(
-                    "[MOVINA CINEMETA GENRE] EMPTY",
-                    normalizedType,
-                    normalizedGenre
-                );
-
-                return null;
-            }
-
-            const items = metas
-                .map(meta => {
-                    const imdbId = String(
-                        meta?.id ||
-                        meta?.imdb_id ||
-                        ""
-                    ).trim().toLowerCase();
-
-                    if (!/^tt\d+$/.test(imdbId)) {
-                        return null;
-                    }
-
-                    const metaType =
-                        String(meta?.type || "")
-                            .trim()
-                            .toLowerCase();
-
-                    if (
-                        metaType &&
-                        metaType !== normalizedType
-                    ) {
-                        return null;
-                    }
-
-                    const title = String(
-                        meta?.name || ""
-                    ).trim();
-
-                    if (!title) {
-                        return null;
-                    }
-
-                    const rawYear = String(
-                        meta?.year ||
-                        meta?.releaseInfo ||
-                        meta?.released ||
-                        ""
-                    );
-
-                    const yearMatch =
-                        rawYear.match(/\b(19|20)\d{2}\b/);
-
-                    const year = yearMatch
-                        ? Number(yearMatch[0])
-                        : 0;
-
-                    const genres = Array.isArray(meta?.genres)
-                        ? meta.genres
-                        : Array.isArray(meta?.genre)
-                            ? meta.genre
-                            : [];
-
-                    const cast = Array.isArray(meta?.cast)
-                        ? meta.cast
-                        : [];
-
-                    const directors = Array.isArray(meta?.director)
-                        ? meta.director
-                        : meta?.director
-                            ? [meta.director]
-                            : [];
-
-                    const rating = Number(
-                        meta?.imdbRating || 0
-                    );
-
-                    return {
-                        id: imdbId,
-
-                        name: title,
-                        origin_name: title,
-
-                        type: normalizedType,
-                        __catalogType: normalizedType,
-
-                        poster:
-                            meta?.poster || "",
-
-                        thumb_url:
-                            meta?.background || "",
-
-                        content:
-                            meta?.description || "",
-
-                        description:
-                            meta?.description || "",
-
-                        year,
-
-                        imdb: {
-                            id: imdbId,
-                            vote_average:
-                                Number.isFinite(rating) &&
-                                rating > 0 &&
-                                rating <= 10
-                                    ? rating
-                                    : null
-                        },
-
-                        imdb_id: imdbId,
-
-                        imdbRating:
-                            Number.isFinite(rating) &&
-                            rating > 0 &&
-                            rating <= 10
-                                ? rating
-                                : null,
-
-                        category: genres
-                            .filter(Boolean)
-                            .map(name => ({
-                                name: String(name)
-                            })),
-
-                        actor: cast
-                            .filter(Boolean)
-                            .map(name => ({
-                                name: String(name)
-                            })),
-
-                        director: directors
-                            .filter(Boolean)
-                            .map(name => ({
-                                name: String(name)
-                            })),
-
-                        __movinaCinemetaSource: true,
-                        __movinaCinemetaImdbId: imdbId,
-                        __movinaCinemetaGenre: normalizedGenre
-                    };
-                })
-                .filter(Boolean);
-
-            if (!items.length) {
-                return null;
-            }
-
-            MOVINA_CINEMETA_GENRE_CACHE.set(
-                cacheKey,
-                {
-                    expiresAt:
-                        Date.now() +
-                        MOVINA_CINEMETA_GENRE_TTL,
-
-                    items: items.map(item => ({
-                        ...item
-                    }))
-                }
-            );
-
-            console.log(
-                "[MOVINA CINEMETA GENRE] SUCCESS",
-                JSON.stringify({
-                    type: normalizedType,
-                    genre: normalizedGenre,
-                    received: metas.length,
-                    valid: items.length,
-                    durationMs: Date.now() - startedAt
-                })
-            );
-
-            return items;
-
-        } catch (error) {
-            console.warn(
-                "[MOVINA CINEMETA GENRE] ERROR",
-                JSON.stringify({
-                    type: normalizedType,
-                    genre: normalizedGenre,
-                    status: error?.response?.status || 0,
-                    error:
-                        error?.message || String(error)
-                })
-            );
-
-            return null;
-        }
-    })();
-
-    MOVINA_CINEMETA_GENRE_INFLIGHT.set(
-        cacheKey,
-        task
-    );
-
-    try {
-        return await task;
-
-    } finally {
-        if (
-            MOVINA_CINEMETA_GENRE_INFLIGHT.get(cacheKey) === task
-        ) {
-            MOVINA_CINEMETA_GENRE_INFLIGHT.delete(cacheKey);
-        }
-    }
-}
-
 async function fetchMovinaTrendingByGenre(
     contentType,
     selectedGenre
@@ -3842,38 +3499,15 @@ async function fetchMovinaTrendingByGenre(
     const genreSlugs =
         MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
+    const isClassic = normalizedGenre === "kinh dien";
 
-const isClassic = normalizedGenre === "kinh dien";
-
-// ------------------------------------------------------------
-// CINEMETA PRIMARY SOURCE
-// ------------------------------------------------------------
-
-const cinemetaGenre =
-    MOVINA_CINEMETA_GENRE_MAP[normalizedGenre] || "";
-
-let cinemetaItems = null;
-
-if (
-    !isClassic &&
-    !isLatest &&
-    cinemetaGenre
-) {
-    cinemetaItems =
-        await movinaFetchCinemetaGenreCatalog(
-            type,
-            cinemetaGenre
-        );
-}
-
-const PAGE_SIZE = 64;
-const MAX_PAGES = 8;
+    const PAGE_SIZE = 64;
+    const MAX_PAGES = 8;
 
     
     // Kinh điển: nguồn ứng viên là danh sách IMDb JSON.
     // Không tải trước 16 trang PhimAPI vì việc ghép phim
     // sẽ tìm trực tiếp từng tiêu đề trong danh sách Top 250.
-
     if (isClassic) {
         console.log(
             "[MOVINA CLASSIC REQUEST PLAN]",
@@ -3884,30 +3518,7 @@ const MAX_PAGES = 8;
             })
         );
 
-
-} else if (
-    Array.isArray(cinemetaItems) &&
-    cinemetaItems.length > 0
-) {
-
-    requests.push(
-        Promise.resolve(cinemetaItems)
-    );
-
-    console.log(
-        "[MOVINA CINEMETA PRIMARY SOURCE]",
-        JSON.stringify({
-            type,
-            genre,
-            cinemetaGenre,
-            items: cinemetaItems.length,
-            fallbackPhimAPI: false,
-            requestCount: 1
-        })
-    );
-
-} else if (isAnimationGenre) {
-
+    } else if (isAnimationGenre) {
 
     // Dùng endpoint hoạt hình chuyên biệt của PhimAPI.
     // Endpoint này có thể chứa cả phim lẻ và phim bộ,
@@ -4141,21 +3752,12 @@ if (normalizedGenre === "kinh dien") {
          * Không bắt buộc metadata category phải lặp lại
          * cùng thông tin lần thứ hai.
          */
-
-if (
-    trustGenreSource &&
-    item.__genreApiSlug === "kinh-di"
-) {
-    return true;
-}
-
-// Cinemeta đã lọc chính xác genre ngay tại endpoint.
-if (
-    item?.__movinaCinemetaSource === true &&
-    item?.__movinaCinemetaGenre === cinemetaGenre
-) {
-    return true;
-}
+        if (
+            trustGenreSource &&
+            item.__genreApiSlug === "kinh-di"
+        ) {
+            return true;
+        }
 
         return movinaTrendingGenreMatches(
             item,
@@ -7075,22 +6677,8 @@ const rankedSourceImdbId =
             .toLowerCase()
         : "";
 
-
-const cinemetaSourceImdbId =
-    item?.__movinaCinemetaSource === true &&
-    /^tt\d+$/i.test(
-        String(
-            item?.__movinaCinemetaImdbId || ""
-        ).trim()
-    )
-        ? String(
-            item.__movinaCinemetaImdbId
-        ).trim().toLowerCase()
-        : "";
-
 const verifiedImdbId =
     rankedSourceImdbId ||
-    cinemetaSourceImdbId ||
     (
         itemSlug
             ? (
@@ -7100,7 +6688,6 @@ const verifiedImdbId =
             )
             : ""
     );
-
 
 const fallbackTitle =
     String(
