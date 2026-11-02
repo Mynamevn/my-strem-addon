@@ -11134,8 +11134,12 @@ if (
 
         let movieName = "";
 
-        // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID
-        let imdbId = "";
+// IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID.
+let imdbId = "";
+
+// Giữ bản ghi IMDb Ranked JSON để Meta handler
+// sử dụng trực tiếp, không phụ thuộc PhimAPI.
+let requestedClassicItem = null;
 
         // ID cuối cùng dùng cho Meta + Video
         let metaId = rawId;
@@ -11182,54 +11186,174 @@ if (
             ? "series"
             : "movie";
 
-    const classicCache =
-        MOVINA_CLASSIC_CATALOG_CACHE.get(classicType);
+    
+const classicCache =
+    MOVINA_CLASSIC_CATALOG_CACHE.get(classicType);
 
-    const classicItem =
-        Array.isArray(classicCache?.items)
-            ? classicCache.items.find(item =>
-                String(
-                    item?.__movinaClassicImdbId || ""
-                ).trim().toLowerCase() === imdbId
-            )
-            : null;
+const classicItem =
+    Array.isArray(classicCache?.items)
+        ? classicCache.items.find(item =>
+            String(
+                item?.__movinaClassicImdbId ||
+                item?.imdb?.id ||
+                ""
+            ).trim().toLowerCase() === imdbId
+        )
+        : null;
 
-    movieName =
-        classicItem?.name ||
-        classicItem?.origin_name ||
-        "";
+// Giữ nguyên bản ghi IMDb Ranked JSON.
+requestedClassicItem =
+    classicItem
+        ? { ...classicItem }
+        : null;
 
-    // Fallback khi Classic Catalog Cache không còn.
-    if (!movieName) {
-        try {
-            const cinemetaRes = await axios.get(
-                "https://v3-cinemeta.strem.io/meta/" +
-                classicType +
-                "/" +
-                encodeURIComponent(imdbId) +
-                ".json",
-                {
-                    timeout: 4500,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
+movieName =
+    requestedClassicItem?.name ||
+    requestedClassicItem?.origin_name ||
+    "";
+
+// ------------------------------------------------------------
+// FALLBACK KHI CLASSIC CACHE KHÔNG CÒN
+// Lấy metadata trực tiếp từ Cinemeta theo IMDb ID.
+// Không bắt buộc phải tìm được bản ghi PhimAPI.
+// ------------------------------------------------------------
+
+if (!requestedClassicItem) {
+
+    try {
+
+        const cinemetaRes = await axios.get(
+            "https://v3-cinemeta.strem.io/meta/" +
+            classicType +
+            "/" +
+            encodeURIComponent(imdbId) +
+            ".json",
+            {
+                timeout: 6000,
+                headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json"
                 }
-            );
+            }
+        );
+
+        const classicMeta =
+            cinemetaRes.data?.meta || null;
+
+        if (classicMeta) {
 
             movieName =
-                cinemetaRes.data?.meta?.name || "";
+                classicMeta.name || movieName;
 
-        } catch (error) {
-            console.log(
-                "[META CLASSIC TITLE ERROR]",
-                imdbId,
-                error?.response?.status ||
-                error?.message ||
-                error
+            const rawYear = String(
+                classicMeta.year ||
+                classicMeta.releaseInfo ||
+                classicMeta.released ||
+                ""
             );
+
+            const yearMatch =
+                rawYear.match(/\b(19|20)\d{2}\b/);
+
+            const rating =
+                Number(classicMeta.imdbRating);
+
+            requestedClassicItem = {
+
+                name:
+                    classicMeta.name || movieName,
+
+                origin_name:
+                    classicMeta.name || movieName,
+
+                original_name:
+                    classicMeta.original_name ||
+                    classicMeta.name ||
+                    movieName,
+
+                type:
+                    classicType,
+
+                __catalogType:
+                    classicType,
+
+                poster_url:
+                    classicMeta.poster || "",
+
+                thumb_url:
+                    classicMeta.background || "",
+
+                content:
+                    classicMeta.description || "",
+
+                description:
+                    classicMeta.description || "",
+
+                year:
+                    yearMatch
+                        ? Number(yearMatch[0])
+                        : undefined,
+
+                imdb: {
+                    id: imdbId,
+
+                    vote_average:
+                        Number.isFinite(rating) &&
+                        rating > 0 &&
+                        rating <= 10
+                            ? rating
+                            : null
+                },
+
+                imdb_id:
+                    imdbId,
+
+                category:
+                    (classicMeta.genres || []).map(name => ({
+                        name
+                    })),
+
+                actor:
+                    (classicMeta.cast || []).map(name => ({
+                        name
+                    })),
+
+                director:
+                    (classicMeta.director || []).map(name => ({
+                        name
+                    })),
+
+                time:
+                    classicMeta.runtime || "",
+
+                __movinaClassicMetaFallback:
+                    true
+            };
         }
+
+    } catch (error) {
+
+        console.log(
+            "[META CLASSIC CINEMETA FALLBACK ERROR]",
+            imdbId,
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
     }
+}
+
+console.log(
+    "[META CLASSIC SOURCE]",
+    JSON.stringify({
+        imdbId,
+        title: movieName,
+        classicCacheHit: Boolean(classicItem),
+        fallbackAvailable: Boolean(requestedClassicItem),
+        poster: Boolean(requestedClassicItem?.poster_url),
+        description: Boolean(requestedClassicItem?.content)
+    })
+);
 
     console.log(
         "[META CLASSIC ID]",
@@ -11387,6 +11511,24 @@ const cachedMatchKey =
             String(imdbId).trim().toLowerCase()
         : "";
 
+
+// ------------------------------------------------------------
+// IMDb → PHIMAPI CACHE LOOKUP
+// Xác định loại phim ngay tại đây.
+// Không sử dụng metaType được khai báo phía dưới.
+// ------------------------------------------------------------
+
+const requestedMetaType =
+    args.type === "series"
+        ? "series"
+        : "movie";
+
+const cachedMatchKey =
+    imdbId
+        ? requestedMetaType + ":" +
+            String(imdbId).trim().toLowerCase()
+        : "";
+
 const cachedMatchEntry =
     cachedMatchKey
         ? MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
@@ -11411,46 +11553,55 @@ if (
     );
 }
 
+// ------------------------------------------------------------
+// KINH ĐIỂN:
+// Nếu đã có dữ liệu IMDb Ranked JSON thì không cần
+// gọi tìm kiếm PhimAPI theo tên.
+// ------------------------------------------------------------
+
 const items =
     cachedPhimApiMatch
         ? [cachedPhimApiMatch]
 
-        : await movinaMetaCachedLoad(
-            MOVINA_META_SEARCH_CACHE,
-            metaSearchKey,
+        : requestedClassicItem
+            ? []
 
-            async () => {
+            : await movinaMetaCachedLoad(
+                MOVINA_META_SEARCH_CACHE,
+                metaSearchKey,
 
-                const searchUrl =
-                    "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-                    encodeURIComponent(movieName) +
-                    "&limit=10";
+                async () => {
 
-                const searchRes =
-                    await axios.get(
-                        searchUrl,
-                        {
-                            timeout: 5000,
-                            headers: {
-                                "User-Agent": "Mozilla/5.0",
-                                "Accept": "application/json"
+                    const searchUrl =
+                        "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                        encodeURIComponent(movieName) +
+                        "&limit=10";
+
+                    const searchRes =
+                        await axios.get(
+                            searchUrl,
+                            {
+                                timeout: 5000,
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
                             }
-                        }
-                    );
+                        );
 
-                const found =
-                    searchRes.data?.data?.items ||
-                    searchRes.data?.items ||
-                    [];
+                    const found =
+                        searchRes.data?.data?.items ||
+                        searchRes.data?.items ||
+                        [];
 
-                return Array.isArray(found)
-                    ? found
-                    : [];
-            },
+                    return Array.isArray(found)
+                        ? found
+                        : [];
+                },
 
-            MOVINA_META_SEARCH_TTL,
-            3000
-        ) || [];
+                MOVINA_META_SEARCH_TTL,
+                3000
+            ) || [];
 
 
 console.log(
@@ -11506,6 +11657,7 @@ console.log(
         let item =
     requestedSlugItem ||
     cachedPhimApiMatch ||
+    requestedClassicItem ||
     null;
 
 if (
