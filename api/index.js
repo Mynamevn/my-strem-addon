@@ -7121,12 +7121,9 @@ const fallbackInternalId =
         );
 
 const metaId =
-    rankedSourceImdbId
-        ? "movina-classic:" + rankedSourceImdbId
-        : (
-            verifiedImdbId ||
-            fallbackInternalId
-        );
+    rankedSourceImdbId ||
+    verifiedImdbId ||
+    fallbackInternalId;
 
 console.log(
     "[CATALOG META] IMDb:",
