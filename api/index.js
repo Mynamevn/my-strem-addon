@@ -11370,17 +11370,27 @@ const metaSearchKey =
     "phimapi:" +
     movinaIdentityNormalizeTitle(movieName);
 
+// ------------------------------------------------------------
+// [STREMIO-013.06A]
+// IMDb → PHIMAPI CACHE LOOKUP
+// Không tham chiếu metaType trước khi được khởi tạo.
+// ------------------------------------------------------------
 
-// ------------------------------------------------------------
-// ƯU TIÊN PHIMAPI ITEM ĐÃ ĐƯỢC BACKGROUND WORKER GHÉP
-// Khi mở phim bằng IMDb ID.
-// ------------------------------------------------------------
+const requestedMetaType =
+    args.type === "series"
+        ? "series"
+        : "movie";
+
+const cachedMatchKey =
+    imdbId
+        ? requestedMetaType + ":" +
+            String(imdbId).trim().toLowerCase()
+        : "";
 
 const cachedMatchEntry =
-    imdbId
+    cachedMatchKey
         ? MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
-            metaType + ":" +
-            String(imdbId).trim().toLowerCase()
+            cachedMatchKey
         )
         : null;
 
@@ -11397,8 +11407,7 @@ if (
     !cachedPhimApiMatch
 ) {
     MOVINA_PHIMAPI_MATCH_BY_IMDB.delete(
-        metaType + ":" +
-        String(imdbId).trim().toLowerCase()
+        cachedMatchKey
     );
 }
 
