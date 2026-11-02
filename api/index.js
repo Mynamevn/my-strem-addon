@@ -11139,9 +11139,13 @@ if (
 // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID.
 let imdbId = "";
 
+// Trạng thái riêng cho từng Meta request.
+// Không để các request đồng thời dùng chung biến.
+let requestedSlug = "";
+let requestedSlugItem = null;
 
-        // ID cuối cùng dùng cho Meta + Video
-        let metaId = rawId;
+// ID cuối cùng dùng cho Meta + Video
+let metaId = rawId;
 
         if (rawId.startsWith("vnwpsw:slug:")) {
 
