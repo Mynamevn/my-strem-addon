@@ -36995,11 +36995,38 @@ builder.defineStreamHandler(async (args) => {
     // 1. LẤY ID + TYPE
     // =====================================================
 
-    const rawId =
-        String(args?.id || "").trim();
+    // Giữ ID gốc để kiểm tra và ghi log.
+const requestedRawId =
+    String(args?.id || "").trim();
 
-    const streamType =
-        String(args?.type || "movie").trim();
+// Chuẩn hóa riêng ID Kinh điển về IMDb ID.
+// Ví dụ:
+// movina-classic:tt0468569
+// → tt0468569
+//
+// Series:
+// movina-classic:tt0903747:1:1
+// → tt0903747:1:1
+//
+// Các ID khác giữ nguyên hoàn toàn.
+const rawId =
+    requestedRawId.replace(
+        /^movina-classic:(tt\d+(?::\d+(?::\d+)?)?)$/i,
+        "$1"
+    );
+
+const streamType =
+    String(args?.type || "movie").trim();
+
+console.log(
+    "[STREAM] Original ID:",
+    requestedRawId
+);
+
+console.log(
+    "[STREAM] Normalized ID:",
+    rawId
+);
 
     console.log(
         "[STREAM] Type:",
