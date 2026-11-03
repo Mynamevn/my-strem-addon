@@ -3488,8 +3488,20 @@ const MOVINA_CINEMETA_GENRE_MAP = {
     "kinh di": "Horror",
     "hai": "Comedy",
     "hanh dong": "Action",
-    "giat gan": "Thriller",
-    "hinh su": "Crime",
+
+    // Một thể loại MOVINA có thể dùng nhiều nguồn Cinemeta.
+    "giat gan": ["Thriller"],
+
+    "hinh su": [
+        "Crime",
+        "Film-Noir"
+    ],
+
+    "am nhac": [
+        "Music",
+        "Musical"
+    ],
+
     "gia dinh": "Family",
     "gia tuong": "Fantasy",
     "bi an": "Mystery",
@@ -3499,7 +3511,12 @@ const MOVINA_CINEMETA_GENRE_MAP = {
     "lang man": "Romance",
     "the thao": "Sport",
     "chien tranh": "War",
-    "lich su": "History",
+
+    "lich su": [
+        "History",
+        "Biography"
+    ],
+
     "tai lieu": "Documentary",
     "hoat hinh": "Animation"
 };
@@ -3864,21 +3881,80 @@ const isClassic = normalizedGenre === "kinh dien";
 // CINEMETA PRIMARY SOURCE
 // ------------------------------------------------------------
 
-const cinemetaGenre =
-    MOVINA_CINEMETA_GENRE_MAP[normalizedGenre] || "";
+const cinemetaGenreConfig =
+    MOVINA_CINEMETA_GENRE_MAP[normalizedGenre] || [];
+
+const cinemetaGenres = Array.isArray(cinemetaGenreConfig)
+    ? cinemetaGenreConfig
+    : cinemetaGenreConfig
+        ? [cinemetaGenreConfig]
+        : [];
 
 let cinemetaItems = null;
 
 if (
     !isClassic &&
     !isLatest &&
-    cinemetaGenre
+    cinemetaGenres.length > 0
 ) {
+    // Gọi song song tất cả Cinemeta genre được ánh xạ.
+    const cinemetaGroups = await Promise.all(
+        cinemetaGenres.map(cinemetaGenre =>
+            movinaFetchCinemetaGenreCatalog(
+                type,
+                cinemetaGenre
+            )
+        )
+    );
+
+    // Gộp kết quả, loại trùng theo IMDb ID.
+    const cinemetaByIMDb = new Map();
+
+    for (const group of cinemetaGroups) {
+        if (!Array.isArray(group)) {
+            continue;
+        }
+
+        for (const item of group) {
+            const imdbId = String(
+                item?.__movinaCinemetaImdbId ||
+                item?.imdb?.id ||
+                item?.id ||
+                ""
+            ).trim().toLowerCase();
+
+            if (!/^tt\d+$/.test(imdbId)) {
+                continue;
+            }
+
+            const existing =
+                cinemetaByIMDb.get(imdbId);
+
+            if (existing) {
+                cinemetaByIMDb.set(imdbId, {
+                    ...existing,
+                    ...item
+                });
+            } else {
+                cinemetaByIMDb.set(imdbId, item);
+            }
+        }
+    }
+
     cinemetaItems =
-        await movinaFetchCinemetaGenreCatalog(
+        Array.from(cinemetaByIMDb.values());
+
+    console.log(
+        "[MOVINA CINEMETA MULTI-GENRE]",
+        JSON.stringify({
             type,
-            cinemetaGenre
-        );
+            genre,
+            cinemetaGenres,
+            requestCount: cinemetaGenres.length,
+            totalUniqueItems:
+                cinemetaItems.length
+        })
+    );
 }
 
 const PAGE_SIZE = 64;
@@ -4165,9 +4241,12 @@ if (
 }
 
 // Cinemeta đã lọc chính xác genre ngay tại endpoint.
+// Chấp nhận tất cả genre được ánh xạ cho MOVINA.
 if (
     item?.__movinaCinemetaSource === true &&
-    item?.__movinaCinemetaGenre === cinemetaGenre
+    cinemetaGenres.includes(
+        item?.__movinaCinemetaGenre
+    )
 ) {
     return true;
 }
