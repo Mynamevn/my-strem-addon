@@ -106,7 +106,6 @@ const manifest = {
                         "Phiêu lưu",
                         "Tâm lý",
                         "Tình cảm",
-                        "Lãng mạn",
                         "Thể thao",
                         "Chiến tranh",                        
                         "Học đường",
@@ -151,7 +150,6 @@ const manifest = {
                         "Phiêu lưu",
                         "Tâm lý",
                         "Tình cảm",
-                        "Lãng mạn",
                         "Thể thao",
                         "Chiến tranh",                        
                         "Học đường",
@@ -3489,13 +3487,8 @@ const MOVINA_CINEMETA_GENRE_MAP = {
     "hai": "Comedy",
     "hanh dong": "Action",
 
-    // Một thể loại MOVINA có thể dùng nhiều nguồn Cinemeta.
-    "giat gan": ["Thriller"],
-
-    "hinh su": [
-        "Crime",
-        "Film-Noir"
-    ],
+    "giat gan": "Thriller",
+    "hinh su": "Crime",
 
     "am nhac": [
         "Music",
@@ -3508,7 +3501,6 @@ const MOVINA_CINEMETA_GENRE_MAP = {
     "vien tuong": "Sci-Fi",
     "phieu luu": "Adventure",
     "tinh cam": "Romance",
-    "lang man": "Romance",
     "the thao": "Sport",
     "chien tranh": "War",
 
@@ -3520,6 +3512,7 @@ const MOVINA_CINEMETA_GENRE_MAP = {
     "tai lieu": "Documentary",
     "hoat hinh": "Animation"
 };
+
 
 // [STREMIO-012.06.01] ANIMATION CINEMETA GENRE MAP
 const MOVINA_ANIMATION_CINEMETA_GENRE_MAP = {
@@ -3890,6 +3883,7 @@ const cinemetaGenres = Array.isArray(cinemetaGenreConfig)
         ? [cinemetaGenreConfig]
         : [];
 
+
 let cinemetaItems = null;
 
 if (
@@ -3897,52 +3891,187 @@ if (
     !isLatest &&
     cinemetaGenres.length > 0
 ) {
-    // Gọi song song tất cả Cinemeta genre được ánh xạ.
-    const cinemetaGroups = await Promise.all(
-        cinemetaGenres.map(cinemetaGenre =>
-            movinaFetchCinemetaGenreCatalog(
-                type,
-                cinemetaGenre
-            )
-        )
-    );
+    const mergeCinemetaGroups = groups => {
+        const cinemetaByIMDb = new Map();
 
-    // Gộp kết quả, loại trùng theo IMDb ID.
-    const cinemetaByIMDb = new Map();
-
-    for (const group of cinemetaGroups) {
-        if (!Array.isArray(group)) {
-            continue;
-        }
-
-        for (const item of group) {
-            const imdbId = String(
-                item?.__movinaCinemetaImdbId ||
-                item?.imdb?.id ||
-                item?.id ||
-                ""
-            ).trim().toLowerCase();
-
-            if (!/^tt\d+$/.test(imdbId)) {
+        for (const group of groups) {
+            if (!Array.isArray(group)) {
                 continue;
             }
 
-            const existing =
-                cinemetaByIMDb.get(imdbId);
+            for (const item of group) {
+                const imdbId = String(
+                    item?.__movinaCinemetaImdbId ||
+                    item?.imdb?.id ||
+                    item?.id ||
+                    ""
+                ).trim().toLowerCase();
 
-            if (existing) {
-                cinemetaByIMDb.set(imdbId, {
-                    ...existing,
-                    ...item
-                });
-            } else {
-                cinemetaByIMDb.set(imdbId, item);
+                if (!/^tt\d+$/.test(imdbId)) {
+                    continue;
+                }
+
+                const existing =
+                    cinemetaByIMDb.get(imdbId);
+
+                if (existing) {
+                    cinemetaByIMDb.set(imdbId, {
+                        ...existing,
+                        ...item
+                    });
+                } else {
+                    cinemetaByIMDb.set(imdbId, item);
+                }
             }
         }
-    }
 
-    cinemetaItems =
-        Array.from(cinemetaByIMDb.values());
+        return Array.from(cinemetaByIMDb.values());
+    };
+
+    if (type === "series") {
+        /*
+         * PHIM BỘ — CACHE FIRST / PHIMAPI FOREGROUND
+         *
+         * 1. Cache Cinemeta đủ dữ liệu:
+         *    dùng Cinemeta như nguồn chính.
+         *
+         * 2. Cache thiếu hoặc chưa có:
+         *    không chờ Cinemeta.
+         *    Chạy request plan PhimAPI foreground ngay.
+         *    Cinemeta được làm nóng cache ở background.
+         */
+
+        const cachedGroups = [];
+        let hasCacheMiss = false;
+        const cacheNow = Date.now();
+
+        for (const cinemetaGenre of cinemetaGenres) {
+            const cacheKey =
+                type + "|" + cinemetaGenre;
+
+            const cached =
+                MOVINA_CINEMETA_GENRE_CACHE.get(cacheKey);
+
+            if (
+                cached &&
+                cached.expiresAt > cacheNow &&
+                Array.isArray(cached.items)
+            ) {
+                cachedGroups.push(
+                    cached.items.map(item => ({
+                        ...item,
+                        imdb: item.imdb
+                            ? { ...item.imdb }
+                            : undefined,
+                        category: Array.isArray(item.category)
+                            ? item.category.map(x => ({ ...x }))
+                            : []
+                    }))
+                );
+
+            } else {
+                if (cached) {
+                    MOVINA_CINEMETA_GENRE_CACHE.delete(cacheKey);
+                }
+
+                hasCacheMiss = true;
+                cachedGroups.push(null);
+            }
+        }
+
+        cinemetaItems =
+            mergeCinemetaGroups(cachedGroups);
+
+        const hasEnoughCinemeta =
+            cinemetaItems.length >= CATALOG_TARGET + 15;
+
+        if (!hasEnoughCinemeta && hasCacheMiss) {
+            const warmTask = Promise.all(
+                cinemetaGenres.map(cinemetaGenre =>
+                    movinaFetchCinemetaGenreCatalog(
+                        type,
+                        cinemetaGenre
+                    )
+                )
+            )
+                .then(groups => {
+                    const warmedItems =
+                        mergeCinemetaGroups(groups);
+
+                    console.log(
+                        "[MOVINA CINEMETA SERIES BACKGROUND WARM]",
+                        JSON.stringify({
+                            genre,
+                            cinemetaGenres,
+                            totalUniqueItems:
+                                warmedItems.length
+                        })
+                    );
+                })
+                .catch(error => {
+                    console.warn(
+                        "[MOVINA CINEMETA SERIES BACKGROUND ERROR]",
+                        genre,
+                        error?.message || String(error)
+                    );
+                });
+
+            try {
+                waitUntil(warmTask);
+
+                console.log(
+                    "[MOVINA CINEMETA SERIES CACHE-FIRST]",
+                    JSON.stringify({
+                        genre,
+                        cachedItems: cinemetaItems.length,
+                        required: CATALOG_TARGET + 15,
+                        foreground: "phimapi",
+                        background: "cinemeta"
+                    })
+                );
+
+            } catch (error) {
+                console.warn(
+                    "[MOVINA CINEMETA SERIES WAITUNTIL ERROR]",
+                    error?.message || String(error)
+                );
+            }
+
+        } else {
+            console.log(
+                "[MOVINA CINEMETA SERIES CACHE-FIRST]",
+                JSON.stringify({
+                    genre,
+                    cachedItems: cinemetaItems.length,
+                    required: CATALOG_TARGET + 15,
+                    foreground: hasEnoughCinemeta
+                        ? "cinemeta"
+                        : "phimapi",
+                    background: hasEnoughCinemeta
+                        ? "none"
+                        : "not-needed"
+                })
+            );
+        }
+
+    } else {
+        /*
+         * PHIM LẺ:
+         * Giữ nguyên cơ chế Cinemeta foreground hiện tại.
+         */
+
+        const cinemetaGroups = await Promise.all(
+            cinemetaGenres.map(cinemetaGenre =>
+                movinaFetchCinemetaGenreCatalog(
+                    type,
+                    cinemetaGenre
+                )
+            )
+        );
+
+        cinemetaItems =
+            mergeCinemetaGroups(cinemetaGroups);
+    }
 
     console.log(
         "[MOVINA CINEMETA MULTI-GENRE]",
@@ -3956,6 +4085,7 @@ if (
         })
     );
 }
+
 
 const PAGE_SIZE = 64;
 const MAX_PAGES = 8;
