@@ -3928,164 +3928,56 @@ if (
         return Array.from(cinemetaByIMDb.values());
     };
 
-    if (type === "series") {
-        /*
-         * PHIM BỘ — CACHE FIRST / PHIMAPI FOREGROUND
-         *
-         * 1. Cache Cinemeta đủ dữ liệu:
-         *    dùng Cinemeta như nguồn chính.
-         *
-         * 2. Cache thiếu hoặc chưa có:
-         *    không chờ Cinemeta.
-         *    Chạy request plan PhimAPI foreground ngay.
-         *    Cinemeta được làm nóng cache ở background.
-         */
+    /*
+     * CINEMETA PRIMARY — MOVIE + SERIES
+     *
+     * - Gọi Cinemeta trực tiếp cho cả phim lẻ và phim bộ.
+     * - Dùng cache/inflight có sẵn trong loader.
+     * - Không yêu cầu phải đủ 65 ứng viên.
+     * - Không chuyển sang PhimAPI chỉ vì thiếu vài phim.
+     * - Chỉ fallback khi Cinemeta lỗi hoặc không có dữ liệu.
+     */
 
-        const cachedGroups = [];
-        let hasCacheMiss = false;
-        const cacheNow = Date.now();
-
-        for (const cinemetaGenre of cinemetaGenres) {
-            const cacheKey =
-                type + "|" + cinemetaGenre;
-
-            const cached =
-                MOVINA_CINEMETA_GENRE_CACHE.get(cacheKey);
-
-            if (
-                cached &&
-                cached.expiresAt > cacheNow &&
-                Array.isArray(cached.items)
-            ) {
-                cachedGroups.push(
-                    cached.items.map(item => ({
-                        ...item,
-                        imdb: item.imdb
-                            ? { ...item.imdb }
-                            : undefined,
-                        category: Array.isArray(item.category)
-                            ? item.category.map(x => ({ ...x }))
-                            : []
-                    }))
-                );
-
-            } else {
-                if (cached) {
-                    MOVINA_CINEMETA_GENRE_CACHE.delete(cacheKey);
-                }
-
-                hasCacheMiss = true;
-                cachedGroups.push(null);
-            }
-        }
-
-        cinemetaItems =
-            mergeCinemetaGroups(cachedGroups);
-
-        const hasEnoughCinemeta =
-            cinemetaItems.length >= CATALOG_TARGET + 15;
-
-        if (!hasEnoughCinemeta && hasCacheMiss) {
-            const warmTask = Promise.all(
-                cinemetaGenres.map(cinemetaGenre =>
-                    movinaFetchCinemetaGenreCatalog(
-                        type,
-                        cinemetaGenre
-                    )
-                )
+    const cinemetaGroups = await Promise.all(
+        cinemetaGenres.map(cinemetaGenre =>
+            movinaFetchCinemetaGenreCatalog(
+                type,
+                cinemetaGenre
             )
-                .then(groups => {
-                    const warmedItems =
-                        mergeCinemetaGroups(groups);
+        )
+    );
 
-                    console.log(
-                        "[MOVINA CINEMETA SERIES BACKGROUND WARM]",
-                        JSON.stringify({
-                            genre,
-                            cinemetaGenres,
-                            totalUniqueItems:
-                                warmedItems.length
-                        })
-                    );
-                })
-                .catch(error => {
-                    console.warn(
-                        "[MOVINA CINEMETA SERIES BACKGROUND ERROR]",
-                        genre,
-                        error?.message || String(error)
-                    );
-                });
-
-            try {
-                waitUntil(warmTask);
-
-                console.log(
-                    "[MOVINA CINEMETA SERIES CACHE-FIRST]",
-                    JSON.stringify({
-                        genre,
-                        cachedItems: cinemetaItems.length,
-                        required: CATALOG_TARGET + 15,
-                        foreground: "phimapi",
-                        background: "cinemeta"
-                    })
-                );
-
-            } catch (error) {
-                console.warn(
-                    "[MOVINA CINEMETA SERIES WAITUNTIL ERROR]",
-                    error?.message || String(error)
-                );
-            }
-
-        } else {
-            console.log(
-                "[MOVINA CINEMETA SERIES CACHE-FIRST]",
-                JSON.stringify({
-                    genre,
-                    cachedItems: cinemetaItems.length,
-                    required: CATALOG_TARGET + 15,
-                    foreground: hasEnoughCinemeta
-                        ? "cinemeta"
-                        : "phimapi",
-                    background: hasEnoughCinemeta
-                        ? "none"
-                        : "not-needed"
-                })
-            );
-        }
-
-    } else {
-        /*
-         * PHIM LẺ:
-         * Giữ nguyên cơ chế Cinemeta foreground hiện tại.
-         */
-
-        const cinemetaGroups = await Promise.all(
-            cinemetaGenres.map(cinemetaGenre =>
-                movinaFetchCinemetaGenreCatalog(
-                    type,
-                    cinemetaGenre
-                )
-            )
-        );
-
-        cinemetaItems =
-            mergeCinemetaGroups(cinemetaGroups);
-    }
+    cinemetaItems =
+        mergeCinemetaGroups(cinemetaGroups);
 
     console.log(
-        "[MOVINA CINEMETA MULTI-GENRE]",
+        "[MOVINA CINEMETA PRIMARY RESULT]",
         JSON.stringify({
             type,
             genre,
             cinemetaGenres,
-            requestCount: cinemetaGenres.length,
-            totalUniqueItems:
-                cinemetaItems.length
+            totalUniqueItems: cinemetaItems.length,
+            source:
+                cinemetaItems.length > 0
+                    ? "cinemeta"
+                    : "phimapi-fallback"
         })
     );
 }
 
+console.log(
+    "[MOVINA CINEMETA MULTI-GENRE]",
+    JSON.stringify({
+        type,
+        genre,
+        cinemetaGenres,
+        requestCount: cinemetaGenres.length,
+        totalUniqueItems:
+            Array.isArray(cinemetaItems)
+                ? cinemetaItems.length
+                : 0
+    })
+);
 
 const PAGE_SIZE = 64;
 const MAX_PAGES = 8;
@@ -4098,24 +3990,25 @@ const MAX_PAGES = 8;
     // Cinemeta phải có đủ ứng viên mới được dùng độc lập.
     // Nếu thiếu, tiếp tục chạy request plan PhimAPI của baseline.
     if (
-        !isClassic &&
-        !isLatest &&
-        Array.isArray(cinemetaItems) &&
-        cinemetaItems.length > 0 &&
-        cinemetaItems.length < CATALOG_TARGET + 15
-    ) {
-        console.log(
-            "[MOVINA CINEMETA FALLBACK PHIMAPI]",
-            JSON.stringify({
-                type,
-                genre,
-                cinemetaGenres,
-                cinemetaItems: cinemetaItems.length,
-                required: CATALOG_TARGET + 15,
-                fallback: "phimapi"
-            })
-        );
-    }
+    !isClassic &&
+    !isLatest &&
+    (
+        !Array.isArray(cinemetaItems) ||
+        cinemetaItems.length === 0
+    )
+) {
+    console.log(
+        "[MOVINA CINEMETA FALLBACK PHIMAPI]",
+        JSON.stringify({
+            type,
+            genre,
+            cinemetaGenres,
+            cinemetaItems: 0,
+            fallback: "phimapi",
+            reason: "cinemeta-empty-or-failed"
+        })
+    );
+}
 
     if (isClassic) {
         console.log(
@@ -4127,10 +4020,10 @@ const MAX_PAGES = 8;
             })
         );
 
-    } else if (
-        Array.isArray(cinemetaItems) &&
-        cinemetaItems.length >= CATALOG_TARGET + 15
-    ) {
+} else if (
+    Array.isArray(cinemetaItems) &&
+    cinemetaItems.length > 0
+) {
 
         requests.push(
             Promise.resolve(cinemetaItems)
@@ -9549,6 +9442,329 @@ function movinaFinalCatalogCacheKey(args) {
 }
 
 /* ============================================================
+   [CORE-003.07] [PROVIDERS: MOVINA]
+   CINEMETA CATALOG BACKGROUND SUPPLEMENT
+   ============================================================ */
+
+const MOVINA_CINEMETA_SUPPLEMENT_JOBS = new Map();
+
+function movinaScheduleCinemetaGenreSupplement(options = {}) {
+    const {
+        type,
+        genre,
+        genreSlugs,
+        finalCacheKey,
+        currentItems
+    } = options;
+
+    const normalizedType =
+        type === "series" ? "series" : "movie";
+
+    const slugs = Array.isArray(genreSlugs)
+        ? genreSlugs.filter(Boolean)
+        : [];
+
+    const sourceItems = Array.isArray(currentItems)
+        ? currentItems
+        : [];
+
+    if (
+        !finalCacheKey ||
+        !slugs.length ||
+        !sourceItems.length ||
+        sourceItems.length >= CATALOG_TARGET ||
+        !sourceItems.some(item =>
+            item?.__movinaCinemetaSource === true
+        )
+    ) {
+        return;
+    }
+
+    if (
+        MOVINA_CINEMETA_SUPPLEMENT_JOBS.has(
+            finalCacheKey
+        )
+    ) {
+        return;
+    }
+
+    const jobKey = finalCacheKey;
+
+    const getIMDb = item => {
+        const candidates = [
+            item?.__movinaCinemetaImdbId,
+            item?.__movinaClassicImdbId,
+            item?.imdb?.id,
+            item?.imdb_id,
+            item?.imdbId,
+            item?.id
+        ];
+
+        for (const value of candidates) {
+            const id = String(value || "")
+                .trim()
+                .toLowerCase();
+
+            if (/^tt\d+$/.test(id)) {
+                return id;
+            }
+        }
+
+        return "";
+    };
+
+    const getTitleYearKey = item => {
+        const title = catalogNormalize(
+            item?.name ||
+            item?.title ||
+            item?.origin_name ||
+            item?.original_name ||
+            ""
+        );
+
+        const year = Number(
+            item?.year ||
+            item?.releaseYear ||
+            0
+        );
+
+        return title
+            ? title + "|" + year
+            : "";
+    };
+
+    const task = (async () => {
+        try {
+            const requests = [];
+
+            /*
+             * Chỉ lấy API thể loại PhimAPI.
+             * Không gọi thêm danh sách phim-le/phim-bo
+             * không giới hạn thể loại.
+             *
+             * Tối đa 3 trang cho mỗi slug.
+             * Chạy nền, không chặn catalog foreground.
+             */
+
+            for (const slug of slugs) {
+                for (let page = 1; page <= 3; page++) {
+                    const url =
+                        "https://phimapi.com/v1/api/the-loai/" +
+                        encodeURIComponent(slug) +
+                        "?page=" + page +
+                        "&limit=64";
+
+                    requests.push(
+                        catalogFetch(url).then(items =>
+                            (Array.isArray(items) ? items : [])
+                                .map(item => ({
+                                    ...item,
+                                    __genreApiSlug: slug
+                                }))
+                        )
+                    );
+                }
+            }
+
+            const groups = await Promise.all(requests);
+
+            const cacheEntry =
+                MOVINA_FINAL_CATALOG_CACHE.get(
+                    finalCacheKey
+                );
+
+            if (
+                !cacheEntry ||
+                cacheEntry.expiresAt <= Date.now() ||
+                !Array.isArray(cacheEntry.metas)
+            ) {
+                return;
+            }
+
+            const seenIMDb = new Set();
+            const seenTitleYear = new Set();
+
+            /*
+             * Đánh dấu các phim đã có trong snapshot.
+             */
+
+            for (const item of sourceItems) {
+                const imdbId = getIMDb(item);
+                const titleYear = getTitleYearKey(item);
+
+                if (imdbId) {
+                    seenIMDb.add(imdbId);
+                }
+
+                if (titleYear) {
+                    seenTitleYear.add(titleYear);
+                }
+            }
+
+            for (const meta of cacheEntry.metas) {
+                const imdbId = getIMDb(meta);
+                const titleYear = getTitleYearKey(meta);
+
+                if (imdbId) {
+                    seenIMDb.add(imdbId);
+                }
+
+                if (titleYear) {
+                    seenTitleYear.add(titleYear);
+                }
+            }
+
+            const candidates = groups.flat();
+            const addedMetas = [];
+
+            for (const item of candidates) {
+                if (
+                    cacheEntry.metas.length +
+                    addedMetas.length >=
+                    CATALOG_TARGET
+                ) {
+                    break;
+                }
+
+                /*
+                 * Xác định chính xác movie / series.
+                 */
+
+                const itemType =
+                    item?.__catalogType === "series"
+                        ? "series"
+                        : item?.__catalogType === "movie"
+                            ? "movie"
+                            : isSeriesItem(item)
+                                ? "series"
+                                : "movie";
+
+                if (itemType !== normalizedType) {
+                    continue;
+                }
+
+                /*
+                 * Không đưa hoạt hình vào thể loại thường.
+                 */
+
+                if (isAnimation(item)) {
+                    continue;
+                }
+
+                const imdbId = getIMDb(item);
+                const titleYear = getTitleYearKey(item);
+
+                if (
+                    (imdbId && seenIMDb.has(imdbId)) ||
+                    (titleYear && seenTitleYear.has(titleYear))
+                ) {
+                    continue;
+                }
+
+                const meta = makeCatalogMeta(
+                    item,
+                    normalizedType
+                );
+
+                if (
+                    !meta?.id ||
+                    !meta?.name
+                ) {
+                    continue;
+                }
+
+                /*
+                 * Chỉ bổ sung, không thay đổi các phim
+                 * Cinemeta đã có trong snapshot.
+                 */
+
+                addedMetas.push(meta);
+
+                if (imdbId) {
+                    seenIMDb.add(imdbId);
+                }
+
+                if (titleYear) {
+                    seenTitleYear.add(titleYear);
+                }
+            }
+
+            if (addedMetas.length) {
+                cacheEntry.metas.push(
+                    ...addedMetas
+                );
+
+                console.log(
+                    "[MOVINA CINEMETA SUPPLEMENT SAVED]",
+                    JSON.stringify({
+                        type: normalizedType,
+                        genre,
+                        originalCount:
+                            sourceItems.length,
+                        added:
+                            addedMetas.length,
+                        finalCount:
+                            cacheEntry.metas.length
+                    })
+                );
+
+            } else {
+                console.log(
+                    "[MOVINA CINEMETA SUPPLEMENT EMPTY]",
+                    JSON.stringify({
+                        type: normalizedType,
+                        genre,
+                        candidates: candidates.length
+                    })
+                );
+            }
+
+        } catch (error) {
+            console.warn(
+                "[MOVINA CINEMETA SUPPLEMENT ERROR]",
+                genre,
+                error?.message || String(error)
+            );
+
+        } finally {
+            MOVINA_CINEMETA_SUPPLEMENT_JOBS.delete(
+                jobKey
+            );
+        }
+    })();
+
+    MOVINA_CINEMETA_SUPPLEMENT_JOBS.set(
+        jobKey,
+        task
+    );
+
+    try {
+        waitUntil(task);
+
+        console.log(
+            "[MOVINA CINEMETA SUPPLEMENT SCHEDULED]",
+            JSON.stringify({
+                type: normalizedType,
+                genre,
+                currentItems: sourceItems.length,
+                target: CATALOG_TARGET,
+                slugs
+            })
+        );
+
+    } catch (error) {
+        MOVINA_CINEMETA_SUPPLEMENT_JOBS.delete(
+            jobKey
+        );
+
+        console.warn(
+            "[MOVINA CINEMETA SUPPLEMENT WAITUNTIL ERROR]",
+            error?.message || String(error)
+        );
+    }
+}
+
+/* ============================================================
    12. DEFINE CATALOG HANDLER
    ============================================================ */
 
@@ -9591,13 +9807,15 @@ const finalCacheKey = finalCacheEligible
 if (finalCacheKey) {
   const cached = MOVINA_FINAL_CATALOG_CACHE.get(finalCacheKey);
 
-  if (cached && cached.expiresAt > Date.now()) {
+if (cached && cached.expiresAt > Date.now()) {
     console.log("[MOVINA FINAL CATALOG CACHE] HIT:", args.id);
 
     return {
-      metas: cached.metas.map(meta => ({ ...meta }))
+        metas: cached.metas.map(meta => ({ ...meta })),
+        cacheMaxAge: 0,
+        staleError: 60
     };
-  }
+}
 
   if (cached) {
     MOVINA_FINAL_CATALOG_CACHE.delete(finalCacheKey);
@@ -10738,6 +10956,61 @@ if (enableCinemetaPreview) {
 }
 
 // ========================================================
+// CINEMETA → PHIMAPI BACKGROUND CATALOG SUPPLEMENT
+// ========================================================
+
+if (
+    finalCacheKey &&
+    !searchQuery &&
+    (
+        args.id === "pa_movies_trending" ||
+        args.id === "pa_series_trending"
+    )
+) {
+    const supplementGenre = String(
+        args.extra?.genre || ""
+    ).trim();
+
+    const normalizedSupplementGenre =
+        catalogNormalize(supplementGenre);
+
+    const mappedGenre =
+        MOVINA_CINEMETA_GENRE_MAP[
+            normalizedSupplementGenre
+        ];
+
+    const supplementSlugs =
+        MOVINA_TRENDING_GENRE_SLUGS[
+            normalizedSupplementGenre
+        ] || [];
+
+    if (
+        mappedGenre &&
+        supplementSlugs.length > 0 &&
+        items.length > 0 &&
+        items.length < CATALOG_TARGET &&
+        items.some(item =>
+            item?.__movinaCinemetaSource === true
+        )
+    ) {
+        movinaScheduleCinemetaGenreSupplement({
+            type:
+                args.id === "pa_series_trending"
+                    ? "series"
+                    : "movie",
+
+            genre: supplementGenre,
+
+            genreSlugs: supplementSlugs,
+
+            finalCacheKey,
+
+            currentItems: items
+        });
+    }
+}
+
+// ========================================================
 // [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
 // ========================================================
 
@@ -10777,7 +11050,11 @@ if (
     );
 }
 
-return { metas };
+return {
+    metas,
+    cacheMaxAge: 0,
+    staleError: 60
+};
 
         } catch (e) {
 
