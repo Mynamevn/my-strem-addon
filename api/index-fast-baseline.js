@@ -59,17 +59,18 @@ const manifest = {
         "MOVINA"
     ],
 
-    idPrefixes: [
-    "tt",
-    "vnwpsw:",
-    "vmttv:",
-    "coban:",
-    "coban-group:",
-    "movina-tv:",
-    "vmttv-group:",
-    "sportsiptv:",
-    "sportsiptv-group:"
-                ],
+        idPrefixes: [
+        "tt",
+        "vnwpsw:",
+        "movina-classic:",
+        "vmttv:",
+        "coban:",
+        "coban-group:",
+        "movina-tv:",
+        "vmttv-group:",
+        "sportsiptv:",
+        "sportsiptv-group:"
+    ],
 
     catalogs: [
 
@@ -105,7 +106,6 @@ const manifest = {
                         "Phiêu lưu",
                         "Tâm lý",
                         "Tình cảm",
-                        "Lãng mạn",
                         "Thể thao",
                         "Chiến tranh",                        
                         "Học đường",
@@ -150,7 +150,6 @@ const manifest = {
                         "Phiêu lưu",
                         "Tâm lý",
                         "Tình cảm",
-                        "Lãng mạn",
                         "Thể thao",
                         "Chiến tranh",                        
                         "Học đường",
@@ -2846,7 +2845,11 @@ function movinaClassicFindExactMatch(title, items) {
 }
 
 
-async function movinaClassicSearchPhimAPI(title, type) {
+async function movinaClassicSearchPhimAPI(
+    title,
+    type,
+    options = {}
+) {
     const cacheKey = [
         type,
         movinaClassicNormalize(title.title),
@@ -2861,23 +2864,35 @@ async function movinaClassicSearchPhimAPI(title, type) {
         return cached.item;
     }
 
+    const priority =
+        options.background === true
+            ? "background"
+            : "foreground";
+
+    const retries =
+        options.background === true ? 0 : 1;
+
     try {
         const response = await movinaPhimApiGet(
-    "https://phimapi.com/v1/api/tim-kiem",
-    {
-        params: {
-            keyword: title.title,
-            page: 1,
-            limit: 20,
-            filterType: type === "series" ? "series" : "single"
-        },
-        timeout: 4000,
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-    }
-);
+            "https://phimapi.com/v1/api/tim-kiem",
+            {
+                params: {
+                    keyword: title.title,
+                    page: 1,
+                    limit: 20,
+                    filterType: type === "series"
+                        ? "series"
+                        : "single"
+                },
+                timeout: 4000,
+                headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json"
+                }
+            },
+            retries,
+            priority
+        );
 
         const items =
             response.data?.data?.items ||
@@ -2889,12 +2904,7 @@ async function movinaClassicSearchPhimAPI(title, type) {
             Array.isArray(items) ? items : []
         );
 
-        /*
-         * PHIM LẺ:
-         * Nếu tìm bằng tên không thành công, thử tra cứu
-         * bằng IMDb ID. Chỉ dùng kết quả nếu không phát hiện
-         * IMDb ID mâu thuẫn hoặc loại nội dung không phù hợp.
-         */
+        // Movie fallback: tra cứu trực tiếp bằng IMDb ID.
         if (
             !match &&
             type === "movie" &&
@@ -2902,16 +2912,18 @@ async function movinaClassicSearchPhimAPI(title, type) {
         ) {
             try {
                 const imdbResponse = await movinaPhimApiGet(
-    "https://phimapi.com/imdb/title/" +
-        encodeURIComponent(title.imdbId),
-    {
-        timeout: 2200,
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-    }
-);
+                    "https://phimapi.com/imdb/title/" +
+                        encodeURIComponent(title.imdbId),
+                    {
+                        timeout: 2200,
+                        headers: {
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
+                        }
+                    },
+                    retries,
+                    priority
+                );
 
                 const data = imdbResponse.data || {};
 
@@ -2999,7 +3011,6 @@ async function movinaClassicSearchPhimAPI(title, type) {
             })
         );
 
-        // Không cache lỗi mạng; cho phép thử lại ở yêu cầu sau.
         return null;
     }
 }
@@ -3459,6 +3470,376 @@ function movinaTrendingBalancedDecades(
     );
 }
 
+
+/* ============================================================
+   [STREMIO-012.06] [PROVIDERS: MOVINA]
+   CINEMETA DIRECT GENRE CATALOG LOADER
+
+   - Một JSON request cho mỗi loại phim / thể loại.
+   - Lấy trực tiếp IMDb ID, poster, rating, description.
+   - Cache 15 phút + chống request trùng.
+   - Không cần TMDB API token.
+   - Không gọi PhimAPI trong foreground nếu thành công.
+   ============================================================ */
+
+const MOVINA_CINEMETA_GENRE_MAP = {
+    "kinh di": "Horror",
+    "hai": "Comedy",
+    "hanh dong": "Action",
+
+    "giat gan": "Thriller",
+    "hinh su": "Crime",
+
+    "am nhac": [
+        "Music",
+        "Musical"
+    ],
+
+    "gia dinh": "Family",
+    "gia tuong": "Fantasy",
+    "bi an": "Mystery",
+    "vien tuong": "Sci-Fi",
+    "phieu luu": "Adventure",
+    "tinh cam": "Romance",
+    "the thao": "Sport",
+    "chien tranh": "War",
+
+    "lich su": [
+        "History",
+        "Biography"
+    ],
+
+    "tai lieu": "Documentary",
+    "hoat hinh": "Animation"
+};
+
+
+// [STREMIO-012.06.01] ANIMATION CINEMETA GENRE MAP
+const MOVINA_ANIMATION_CINEMETA_GENRE_MAP = {
+    "gia dinh thieu nhi": "Family",
+    "hai huoc": "Comedy",
+    "the thao": "Sport",
+    "bi an trinh tham": "Mystery",
+    "hanh dong": "Action",
+    "phieu luu": "Adventure",
+    "ky ao": "Fantasy",
+    "khoa hoc vien tuong": "Sci-Fi",
+    "kinh di": "Horror",
+    "tinh cam": "Romance",
+    "lich su": "History"
+};
+
+const MOVINA_CINEMETA_GENRE_CACHE = new Map();
+const MOVINA_CINEMETA_GENRE_INFLIGHT = new Map();
+
+const MOVINA_CINEMETA_GENRE_TTL =
+    15 * 60 * 1000;
+
+
+async function movinaFetchCinemetaGenreCatalog(
+    type,
+    genre
+) {
+    const normalizedType =
+        type === "series" ? "series" : "movie";
+
+    const normalizedGenre =
+        String(genre || "").trim();
+
+    if (!normalizedGenre) {
+        return null;
+    }
+
+    const cacheKey =
+        normalizedType + "|" + normalizedGenre;
+
+    const now = Date.now();
+
+    // --------------------------------------------------------
+    // 1. CACHE HIT
+    // --------------------------------------------------------
+
+    const cached =
+        MOVINA_CINEMETA_GENRE_CACHE.get(cacheKey);
+
+    if (
+        cached &&
+        cached.expiresAt > now &&
+        Array.isArray(cached.items)
+    ) {
+        console.log(
+            "[MOVINA CINEMETA GENRE] CACHE HIT",
+            JSON.stringify({
+                type: normalizedType,
+                genre: normalizedGenre,
+                items: cached.items.length
+            })
+        );
+
+        return cached.items.map(item => ({
+            ...item,
+            imdb: item.imdb
+                ? { ...item.imdb }
+                : undefined,
+            category: Array.isArray(item.category)
+                ? item.category.map(x => ({ ...x }))
+                : []
+        }));
+    }
+
+    if (cached) {
+        MOVINA_CINEMETA_GENRE_CACHE.delete(cacheKey);
+    }
+
+    // --------------------------------------------------------
+    // 2. IN-FLIGHT DEDUPLICATION
+    // --------------------------------------------------------
+
+    const running =
+        MOVINA_CINEMETA_GENRE_INFLIGHT.get(cacheKey);
+
+    if (running) {
+        return running;
+    }
+
+    // --------------------------------------------------------
+    // 3. DIRECT CINEMETA JSON REQUEST
+    // --------------------------------------------------------
+
+    const task = (async () => {
+        const startedAt = Date.now();
+
+        const url =
+            "https://v3-cinemeta.strem.io/catalog/" +
+            normalizedType +
+            "/top/genre=" +
+            encodeURIComponent(normalizedGenre) +
+            ".json";
+
+        try {
+            const response = await axios.get(
+                url,
+                {
+                    timeout: 5000,
+                    maxRedirects: 3,
+                    headers: {
+                        "User-Agent": "MOVINA/1.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+            const metas =
+                Array.isArray(response.data?.metas)
+                    ? response.data.metas
+                    : [];
+
+            if (!metas.length) {
+                console.warn(
+                    "[MOVINA CINEMETA GENRE] EMPTY",
+                    normalizedType,
+                    normalizedGenre
+                );
+
+                return null;
+            }
+
+            const items = metas
+                .map(meta => {
+                    const imdbId = String(
+                        meta?.id ||
+                        meta?.imdb_id ||
+                        ""
+                    ).trim().toLowerCase();
+
+                    if (!/^tt\d+$/.test(imdbId)) {
+                        return null;
+                    }
+
+                    const metaType =
+                        String(meta?.type || "")
+                            .trim()
+                            .toLowerCase();
+
+                    if (
+                        metaType &&
+                        metaType !== normalizedType
+                    ) {
+                        return null;
+                    }
+
+                    const title = String(
+                        meta?.name || ""
+                    ).trim();
+
+                    if (!title) {
+                        return null;
+                    }
+
+                    const rawYear = String(
+                        meta?.year ||
+                        meta?.releaseInfo ||
+                        meta?.released ||
+                        ""
+                    );
+
+                    const yearMatch =
+                        rawYear.match(/\b(19|20)\d{2}\b/);
+
+                    const year = yearMatch
+                        ? Number(yearMatch[0])
+                        : 0;
+
+                    const genres = Array.isArray(meta?.genres)
+                        ? meta.genres
+                        : Array.isArray(meta?.genre)
+                            ? meta.genre
+                            : [];
+
+                    const cast = Array.isArray(meta?.cast)
+                        ? meta.cast
+                        : [];
+
+                    const directors = Array.isArray(meta?.director)
+                        ? meta.director
+                        : meta?.director
+                            ? [meta.director]
+                            : [];
+
+                    const rating = Number(
+                        meta?.imdbRating || 0
+                    );
+
+                    return {
+                        id: imdbId,
+
+                        name: title,
+                        origin_name: title,
+
+                        type: normalizedType,
+                        __catalogType: normalizedType,
+
+                        poster:
+                            meta?.poster || "",
+
+                        thumb_url:
+                            meta?.background || "",
+
+                        content:
+                            meta?.description || "",
+
+                        description:
+                            meta?.description || "",
+
+                        year,
+
+                        imdb: {
+                            id: imdbId,
+                            vote_average:
+                                Number.isFinite(rating) &&
+                                rating > 0 &&
+                                rating <= 10
+                                    ? rating
+                                    : null
+                        },
+
+                        imdb_id: imdbId,
+
+                        imdbRating:
+                            Number.isFinite(rating) &&
+                            rating > 0 &&
+                            rating <= 10
+                                ? rating
+                                : null,
+
+                        category: genres
+                            .filter(Boolean)
+                            .map(name => ({
+                                name: String(name)
+                            })),
+
+                        actor: cast
+                            .filter(Boolean)
+                            .map(name => ({
+                                name: String(name)
+                            })),
+
+                        director: directors
+                            .filter(Boolean)
+                            .map(name => ({
+                                name: String(name)
+                            })),
+
+                        __movinaCinemetaSource: true,
+                        __movinaCinemetaImdbId: imdbId,
+                        __movinaCinemetaGenre: normalizedGenre
+                    };
+                })
+                .filter(Boolean);
+
+            if (!items.length) {
+                return null;
+            }
+
+            MOVINA_CINEMETA_GENRE_CACHE.set(
+                cacheKey,
+                {
+                    expiresAt:
+                        Date.now() +
+                        MOVINA_CINEMETA_GENRE_TTL,
+
+                    items: items.map(item => ({
+                        ...item
+                    }))
+                }
+            );
+
+            console.log(
+                "[MOVINA CINEMETA GENRE] SUCCESS",
+                JSON.stringify({
+                    type: normalizedType,
+                    genre: normalizedGenre,
+                    received: metas.length,
+                    valid: items.length,
+                    durationMs: Date.now() - startedAt
+                })
+            );
+
+            return items;
+
+        } catch (error) {
+            console.warn(
+                "[MOVINA CINEMETA GENRE] ERROR",
+                JSON.stringify({
+                    type: normalizedType,
+                    genre: normalizedGenre,
+                    status: error?.response?.status || 0,
+                    error:
+                        error?.message || String(error)
+                })
+            );
+
+            return null;
+        }
+    })();
+
+    MOVINA_CINEMETA_GENRE_INFLIGHT.set(
+        cacheKey,
+        task
+    );
+
+    try {
+        return await task;
+
+    } finally {
+        if (
+            MOVINA_CINEMETA_GENRE_INFLIGHT.get(cacheKey) === task
+        ) {
+            MOVINA_CINEMETA_GENRE_INFLIGHT.delete(cacheKey);
+        }
+    }
+}
+
 async function fetchMovinaTrendingByGenre(
     contentType,
     selectedGenre
@@ -3486,15 +3867,149 @@ async function fetchMovinaTrendingByGenre(
     const genreSlugs =
         MOVINA_TRENDING_GENRE_SLUGS[normalizedGenre] || [];
 
-    const isClassic = normalizedGenre === "kinh dien";
 
-    const PAGE_SIZE = 64;
-    const MAX_PAGES = 8;
+const isClassic = normalizedGenre === "kinh dien";
 
+// ------------------------------------------------------------
+// CINEMETA PRIMARY SOURCE
+// ------------------------------------------------------------
+
+const cinemetaGenreConfig =
+    MOVINA_CINEMETA_GENRE_MAP[normalizedGenre] || [];
+
+const cinemetaGenres = Array.isArray(cinemetaGenreConfig)
+    ? cinemetaGenreConfig
+    : cinemetaGenreConfig
+        ? [cinemetaGenreConfig]
+        : [];
+
+
+let cinemetaItems = null;
+
+if (
+    !isClassic &&
+    !isLatest &&
+    cinemetaGenres.length > 0
+) {
+    const mergeCinemetaGroups = groups => {
+        const cinemetaByIMDb = new Map();
+
+        for (const group of groups) {
+            if (!Array.isArray(group)) {
+                continue;
+            }
+
+            for (const item of group) {
+                const imdbId = String(
+                    item?.__movinaCinemetaImdbId ||
+                    item?.imdb?.id ||
+                    item?.id ||
+                    ""
+                ).trim().toLowerCase();
+
+                if (!/^tt\d+$/.test(imdbId)) {
+                    continue;
+                }
+
+                const existing =
+                    cinemetaByIMDb.get(imdbId);
+
+                if (existing) {
+                    cinemetaByIMDb.set(imdbId, {
+                        ...existing,
+                        ...item
+                    });
+                } else {
+                    cinemetaByIMDb.set(imdbId, item);
+                }
+            }
+        }
+
+        return Array.from(cinemetaByIMDb.values());
+    };
+
+    /*
+     * CINEMETA PRIMARY — MOVIE + SERIES
+     *
+     * - Gọi Cinemeta trực tiếp cho cả phim lẻ và phim bộ.
+     * - Dùng cache/inflight có sẵn trong loader.
+     * - Không yêu cầu phải đủ 65 ứng viên.
+     * - Không chuyển sang PhimAPI chỉ vì thiếu vài phim.
+     * - Chỉ fallback khi Cinemeta lỗi hoặc không có dữ liệu.
+     */
+
+    const cinemetaGroups = await Promise.all(
+        cinemetaGenres.map(cinemetaGenre =>
+            movinaFetchCinemetaGenreCatalog(
+                type,
+                cinemetaGenre
+            )
+        )
+    );
+
+    cinemetaItems =
+        mergeCinemetaGroups(cinemetaGroups);
+
+    console.log(
+        "[MOVINA CINEMETA PRIMARY RESULT]",
+        JSON.stringify({
+            type,
+            genre,
+            cinemetaGenres,
+            totalUniqueItems: cinemetaItems.length,
+            source:
+                cinemetaItems.length > 0
+                    ? "cinemeta"
+                    : "phimapi-fallback"
+        })
+    );
+}
+
+console.log(
+    "[MOVINA CINEMETA MULTI-GENRE]",
+    JSON.stringify({
+        type,
+        genre,
+        cinemetaGenres,
+        requestCount: cinemetaGenres.length,
+        totalUniqueItems:
+            Array.isArray(cinemetaItems)
+                ? cinemetaItems.length
+                : 0
+    })
+);
+
+const PAGE_SIZE = 64;
+const MAX_PAGES = 8;
+   
     
     // Kinh điển: nguồn ứng viên là danh sách IMDb JSON.
     // Không tải trước 16 trang PhimAPI vì việc ghép phim
     // sẽ tìm trực tiếp từng tiêu đề trong danh sách Top 250.
+
+    // Cinemeta phải có đủ ứng viên mới được dùng độc lập.
+    // Nếu thiếu, tiếp tục chạy request plan PhimAPI của baseline.
+    if (
+    !isClassic &&
+    !isLatest &&
+    (
+        !Array.isArray(cinemetaItems) ||
+        cinemetaItems.length === 0
+    )
+) {
+    console.log(
+        "[MOVINA CINEMETA FALLBACK PHIMAPI]",
+        JSON.stringify({
+            type,
+            genre,
+            cinemetaGenres,
+            cinemetaItems: 0,
+            fallback: "phimapi",
+            reason: "cinemeta-empty-or-failed"
+        })
+    );
+}
+
     if (isClassic) {
         console.log(
             "[MOVINA CLASSIC REQUEST PLAN]",
@@ -3502,6 +4017,27 @@ async function fetchMovinaTrendingByGenre(
                 type,
                 source: "IMDb Top 250 JSON",
                 catalogInventoryRequests: 0
+            })
+        );
+
+} else if (
+    Array.isArray(cinemetaItems) &&
+    cinemetaItems.length > 0
+) {
+
+        requests.push(
+            Promise.resolve(cinemetaItems)
+        );
+
+        console.log(
+            "[MOVINA CINEMETA PRIMARY SOURCE]",
+            JSON.stringify({
+                type,
+                genre,
+                cinemetaGenres,
+                items: cinemetaItems.length,
+                fallbackPhimAPI: false,
+                requestCount: 1
             })
         );
 
@@ -3739,12 +4275,24 @@ if (normalizedGenre === "kinh dien") {
          * Không bắt buộc metadata category phải lặp lại
          * cùng thông tin lần thứ hai.
          */
-        if (
-            trustGenreSource &&
-            item.__genreApiSlug === "kinh-di"
-        ) {
-            return true;
-        }
+
+if (
+    trustGenreSource &&
+    item.__genreApiSlug === "kinh-di"
+) {
+    return true;
+}
+
+// Cinemeta đã lọc chính xác genre ngay tại endpoint.
+// Chấp nhận tất cả genre được ánh xạ cho MOVINA.
+if (
+    item?.__movinaCinemetaSource === true &&
+    cinemetaGenres.includes(
+        item?.__movinaCinemetaGenre
+    )
+) {
+    return true;
+}
 
         return movinaTrendingGenreMatches(
             item,
@@ -6422,15 +6970,103 @@ async function fetchAnimationByFilter(selectedFilter) {
     const genreConfig =
         MOVINA_ANIMATION_GENRES[normalizedGenre];
 
-    if (!isLatest && !genreConfig) {
-        console.warn(
-            "[ANIMATION FILTER] Unknown genre:",
-            genreLabel
-        );
-        return [];
-    }
+if (!isLatest && !genreConfig) {
+    console.warn(
+        "[ANIMATION FILTER] Unknown genre:",
+        genreLabel
+    );
+    return [];
+}
 
-    const requests = [];
+// -----------------------------------------------------
+// CINEMETA FOREGROUND — ANIMATION MAPPED GENRES
+// -----------------------------------------------------
+
+const cinemetaAnimationGenre =
+    MOVINA_ANIMATION_CINEMETA_GENRE_MAP[
+        normalizedGenre
+    ];
+
+if (!isLatest && cinemetaAnimationGenre) {
+    try {
+        const cinemetaItems =
+            await movinaFetchCinemetaGenreCatalog(
+                type,
+                cinemetaAnimationGenre
+            );
+
+        if (Array.isArray(cinemetaItems)) {
+            const filteredCinemeta =
+                catalogDedupe(
+                    cinemetaItems.filter(item =>
+                        isAnimation(item) &&
+                        (
+                            type === "series"
+                                ? isSeriesItem(item)
+                                : !isSeriesItem(item)
+                        ) &&
+                        movinaAnimationGenreMatches(
+                            item,
+                            genreConfig
+                        )
+                    )
+                );
+
+            if (
+                filteredCinemeta.length >=
+                CATALOG_TARGET
+            ) {
+                const result =
+                    movinaTrendingBalancedDecades(
+                        filteredCinemeta,
+                        "animation|cinemeta|" +
+                            type + "|" +
+                            normalizedGenre + "|" +
+                            day,
+                        CATALOG_TARGET
+                    );
+
+                console.log(
+                    "[ANIMATION CINEMETA FOREGROUND]",
+                    JSON.stringify({
+                        genre: genreLabel,
+                        cinemetaGenre:
+                            cinemetaAnimationGenre,
+                        type,
+                        candidates:
+                            filteredCinemeta.length,
+                        returned: result.length,
+                        source: "cinemeta"
+                    })
+                );
+
+                return result;
+            }
+
+            console.log(
+                "[ANIMATION CINEMETA FALLBACK]",
+                JSON.stringify({
+                    genre: genreLabel,
+                    cinemetaGenre:
+                        cinemetaAnimationGenre,
+                    type,
+                    candidates:
+                        filteredCinemeta.length,
+                    required: CATALOG_TARGET,
+                    fallback: "phimapi"
+                })
+            );
+        }
+    } catch (error) {
+        console.warn(
+            "[ANIMATION CINEMETA ERROR]",
+            genreLabel,
+            error?.message || error
+        );
+    }
+}
+
+const requests = [];
 
     /*
      * Nguồn hoạt hình chính.
@@ -6664,8 +7300,22 @@ const rankedSourceImdbId =
             .toLowerCase()
         : "";
 
+
+const cinemetaSourceImdbId =
+    item?.__movinaCinemetaSource === true &&
+    /^tt\d+$/i.test(
+        String(
+            item?.__movinaCinemetaImdbId || ""
+        ).trim()
+    )
+        ? String(
+            item.__movinaCinemetaImdbId
+        ).trim().toLowerCase()
+        : "";
+
 const verifiedImdbId =
     rankedSourceImdbId ||
+    cinemetaSourceImdbId ||
     (
         itemSlug
             ? (
@@ -6675,6 +7325,7 @@ const verifiedImdbId =
             )
             : ""
     );
+
 
 const fallbackTitle =
     String(
@@ -6695,6 +7346,7 @@ const fallbackInternalId =
         );
 
 const metaId =
+    rankedSourceImdbId ||
     verifiedImdbId ||
     fallbackInternalId;
 
@@ -6847,6 +7499,19 @@ const MOVINA_META_SEARCH_TTL =
 
 const MOVINA_META_DETAIL_TTL =
     15 * 60 * 1000;
+
+// ============================================================
+// [STREMIO-012.01B] CINEMETA IMDb → PHIMAPI MATCH CACHE
+// ============================================================
+// Lưu bản ghi PhimAPI đã được đối chiếu với IMDb ID.
+// Dùng lại khi người dùng mở Meta hoặc Stream bằng tt...
+// Không thay đổi ID của catalog.
+// ============================================================
+
+const MOVINA_PHIMAPI_MATCH_BY_IMDB = new Map();
+
+const MOVINA_PHIMAPI_MATCH_BY_IMDB_TTL =
+    6 * 60 * 60 * 1000;
 
 function movinaIdentityNormalizeTitle(value) {
     return String(value || "")
@@ -7511,10 +8176,35 @@ async function movinaFetchCinemetaPreview(
         : "foreground"
 );
 
-            const detail =
-                response.data?.data?.item ||
-                response.data?.item ||
-                {};
+            
+const detail =
+    response.data?.data?.item ||
+    response.data?.item ||
+    {};
+
+// ------------------------------------------------------------
+// LƯU FULL PHIMAPI DETAIL
+// Để Meta handler sử dụng lại, đặc biệt với phim bộ.
+// Tránh gọi lại endpoint detail khi worker đã tải xong.
+// ------------------------------------------------------------
+
+if (
+    detail &&
+    typeof detail === "object" &&
+    Object.keys(detail).length
+) {
+    MOVINA_META_DETAIL_CACHE.set(
+        "phimapi:detail:" + slug,
+        {
+            expiresAt:
+                Date.now() + MOVINA_META_DETAIL_TTL,
+
+            promise:
+                Promise.resolve(detail)
+        }
+    );
+}
+
 
             const rawDescription =
                 detail.content ||
@@ -7992,21 +8682,79 @@ function movinaSchedulePreviewCompletion(
     catalogId,
     resolveType
 ) {
-    const sourceItems = (Array.isArray(items) ? items : [])
-        .slice(0, CATALOG_TARGET)
-        .filter(item => String(item?.slug || "").trim());
+    
+    
+const sourceItems = (Array.isArray(items) ? items : [])
+    .slice(0, CATALOG_TARGET)
+    .filter(item => {
 
-    if (!sourceItems.length) {
-        return;
-    }
+        const hasPhimApiSlug =
+            Boolean(String(item?.slug || "").trim());
 
-    const jobKey =
-        String(catalogId || "movina") +
-        ":" +
-        sourceItems
-            .map(item => String(item.slug || "").trim())
-            .sort()
-            .join("|");
+        const isClassicRanked =
+            item?.__movinaClassicSource === "ranked-json" &&
+            /^tt\d+$/i.test(
+                String(item?.__movinaClassicImdbId || "")
+                    .trim()
+            );
+
+        const isCinemetaCatalog =
+            item?.__movinaCinemetaSource === true &&
+            /^tt\d+$/i.test(
+                String(
+                    item?.__movinaCinemetaImdbId ||
+                    item?.imdb?.id ||
+                    item?.imdb_id ||
+                    ""
+                ).trim()
+            );
+
+        return (
+            hasPhimApiSlug ||
+            isClassicRanked ||
+            isCinemetaCatalog
+        );
+    });
+
+if (!sourceItems.length) {
+    return;
+}
+
+const jobKey =
+    String(catalogId || "movina") +
+    ":" +
+    sourceItems
+        .map(item => {
+
+            const slug =
+                String(item?.slug || "").trim();
+
+            if (slug) {
+                return "slug:" + slug;
+            }
+
+            if (item?.__movinaCinemetaSource === true) {
+                return (
+                    "cinemeta:" +
+                    String(
+                        item?.__movinaCinemetaImdbId ||
+                        item?.imdb?.id ||
+                        item?.imdb_id ||
+                        ""
+                    ).trim().toLowerCase()
+                );
+            }
+
+            return (
+                "classic:" +
+                String(
+                    item?.__movinaClassicImdbId || ""
+                ).trim().toLowerCase()
+            );
+        })
+        .sort()
+        .join("|");
+
 
     if (MOVINA_PREVIEW_BACKGROUND_JOBS.has(jobKey)) {
         console.log(
@@ -8063,12 +8811,103 @@ function movinaSchedulePreviewCompletion(
                     ? "series"
                     : "movie";
 
-            const slug = String(item?.slug || "").trim();
+                        
+let workingItem = item;
 
-            if (!slug) {
-                skipped++;
-                continue;
+let slug = String(
+    item?.slug || ""
+).trim();
+
+const isClassicRanked =
+    item?.__movinaClassicSource === "ranked-json";
+
+const isCinemetaCatalog =
+    item?.__movinaCinemetaSource === true;
+
+const sourceImdbId = String(
+    item?.__movinaCinemetaImdbId ||
+    item?.__movinaClassicImdbId ||
+    item?.imdb?.id ||
+    item?.imdb_id ||
+    item?.imdbId ||
+    ""
+).trim().toLowerCase();
+
+// ------------------------------------------------------------
+// CINEMETA / CLASSIC → PHIMAPI MATCH
+// Chỉ nhận kết quả khớp tên và năm.
+// Không tự chọn kết quả mơ hồ.
+// ------------------------------------------------------------
+
+if (
+    !slug &&
+    (
+        isClassicRanked ||
+        isCinemetaCatalog
+    )
+) {
+
+    const searchTitle = String(
+        item?.origin_name ||
+        item?.name ||
+        ""
+    ).trim();
+
+    const match =
+        await movinaClassicSearchPhimAPI(
+            {
+                title: searchTitle,
+
+                imdbId: sourceImdbId,
+
+                year:
+                    Number(item?.year) || 0
+            },
+            itemType,
+            {
+                background: true
             }
+        );
+
+    if (match?.slug) {
+
+        workingItem = match;
+
+        slug = String(
+            match.slug
+        ).trim();
+
+        console.log(
+            "[MOVINA CINEMETA → PHIMAPI MATCH]",
+            JSON.stringify({
+                title: item?.name,
+                matchedTitle: match?.name,
+                year: item?.year || 0,
+                matchedYear: match?.year || 0,
+                imdbId: sourceImdbId,
+                type: itemType,
+                slug
+            })
+        );
+
+    } else if (isCinemetaCatalog) {
+
+        console.log(
+            "[MOVINA CINEMETA → PHIMAPI NO MATCH]",
+            JSON.stringify({
+                title: item?.name,
+                year: item?.year || 0,
+                imdbId: sourceImdbId,
+                type: itemType
+            })
+        );
+    }
+}
+
+if (!slug) {
+    skipped++;
+    continue;
+}
 
             try {
                 const previewCacheKey =
@@ -8090,7 +8929,7 @@ function movinaSchedulePreviewCompletion(
                     previewRequests++;
 
                     detail = await movinaFetchCinemetaPreview(
-    item,
+    workingItem,
     itemType,
     {
         background: true
@@ -8099,6 +8938,86 @@ function movinaSchedulePreviewCompletion(
                 }
 
                 detail = detail || {};
+
+                // =================================================
+                // CLASSIC — SAVE VIETNAMESE DESCRIPTION
+                // =================================================
+
+                const classicImdbId = String(
+                    item?.__movinaClassicImdbId || ""
+                ).trim().toLowerCase();
+
+                const classicDescription = String(
+                    detail?.description || ""
+                ).trim();
+
+                if (
+                    isClassicRanked &&
+                    /^tt\d+$/i.test(classicImdbId) &&
+                    classicDescription
+                ) {
+                    // 1. Cập nhật Classic Catalog Cache.
+                    const classicCache =
+                        MOVINA_CLASSIC_CATALOG_CACHE.get(itemType);
+
+                    if (Array.isArray(classicCache?.items)) {
+                        const cachedItem =
+                            classicCache.items.find(entry =>
+                                String(
+                                    entry?.__movinaClassicImdbId || ""
+                                ).trim().toLowerCase() === classicImdbId
+                            );
+
+                        if (cachedItem) {
+                            cachedItem.content = classicDescription;
+                            cachedItem.description = classicDescription;
+                        }
+                    }
+
+                    // 2. Cập nhật Final Catalog Cache.
+                    for (
+                        const cachedCatalog of
+                        MOVINA_FINAL_CATALOG_CACHE.values()
+                    ) {
+                        if (
+                            cachedCatalog?.catalogId !== catalogId ||
+                            cachedCatalog.expiresAt <= Date.now() ||
+                            !Array.isArray(cachedCatalog.metas)
+                        ) {
+                            continue;
+                        }
+
+                        const targetMeta =
+    cachedCatalog.metas.find(meta => {
+        const metaId = String(
+            meta?.id || ""
+        ).trim().toLowerCase();
+
+        return (
+            meta?.type === itemType &&
+            (
+                metaId === classicImdbId ||
+                metaId === "movina-classic:" + classicImdbId
+            )
+        );
+    });
+
+                        if (targetMeta) {
+                            targetMeta.description =
+                                classicDescription;
+                        }
+                    }
+
+                    console.log(
+                        "[MOVINA CLASSIC VI DESCRIPTION SAVED]",
+                        JSON.stringify({
+                            title: item?.name,
+                            imdbId: classicImdbId,
+                            type: itemType,
+                            length: classicDescription.length
+                        })
+                    );
+                }
 
                 const sourceRating = getValidRating(
     item?.__movinaIMDbRating ??
@@ -8123,12 +9042,277 @@ function movinaSchedulePreviewCompletion(
 // Xác minh IMDb hoặc tìm IMDb mới nếu nguồn thiếu ID.
 // Chạy background, tuyệt đối không chặn Catalog foreground.
 
+
 const verifiedImdbId =
-    await movinaResolveAndVerifyImdb(
-        item,
-        detail,
-        itemType
+    isClassicRanked
+        ? getImdbId(
+            item?.__movinaClassicImdbId
+        )
+
+        // IMDb ID đã được cấp trực tiếp bởi
+        // Cinemeta Catalog JSON.
+        // Không gọi lại Cinemeta Meta JSON.
+        : isCinemetaCatalog
+            ? getImdbId(sourceImdbId)
+
+            // Các nguồn PhimAPI thông thường vẫn
+            // phải xác minh IMDb như trước.
+            : await movinaResolveAndVerifyImdb(
+                item,
+                detail,
+                itemType
+            );
+
+
+// ============================================================
+// CINEMETA → PHIMAPI ENRICHMENT CACHE
+// ============================================================
+
+if (
+    isCinemetaCatalog &&
+    verifiedImdbId &&
+    workingItem?.slug
+) {
+
+    const normalizedImdbId =
+        String(verifiedImdbId)
+            .trim()
+            .toLowerCase();
+
+    const matchedSlug =
+        String(workingItem.slug).trim();
+
+    // --------------------------------------------------------
+    // 1. CACHE IMDb → PHIMAPI ITEM
+    // --------------------------------------------------------
+
+    const matchedItem = {
+        ...workingItem
+    };
+
+    MOVINA_PHIMAPI_MATCH_BY_IMDB.set(
+        itemType + ":" + normalizedImdbId,
+        {
+            expiresAt:
+                Date.now() +
+                MOVINA_PHIMAPI_MATCH_BY_IMDB_TTL,
+
+            item: matchedItem
+        }
     );
+
+    // Đồng bộ IMDb đã xác minh với slug PhimAPI.
+    movinaPromoteCatalogIdentity(
+        matchedItem,
+        itemType,
+        normalizedImdbId
+    );
+
+    // --------------------------------------------------------
+    // 2. ĐỌC FULL DETAIL PHIMAPI ĐÃ CACHE
+    // --------------------------------------------------------
+
+    let fullDetail = {};
+
+    const fullDetailEntry =
+        MOVINA_META_DETAIL_CACHE.get(
+            "phimapi:detail:" + matchedSlug
+        );
+
+    if (
+        fullDetailEntry &&
+        fullDetailEntry.expiresAt > Date.now()
+    ) {
+        try {
+            fullDetail =
+                await fullDetailEntry.promise || {};
+        } catch (_) {
+            fullDetail = {};
+        }
+    }
+
+    // --------------------------------------------------------
+    // 3. ƯU TIÊN POSTER DỌC GỐC TỪ PHIMAPI
+    // Không dùng thumb làm poster thay thế.
+    // --------------------------------------------------------
+
+    const rawOriginalPoster =
+        fullDetail?.poster_url ||
+        fullDetail?.poster ||
+        workingItem?.poster_url ||
+        workingItem?.poster ||
+        "";
+
+    const originalPoster =
+        rawOriginalPoster
+            ? makePosterUrl({
+                poster: rawOriginalPoster
+            })
+            : "";
+
+    const originalBackground =
+        fullDetail?.thumb_url ||
+        workingItem?.thumb_url ||
+        workingItem?.thumb ||
+        "";
+
+    // --------------------------------------------------------
+    // 4. CẬP NHẬT CINEMETA GENRE CACHE
+    // Để lần mở catalog tiếp theo có sẵn metadata tiếng Việt.
+    // --------------------------------------------------------
+
+    const genreName = String(
+        item?.__movinaCinemetaGenre || ""
+    ).trim();
+
+    if (genreName) {
+
+        const genreCacheKey =
+            itemType + "|" + genreName;
+
+        const genreCache =
+            MOVINA_CINEMETA_GENRE_CACHE.get(
+                genreCacheKey
+            );
+
+        if (Array.isArray(genreCache?.items)) {
+
+            const cachedGenreItem =
+                genreCache.items.find(entry =>
+                    String(
+                        entry?.__movinaCinemetaImdbId ||
+                        entry?.imdb?.id ||
+                        ""
+                    ).trim().toLowerCase() === normalizedImdbId
+                );
+
+            if (cachedGenreItem) {
+
+                cachedGenreItem.slug =
+                    matchedSlug;
+
+                if (detail?.description) {
+                    cachedGenreItem.content =
+                        detail.description;
+
+                    cachedGenreItem.description =
+                        detail.description;
+                }
+
+                if (originalPoster) {
+                    cachedGenreItem.poster_url =
+                        originalPoster;
+                }
+
+                if (originalBackground) {
+                    cachedGenreItem.thumb_url =
+                        originalBackground;
+                }
+
+                cachedGenreItem.__movinaPhimApiMatched =
+                    true;
+            }
+        }
+    }
+
+    // --------------------------------------------------------
+    // 5. CẬP NHẬT FINAL CATALOG CACHE
+    // Không thay đổi ID, tên phim hoặc thứ tự.
+    // --------------------------------------------------------
+
+    for (
+        const cachedCatalog of
+        MOVINA_FINAL_CATALOG_CACHE.values()
+    ) {
+
+        if (
+            cachedCatalog?.catalogId !== catalogId ||
+            cachedCatalog.expiresAt <= Date.now() ||
+            !Array.isArray(cachedCatalog.metas)
+        ) {
+            continue;
+        }
+
+        const targetMeta =
+            cachedCatalog.metas.find(meta =>
+                meta?.type === itemType &&
+                String(meta?.id || "")
+                    .trim()
+                    .toLowerCase() === normalizedImdbId
+            );
+
+        if (!targetMeta) {
+            continue;
+        }
+
+        // Mô tả tiếng Việt từ PhimAPI.
+        if (detail?.description) {
+            targetMeta.description =
+                detail.description;
+        }
+
+        // Poster gốc, chỉ khi PhimAPI có poster thật.
+        if (originalPoster) {
+            targetMeta.poster =
+                originalPoster;
+        }
+
+        if (originalBackground) {
+            targetMeta.background =
+                originalBackground;
+        }
+
+        if (
+            Array.isArray(detail?.cast) &&
+            detail.cast.length
+        ) {
+            targetMeta.cast =
+                detail.cast;
+        }
+
+        if (
+            Array.isArray(detail?.director) &&
+            detail.director.length
+        ) {
+            targetMeta.director =
+                detail.director;
+        }
+
+        if (
+            detail?.runtime &&
+            !targetMeta.runtime
+        ) {
+            targetMeta.runtime =
+                detail.runtime;
+        }
+
+        if (
+            detail?.genres?.length &&
+            !targetMeta.genres?.length
+        ) {
+            targetMeta.genres =
+                detail.genres;
+        }
+    }
+
+    console.log(
+        "[MOVINA CINEMETA ENRICHMENT SAVED]",
+        JSON.stringify({
+            title: item?.name,
+            imdbId: normalizedImdbId,
+            type: itemType,
+            slug: matchedSlug,
+            vietnameseDescription:
+                Boolean(detail?.description),
+            originalPoster:
+                Boolean(originalPoster),
+            background:
+                Boolean(originalBackground),
+            fullDetailCached:
+                Boolean(Object.keys(fullDetail).length)
+        })
+    );
+}
 
 if (verifiedImdbId) {
     console.log(
@@ -8258,6 +9442,329 @@ function movinaFinalCatalogCacheKey(args) {
 }
 
 /* ============================================================
+   [CORE-003.07] [PROVIDERS: MOVINA]
+   CINEMETA CATALOG BACKGROUND SUPPLEMENT
+   ============================================================ */
+
+const MOVINA_CINEMETA_SUPPLEMENT_JOBS = new Map();
+
+function movinaScheduleCinemetaGenreSupplement(options = {}) {
+    const {
+        type,
+        genre,
+        genreSlugs,
+        finalCacheKey,
+        currentItems
+    } = options;
+
+    const normalizedType =
+        type === "series" ? "series" : "movie";
+
+    const slugs = Array.isArray(genreSlugs)
+        ? genreSlugs.filter(Boolean)
+        : [];
+
+    const sourceItems = Array.isArray(currentItems)
+        ? currentItems
+        : [];
+
+    if (
+        !finalCacheKey ||
+        !slugs.length ||
+        !sourceItems.length ||
+        sourceItems.length >= CATALOG_TARGET ||
+        !sourceItems.some(item =>
+            item?.__movinaCinemetaSource === true
+        )
+    ) {
+        return;
+    }
+
+    if (
+        MOVINA_CINEMETA_SUPPLEMENT_JOBS.has(
+            finalCacheKey
+        )
+    ) {
+        return;
+    }
+
+    const jobKey = finalCacheKey;
+
+    const getIMDb = item => {
+        const candidates = [
+            item?.__movinaCinemetaImdbId,
+            item?.__movinaClassicImdbId,
+            item?.imdb?.id,
+            item?.imdb_id,
+            item?.imdbId,
+            item?.id
+        ];
+
+        for (const value of candidates) {
+            const id = String(value || "")
+                .trim()
+                .toLowerCase();
+
+            if (/^tt\d+$/.test(id)) {
+                return id;
+            }
+        }
+
+        return "";
+    };
+
+    const getTitleYearKey = item => {
+        const title = catalogNormalize(
+            item?.name ||
+            item?.title ||
+            item?.origin_name ||
+            item?.original_name ||
+            ""
+        );
+
+        const year = Number(
+            item?.year ||
+            item?.releaseYear ||
+            0
+        );
+
+        return title
+            ? title + "|" + year
+            : "";
+    };
+
+    const task = (async () => {
+        try {
+            const requests = [];
+
+            /*
+             * Chỉ lấy API thể loại PhimAPI.
+             * Không gọi thêm danh sách phim-le/phim-bo
+             * không giới hạn thể loại.
+             *
+             * Tối đa 3 trang cho mỗi slug.
+             * Chạy nền, không chặn catalog foreground.
+             */
+
+            for (const slug of slugs) {
+                for (let page = 1; page <= 3; page++) {
+                    const url =
+                        "https://phimapi.com/v1/api/the-loai/" +
+                        encodeURIComponent(slug) +
+                        "?page=" + page +
+                        "&limit=64";
+
+                    requests.push(
+                        catalogFetch(url).then(items =>
+                            (Array.isArray(items) ? items : [])
+                                .map(item => ({
+                                    ...item,
+                                    __genreApiSlug: slug
+                                }))
+                        )
+                    );
+                }
+            }
+
+            const groups = await Promise.all(requests);
+
+            const cacheEntry =
+                MOVINA_FINAL_CATALOG_CACHE.get(
+                    finalCacheKey
+                );
+
+            if (
+                !cacheEntry ||
+                cacheEntry.expiresAt <= Date.now() ||
+                !Array.isArray(cacheEntry.metas)
+            ) {
+                return;
+            }
+
+            const seenIMDb = new Set();
+            const seenTitleYear = new Set();
+
+            /*
+             * Đánh dấu các phim đã có trong snapshot.
+             */
+
+            for (const item of sourceItems) {
+                const imdbId = getIMDb(item);
+                const titleYear = getTitleYearKey(item);
+
+                if (imdbId) {
+                    seenIMDb.add(imdbId);
+                }
+
+                if (titleYear) {
+                    seenTitleYear.add(titleYear);
+                }
+            }
+
+            for (const meta of cacheEntry.metas) {
+                const imdbId = getIMDb(meta);
+                const titleYear = getTitleYearKey(meta);
+
+                if (imdbId) {
+                    seenIMDb.add(imdbId);
+                }
+
+                if (titleYear) {
+                    seenTitleYear.add(titleYear);
+                }
+            }
+
+            const candidates = groups.flat();
+            const addedMetas = [];
+
+            for (const item of candidates) {
+                if (
+                    cacheEntry.metas.length +
+                    addedMetas.length >=
+                    CATALOG_TARGET
+                ) {
+                    break;
+                }
+
+                /*
+                 * Xác định chính xác movie / series.
+                 */
+
+                const itemType =
+                    item?.__catalogType === "series"
+                        ? "series"
+                        : item?.__catalogType === "movie"
+                            ? "movie"
+                            : isSeriesItem(item)
+                                ? "series"
+                                : "movie";
+
+                if (itemType !== normalizedType) {
+                    continue;
+                }
+
+                /*
+                 * Không đưa hoạt hình vào thể loại thường.
+                 */
+
+                if (isAnimation(item)) {
+                    continue;
+                }
+
+                const imdbId = getIMDb(item);
+                const titleYear = getTitleYearKey(item);
+
+                if (
+                    (imdbId && seenIMDb.has(imdbId)) ||
+                    (titleYear && seenTitleYear.has(titleYear))
+                ) {
+                    continue;
+                }
+
+                const meta = makeCatalogMeta(
+                    item,
+                    normalizedType
+                );
+
+                if (
+                    !meta?.id ||
+                    !meta?.name
+                ) {
+                    continue;
+                }
+
+                /*
+                 * Chỉ bổ sung, không thay đổi các phim
+                 * Cinemeta đã có trong snapshot.
+                 */
+
+                addedMetas.push(meta);
+
+                if (imdbId) {
+                    seenIMDb.add(imdbId);
+                }
+
+                if (titleYear) {
+                    seenTitleYear.add(titleYear);
+                }
+            }
+
+            if (addedMetas.length) {
+                cacheEntry.metas.push(
+                    ...addedMetas
+                );
+
+                console.log(
+                    "[MOVINA CINEMETA SUPPLEMENT SAVED]",
+                    JSON.stringify({
+                        type: normalizedType,
+                        genre,
+                        originalCount:
+                            sourceItems.length,
+                        added:
+                            addedMetas.length,
+                        finalCount:
+                            cacheEntry.metas.length
+                    })
+                );
+
+            } else {
+                console.log(
+                    "[MOVINA CINEMETA SUPPLEMENT EMPTY]",
+                    JSON.stringify({
+                        type: normalizedType,
+                        genre,
+                        candidates: candidates.length
+                    })
+                );
+            }
+
+        } catch (error) {
+            console.warn(
+                "[MOVINA CINEMETA SUPPLEMENT ERROR]",
+                genre,
+                error?.message || String(error)
+            );
+
+        } finally {
+            MOVINA_CINEMETA_SUPPLEMENT_JOBS.delete(
+                jobKey
+            );
+        }
+    })();
+
+    MOVINA_CINEMETA_SUPPLEMENT_JOBS.set(
+        jobKey,
+        task
+    );
+
+    try {
+        waitUntil(task);
+
+        console.log(
+            "[MOVINA CINEMETA SUPPLEMENT SCHEDULED]",
+            JSON.stringify({
+                type: normalizedType,
+                genre,
+                currentItems: sourceItems.length,
+                target: CATALOG_TARGET,
+                slugs
+            })
+        );
+
+    } catch (error) {
+        MOVINA_CINEMETA_SUPPLEMENT_JOBS.delete(
+            jobKey
+        );
+
+        console.warn(
+            "[MOVINA CINEMETA SUPPLEMENT WAITUNTIL ERROR]",
+            error?.message || String(error)
+        );
+    }
+}
+
+/* ============================================================
    12. DEFINE CATALOG HANDLER
    ============================================================ */
 
@@ -8300,13 +9807,15 @@ const finalCacheKey = finalCacheEligible
 if (finalCacheKey) {
   const cached = MOVINA_FINAL_CATALOG_CACHE.get(finalCacheKey);
 
-  if (cached && cached.expiresAt > Date.now()) {
+if (cached && cached.expiresAt > Date.now()) {
     console.log("[MOVINA FINAL CATALOG CACHE] HIT:", args.id);
 
     return {
-      metas: cached.metas.map(meta => ({ ...meta }))
+        metas: cached.metas.map(meta => ({ ...meta })),
+        cacheMaxAge: 0,
+        staleError: 60
     };
-  }
+}
 
   if (cached) {
     MOVINA_FINAL_CATALOG_CACHE.delete(finalCacheKey);
@@ -9398,45 +10907,7 @@ if (enableCinemetaPreview) {
         );
 }
 
-// ========================================================
-// [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
-// ========================================================
 
-// Chỉ áp dụng cho 5 catalog VOD đã bật enrichment.
-// Không áp dụng cho Search MOVINA và IPTV.
-
-if (
-    enableCinemetaPreview &&
-    !searchQuery &&
-    [
-        "pa_movies_trending",
-        "pa_series_trending",
-        "pa_tvb",
-        "pa_daily",
-        "pa_animation_new"
-    ].includes(args.id)
-) {
-    const resolveBackgroundType = item => {
-        // Catalog có type cố định.
-        if (
-            forcedType === "movie" ||
-            forcedType === "series"
-        ) {
-            return forcedType;
-        }
-
-        // Catalog hỗn hợp: xác định riêng từng phim.
-        return isSeriesItem(item)
-            ? "series"
-            : "movie";
-    };
-
-    movinaSchedulePreviewCompletion(
-        items,
-        args.id,
-        resolveBackgroundType
-    );
-}
 
             /* ========================================================
                12.9 LOG
@@ -9484,7 +10955,106 @@ if (
     });
 }
 
-return { metas };
+// ========================================================
+// CINEMETA → PHIMAPI BACKGROUND CATALOG SUPPLEMENT
+// ========================================================
+
+if (
+    finalCacheKey &&
+    !searchQuery &&
+    (
+        args.id === "pa_movies_trending" ||
+        args.id === "pa_series_trending"
+    )
+) {
+    const supplementGenre = String(
+        args.extra?.genre || ""
+    ).trim();
+
+    const normalizedSupplementGenre =
+        catalogNormalize(supplementGenre);
+
+    const mappedGenre =
+        MOVINA_CINEMETA_GENRE_MAP[
+            normalizedSupplementGenre
+        ];
+
+    const supplementSlugs =
+        MOVINA_TRENDING_GENRE_SLUGS[
+            normalizedSupplementGenre
+        ] || [];
+
+    if (
+        mappedGenre &&
+        supplementSlugs.length > 0 &&
+        items.length > 0 &&
+        items.length < CATALOG_TARGET &&
+        items.some(item =>
+            item?.__movinaCinemetaSource === true
+        )
+    ) {
+        movinaScheduleCinemetaGenreSupplement({
+            type:
+                args.id === "pa_series_trending"
+                    ? "series"
+                    : "movie",
+
+            genre: supplementGenre,
+
+            genreSlugs: supplementSlugs,
+
+            finalCacheKey,
+
+            currentItems: items
+        });
+    }
+}
+
+// ========================================================
+// [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
+// ========================================================
+
+// Chỉ áp dụng cho 5 catalog VOD đã bật enrichment.
+// Không áp dụng cho Search MOVINA và IPTV.
+
+if (
+    enableCinemetaPreview &&
+    !searchQuery &&
+    [
+        "pa_movies_trending",
+        "pa_series_trending",
+        "pa_tvb",
+        "pa_daily",
+        "pa_animation_new"
+    ].includes(args.id)
+) {
+    const resolveBackgroundType = item => {
+        // Catalog có type cố định.
+        if (
+            forcedType === "movie" ||
+            forcedType === "series"
+        ) {
+            return forcedType;
+        }
+
+        // Catalog hỗn hợp: xác định riêng từng phim.
+        return isSeriesItem(item)
+            ? "series"
+            : "movie";
+    };
+
+    movinaSchedulePreviewCompletion(
+        items,
+        args.id,
+        resolveBackgroundType
+    );
+}
+
+return {
+    metas,
+    cacheMaxAge: 0,
+    staleError: 60
+};
 
         } catch (e) {
 
@@ -10175,11 +11745,16 @@ if (
 
         let movieName = "";
 
-        // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID
-        let imdbId = "";
+// IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID.
+let imdbId = "";
 
-        // ID cuối cùng dùng cho Meta + Video
-        let metaId = rawId;
+// Trạng thái riêng cho từng Meta request.
+// Không để các request đồng thời dùng chung biến.
+let requestedSlug = "";
+let requestedSlugItem = null;
+
+// ID cuối cùng dùng cho Meta + Video
+let metaId = rawId;
 
         if (rawId.startsWith("vnwpsw:slug:")) {
 
@@ -10205,56 +11780,134 @@ if (
             )
         );
 
-        } else if (rawId.startsWith("tt")) {
+        } else if (rawId.startsWith("movina-classic:")) {
 
-            imdbId =
-                rawId.split(":")[0];
+    imdbId = rawId
+        .substring("movina-classic:".length)
+        .trim()
+        .toLowerCase();
 
-            metaId =
-                imdbId;
+    if (!/^tt\d+$/i.test(imdbId)) {
+        return { meta: null };
+    }
 
-            try {
+    // Ưu tiên lấy tên từ Classic Catalog Cache.
+    // Không cần gọi Cinemeta nếu cache đã có dữ liệu.
+    const classicType =
+        args.type === "series"
+            ? "series"
+            : "movie";
 
-                const cinemetaRes =
-                    await axios.get(
-                        "https://v3-cinemeta.strem.io/meta/" +
-                        (
-                            args.type === "series"
-                                ? "series"
-                                : "movie"
-                        ) +
-                        "/" +
-                        encodeURIComponent(
-                            imdbId
-                        ) +
-                        ".json",
-                        {
-                            timeout: 8000,
+    const classicCache =
+        MOVINA_CLASSIC_CATALOG_CACHE.get(classicType);
 
-                            headers: {
-                                "User-Agent":
-                                    "Mozilla/5.0",
+    const classicItem =
+        Array.isArray(classicCache?.items)
+            ? classicCache.items.find(item =>
+                String(
+                    item?.__movinaClassicImdbId ||
+                    item?.imdb?.id ||
+                    ""
+                ).trim().toLowerCase() === imdbId
+            )
+            : null;
 
-                                "Accept":
-                                    "application/json"
-                            }
-                        }
-                    );
+    movieName =
+        classicItem?.name ||
+        classicItem?.origin_name ||
+        "";
 
-                movieName =
-                    cinemetaRes.data?.meta?.name ||
-                    "";
+    // Fallback khi Classic Catalog Cache không còn.
+    if (!movieName) {
+        try {
+            const cinemetaRes = await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                classicType +
+                "/" +
+                encodeURIComponent(imdbId) +
+                ".json",
+                {
+                    timeout: 4500,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
 
-            } catch (e) {
+            movieName =
+                cinemetaRes.data?.meta?.name || "";
 
-                console.log(
-                    "[META CINEMETA ERROR]",
-                    e?.response?.status ||
-                    e?.message ||
-                    e
-                );
+        } catch (error) {
+            console.log(
+                "[META CLASSIC TITLE ERROR]",
+                imdbId,
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+        }
+    }
 
-            }
+    console.log(
+        "[META CLASSIC ID]",
+        JSON.stringify({
+            imdbId,
+            title: movieName,
+            cacheHit: Boolean(classicItem)
+        })
+    );
+
+} else if (rawId.startsWith("tt")) {
+
+    imdbId =
+        rawId.split(":")[0];
+
+    metaId =
+        imdbId;
+
+    try {
+
+        const cinemetaRes =
+            await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                (
+                    args.type === "series"
+                        ? "series"
+                        : "movie"
+                ) +
+                "/" +
+                encodeURIComponent(
+                    imdbId
+                ) +
+                ".json",
+                {
+                    timeout: 8000,
+
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0",
+
+                        "Accept":
+                            "application/json"
+                    }
+                }
+            );
+
+        movieName =
+            cinemetaRes.data?.meta?.name ||
+            "";
+
+    } catch (e) {
+
+        console.log(
+            "[META CINEMETA ERROR]",
+            e?.response?.status ||
+            e?.message ||
+            e
+        );
+
+    }
 
         } else {
 
@@ -10335,42 +11988,93 @@ const metaSearchKey =
     "phimapi:" +
     movinaIdentityNormalizeTitle(movieName);
 
+// ------------------------------------------------------------
+// IMDb → PHIMAPI CACHE LOOKUP
+// Xác định loại phim ngay tại đây.
+// Không sử dụng metaType được khai báo phía dưới.
+// ------------------------------------------------------------
+
+const requestedMetaType =
+    args.type === "series"
+        ? "series"
+        : "movie";
+
+const cachedMatchKey =
+    imdbId
+        ? requestedMetaType + ":" +
+            String(imdbId).trim().toLowerCase()
+        : "";
+
+const cachedMatchEntry =
+    cachedMatchKey
+        ? MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
+            cachedMatchKey
+        )
+        : null;
+
+const cachedPhimApiMatch =
+    (
+        cachedMatchEntry &&
+        cachedMatchEntry.expiresAt > Date.now()
+    )
+        ? cachedMatchEntry.item
+        : null;
+
+if (
+    cachedMatchEntry &&
+    !cachedPhimApiMatch
+) {
+    MOVINA_PHIMAPI_MATCH_BY_IMDB.delete(
+        cachedMatchKey
+    );
+}
+
+// ------------------------------------------------------------
+// KINH ĐIỂN:
+// Nếu đã có dữ liệu IMDb Ranked JSON thì không cần
+// gọi tìm kiếm PhimAPI theo tên.
+// ------------------------------------------------------------
+
 const items =
-    await movinaMetaCachedLoad(
-        MOVINA_META_SEARCH_CACHE,
-        metaSearchKey,
+    cachedPhimApiMatch
+        ? [cachedPhimApiMatch]
+        : await movinaMetaCachedLoad(
+                MOVINA_META_SEARCH_CACHE,
+                metaSearchKey,
 
-        async () => {
-            const searchUrl =
-                "https://phimapi.com/v1/api/tim-kiem?keyword=" +
-                encodeURIComponent(movieName) +
-                "&limit=10";
+                async () => {
 
-            const searchRes =
-                await axios.get(
-                    searchUrl,
-                    {
-                        timeout: 5000,
-                        headers: {
-                            "User-Agent": "Mozilla/5.0",
-                            "Accept": "application/json"
-                        }
-                    }
-                );
+                    const searchUrl =
+                        "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                        encodeURIComponent(movieName) +
+                        "&limit=10";
 
-            const found =
-                searchRes.data?.data?.items ||
-                searchRes.data?.items ||
-                [];
+                    const searchRes =
+                        await axios.get(
+                            searchUrl,
+                            {
+                                timeout: 5000,
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
+                            }
+                        );
 
-            return Array.isArray(found)
-                ? found
-                : [];
-        },
+                    const found =
+                        searchRes.data?.data?.items ||
+                        searchRes.data?.items ||
+                        [];
 
-        MOVINA_META_SEARCH_TTL,
-        3000
-    ) || [];
+                    return Array.isArray(found)
+                        ? found
+                        : [];
+                },
+
+                MOVINA_META_SEARCH_TTL,
+                3000
+            ) || [];
+
 
 console.log(
     "[META SEARCH CACHE]",
@@ -10423,7 +12127,9 @@ console.log(
             );
 
         let item =
-    requestedSlugItem || null;
+    requestedSlugItem ||
+    cachedPhimApiMatch ||
+    null;
 
 if (
     !item &&
@@ -35904,11 +37610,38 @@ builder.defineStreamHandler(async (args) => {
     // 1. LẤY ID + TYPE
     // =====================================================
 
-    const rawId =
-        String(args?.id || "").trim();
+    // Giữ ID gốc để kiểm tra và ghi log.
+const requestedRawId =
+    String(args?.id || "").trim();
 
-    const streamType =
-        String(args?.type || "movie").trim();
+// Chuẩn hóa riêng ID Kinh điển về IMDb ID.
+// Ví dụ:
+// movina-classic:tt0468569
+// → tt0468569
+//
+// Series:
+// movina-classic:tt0903747:1:1
+// → tt0903747:1:1
+//
+// Các ID khác giữ nguyên hoàn toàn.
+const rawId =
+    requestedRawId.replace(
+        /^movina-classic:(tt\d+(?::\d+(?::\d+)?)?)$/i,
+        "$1"
+    );
+
+const streamType =
+    String(args?.type || "movie").trim();
+
+console.log(
+    "[STREAM] Original ID:",
+    requestedRawId
+);
+
+console.log(
+    "[STREAM] Normalized ID:",
+    rawId
+);
 
     console.log(
         "[STREAM] Type:",
