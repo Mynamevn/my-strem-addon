@@ -3504,6 +3504,21 @@ const MOVINA_CINEMETA_GENRE_MAP = {
     "hoat hinh": "Animation"
 };
 
+// [STREMIO-012.06.01] ANIMATION CINEMETA GENRE MAP
+const MOVINA_ANIMATION_CINEMETA_GENRE_MAP = {
+    "gia dinh thieu nhi": "Family",
+    "hai huoc": "Comedy",
+    "the thao": "Sport",
+    "bi an trinh tham": "Mystery",
+    "hanh dong": "Action",
+    "phieu luu": "Adventure",
+    "ky ao": "Fantasy",
+    "khoa hoc vien tuong": "Sci-Fi",
+    "kinh di": "Horror",
+    "tinh cam": "Romance",
+    "lich su": "History"
+};
+
 const MOVINA_CINEMETA_GENRE_CACHE = new Map();
 const MOVINA_CINEMETA_GENRE_INFLIGHT = new Map();
 
@@ -6833,15 +6848,103 @@ async function fetchAnimationByFilter(selectedFilter) {
     const genreConfig =
         MOVINA_ANIMATION_GENRES[normalizedGenre];
 
-    if (!isLatest && !genreConfig) {
-        console.warn(
-            "[ANIMATION FILTER] Unknown genre:",
-            genreLabel
-        );
-        return [];
-    }
+if (!isLatest && !genreConfig) {
+    console.warn(
+        "[ANIMATION FILTER] Unknown genre:",
+        genreLabel
+    );
+    return [];
+}
 
-    const requests = [];
+// -----------------------------------------------------
+// CINEMETA FOREGROUND — ANIMATION MAPPED GENRES
+// -----------------------------------------------------
+
+const cinemetaAnimationGenre =
+    MOVINA_ANIMATION_CINEMETA_GENRE_MAP[
+        normalizedGenre
+    ];
+
+if (!isLatest && cinemetaAnimationGenre) {
+    try {
+        const cinemetaItems =
+            await movinaFetchCinemetaGenreCatalog(
+                type,
+                cinemetaAnimationGenre
+            );
+
+        if (Array.isArray(cinemetaItems)) {
+            const filteredCinemeta =
+                catalogDedupe(
+                    cinemetaItems.filter(item =>
+                        isAnimation(item) &&
+                        (
+                            type === "series"
+                                ? isSeriesItem(item)
+                                : !isSeriesItem(item)
+                        ) &&
+                        movinaAnimationGenreMatches(
+                            item,
+                            genreConfig
+                        )
+                    )
+                );
+
+            if (
+                filteredCinemeta.length >=
+                CATALOG_TARGET
+            ) {
+                const result =
+                    movinaTrendingBalancedDecades(
+                        filteredCinemeta,
+                        "animation|cinemeta|" +
+                            type + "|" +
+                            normalizedGenre + "|" +
+                            day,
+                        CATALOG_TARGET
+                    );
+
+                console.log(
+                    "[ANIMATION CINEMETA FOREGROUND]",
+                    JSON.stringify({
+                        genre: genreLabel,
+                        cinemetaGenre:
+                            cinemetaAnimationGenre,
+                        type,
+                        candidates:
+                            filteredCinemeta.length,
+                        returned: result.length,
+                        source: "cinemeta"
+                    })
+                );
+
+                return result;
+            }
+
+            console.log(
+                "[ANIMATION CINEMETA FALLBACK]",
+                JSON.stringify({
+                    genre: genreLabel,
+                    cinemetaGenre:
+                        cinemetaAnimationGenre,
+                    type,
+                    candidates:
+                        filteredCinemeta.length,
+                    required: CATALOG_TARGET,
+                    fallback: "phimapi"
+                })
+            );
+        }
+    } catch (error) {
+        console.warn(
+            "[ANIMATION CINEMETA ERROR]",
+            genreLabel,
+            error?.message || error
+        );
+    }
+}
+
+const requests = [];
 
     /*
      * Nguồn hoạt hình chính.
