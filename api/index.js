@@ -3959,11 +3959,33 @@ if (
 
 const PAGE_SIZE = 64;
 const MAX_PAGES = 8;
-
+   
     
     // Kinh điển: nguồn ứng viên là danh sách IMDb JSON.
     // Không tải trước 16 trang PhimAPI vì việc ghép phim
     // sẽ tìm trực tiếp từng tiêu đề trong danh sách Top 250.
+
+    // Cinemeta phải có đủ ứng viên mới được dùng độc lập.
+    // Nếu thiếu, tiếp tục chạy request plan PhimAPI của baseline.
+    if (
+        !isClassic &&
+        !isLatest &&
+        Array.isArray(cinemetaItems) &&
+        cinemetaItems.length > 0 &&
+        cinemetaItems.length < CATALOG_TARGET + 15
+    ) {
+        console.log(
+            "[MOVINA CINEMETA FALLBACK PHIMAPI]",
+            JSON.stringify({
+                type,
+                genre,
+                cinemetaGenres,
+                cinemetaItems: cinemetaItems.length,
+                required: CATALOG_TARGET + 15,
+                fallback: "phimapi"
+            })
+        );
+    }
 
     if (isClassic) {
         console.log(
@@ -3975,30 +3997,28 @@ const MAX_PAGES = 8;
             })
         );
 
+    } else if (
+        Array.isArray(cinemetaItems) &&
+        cinemetaItems.length >= CATALOG_TARGET + 15
+    ) {
 
-} else if (
-    Array.isArray(cinemetaItems) &&
-    cinemetaItems.length > 0
-) {
+        requests.push(
+            Promise.resolve(cinemetaItems)
+        );
 
-    requests.push(
-        Promise.resolve(cinemetaItems)
-    );
+        console.log(
+            "[MOVINA CINEMETA PRIMARY SOURCE]",
+            JSON.stringify({
+                type,
+                genre,
+                cinemetaGenres,
+                items: cinemetaItems.length,
+                fallbackPhimAPI: false,
+                requestCount: 1
+            })
+        );
 
-    console.log(
-        "[MOVINA CINEMETA PRIMARY SOURCE]",
-        JSON.stringify({
-            type,
-            genre,
-            cinemetaGenre,
-            items: cinemetaItems.length,
-            fallbackPhimAPI: false,
-            requestCount: 1
-        })
-    );
-
-} else if (isAnimationGenre) {
-
+    } else if (isAnimationGenre) {
 
     // Dùng endpoint hoạt hình chuyên biệt của PhimAPI.
     // Endpoint này có thể chứa cả phim lẻ và phim bộ,
