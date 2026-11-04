@@ -7168,7 +7168,6 @@ if (
         cinemetaAnimationItems =
             Array.from(cinemetaByImdb.values())
                 .filter(item =>
-                    isAnimation(item) &&
                     (
                         type === "series"
                             ? isSeriesItem(item)
@@ -7319,6 +7318,213 @@ const requests = [];
             )
         );
     }
+
+// -----------------------------------------------------
+// CINEMETA ANIMATION IDENTITY VALIDATION
+//
+// Cinemeta cung cấp metadata.
+// PhimAPI animation catalog xác nhận danh tính hoạt hình.
+//
+// Ưu tiên đối chiếu IMDb ID.
+// Nếu thiếu IMDb ID: tên chính xác + năm + loại phim.
+// Không nhận phim người đóng chỉ vì trùng Family / Comedy.
+// -----------------------------------------------------
+
+if (
+    !isLatest &&
+    cinemetaAnimationItems.length > 0 &&
+    items.length > 0
+) {
+    const getAnimationImdbId = item => {
+        const candidates = [
+            item?.__movinaCinemetaImdbId,
+            item?.imdb_id,
+            item?.imdbId,
+            item?.imdb?.id,
+            item?.tmdb?.imdb_id,
+            item?.id
+        ];
+
+        for (const value of candidates) {
+            const id = String(value || "")
+                .trim()
+                .toLowerCase();
+
+            if (/^tt\d+$/.test(id)) {
+                return id;
+            }
+        }
+
+        return "";
+    };
+
+    const animationByImdb = new Map();
+    const animationByTitleYear = new Map();
+
+    // Lập danh sách phim hoạt hình đã được PhimAPI xác nhận.
+    for (const animation of items) {
+        const animationType =
+            isSeriesItem(animation)
+                ? "series"
+                : "movie";
+
+        if (animationType !== type) {
+            continue;
+        }
+
+        const imdbId =
+            getAnimationImdbId(animation);
+
+        if (imdbId) {
+            if (!animationByImdb.has(imdbId)) {
+                animationByImdb.set(imdbId, []);
+            }
+
+            animationByImdb.get(imdbId).push(animation);
+        }
+
+        const year =
+            movinaIdentityGetYear(animation);
+
+        if (!year) {
+            continue;
+        }
+
+        const titles =
+            movinaIdentityTitles(animation);
+
+        for (const title of titles) {
+            const key =
+                animationType +
+                "|" +
+                title +
+                "|" +
+                year;
+
+            if (!animationByTitleYear.has(key)) {
+                animationByTitleYear.set(key, []);
+            }
+
+            animationByTitleYear.get(key).push(animation);
+        }
+    }
+
+    const verifiedCinemetaItems = [];
+
+    for (const cinemeta of cinemetaAnimationItems) {
+        const cinemetaType =
+            isSeriesItem(cinemeta)
+                ? "series"
+                : "movie";
+
+        if (cinemetaType !== type) {
+            continue;
+        }
+
+        const imdbId =
+            getAnimationImdbId(cinemeta);
+
+        let matchedAnimation = null;
+
+        // Ưu tiên IMDb ID duy nhất.
+        if (imdbId) {
+            const matches =
+                animationByImdb.get(imdbId) || [];
+
+            if (matches.length === 1) {
+                matchedAnimation = matches[0];
+            }
+        }
+
+        // Fallback: tên chính xác + năm + loại phim.
+        if (!matchedAnimation) {
+            const year =
+                movinaIdentityGetYear(cinemeta);
+
+            const titles =
+                movinaIdentityTitles(cinemeta);
+
+            if (year) {
+                const candidates = new Map();
+
+                for (const title of titles) {
+                    const key =
+                        cinemetaType +
+                        "|" +
+                        title +
+                        "|" +
+                        year;
+
+                    const matches =
+                        animationByTitleYear.get(key) || [];
+
+                    for (const candidate of matches) {
+                        candidates.set(
+                            catalogKey(candidate),
+                            candidate
+                        );
+                    }
+                }
+
+                // Chỉ nhận khi có duy nhất một ứng viên.
+                if (candidates.size === 1) {
+                    matchedAnimation =
+                        candidates.values().next().value;
+                }
+            }
+        }
+
+        if (!matchedAnimation) {
+            continue;
+        }
+
+        // Giữ danh tính và poster PhimAPI.
+        // Lấy metadata mô tả và rating từ Cinemeta.
+        const enrichedAnimation = {
+            ...matchedAnimation,
+            ...cinemeta,
+
+            id: matchedAnimation.id,
+            _id: matchedAnimation._id,
+            slug: matchedAnimation.slug,
+
+            name: matchedAnimation.name,
+            origin_name: matchedAnimation.origin_name,
+            original_name: matchedAnimation.original_name,
+
+            year: matchedAnimation.year,
+            type: matchedAnimation.type,
+            category: matchedAnimation.category,
+
+            poster_url: matchedAnimation.poster_url,
+            thumb_url: matchedAnimation.thumb_url,
+            poster: matchedAnimation.poster,
+
+            __isAnimation: true,
+            __catalogType: type,
+
+            __movinaCinemetaSource: true,
+            __movinaCinemetaImdbId:
+                imdbId || getAnimationImdbId(matchedAnimation)
+        };
+
+        verifiedCinemetaItems.push(enrichedAnimation);
+    }
+
+    cinemetaAnimationItems =
+        verifiedCinemetaItems;
+
+    console.log(
+        "[ANIMATION CINEMETA VERIFIED]",
+        JSON.stringify({
+            genre: genreLabel,
+            type,
+            candidates: animationByTitleYear.size,
+            verified: cinemetaAnimationItems.length,
+            phimapiAnimation: items.length
+        })
+    );
+}
 
 // -----------------------------------------------------
 // CINEMETA + PHIMAPI MERGE
