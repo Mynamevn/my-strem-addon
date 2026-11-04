@@ -7513,6 +7513,201 @@ const MOVINA_PHIMAPI_MATCH_BY_IMDB = new Map();
 const MOVINA_PHIMAPI_MATCH_BY_IMDB_TTL =
     6 * 60 * 60 * 1000;
 
+/* ============================================================
+   [STREMIO-012.01C] [PROVIDERS: MOVINA]
+   SHARED ENRICHED METADATA CACHE
+
+   - Cache theo IMDb ID và PhimAPI slug.
+   - Dùng chung cho Trending, Daily, TVB, Animation, Classic.
+   - Không gọi mạng trong foreground.
+   - RAM-only, không phụ thuộc Redis.
+   ============================================================ */
+
+const MOVINA_ENRICHED_META_CACHE = new Map();
+
+const MOVINA_ENRICHED_META_TTL =
+    24 * 60 * 60 * 1000;
+
+const MOVINA_ENRICHED_META_MAX_ENTRIES = 6000;
+
+
+function movinaStoreEnrichedMeta(
+    type,
+    imdbId,
+    slug,
+    fields = {}
+) {
+    const safeType =
+        type === "series" ? "series" : "movie";
+
+    const normalizedImdbId =
+        String(imdbId || "")
+            .trim()
+            .toLowerCase();
+
+    const normalizedSlug =
+        String(slug || "").trim();
+
+    const keys = [];
+
+    if (/^tt\d+$/.test(normalizedImdbId)) {
+        keys.push(
+            "imdb:" +
+            safeType +
+            ":" +
+            normalizedImdbId
+        );
+    }
+
+    if (normalizedSlug) {
+        keys.push(
+            "slug:" +
+            safeType +
+            ":" +
+            normalizedSlug
+        );
+    }
+
+    if (!keys.length) {
+        return;
+    }
+
+    const now = Date.now();
+
+    let previous = {};
+
+    for (const key of keys) {
+        const cached =
+            MOVINA_ENRICHED_META_CACHE.get(key);
+
+        if (
+            cached &&
+            cached.expiresAt > now
+        ) {
+            previous = {
+                ...previous,
+                ...cached.value
+            };
+        }
+    }
+
+    const cleanFields = {};
+
+    for (const [key, value] of Object.entries(fields)) {
+        if (
+            value === undefined ||
+            value === null ||
+            value === ""
+        ) {
+            continue;
+        }
+
+        if (
+            Array.isArray(value) &&
+            value.length === 0
+        ) {
+            continue;
+        }
+
+        cleanFields[key] = value;
+    }
+
+    const value = {
+        ...previous,
+        ...cleanFields,
+        type: safeType,
+        imdbId: normalizedImdbId || previous.imdbId,
+        slug: normalizedSlug || previous.slug,
+        updatedAt: now
+    };
+
+    const expiresAt =
+        now + MOVINA_ENRICHED_META_TTL;
+
+    for (const key of keys) {
+        MOVINA_ENRICHED_META_CACHE.delete(key);
+
+        MOVINA_ENRICHED_META_CACHE.set(key, {
+            expiresAt,
+            value
+        });
+    }
+
+    while (
+        MOVINA_ENRICHED_META_CACHE.size >
+        MOVINA_ENRICHED_META_MAX_ENTRIES
+    ) {
+        const oldestKey =
+            MOVINA_ENRICHED_META_CACHE.keys().next().value;
+
+        MOVINA_ENRICHED_META_CACHE.delete(oldestKey);
+    }
+}
+
+
+function movinaGetEnrichedMeta(
+    type,
+    imdbId,
+    slug
+) {
+    const safeType =
+        type === "series" ? "series" : "movie";
+
+    const normalizedImdbId =
+        String(imdbId || "")
+            .trim()
+            .toLowerCase();
+
+    const normalizedSlug =
+        String(slug || "").trim();
+
+    const keys = [];
+
+    if (/^tt\d+$/.test(normalizedImdbId)) {
+        keys.push(
+            "imdb:" +
+            safeType +
+            ":" +
+            normalizedImdbId
+        );
+    }
+
+    if (normalizedSlug) {
+        keys.push(
+            "slug:" +
+            safeType +
+            ":" +
+            normalizedSlug
+        );
+    }
+
+    const now = Date.now();
+
+    for (const key of keys) {
+        const cached =
+            MOVINA_ENRICHED_META_CACHE.get(key);
+
+        if (!cached) {
+            continue;
+        }
+
+        if (cached.expiresAt <= now) {
+            MOVINA_ENRICHED_META_CACHE.delete(key);
+            continue;
+        }
+
+        // Đưa entry vừa sử dụng về cuối Map.
+        MOVINA_ENRICHED_META_CACHE.delete(key);
+        MOVINA_ENRICHED_META_CACHE.set(key, cached);
+
+        return {
+            ...cached.value
+        };
+    }
+
+    return null;
+}
+
 function movinaIdentityNormalizeTitle(value) {
     return String(value || "")
         .normalize("NFD")
@@ -8520,6 +8715,85 @@ function movinaEnrichMovieTrendingPreviews(
 
         const slug = String(item?.slug || "").trim();
 
+        const sourceImdbId = getImdbId(
+            item?.__movinaCinemetaImdbId,
+            item?.__movinaClassicImdbId,
+            item?.imdb?.id,
+            item?.imdb_id,
+            item?.imdbId,
+            meta?.id
+        );
+
+        const enrichedCache =
+            movinaGetEnrichedMeta(
+                type,
+                sourceImdbId,
+                slug
+            );
+
+        if (enrichedCache) {
+
+            // Mô tả PhimAPI tiếng Việt được ưu tiên
+            // hơn mô tả tiếng Anh của Cinemeta.
+            if (enrichedCache.description) {
+                meta.description =
+                    enrichedCache.description;
+            }
+
+            // Poster PhimAPI gốc được ưu tiên
+            // nếu đã có trong cache.
+            if (enrichedCache.poster) {
+                meta.poster =
+                    enrichedCache.poster;
+            }
+
+            if (enrichedCache.background) {
+                meta.background =
+                    enrichedCache.background;
+            }
+
+            if (
+                enrichedCache.genres?.length &&
+                !meta.genres?.length
+            ) {
+                meta.genres =
+                    enrichedCache.genres;
+            }
+
+            if (
+                enrichedCache.cast?.length &&
+                !meta.cast?.length
+            ) {
+                meta.cast =
+                    enrichedCache.cast;
+            }
+
+            if (
+                enrichedCache.director?.length &&
+                !meta.director?.length
+            ) {
+                meta.director =
+                    enrichedCache.director;
+            }
+
+            if (
+                enrichedCache.runtime &&
+                !meta.runtime
+            ) {
+                meta.runtime =
+                    enrichedCache.runtime;
+            }
+
+            // Không ghi đè rating hợp lệ đã có.
+            if (
+                !getValidRating(meta.imdbRating) &&
+                getValidRating(enrichedCache.imdbRating)
+            ) {
+                meta.imdbRating =
+                    enrichedCache.imdbRating;
+            }
+        }
+
         let preview = {};
 
         if (slug) {
@@ -9069,7 +9343,6 @@ const verifiedImdbId =
 // ============================================================
 
 if (
-    isCinemetaCatalog &&
     verifiedImdbId &&
     workingItem?.slug
 ) {
@@ -9155,6 +9428,69 @@ if (
         workingItem?.thumb_url ||
         workingItem?.thumb ||
         "";
+
+    // --------------------------------------------------------
+    // SHARED ENRICHED METADATA CACHE
+    // Lưu dữ liệu đã làm giàu theo IMDb ID và PhimAPI slug.
+    // Dùng lại ở lần mở catalog tiếp theo.
+    // --------------------------------------------------------
+
+    movinaStoreEnrichedMeta(
+        itemType,
+        normalizedImdbId,
+        matchedSlug,
+        {
+            description:
+                detail?.description ||
+                detail?.content ||
+                fullDetail?.content ||
+                fullDetail?.description ||
+                "",
+
+            genres:
+                detail?.genres ||
+                [],
+
+            cast:
+                detail?.cast ||
+                [],
+
+            director:
+                detail?.director ||
+                [],
+
+            runtime:
+                detail?.runtime ||
+                fullDetail?.time ||
+                fullDetail?.runtime ||
+                "",
+
+            imdbRating:
+                detailRating ||
+                sourceRating ||
+                null,
+
+            poster:
+                originalPoster,
+
+            background:
+                originalBackground
+        }
+    );
+
+    console.log(
+        "[MOVINA SHARED ENRICHED CACHE SAVED]",
+        JSON.stringify({
+            type: itemType,
+            imdbId: normalizedImdbId,
+            slug: matchedSlug,
+            description: Boolean(detail?.description),
+            poster: Boolean(originalPoster),
+            rating: Boolean(
+                detailRating || sourceRating
+            )
+        })
+    );
 
     // --------------------------------------------------------
     // 4. CẬP NHẬT CINEMETA GENRE CACHE
