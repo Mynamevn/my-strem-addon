@@ -6980,7 +6980,15 @@ if (!isLatest && !genreConfig) {
 
 // -----------------------------------------------------
 // CINEMETA FOREGROUND — ANIMATION MAPPED GENRES
+//
+// - Cinemeta là nguồn ưu tiên.
+// - Không bắt buộc phải đủ 50 kết quả.
+// - PhimAPI sẽ bổ sung phần còn thiếu.
+// - Không áp dụng cho Mới nhất.
+// - Đời thường và Tâm lý giữ mapping PhimAPI hiện tại.
 // -----------------------------------------------------
+
+let cinemetaAnimationItems = [];
 
 const cinemetaAnimationGenre =
     MOVINA_ANIMATION_CINEMETA_GENRE_MAP[
@@ -6996,7 +7004,7 @@ if (!isLatest && cinemetaAnimationGenre) {
             );
 
         if (Array.isArray(cinemetaItems)) {
-            const filteredCinemeta =
+            cinemetaAnimationItems =
                 catalogDedupe(
                     cinemetaItems.filter(item =>
                         isAnimation(item) &&
@@ -7011,52 +7019,21 @@ if (!isLatest && cinemetaAnimationGenre) {
                         )
                     )
                 );
-
-            if (
-                filteredCinemeta.length >=
-                CATALOG_TARGET
-            ) {
-                const result =
-                    movinaTrendingBalancedDecades(
-                        filteredCinemeta,
-                        "animation|cinemeta|" +
-                            type + "|" +
-                            normalizedGenre + "|" +
-                            day,
-                        CATALOG_TARGET
-                    );
-
-                console.log(
-                    "[ANIMATION CINEMETA FOREGROUND]",
-                    JSON.stringify({
-                        genre: genreLabel,
-                        cinemetaGenre:
-                            cinemetaAnimationGenre,
-                        type,
-                        candidates:
-                            filteredCinemeta.length,
-                        returned: result.length,
-                        source: "cinemeta"
-                    })
-                );
-
-                return result;
-            }
-
-            console.log(
-                "[ANIMATION CINEMETA FALLBACK]",
-                JSON.stringify({
-                    genre: genreLabel,
-                    cinemetaGenre:
-                        cinemetaAnimationGenre,
-                    type,
-                    candidates:
-                        filteredCinemeta.length,
-                    required: CATALOG_TARGET,
-                    fallback: "phimapi"
-                })
-            );
         }
+
+        console.log(
+            "[ANIMATION CINEMETA PRIMARY]",
+            JSON.stringify({
+                genre: genreLabel,
+                cinemetaGenre:
+                    cinemetaAnimationGenre,
+                type,
+                candidates:
+                    cinemetaAnimationItems.length,
+                target: CATALOG_TARGET
+            })
+        );
+
     } catch (error) {
         console.warn(
             "[ANIMATION CINEMETA ERROR]",
@@ -7168,7 +7145,108 @@ const requests = [];
         );
     }
 
+// -----------------------------------------------------
+// CINEMETA + PHIMAPI MERGE
+//
+// Thứ tự ưu tiên:
+// 1. Cinemeta JSON.
+// 2. PhimAPI bổ sung.
+//
+// Chống trùng theo IMDb ID.
+// Nếu thiếu IMDb ID, dùng tên + năm + loại phim.
+// -----------------------------------------------------
+
+if (
+    !isLatest &&
+    cinemetaAnimationItems.length > 0
+) {
+    const mergedItems = [];
+    const seenImdbIds = new Set();
+    const seenTitleKeys = new Set();
+
+    const addUniqueAnimationItem = item => {
+        const imdbId = String(
+            item?.__movinaCinemetaImdbId ||
+            item?.imdb?.id ||
+            item?.imdb_id ||
+            item?.imdbId ||
+            ""
+        ).trim().toLowerCase();
+
+        const itemType =
+            isSeriesItem(item)
+                ? "series"
+                : "movie";
+
+        const year =
+            itemYear(item) || 0;
+
+        const title = movinaIdentityNormalizeTitle(
+            item?.origin_name ||
+            item?.original_name ||
+            item?.name ||
+            ""
+        );
+
+        const imdbKey =
+            /^tt\d+$/.test(imdbId)
+                ? itemType + ":" + imdbId
+                : "";
+
+        const titleKey =
+            title && year
+                ? itemType + ":" + title + ":" + year
+                : "";
+
+        if (
+            (imdbKey && seenImdbIds.has(imdbKey)) ||
+            (titleKey && seenTitleKeys.has(titleKey))
+        ) {
+            return;
+        }
+
+        if (imdbKey) {
+            seenImdbIds.add(imdbKey);
+        }
+
+        if (titleKey) {
+            seenTitleKeys.add(titleKey);
+        }
+
+        mergedItems.push(item);
+    };
+
+    // Cinemeta được thêm trước để giữ ưu tiên.
+    for (const item of cinemetaAnimationItems) {
+        addUniqueAnimationItem(item);
+    }
+
+    // PhimAPI chỉ bổ sung những phim chưa có.
+    for (const item of items) {
+        addUniqueAnimationItem(item);
+    }
+
+    console.log(
+        "[ANIMATION CINEMETA + PHIMAPI MERGE]",
+        JSON.stringify({
+            genre: genreLabel,
+            type,
+            cinemeta:
+                cinemetaAnimationItems.length,
+            phimapi:
+                items.length,
+            merged:
+                mergedItems.length,
+            target:
+                CATALOG_TARGET
+        })
+    );
+
+    items = mergedItems;
+
+} else {
     items = catalogDedupe(items);
+}
 
     /*
      * Mới nhất:
@@ -8856,6 +8934,142 @@ function movinaEnrichMovieTrendingPreviews(
                 previewFieldsMerged++;
             }
         }
+
+// --------------------------------------------------------
+// TVB — CINEMETA JSON IDENTITY CACHE
+//
+// Chỉ đọc dữ liệu Cinemeta đã được xác minh trước đó.
+// Không gọi request mạng trong foreground.
+// Không thay tên, năm hoặc thứ tự phim TVB.
+// Mô tả PhimAPI tiếng Việt vẫn được ưu tiên.
+// --------------------------------------------------------
+
+if (
+    options.tvbFastMode === true &&
+    sourceImdbId
+) {
+    const identityCacheKey =
+        type + ":" + sourceImdbId;
+
+    const identityEntry =
+        MOVINA_IMDB_IDENTITY_CACHE.get(
+            identityCacheKey
+        );
+
+    if (
+        identityEntry &&
+        identityEntry.expiresAt > Date.now()
+    ) {
+        try {
+            const cinemetaMeta =
+                await identityEntry.promise;
+
+            if (
+                cinemetaMeta &&
+                String(cinemetaMeta.id || "")
+                    .trim()
+                    .toLowerCase() === sourceImdbId &&
+                movinaIdentityMatches(
+                    item,
+                    cinemetaMeta,
+                    type
+                )
+            ) {
+                // Chỉ dùng Cinemeta description
+                // khi PhimAPI chưa có mô tả.
+                if (
+                    !meta.description &&
+                    cinemetaMeta.description
+                ) {
+                    meta.description =
+                        cinemetaMeta.description;
+                }
+
+                // Giữ poster PhimAPI nếu đã có.
+                if (
+                    !meta.poster &&
+                    cinemetaMeta.poster
+                ) {
+                    meta.poster =
+                        cinemetaMeta.poster;
+                }
+
+                if (
+                    !meta.background &&
+                    cinemetaMeta.background
+                ) {
+                    meta.background =
+                        cinemetaMeta.background;
+                }
+
+                // Giữ IMDb rating hiện tại nếu hợp lệ.
+                if (
+                    !getValidRating(meta.imdbRating) &&
+                    getValidRating(
+                        cinemetaMeta.imdbRating
+                    )
+                ) {
+                    meta.imdbRating =
+                        getValidRating(
+                            cinemetaMeta.imdbRating
+                        );
+                }
+
+                if (
+                    !meta.genres?.length &&
+                    Array.isArray(cinemetaMeta.genres)
+                ) {
+                    meta.genres =
+                        cinemetaMeta.genres;
+                }
+
+                if (
+                    !meta.cast?.length &&
+                    Array.isArray(cinemetaMeta.cast)
+                ) {
+                    meta.cast =
+                        cinemetaMeta.cast;
+                }
+
+                if (
+                    !meta.director?.length &&
+                    Array.isArray(cinemetaMeta.director)
+                ) {
+                    meta.director =
+                        cinemetaMeta.director;
+                }
+
+                if (
+                    !meta.runtime &&
+                    cinemetaMeta.runtime
+                ) {
+                    meta.runtime =
+                        cinemetaMeta.runtime;
+                }
+
+                console.log(
+                    "[TVB CINEMETA CACHE MERGED]",
+                    JSON.stringify({
+                        title: item?.name,
+                        type,
+                        imdbId: sourceImdbId,
+                        description:
+                            Boolean(meta.description),
+                        rating:
+                            Boolean(meta.imdbRating)
+                    })
+                );
+            }
+
+        } catch (error) {
+            console.warn(
+                "[TVB CINEMETA CACHE ERROR]",
+                sourceImdbId,
+                error?.message || error
+            );
+        }
+    }
+}
 
         // Rating có sẵn từ IMDb ranked list luôn được ưu tiên.
         let rating = getValidRating(meta.imdbRating);
