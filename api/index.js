@@ -3518,6 +3518,14 @@ const MOVINA_CINEMETA_GENRE_MAP = {
 const MOVINA_ANIMATION_CINEMETA_GENRE_MAP = {
     "gia dinh thieu nhi": "Family",
     "hai huoc": "Comedy",
+
+    // Slice of Life không có genre riêng trong Cinemeta.
+    // Dùng Family + Comedy làm hai nguồn gần nhất.
+    "doi thuong": [
+        "Family",
+        "Comedy"
+    ],
+
     "the thao": "Sport",
     "bi an trinh tham": "Mystery",
     "hanh dong": "Action",
@@ -3525,6 +3533,10 @@ const MOVINA_ANIMATION_CINEMETA_GENRE_MAP = {
     "ky ao": "Fantasy",
     "khoa hoc vien tuong": "Sci-Fi",
     "kinh di": "Horror",
+
+    // Tâm lý: dùng Drama.
+    "tam ly": "Drama",
+
     "tinh cam": "Romance",
     "lich su": "History"
 };
@@ -6856,7 +6868,9 @@ const MOVINA_ANIMATION_GENRES = {
         aliases: [
             "doi thuong",
             "slice of life",
-            "daily life"
+            "daily life",
+            "family",
+            "comedy"
         ]
     },
     "the thao": {
@@ -6906,7 +6920,8 @@ const MOVINA_ANIMATION_GENRES = {
         aliases: [
             "tam ly",
             "chinh kich",
-            "psychological"
+            "psychological",
+            "drama"
         ]
     },
     "tinh cam": {
@@ -6924,12 +6939,48 @@ const MOVINA_ANIMATION_GENRES = {
     }
 };
 
-function movinaAnimationGenreMatches(item, genreConfig) {
+function movinaAnimationGenreMatches(
+    item,
+    genreConfig,
+    normalizedGenre = ""
+) {
     const categories = catalogCategoryNames(item);
+
+    // Cinemeta có thể trả về item nhưng thiếu một số
+    // genre trong metadata. Dùng genre nguồn của catalog
+    // để xác nhận item đã đến từ đúng truy vấn.
+    const mappedGenres =
+        MOVINA_ANIMATION_CINEMETA_GENRE_MAP[
+            normalizedGenre
+        ];
+
+    const allowedCinemetaGenres =
+        Array.isArray(mappedGenres)
+            ? mappedGenres
+            : mappedGenres
+                ? [mappedGenres]
+                : [];
+
+    const sourceCinemetaGenre =
+        catalogNormalize(
+            item?.__movinaCinemetaGenre || ""
+        );
+
+    const matchedCinemetaSource =
+        item?.__movinaCinemetaSource === true &&
+        allowedCinemetaGenres.some(genre =>
+            catalogNormalize(genre) ===
+            sourceCinemetaGenre
+        );
+
+    if (matchedCinemetaSource) {
+        return true;
+    }
 
     return categories.some(category =>
         genreConfig.aliases.some(alias => {
-            const normalizedAlias = catalogNormalize(alias);
+            const normalizedAlias =
+                catalogNormalize(alias);
 
             return (
                 category === normalizedAlias ||
@@ -6990,46 +7041,166 @@ if (!isLatest && !genreConfig) {
 
 let cinemetaAnimationItems = [];
 
-const cinemetaAnimationGenre =
+const mappedCinemetaGenres =
     MOVINA_ANIMATION_CINEMETA_GENRE_MAP[
         normalizedGenre
     ];
 
-if (!isLatest && cinemetaAnimationGenre) {
+const cinemetaAnimationGenres =
+    Array.isArray(mappedCinemetaGenres)
+        ? mappedCinemetaGenres
+        : mappedCinemetaGenres
+            ? [mappedCinemetaGenres]
+            : [];
+
+if (
+    !isLatest &&
+    cinemetaAnimationGenres.length > 0
+) {
     try {
-        const cinemetaItems =
-            await movinaFetchCinemetaGenreCatalog(
-                type,
-                cinemetaAnimationGenre
+        const cinemetaGroups =
+            await Promise.all(
+                cinemetaAnimationGenres.map(
+                    cinemetaGenre =>
+                        movinaFetchCinemetaGenreCatalog(
+                            type,
+                            cinemetaGenre
+                        )
+                )
             );
 
-        if (Array.isArray(cinemetaItems)) {
-            cinemetaAnimationItems =
-                catalogDedupe(
-                    cinemetaItems.filter(item =>
-                        isAnimation(item) &&
-                        (
-                            type === "series"
-                                ? isSeriesItem(item)
-                                : !isSeriesItem(item)
-                        ) &&
-                        movinaAnimationGenreMatches(
-                            item,
-                            genreConfig
-                        )
+        const cinemetaByImdb = new Map();
+
+        for (
+            let groupIndex = 0;
+            groupIndex < cinemetaGroups.length;
+            groupIndex++
+        ) {
+            const sourceGenre =
+                cinemetaAnimationGenres[groupIndex];
+
+            const group =
+                Array.isArray(cinemetaGroups[groupIndex])
+                    ? cinemetaGroups[groupIndex]
+                    : [];
+
+            for (const rawItem of group) {
+                const imdbId = String(
+                    rawItem?.__movinaCinemetaImdbId ||
+                    rawItem?.imdb?.id ||
+                    rawItem?.id ||
+                    ""
+                ).trim().toLowerCase();
+
+                if (!/^tt\d+$/.test(imdbId)) {
+                    continue;
+                }
+
+                const item = {
+                    ...rawItem,
+                    __movinaCinemetaSource: true,
+                    __movinaCinemetaImdbId: imdbId,
+                    __movinaCinemetaGenre: sourceGenre
+                };
+
+                const previous =
+                    cinemetaByImdb.get(imdbId);
+
+                if (!previous) {
+                    cinemetaByImdb.set(
+                        imdbId,
+                        item
+                    );
+                    continue;
+                }
+
+                // Gộp genres từ các truy vấn Family / Comedy.
+                const categoryMap = new Map();
+
+                for (const category of [
+                    ...(previous.category || []),
+                    ...(item.category || [])
+                ]) {
+                    const name =
+                        typeof category === "string"
+                            ? category
+                            : category?.name || "";
+
+                    const key =
+                        catalogNormalize(name);
+
+                    if (key && !categoryMap.has(key)) {
+                        categoryMap.set(key, {
+                            name
+                        });
+                    }
+                }
+
+                cinemetaByImdb.set(
+                    imdbId,
+                    {
+                        ...previous,
+                        ...item,
+
+                        category:
+                            Array.from(categoryMap.values()),
+
+                        // Không làm mất mô tả/rating đã có.
+                        description:
+                            item.description ||
+                            previous.description ||
+                            "",
+
+                        content:
+                            item.content ||
+                            previous.content ||
+                            "",
+
+                        imdbRating:
+                            item.imdbRating ??
+                            previous.imdbRating ??
+                            null
+                    }
+                );
+            }
+        }
+
+        cinemetaAnimationItems =
+            Array.from(cinemetaByImdb.values())
+                .filter(item =>
+                    isAnimation(item) &&
+                    (
+                        type === "series"
+                            ? isSeriesItem(item)
+                            : !isSeriesItem(item)
+                    ) &&
+                    movinaAnimationGenreMatches(
+                        item,
+                        genreConfig,
+                        normalizedGenre
                     )
                 );
-        }
 
         console.log(
             "[ANIMATION CINEMETA PRIMARY]",
             JSON.stringify({
                 genre: genreLabel,
-                cinemetaGenre:
-                    cinemetaAnimationGenre,
+                cinemetaGenres:
+                    cinemetaAnimationGenres,
                 type,
                 candidates:
                     cinemetaAnimationItems.length,
+                withDescription:
+                    cinemetaAnimationItems.filter(
+                        item => Boolean(
+                            item.description ||
+                            item.content
+                        )
+                    ).length,
+                withRating:
+                    cinemetaAnimationItems.filter(
+                        item => Number(item.imdbRating) > 0
+                    ).length,
                 target: CATALOG_TARGET
             })
         );
@@ -7141,7 +7312,11 @@ const requests = [];
 
     if (!isLatest) {
         items = items.filter(item =>
-            movinaAnimationGenreMatches(item, genreConfig)
+            movinaAnimationGenreMatches(
+                item,
+                genreConfig,
+                normalizedGenre
+            )
         );
     }
 
