@@ -8432,8 +8432,8 @@ async function movinaVerifyImdbIdentity(
                 : ["movie", "film"];
 
         const typeMatched =
-            !candidateType ||
-            allowedTypes.includes(candidateType);
+    Boolean(candidateType) &&
+    allowedTypes.includes(candidateType);
 
         const sourceYear =
             movinaIdentityGetYear(source);
@@ -8442,8 +8442,9 @@ async function movinaVerifyImdbIdentity(
             movinaIdentityGetYear(candidate);
 
         const yearMatched =
-            !sourceYear ||
-            candidateYear === sourceYear;
+    sourceYear > 0 &&
+    candidateYear > 0 &&
+    candidateYear === sourceYear;
 
         identityMatched =
             typeMatched &&
@@ -14159,6 +14160,7 @@ if (!imdbId) {
 // ============================================================
 
 let imdbResolvedByKKPhim = false;
+let imdbResolvedByTMDB = false;
 
 if (
     !imdbId &&
@@ -14441,6 +14443,89 @@ if (
     }
 }
 
+// ============================================================
+// B.6. TMDB IMDb IDENTITY FALLBACK
+// Chỉ chạy khi Cinemeta và KKPhim đều thất bại.
+// ============================================================
+
+if (
+    !imdbId &&
+    targetYear > 0
+) {
+    console.log(
+        "[META TMDB IMDb FALLBACK START]",
+        JSON.stringify({
+            title: movieName,
+            year: targetYear,
+            type: metaType,
+            hasApiKey: Boolean(
+                String(process.env.TMDB_API_KEY || "").trim()
+            )
+        })
+    );
+
+    const tmdbResolvedId =
+        await movinaResolveAndVerifyImdb(
+            {
+                ...item,
+                ...detail,
+
+                name:
+                    detail?.name ||
+                    item?.name ||
+                    movieName,
+
+                origin_name:
+                    detail?.origin_name ||
+                    item?.origin_name ||
+                    "",
+
+                year: targetYear,
+
+                slug:
+                    detail?.slug ||
+                    item?.slug ||
+                    slug
+            },
+            detail,
+            metaType
+        );
+
+    if (
+        /^tt\d+$/i.test(
+            String(tmdbResolvedId || "")
+        )
+    ) {
+        imdbId = String(tmdbResolvedId)
+            .trim()
+            .toLowerCase();
+
+        metaId = imdbId;
+
+        imdbResolvedByTMDB = true;
+
+        console.log(
+            "[META TMDB IMDb IDENTITY PASS]",
+            JSON.stringify({
+                title: movieName,
+                imdbId,
+                year: targetYear,
+                type: metaType
+            })
+        );
+
+    } else {
+        console.log(
+            "[META TMDB IMDb IDENTITY FAIL]",
+            JSON.stringify({
+                title: movieName,
+                year: targetYear,
+                type: metaType,
+                keepInternalId: true
+            })
+        );
+    }
+}
 
 // ============================================================
 // C. FINAL ID
@@ -14462,8 +14547,9 @@ console.log(
         finalId: metaId,
         imdbId: imdbId || null,
         imdbResolvedByCinemeta,
-        imdbResolvedByKKPhim,
-        type: metaType
+imdbResolvedByKKPhim,
+imdbResolvedByTMDB,
+type: metaType
     })
 );
 
@@ -14514,13 +14600,17 @@ if (
             imdbId: normalizedImdbId,
             type: metaType,
             slug: matchedPhimApiItem.slug,
-            source: imdbResolvedByKKPhim
-                ? "KKPHIM"
-                : (
-                    imdbResolvedByCinemeta
-                        ? "CINEMETA"
-                        : "PHIMAPI"
-                )
+            source: imdbResolvedByTMDB
+    ? "TMDB"
+    : (
+        imdbResolvedByKKPhim
+            ? "KKPHIM"
+            : (
+                imdbResolvedByCinemeta
+                    ? "CINEMETA"
+                    : "PHIMAPI"
+            )
+    )
         })
     );
 }
