@@ -9544,7 +9544,7 @@ const castNames = [
                 row
             );
 
-            console.log(
+                        console.log(
                 "[MOVINA TMDB PEOPLE MATCH]",
                 JSON.stringify({
                     title:
@@ -9563,11 +9563,12 @@ const castNames = [
             );
         }
 
+    } // Đóng if (allPersonIds.length >= 2)
+
 
 // --------------------------------------------------------
 // 3.4. SEARCH DIAGNOSTICS
 // --------------------------------------------------------
-
 
 console.log(
     "[MOVINA TMDB SEARCH SUMMARY]",
