@@ -26201,6 +26201,430 @@ async function asupnimerFetchPost(postUrl) {
     return result;
 }
 
+
+/* ============================================================
+   [PRV-ASUPNIMER.05] [PROVIDERS: ASUPNIMER]
+   HTML CLEANING AND POST CONTENT EXTRACTION
+   ============================================================ */
+
+function asupnimerDecodeHtml(value = "") {
+    const html = String(value || "");
+
+    try {
+        return cheerio.load(
+            `<div>${html}</div>`
+        ).text()
+            .replace(/\u00a0/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    } catch (_) {
+        return html
+            .replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/&nbsp;/gi, " ")
+            .replace(/&amp;/gi, "&")
+            .replace(/&quot;/gi, '"')
+            .replace(/&#39;/gi, "'")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+}
+
+function asupnimerExtractDescription(html = "") {
+    const source = String(html || "");
+
+    const patterns = [
+        /<noidung\b[^>]*>([\s\S]*?)<\/noidung>/i,
+        /<div\b[^>]*id=["']?noidung["']?[^>]*>([\s\S]*?)<\/div>/i,
+        /<div\b[^>]*id=["']?summary\d+["']?[^>]*>([\s\S]*?)<\/div>/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = source.match(pattern);
+
+        if (match?.[1]) {
+            const description =
+                asupnimerDecodeHtml(
+                    match[1]
+                        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+                        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+                );
+
+            if (description.length >= 20) {
+                return description;
+            }
+        }
+    }
+
+    return "";
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.06] [PROVIDERS: ASUPNIMER]
+   TITLE, YEAR AND POSTER EXTRACTION
+   ============================================================ */
+
+function asupnimerExtractPostMetadata(
+    html = "",
+    post = {}
+) {
+    const source = String(html || "");
+
+    const decodeAttribute = value =>
+        asupnimerDecodeHtml(value)
+            .replace(/^["']|["']$/g, "")
+            .trim();
+
+    let title =
+        String(post?.title || "").trim();
+
+    if (!title) {
+        const rawTitlePatterns = [
+            /var\s+a\s*=\s*&quot;([^&]+)&quot;/i,
+            /var\s+a\s*=\s*"([^"]+)"/i,
+            /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
+            /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i,
+            /<title[^>]*>([^<]*)<\/title>/i
+        ];
+
+        for (const pattern of rawTitlePatterns) {
+            const match = source.match(pattern);
+
+            if (match?.[1]) {
+                title = decodeAttribute(match[1]);
+                if (title) break;
+            }
+        }
+    }
+
+    const thumbnailTag =
+        source.match(/<img\b[^>]*post-thumbnail[^>]*>/i)?.[0] ||
+        "";
+
+    const thumbnail =
+        thumbnailTag.match(/\bsrc=["']([^"']+)["']/i)?.[1] ||
+        thumbnailTag.match(/\bdata-src=["']([^"']+)["']/i)?.[1] ||
+        "";
+
+    const poster =
+        post?.poster ||
+        asupnimerAbsoluteUrl(
+            thumbnail,
+            post?.url || asupnimerActiveDomain
+        );
+
+    const yearMatch =
+        String(title || source).match(
+            /\((19\d{2}|20\d{2})\)/
+        );
+
+    const publishedYear =
+        String(post?.published || "").match(
+            /\b(19\d{2}|20\d{2})\b/
+        );
+
+    const year = yearMatch
+        ? Number(yearMatch[1])
+        : publishedYear
+            ? Number(publishedYear[1])
+            : 0;
+
+    return {
+        title,
+        year,
+        poster: poster || null
+    };
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.07] [PROVIDERS: ASUPNIMER]
+   EPISODE SOURCE PARSING
+   ============================================================ */
+
+function asupnimerExtractEpisodeBlock(html = "") {
+    const source = String(html || "");
+
+    const bracketStart = source.indexOf("[id]");
+    const bracketEnd = source.lastIndexOf("[/id]");
+
+    if (
+        bracketStart >= 0 &&
+        bracketEnd > bracketStart
+    ) {
+        return source.slice(
+            bracketStart + 4,
+            bracketEnd
+        );
+    }
+
+    const tagStart = source.indexOf("<id>");
+    const tagEnd = source.lastIndexOf("</id>");
+
+    if (
+        tagStart >= 0 &&
+        tagEnd > tagStart
+    ) {
+        return source.slice(
+            tagStart + 4,
+            tagEnd
+        );
+    }
+
+    return source;
+}
+
+function asupnimerParseAudioField(raw = "") {
+    const field = String(raw || "").trim();
+
+    if (!field) return null;
+
+    const separator = field.indexOf("=");
+
+    if (separator < 0) return null;
+
+    const head = field
+        .slice(0, separator)
+        .trim();
+
+    if (!/^ad?([-:\d.]*)$/i.test(head)) {
+        return null;
+    }
+
+    let url = field
+        .slice(separator + 1)
+        .trim();
+
+    if (!/^https?:\/\//i.test(url)) {
+        return null;
+    }
+
+    if (url.endsWith(",m")) {
+        url = url.slice(0, -2).trim();
+    }
+
+    url = url.replace(/,\d{1,3}$/, "").trim();
+
+    return /^https?:\/\//i.test(url)
+        ? url
+        : null;
+}
+
+function asupnimerIsPlayableUrl(url = "") {
+    const value = String(url || "").toLowerCase();
+
+    return (
+        value.includes("youtube.com/watch") ||
+        value.includes("youtu.be/") ||
+        value.includes("loadvid.com/videos/play/") ||
+        value.includes("playhydrax.com") ||
+        value.includes(".m3u8") ||
+        value.includes(".mp4")
+    );
+}
+
+function asupnimerParseEpisodeSources(html = "") {
+    const episodeBlock =
+        asupnimerExtractEpisodeBlock(html);
+
+    const lines = String(episodeBlock || "")
+        .split("|");
+
+    const episodesByNumber = new Map();
+
+    let movieSource = null;
+
+    for (const rawLine of lines) {
+        const parts = String(rawLine || "")
+            .split(";")
+            .map(value => value.trim());
+
+        if (parts.length < 2) continue;
+
+        const label = parts[0];
+
+        if (
+            !label ||
+            /trailer/i.test(label)
+        ) {
+            continue;
+        }
+
+        const rawVideo = parts[1] || "";
+
+        const videoMatch =
+            rawVideo.match(/https?:\/\/\S+/i);
+
+        if (!videoMatch) continue;
+
+        const video = videoMatch[0]
+            .replace(/,\d{1,3}$/, "")
+            .replace(/[)"'\]]+$/, "")
+            .trim();
+
+        if (!asupnimerIsPlayableUrl(video)) {
+            continue;
+        }
+
+        let audio = null;
+
+        for (let i = 2; i < parts.length; i++) {
+            const candidate =
+                asupnimerParseAudioField(parts[i]);
+
+            if (candidate) {
+                audio = candidate;
+            }
+        }
+
+        const source = {
+            video,
+            audio
+        };
+
+        const numberMatch =
+            label.match(/^(\d+)/);
+
+        if (numberMatch) {
+            const episodeNumber =
+                Number(numberMatch[1]);
+
+            if (
+                Number.isInteger(episodeNumber) &&
+                episodeNumber > 0 &&
+                !episodesByNumber.has(episodeNumber)
+            ) {
+                episodesByNumber.set(
+                    episodeNumber,
+                    {
+                        number: episodeNumber,
+                        label,
+                        video,
+                        audio
+                    }
+                );
+            }
+        } else if (!movieSource) {
+            movieSource = source;
+        }
+    }
+
+    return {
+        movieSource,
+        episodes: [...episodesByNumber.values()]
+            .sort((a, b) => a.number - b.number)
+    };
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.08] [PROVIDERS: ASUPNIMER]
+   NORMALIZED POST DETAIL
+   ============================================================ */
+
+async function asupnimerBuildPostDetail(post) {
+    if (!post?.url) return null;
+
+    const detail =
+        await asupnimerFetchPost(post.url);
+
+    if (!detail) return null;
+
+    const metadata =
+        asupnimerExtractPostMetadata(
+            detail.content,
+            {
+                ...post,
+                ...detail
+            }
+        );
+
+    if (!metadata.title) {
+        console.log(
+            "[ASUPNIMER] DETAIL SKIP: TITLE NOT FOUND",
+            post.url
+        );
+
+        return null;
+    }
+
+    const parsedSources =
+        asupnimerParseEpisodeSources(
+            detail.content
+        );
+
+    const description =
+        asupnimerExtractDescription(
+            detail.content
+        );
+
+    const categories =
+        Array.isArray(detail.categories)
+            ? detail.categories
+            : Array.isArray(post.categories)
+                ? post.categories
+                : [];
+
+    const categoryText =
+        categories.join(" ").toLowerCase();
+
+    const titleText =
+        metadata.title.toLowerCase();
+
+    const isMovieLabel =
+        /\bmovie\b/i.test(metadata.title) ||
+        /\banime-sp\b/i.test(categoryText);
+
+    const isSeriesLabel =
+        /\banime-seri\b/i.test(categoryText);
+
+    const hasNumberedEpisodes =
+        parsedSources.episodes.length > 0;
+
+    const isMovie =
+        isMovieLabel &&
+        !hasNumberedEpisodes;
+
+    const type = isMovie
+        ? "movie"
+        : isSeriesLabel || hasNumberedEpisodes
+            ? "series"
+            : parsedSources.movieSource
+                ? "movie"
+                : "unknown";
+
+    const result = {
+        title: metadata.title,
+        year: metadata.year,
+        poster: metadata.poster,
+        description,
+        categories,
+        url: detail.url || post.url,
+        type,
+        movieSource: parsedSources.movieSource,
+        episodes: parsedSources.episodes,
+        episodeCount: parsedSources.episodes.length
+    };
+
+    console.log(
+        "[ASUPNIMER] DETAIL PARSED:",
+        JSON.stringify({
+            title: result.title,
+            year: result.year,
+            type: result.type,
+            categories: result.categories,
+            episodeCount: result.episodeCount,
+            hasMovieSource: Boolean(result.movieSource),
+            hasDescription: Boolean(result.description),
+            hasPoster: Boolean(result.poster)
+        })
+    );
+
+    return result;
+}
+
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
 // ============================================================
