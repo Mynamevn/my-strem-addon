@@ -208,36 +208,58 @@ const manifest = {
                 {
                     name: "genre",
                     isRequired: false,
-                    options: [
-                        "Mới nhất - HH lẻ",
-                        "Mới nhất - HH bộ",
-                        "Gia đình – Thiếu nhi - HH lẻ",
-                        "Gia đình – Thiếu nhi - HH bộ",
-                        "Hài hước - HH lẻ",
-                        "Hài hước - HH bộ",
-                        "Đời thường - HH lẻ",
-                        "Đời thường - HH bộ",
-                        "Thể thao - HH lẻ",
-                        "Thể thao - HH bộ",
-                        "Bí ẩn – Trinh thám - HH lẻ",
-                        "Bí ẩn – Trinh thám - HH bộ",
-                        "Hành động - HH lẻ",
-                        "Hành động - HH bộ",
-                        "Phiêu lưu - HH lẻ",
-                        "Phiêu lưu - HH bộ",
-                        "Kỳ ảo - HH lẻ",
-                        "Kỳ ảo - HH bộ",
-                        "Khoa học viễn tưởng - HH lẻ",
-                        "Khoa học viễn tưởng - HH bộ",
-                        "Kinh dị - HH lẻ",
-                        "Kinh dị - HH bộ",
-                        "Tâm lý - HH lẻ",
-                        "Tâm lý - HH bộ",
-                        "Tình cảm - HH lẻ",
-                        "Tình cảm - HH bộ",
-                        "Lịch sử - HH lẻ",
-                        "Lịch sử - HH bộ"
-                    ],
+options: [
+    "Mới nhất - HH lẻ",
+    "Mới nhất - HH bộ",
+
+    "Gia đình – Thiếu nhi - HH lẻ",
+    "Gia đình – Thiếu nhi - HH bộ",
+
+    "Hài hước - HH lẻ",
+    "Hài hước - HH bộ",
+
+    "Đời thường - HH lẻ",
+    "Đời thường - HH bộ",
+
+    "Thể thao - HH lẻ",
+    "Thể thao - HH bộ",
+
+    "Bí ẩn – Trinh thám - HH lẻ",
+    "Bí ẩn – Trinh thám - HH bộ",
+
+    "Hành động - HH lẻ",
+    "Hành động - HH bộ",
+
+    "Phiêu lưu - HH lẻ",
+    "Phiêu lưu - HH bộ",
+
+    "Kỳ ảo - HH lẻ",
+    "Kỳ ảo - HH bộ",
+
+    "Khoa học viễn tưởng - HH lẻ",
+    "Khoa học viễn tưởng - HH bộ",
+
+    "Kinh dị - HH lẻ",
+    "Kinh dị - HH bộ",
+
+    "Tâm lý - HH lẻ",
+    "Tâm lý - HH bộ",
+
+    "Tình cảm - HH lẻ",
+    "Tình cảm - HH bộ",
+
+    "Lịch sử - HH lẻ",
+    "Lịch sử - HH bộ",
+
+    "Chiến tranh - HH lẻ",
+    "Chiến tranh - HH bộ",
+
+    "Học đường - HH lẻ",
+    "Học đường - HH bộ",
+
+    "Âm nhạc - HH lẻ",
+    "Âm nhạc - HH bộ"
+],
                     optionsLimit: 1
                 },
                 {
@@ -3515,6 +3537,7 @@ const MOVINA_CINEMETA_GENRE_MAP = {
 
 
 // [STREMIO-012.06.01] ANIMATION CINEMETA GENRE MAP
+
 const MOVINA_ANIMATION_CINEMETA_GENRE_MAP = {
     "gia dinh thieu nhi": "Family",
     "hai huoc": "Comedy",
@@ -3538,7 +3561,15 @@ const MOVINA_ANIMATION_CINEMETA_GENRE_MAP = {
     "tam ly": "Drama",
 
     "tinh cam": "Romance",
-    "lich su": "History"
+    "lich su": "History",
+
+    "chien tranh": "War",
+    "hoc duong": "School",
+
+    "am nhac": [
+        "Music",
+        "Musical"
+    ]
 };
 
 const MOVINA_CINEMETA_GENRE_CACHE = new Map();
@@ -6859,10 +6890,12 @@ const MOVINA_ANIMATION_GENRES = {
             "children"
         ]
     },
+
     "hai huoc": {
         slugs: ["hai-huoc"],
         aliases: ["hai", "hai huoc", "comedy"]
     },
+
     "doi thuong": {
         slugs: ["doi-thuong"],
         aliases: [
@@ -6873,10 +6906,12 @@ const MOVINA_ANIMATION_GENRES = {
             "comedy"
         ]
     },
+
     "the thao": {
         slugs: ["the-thao"],
         aliases: ["the thao", "sport", "sports"]
     },
+
     "bi an trinh tham": {
         slugs: ["bi-an", "trinh-tham"],
         aliases: [
@@ -6886,18 +6921,22 @@ const MOVINA_ANIMATION_GENRES = {
             "detective"
         ]
     },
+
     "hanh dong": {
         slugs: ["hanh-dong"],
         aliases: ["hanh dong", "action"]
     },
+
     "phieu luu": {
         slugs: ["phieu-luu"],
         aliases: ["phieu luu", "adventure"]
     },
+
     "ky ao": {
         slugs: ["gia-tuong", "fantasy"],
         aliases: ["gia tuong", "ky ao", "fantasy"]
     },
+
     "khoa hoc vien tuong": {
         slugs: [
             "khoa-hoc",
@@ -6911,10 +6950,12 @@ const MOVINA_ANIMATION_GENRES = {
             "sci fi"
         ]
     },
+
     "kinh di": {
         slugs: ["kinh-di"],
         aliases: ["kinh di", "horror"]
     },
+
     "tam ly": {
         slugs: ["tam-ly", "chinh-kich"],
         aliases: [
@@ -6924,6 +6965,7 @@ const MOVINA_ANIMATION_GENRES = {
             "drama"
         ]
     },
+
     "tinh cam": {
         slugs: ["tinh-cam"],
         aliases: [
@@ -6933,9 +6975,35 @@ const MOVINA_ANIMATION_GENRES = {
             "romantic"
         ]
     },
+
     "lich su": {
         slugs: ["lich-su"],
         aliases: ["lich su", "history"]
+    },
+
+    "chien tranh": {
+        slugs: ["chien-tranh"],
+        aliases: [
+            "chien tranh",
+            "war"
+        ]
+    },
+
+    "hoc duong": {
+        slugs: ["hoc-duong"],
+        aliases: [
+            "hoc duong",
+            "school"
+        ]
+    },
+
+    "am nhac": {
+        slugs: ["am-nhac"],
+        aliases: [
+            "am nhac",
+            "music",
+            "musical"
+        ]
     }
 };
 
