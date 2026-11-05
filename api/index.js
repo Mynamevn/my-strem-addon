@@ -78,6 +78,17 @@ const manifest = {
         // VOD
         // =====================================================
 
+{
+            type: "MOVINA",
+            id: "pa_daily",
+            name: "⭐ Phim trong ngày",
+            extra: [
+                {
+                    name: "search",
+                    isRequired: false
+                }
+            ]
+        },
         
         {
             type: "MOVINA",
@@ -188,19 +199,7 @@ const manifest = {
             ]
         },
 
-        {
-            type: "MOVINA",
-            id: "pa_daily",
-            name: "⭐ Phim trong ngày",
-            extra: [
-                {
-                    name: "search",
-                    isRequired: false
-                }
-            ]
-        },
-
-                {
+            {
             type: "MOVINA",
             id: "pa_animation_new",
             name: "🐼 Hoạt hình - New",
