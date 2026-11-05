@@ -26926,6 +26926,347 @@ async function asupnimerResolveVideoSource(sourceUrl) {
     return null;
 }
 
+/* ============================================================
+   [PRV-ASUPNIMER.12] [PROVIDERS: ASUPNIMER]
+   HYDRAX DATA DECODER
+   ============================================================ */
+
+function asupnimerHydraxMd5Hex(data) {
+    return crypto
+        .createHash("md5")
+        .update(data)
+        .digest("hex");
+}
+
+function asupnimerHydraxAesCtrDecrypt(
+    data,
+    key,
+    iv
+) {
+    const decipher = crypto.createDecipheriv(
+        "aes-256-ctr",
+        Buffer.from(key),
+        Buffer.from(iv)
+    );
+
+    return Buffer.concat([
+        decipher.update(Buffer.from(data)),
+        decipher.final()
+    ]);
+}
+
+function asupnimerHydraxDecodeDatas(pageHtml = "") {
+    try {
+        const html = String(pageHtml || "");
+
+        const match = html.match(
+            /datas\s*=\s*"([^"]+)"/i
+        );
+
+        if (!match?.[1]) {
+            return null;
+        }
+
+        const rawBuffer = Buffer.from(
+            match[1],
+            "base64"
+        );
+
+        const rawJson = rawBuffer.toString(
+            "latin1"
+        );
+
+        const root = JSON.parse(rawJson);
+
+        const md5Id = String(
+            root?.md5_id ?? ""
+        );
+
+        const userId = String(
+            root?.user_id ?? ""
+        );
+
+        const slug = String(
+            root?.slug ?? ""
+        );
+
+        const media = String(
+            root?.media ?? ""
+        );
+
+        if (
+            !/^\d+$/.test(md5Id) ||
+            !/^\d+$/.test(userId) ||
+            !slug ||
+            !media
+        ) {
+            return null;
+        }
+
+        const keyHex =
+            asupnimerHydraxMd5Hex(
+                Buffer.from(
+                    `${userId}:${slug}:${md5Id}`,
+                    "utf8"
+                )
+            );
+
+        const key = Buffer.from(
+            keyHex,
+            "ascii"
+        );
+
+        const iv = key.subarray(0, 16);
+
+        const mediaBytes = Buffer.from(
+            media,
+            "latin1"
+        );
+
+        const decrypted =
+            asupnimerHydraxAesCtrDecrypt(
+                mediaBytes,
+                key,
+                iv
+            );
+
+        const mediaJson = JSON.parse(
+            decrypted.toString("utf8")
+        );
+
+        const sources =
+            mediaJson?.mp4?.sources;
+
+        const domains =
+            mediaJson?.mp4?.domains;
+
+        if (
+            !Array.isArray(sources) ||
+            !sources.length ||
+            !Array.isArray(domains) ||
+            !domains.length
+        ) {
+            return null;
+        }
+
+        const firstDomain = String(
+            domains[0] || ""
+        ).trim();
+
+        if (!firstDomain.includes(".")) {
+            return null;
+        }
+
+        const suffix =
+            firstDomain.substring(
+                firstDomain.indexOf(".") + 1
+            );
+
+        if (!suffix) {
+            return null;
+        }
+
+        return {
+            md5Id,
+            userId,
+            slug,
+            mediaJson,
+            sources,
+            domains,
+            suffix
+        };
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] DATA DECODE ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.13] [PROVIDERS: ASUPNIMER]
+   HYDRAX SOURCE SELECTION
+   ============================================================ */
+
+function asupnimerHydraxSelectSource(
+    decoded
+) {
+    try {
+        const sources =
+            decoded?.sources;
+
+        if (
+            !Array.isArray(sources) ||
+            !sources.length
+        ) {
+            return null;
+        }
+
+        const preferredQualities = [
+            "1080p",
+            "720p",
+            "480p"
+        ];
+
+        let selected = null;
+
+        for (const quality of preferredQualities) {
+
+            selected = sources.find(source =>
+                String(source?.label || "") === quality &&
+                String(source?.codec || "") === "h264"
+            );
+
+            if (selected) break;
+
+            selected = sources.find(source =>
+                String(source?.label || "") === quality
+            );
+
+            if (selected) break;
+        }
+
+        if (!selected) {
+            selected = sources[0];
+        }
+
+        const size = String(
+            selected?.size ?? ""
+        );
+
+        const resId = String(
+            selected?.res_id ?? ""
+        );
+
+        const sub = String(
+            selected?.sub ?? ""
+        );
+
+        if (
+            !/^\d+$/.test(size) ||
+            !/^\d+$/.test(resId) ||
+            !sub
+        ) {
+            return null;
+        }
+
+        return {
+            size,
+            resId,
+            sub,
+            label: String(
+                selected?.label || ""
+            ),
+            codec: String(
+                selected?.codec || ""
+            ),
+            suffix: decoded.suffix,
+            md5Id: decoded.md5Id,
+            userId: decoded.userId,
+            slug: decoded.slug
+        };
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] SOURCE SELECT ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.14] [PROVIDERS: ASUPNIMER]
+   HYDRAX RANGE TOKEN GENERATOR
+   ============================================================ */
+
+function asupnimerHydraxCreateToken({
+    index,
+    size,
+    md5Id,
+    resId,
+    frag
+}) {
+    try {
+        const indexValue = Number(index);
+
+        const sizeValue = String(size || "");
+        const md5IdValue = String(md5Id || "");
+        const resIdValue = String(resId || "");
+        const fragValue = String(frag ?? "");
+
+        if (
+            !Number.isInteger(indexValue) ||
+            indexValue < 0 ||
+            !/^\d+$/.test(sizeValue) ||
+            !/^\d+$/.test(md5IdValue) ||
+            !/^\d+$/.test(resIdValue) ||
+            !/^\d+$/.test(fragValue)
+        ) {
+            return null;
+        }
+
+        // Smali: mỗi chữ số của size được chuyển
+        // thành byte mang giá trị số 0–9, không phải ASCII.
+        const digitBytes = Buffer.from(
+            [...sizeValue].map(char =>
+                Number(char)
+            )
+        );
+
+        const keyHex =
+            asupnimerHydraxMd5Hex(
+                digitBytes
+            );
+
+        const key = Buffer.from(
+            keyHex,
+            "ascii"
+        );
+
+        const iv = key.subarray(0, 16);
+
+        const path = Buffer.from(
+            `/mp4/${md5IdValue}/${resIdValue}/${sizeValue}/${fragValue}/${indexValue}`,
+            "utf8"
+        );
+
+        // AES-CTR dùng cùng phép biến đổi cho mã hóa và giải mã.
+        const encrypted =
+            asupnimerHydraxAesCtrDecrypt(
+                path,
+                key,
+                iv
+            );
+
+        // Base64 lần 1, bỏ dấu "=" cuối chuỗi.
+        const first = encrypted
+            .toString("base64")
+            .replace(/=+$/g, "");
+
+        // Smali chuyển chuỗi Base64 lần 1 sang ISO-8859-1,
+        // sau đó Base64 lần 2 và tiếp tục bỏ dấu "=".
+        const second = Buffer
+            .from(first, "latin1")
+            .toString("base64")
+            .replace(/=+$/g, "");
+
+        return second;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] TOKEN ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
 // ============================================================
