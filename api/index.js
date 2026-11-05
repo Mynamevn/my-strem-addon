@@ -14813,14 +14813,27 @@ if (
                 );
             }
         }
-
         // Kiểm tra lại toàn bộ dữ liệu chi tiết.
-        if (
+        // Không tin IMDb ID chỉ vì KKPhim gắn nó
+        // vào một kết quả có tên, năm và type phù hợp.
+        // Phải xác minh chính IMDb ID trên Cinemeta.
+
+        const verifiedKKImdbId =
             kkImdbId &&
             kkIdentityMatchesSource(kkIdentityDetail)
+                ? await movinaVerifyImdbIdentity(
+                    kkIdentityDetail,
+                    kkImdbId,
+                    metaType
+                )
+                : "";
+
+        if (
+            verifiedKKImdbId &&
+            kkIdentityMatchesSource(kkIdentityDetail)
         ) {
-            imdbId = kkImdbId;
-            metaId = kkImdbId;
+            imdbId = verifiedKKImdbId;
+            metaId = verifiedKKImdbId;
             imdbResolvedByKKPhim = true;
 
             console.log(
@@ -14830,18 +14843,26 @@ if (
                     title: kkIdentityDetail.name,
                     originalTitle: kkIdentityDetail.origin_name,
                     year: kkIdentityDetail.year,
-                    type: kkIdentityDetail.type
+                    type: kkIdentityDetail.type,
+                    cinemetaVerified: true
                 })
             );
 
         } else {
-            console.log(
-                "[META KKPHIM IDENTITY FAIL]",
+            console.warn(
+                "[META KKPHIM IMDb REJECTED]",
                 JSON.stringify({
                     title: movieName,
                     candidate: kkIdentityDetail?.name || "",
+                    originalTitle:
+                        kkIdentityDetail?.origin_name || "",
                     year: kkIdentityDetail?.year || 0,
-                    imdbId: kkImdbId || null
+                    type: kkIdentityDetail?.type || "",
+                    imdbId: kkImdbId || null,
+                    reason: kkImdbId
+                        ? "CINEMETA_IDENTITY_MISMATCH"
+                        : "NO_IMDB_ID",
+                    keepInternalId: true
                 })
             );
         }
