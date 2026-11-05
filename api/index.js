@@ -9126,9 +9126,6 @@ const castNames = [
         // - Giữ nguyên điều kiện xác minh nghiêm ngặt.
         // ====================================================
 
-        const discoverType =
-            type === "series" ? "tv" : "movie";
-
         const discoverPeopleQuery =
             allPersonIds.join("|");
 
