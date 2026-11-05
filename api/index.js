@@ -7030,188 +7030,15 @@ if (!isLatest && !genreConfig) {
 }
 
 // -----------------------------------------------------
-// CINEMETA FOREGROUND — ANIMATION MAPPED GENRES
+// ANIMATION METADATA
 //
-// - Cinemeta là nguồn ưu tiên.
-// - Không bắt buộc phải đủ 50 kết quả.
-// - PhimAPI sẽ bổ sung phần còn thiếu.
-// - Không áp dụng cho Mới nhất.
-// - Đời thường và Tâm lý giữ mapping PhimAPI hiện tại.
+// PhimAPI là nguồn xác định danh sách hoạt hình và thể loại.
+// Không truy vấn Cinemeta bằng Drama / Romance / Family...
+// vì các catalog đó có cả phim người đóng.
+//
+// Cinemeta sẽ được tra theo IMDb ID của từng phim PhimAPI
+// sau khi danh sách kết quả đã được chọn.
 // -----------------------------------------------------
-
-let cinemetaAnimationItems = [];
-
-const mappedCinemetaGenres =
-    MOVINA_ANIMATION_CINEMETA_GENRE_MAP[
-        normalizedGenre
-    ];
-
-const cinemetaAnimationGenres =
-    Array.isArray(mappedCinemetaGenres)
-        ? mappedCinemetaGenres
-        : mappedCinemetaGenres
-            ? [mappedCinemetaGenres]
-            : [];
-
-if (
-    !isLatest &&
-    cinemetaAnimationGenres.length > 0
-) {
-    try {
-        const cinemetaGroups =
-            await Promise.all(
-                cinemetaAnimationGenres.map(
-                    cinemetaGenre =>
-                        movinaFetchCinemetaGenreCatalog(
-                            type,
-                            cinemetaGenre
-                        )
-                )
-            );
-
-        const cinemetaByImdb = new Map();
-
-        for (
-            let groupIndex = 0;
-            groupIndex < cinemetaGroups.length;
-            groupIndex++
-        ) {
-            const sourceGenre =
-                cinemetaAnimationGenres[groupIndex];
-
-            const group =
-                Array.isArray(cinemetaGroups[groupIndex])
-                    ? cinemetaGroups[groupIndex]
-                    : [];
-
-            for (const rawItem of group) {
-                const imdbId = String(
-                    rawItem?.__movinaCinemetaImdbId ||
-                    rawItem?.imdb?.id ||
-                    rawItem?.id ||
-                    ""
-                ).trim().toLowerCase();
-
-                if (!/^tt\d+$/.test(imdbId)) {
-                    continue;
-                }
-
-                const item = {
-                    ...rawItem,
-                    __movinaCinemetaSource: true,
-                    __movinaCinemetaImdbId: imdbId,
-                    __movinaCinemetaGenre: sourceGenre
-                };
-
-                const previous =
-                    cinemetaByImdb.get(imdbId);
-
-                if (!previous) {
-                    cinemetaByImdb.set(
-                        imdbId,
-                        item
-                    );
-                    continue;
-                }
-
-                // Gộp genres từ các truy vấn Family / Comedy.
-                const categoryMap = new Map();
-
-                for (const category of [
-                    ...(previous.category || []),
-                    ...(item.category || [])
-                ]) {
-                    const name =
-                        typeof category === "string"
-                            ? category
-                            : category?.name || "";
-
-                    const key =
-                        catalogNormalize(name);
-
-                    if (key && !categoryMap.has(key)) {
-                        categoryMap.set(key, {
-                            name
-                        });
-                    }
-                }
-
-                cinemetaByImdb.set(
-                    imdbId,
-                    {
-                        ...previous,
-                        ...item,
-
-                        category:
-                            Array.from(categoryMap.values()),
-
-                        // Không làm mất mô tả/rating đã có.
-                        description:
-                            item.description ||
-                            previous.description ||
-                            "",
-
-                        content:
-                            item.content ||
-                            previous.content ||
-                            "",
-
-                        imdbRating:
-                            item.imdbRating ??
-                            previous.imdbRating ??
-                            null
-                    }
-                );
-            }
-        }
-
-        cinemetaAnimationItems =
-            Array.from(cinemetaByImdb.values())
-                .filter(item =>
-                    (
-                        type === "series"
-                            ? isSeriesItem(item)
-                            : !isSeriesItem(item)
-                    ) &&
-                    movinaAnimationGenreMatches(
-                        item,
-                        genreConfig,
-                        normalizedGenre
-                    )
-                );
-
-        console.log(
-            "[ANIMATION CINEMETA PRIMARY]",
-            JSON.stringify({
-                genre: genreLabel,
-                cinemetaGenres:
-                    cinemetaAnimationGenres,
-                type,
-                candidates:
-                    cinemetaAnimationItems.length,
-                withDescription:
-                    cinemetaAnimationItems.filter(
-                        item => Boolean(
-                            item.description ||
-                            item.content
-                        )
-                    ).length,
-                withRating:
-                    cinemetaAnimationItems.filter(
-                        item => Number(item.imdbRating) > 0
-                    ).length,
-                target: CATALOG_TARGET
-            })
-        );
-
-    } catch (error) {
-        console.warn(
-            "[ANIMATION CINEMETA ERROR]",
-            genreLabel,
-            error?.message || error
-        );
-    }
-}
 
 const requests = [];
 
@@ -7320,451 +7147,13 @@ const requests = [];
     }
 
 // -----------------------------------------------------
-// CINEMETA ANIMATION IDENTITY VALIDATION
+// PHIMAPI ANIMATION CATALOG
 //
-// Cinemeta cung cấp metadata.
-// PhimAPI animation catalog xác nhận danh tính hoạt hình.
-//
-// Ưu tiên đối chiếu IMDb ID.
-// Nếu thiếu IMDb ID: tên chính xác + năm + loại phim.
-// Không nhận phim người đóng chỉ vì trùng Family / Comedy.
+// PhimAPI quyết định danh sách, thể loại và loại phim.
+// Không ghép thêm kết quả từ Cinemeta genre catalog.
 // -----------------------------------------------------
 
-if (
-    !isLatest &&
-    cinemetaAnimationItems.length > 0 &&
-    items.length > 0
-) {
-    
-    const getAnimationImdbId = item => {
-        const candidates = [
-            item?.__movinaCinemetaImdbId,
-
-            // PhimAPI có thể trả IMDb dưới dạng chuỗi.
-            typeof item?.imdb === "string"
-                ? item.imdb
-                : "",
-
-            // Một số nguồn trả IMDb dưới dạng object.
-            item?.imdb?.id,
-            item?.imdb?.imdb_id,
-
-            item?.imdb_id,
-            item?.imdbId,
-            item?.tmdb?.imdb_id,
-            item?.id
-        ];
-
-        for (const value of candidates) {
-            const text = String(value || "")
-                .trim()
-                .toLowerCase();
-
-            const match = text.match(/\btt\d+\b/);
-
-            if (match) {
-                return match[0];
-            }
-        }
-
-        return "";
-    };
-
-    const animationByImdb = new Map();
-    const animationByTitleYear = new Map();
-
-    // Lập danh sách phim hoạt hình đã được PhimAPI xác nhận.
-    for (const animation of items) {
-        const animationType =
-            isSeriesItem(animation)
-                ? "series"
-                : "movie";
-
-        if (animationType !== type) {
-            continue;
-        }
-
-        const imdbId =
-            getAnimationImdbId(animation);
-
-        if (imdbId) {
-            if (!animationByImdb.has(imdbId)) {
-                animationByImdb.set(imdbId, []);
-            }
-
-            animationByImdb.get(imdbId).push(animation);
-        }
-
-        const year =
-            movinaIdentityGetYear(animation);
-
-        if (!year) {
-            continue;
-        }
-
-        const titles =
-            movinaIdentityTitles(animation);
-
-        for (const title of titles) {
-            const key =
-                animationType +
-                "|" +
-                title +
-                "|" +
-                year;
-
-            if (!animationByTitleYear.has(key)) {
-                animationByTitleYear.set(key, []);
-            }
-
-            animationByTitleYear.get(key).push(animation);
-        }
-    }
-
-    // [ANIMATION DIAGNOSTICS] Kiểm tra dữ liệu trước khi xác minh.
-    const phimapiImdbCount = Array.from(
-        animationByImdb.values()
-    ).reduce(
-        (total, matches) => total + matches.length,
-        0
-    );
-
-    const phimapiDuplicateImdbGroups = Array.from(
-        animationByImdb.entries()
-    )
-        .filter(([, matches]) => matches.length > 1);
-
-    const getAnimationDiagnostic = item => ({
-        name: item?.name || "",
-        origin_name: item?.origin_name || "",
-        original_name: item?.original_name || "",
-        year: movinaIdentityGetYear(item),
-        type: isSeriesItem(item) ? "series" : "movie",
-        imdbDetected: getAnimationImdbId(item),
-        imdbRaw:
-            typeof item?.imdb === "object"
-                ? {
-                    id: item.imdb?.id || "",
-                    imdb_id: item.imdb?.imdb_id || ""
-                }
-                : item?.imdb || null,
-        imdb_id: item?.imdb_id || "",
-        imdbId: item?.imdbId || "",
-        id: item?.id || ""
-    });
-
-    console.log(
-        "[ANIMATION ID DIAGNOSTIC - PHIMAPI]",
-        JSON.stringify({
-            genre: genreLabel,
-            type,
-            records: items.length,
-            recordsWithImdb: phimapiImdbCount,
-            uniqueImdbIds: animationByImdb.size,
-            duplicateImdbGroups:
-                phimapiDuplicateImdbGroups.length,
-            duplicateSamples:
-                phimapiDuplicateImdbGroups
-                    .slice(0, 5)
-                    .map(([imdbId, matches]) => ({
-                        imdbId,
-                        count: matches.length,
-                        records: matches
-                            .slice(0, 3)
-                            .map(getAnimationDiagnostic)
-                    })),
-            samples: items
-                .slice(0, 5)
-                .map(getAnimationDiagnostic)
-        })
-    );
-
-    console.log(
-        "[ANIMATION ID DIAGNOSTIC - CINEMETA]",
-        JSON.stringify({
-            genre: genreLabel,
-            type,
-            records: cinemetaAnimationItems.length,
-            recordsWithImdb:
-                cinemetaAnimationItems.filter(
-                    item => Boolean(getAnimationImdbId(item))
-                ).length,
-            samples: cinemetaAnimationItems
-                .slice(0, 8)
-                .map(getAnimationDiagnostic)
-        })
-    );
-
-    const verifiedCinemetaItems = [];
-
-    const identityStats = {
-        cinemetaRecords: cinemetaAnimationItems.length,
-        matchedByImdb: 0,
-        matchedByTitleYear: 0,
-        unmatchedWithImdb: 0,
-        unmatchedWithoutImdb: 0,
-        ambiguousImdb: 0,
-        unmatchedSamples: []
-    };
-
-    for (const cinemeta of cinemetaAnimationItems) {
-        const cinemetaType =
-            isSeriesItem(cinemeta)
-                ? "series"
-                : "movie";
-
-        if (cinemetaType !== type) {
-            continue;
-        }
-
-        const imdbId =
-            getAnimationImdbId(cinemeta);
-
-        let matchedAnimation = null;
-        let matchMethod = "";
-
-        let imdbMatches = [];
-
-        // Ưu tiên IMDb ID.
-        if (imdbId) {
-            imdbMatches =
-                animationByImdb.get(imdbId) || [];
-
-            if (imdbMatches.length === 1) {
-                matchedAnimation = imdbMatches[0];
-                matchMethod = "imdb";
-            } else if (imdbMatches.length > 1) {
-                identityStats.ambiguousImdb++;
-            }
-        }
-
-        // Fallback: tên chính xác + năm + loại phim.
-        if (!matchedAnimation) {
-            const year =
-                movinaIdentityGetYear(cinemeta);
-
-            const titles =
-                movinaIdentityTitles(cinemeta);
-
-            if (year) {
-                const candidates = new Map();
-
-                for (const title of titles) {
-                    const key =
-                        cinemetaType +
-                        "|" +
-                        title +
-                        "|" +
-                        year;
-
-                    const matches =
-                        animationByTitleYear.get(key) || [];
-
-                    for (const candidate of matches) {
-                        candidates.set(
-                            catalogKey(candidate),
-                            candidate
-                        );
-                    }
-                }
-
-                if (candidates.size === 1) {
-                    matchedAnimation =
-                        candidates.values().next().value;
-
-                    matchMethod = "title-year";
-                }
-            }
-        }
-
-        if (!matchedAnimation) {
-            if (imdbId) {
-                identityStats.unmatchedWithImdb++;
-            } else {
-                identityStats.unmatchedWithoutImdb++;
-            }
-
-            if (identityStats.unmatchedSamples.length < 10) {
-                identityStats.unmatchedSamples.push({
-                    cinemeta:
-                        getAnimationDiagnostic(cinemeta),
-
-                    phimapiMatchesForImdb:
-                        imdbMatches.length,
-
-                    sameImdbCandidates:
-                        imdbMatches
-                            .slice(0, 3)
-                            .map(getAnimationDiagnostic),
-
-                    cinemetaTitles:
-                        movinaIdentityTitles(cinemeta)
-                });
-            }
-
-            continue;
-        }
-
-        if (matchMethod === "imdb") {
-            identityStats.matchedByImdb++;
-        } else if (matchMethod === "title-year") {
-            identityStats.matchedByTitleYear++;
-        }
-
-        // Giữ danh tính và poster PhimAPI.
-        // Lấy metadata mô tả và rating từ Cinemeta.
-        const enrichedAnimation = {
-            ...matchedAnimation,
-            ...cinemeta,
-
-            id: matchedAnimation.id,
-            _id: matchedAnimation._id,
-            slug: matchedAnimation.slug,
-            name: matchedAnimation.name,
-            origin_name: matchedAnimation.origin_name,
-            original_name: matchedAnimation.original_name,
-
-            year: matchedAnimation.year,
-            type: matchedAnimation.type,
-            category: matchedAnimation.category,
-
-            poster_url: matchedAnimation.poster_url,
-            thumb_url: matchedAnimation.thumb_url,
-            poster: matchedAnimation.poster,
-
-            __isAnimation: true,
-            __catalogType: type,
-
-            __movinaCinemetaSource: true,
-            __movinaCinemetaImdbId:
-                imdbId || getAnimationImdbId(matchedAnimation)
-        };
-
-        verifiedCinemetaItems.push(enrichedAnimation);
-    }
-
-    console.log(
-        "[ANIMATION ID DIAGNOSTIC - RESULT]",
-        JSON.stringify(identityStats)
-    );
-
-    cinemetaAnimationItems =
-        verifiedCinemetaItems;
-
-    console.log(
-        "[ANIMATION CINEMETA VERIFIED]",
-        JSON.stringify({
-            genre: genreLabel,
-            type,
-            candidates: animationByTitleYear.size,
-            verified: cinemetaAnimationItems.length,
-            phimapiAnimation: items.length
-        })
-    );
-}
-
-// -----------------------------------------------------
-// CINEMETA + PHIMAPI MERGE
-//
-// Thứ tự ưu tiên:
-// 1. Cinemeta JSON.
-// 2. PhimAPI bổ sung.
-//
-// Chống trùng theo IMDb ID.
-// Nếu thiếu IMDb ID, dùng tên + năm + loại phim.
-// -----------------------------------------------------
-
-if (
-    !isLatest &&
-    cinemetaAnimationItems.length > 0
-) {
-    const mergedItems = [];
-    const seenImdbIds = new Set();
-    const seenTitleKeys = new Set();
-
-    const addUniqueAnimationItem = item => {
-        const imdbId = String(
-            item?.__movinaCinemetaImdbId ||
-            item?.imdb?.id ||
-            item?.imdb_id ||
-            item?.imdbId ||
-            ""
-        ).trim().toLowerCase();
-
-        const itemType =
-            isSeriesItem(item)
-                ? "series"
-                : "movie";
-
-        const year =
-            itemYear(item) || 0;
-
-        const title = movinaIdentityNormalizeTitle(
-            item?.origin_name ||
-            item?.original_name ||
-            item?.name ||
-            ""
-        );
-
-        const imdbKey =
-            /^tt\d+$/.test(imdbId)
-                ? itemType + ":" + imdbId
-                : "";
-
-        const titleKey =
-            title && year
-                ? itemType + ":" + title + ":" + year
-                : "";
-
-        if (
-            (imdbKey && seenImdbIds.has(imdbKey)) ||
-            (titleKey && seenTitleKeys.has(titleKey))
-        ) {
-            return;
-        }
-
-        if (imdbKey) {
-            seenImdbIds.add(imdbKey);
-        }
-
-        if (titleKey) {
-            seenTitleKeys.add(titleKey);
-        }
-
-        mergedItems.push(item);
-    };
-
-    // Cinemeta được thêm trước để giữ ưu tiên.
-    for (const item of cinemetaAnimationItems) {
-        addUniqueAnimationItem(item);
-    }
-
-    // PhimAPI chỉ bổ sung những phim chưa có.
-    for (const item of items) {
-        addUniqueAnimationItem(item);
-    }
-
-    console.log(
-        "[ANIMATION CINEMETA + PHIMAPI MERGE]",
-        JSON.stringify({
-            genre: genreLabel,
-            type,
-            cinemeta:
-                cinemetaAnimationItems.length,
-            phimapi:
-                items.length,
-            merged:
-                mergedItems.length,
-            target:
-                CATALOG_TARGET
-        })
-    );
-
-    items = mergedItems;
-
-} else {
-    items = catalogDedupe(items);
-}
+items = catalogDedupe(items);
 
     /*
      * Mới nhất:
@@ -7788,6 +7177,7 @@ if (
             recentPool,
             "animation|latest|" + type + "|" + day
         ).slice(0, CATALOG_TARGET);
+
     } else {
         result = movinaTrendingBalancedDecades(
             items,
@@ -7797,8 +7187,257 @@ if (
         );
     }
 
+// -----------------------------------------------------
+// CINEMETA METADATA BY VERIFIED IMDb ID
+//
+// - PhimAPI vẫn quyết định danh sách hoạt hình.
+// - Chỉ tra Cinemeta theo IMDb ID do PhimAPI cung cấp.
+// - Dùng movinaVerifyImdbIdentity() để kiểm tra tên,
+//   năm và loại phim trước khi nhận metadata.
+// - Giữ nguyên ID, tên, năm, thể loại và poster PhimAPI.
+// - Tối đa 8 request đồng thời.
+// - Dùng MOVINA_IMDB_IDENTITY_CACHE và
+//   MOVINA_ENRICHED_META_CACHE hiện có.
+// -----------------------------------------------------
+
+if (!isLatest && result.length > 0) {
+
+    const getAnimationImdbId = item => {
+        const candidates = [
+            item?.__movinaCinemetaImdbId,
+
+            typeof item?.imdb === "string"
+                ? item.imdb
+                : "",
+
+            item?.imdb?.id,
+            item?.imdb?.imdb_id,
+
+            item?.imdb_id,
+            item?.imdbId,
+            item?.tmdb?.imdb_id
+        ];
+
+        for (const value of candidates) {
+            const match = String(value || "")
+                .trim()
+                .toLowerCase()
+                .match(/\btt\d+\b/);
+
+            if (match) {
+                return match[0];
+            }
+        }
+
+        return "";
+    };
+
+    const enrichAnimationItem = async item => {
+        const imdbId =
+            getAnimationImdbId(item);
+
+        if (!imdbId) {
+            return item;
+        }
+
+        const slug =
+            String(item?.slug || "").trim();
+
+        // Ưu tiên metadata đã được làm giàu và lưu trong RAM.
+        const cachedMeta =
+            movinaGetEnrichedMeta(
+                type,
+                imdbId,
+                slug
+            );
+
+        if (
+            cachedMeta &&
+            (
+                cachedMeta.description ||
+                Number(cachedMeta.imdbRating) > 0
+            )
+        ) {
+            return {
+                ...item,
+
+                ...(cachedMeta.description
+                    ? {
+                        description:
+                            cachedMeta.description
+                    }
+                    : {}),
+
+                ...(Number(cachedMeta.imdbRating) > 0
+                    ? {
+                        imdbRating:
+                            cachedMeta.imdbRating
+                    }
+                    : {}),
+
+                ...(Array.isArray(cachedMeta.actor)
+                    ? {
+                        actor: cachedMeta.actor
+                    }
+                    : {}),
+
+                ...(Array.isArray(cachedMeta.director)
+                    ? {
+                        director: cachedMeta.director
+                    }
+                    : {})
+            };
+        }
+
+        // Xác minh IMDb bằng helper hiện có.
+        // Không nhận metadata nếu tên / năm / loại phim sai.
+        const verifiedImdbId =
+            await movinaVerifyImdbIdentity(
+                item,
+                imdbId,
+                type
+            );
+
+        if (verifiedImdbId !== imdbId) {
+            return item;
+        }
+
+        const identityCacheKey =
+            type + ":" + imdbId;
+
+        const identityCache =
+            MOVINA_IMDB_IDENTITY_CACHE.get(
+                identityCacheKey
+            );
+
+        const cinemetaMeta =
+            identityCache
+                ? await identityCache.promise
+                : null;
+
+        if (
+            !cinemetaMeta ||
+            !movinaIdentityMatches(
+                item,
+                cinemetaMeta,
+                type
+            )
+        ) {
+            return item;
+        }
+
+        const description =
+            String(
+                cinemetaMeta.description ||
+                cinemetaMeta.content ||
+                ""
+            ).trim();
+
+        const imdbRating =
+            Number(cinemetaMeta.imdbRating) || 0;
+
+        const actor =
+            Array.isArray(cinemetaMeta.cast)
+                ? cinemetaMeta.cast
+                : [];
+
+        const director =
+            Array.isArray(cinemetaMeta.director)
+                ? cinemetaMeta.director
+                : [];
+
+        // Lưu metadata vào cache dùng chung 24 giờ.
+        movinaStoreEnrichedMeta(
+            type,
+            imdbId,
+            slug,
+            {
+                description,
+                imdbRating,
+                actor,
+                director
+            }
+        );
+
+        return {
+            ...item,
+
+            ...(description
+                ? { description }
+                : {}),
+
+            ...(imdbRating > 0
+                ? { imdbRating }
+                : {}),
+
+            ...(actor.length
+                ? { actor }
+                : {}),
+
+            ...(director.length
+                ? { director }
+                : {})
+        };
+    };
+
+    let nextIndex = 0;
+    let enrichedCount = 0;
+
+    const worker = async () => {
+        while (nextIndex < result.length) {
+            const currentIndex = nextIndex++;
+
+            try {
+                const enriched =
+                    await enrichAnimationItem(
+                        result[currentIndex]
+                    );
+
+                if (enriched !== result[currentIndex]) {
+                    result[currentIndex] = enriched;
+                }
+
+                if (
+                    enriched?.description ||
+                    Number(enriched?.imdbRating) > 0
+                ) {
+                    enrichedCount++;
+                }
+
+            } catch (error) {
+                console.warn(
+                    "[ANIMATION CINEMETA ITEM ERROR]",
+                    result[currentIndex]?.name || "",
+                    error?.message || error
+                );
+            }
+        }
+    };
+
+    await Promise.all(
+        Array.from(
+            {
+                length: Math.min(8, result.length)
+            },
+            () => worker()
+        )
+    );
+
+    console.log(
+        "[ANIMATION CINEMETA ENRICHMENT]",
+        JSON.stringify({
+            genre: genreLabel,
+            type,
+            total: result.length,
+            enriched: enrichedCount,
+            workers: Math.min(8, result.length)
+        })
+    );
+}
+
     console.log(
         "[ANIMATION FILTER]",
+
         JSON.stringify({
             filter,
             type,
