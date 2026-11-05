@@ -39632,8 +39632,50 @@ const rawId =
         "$1"
     );
 
-const streamType =
+let streamType =
     String(args?.type || "movie").trim();
+
+// =====================================================
+// MOVINA SERIES EPISODE TYPE CORRECTION
+//
+// Một số request từ Stremio gửi type=movie
+// dù ID thực tế là video của series.
+//
+// Ví dụ:
+// vnwpsw:slug:hoc-vien-ca-cuoc:1:1
+//
+// Phải nhận diện đây là series để:
+// - Tách slug chính xác
+// - Lấy đúng season / episode
+// - Tìm đúng detail PhimAPI
+// - Chạy provider với đúng episode
+// =====================================================
+
+const movinaEpisodeIdMatch =
+    rawId.match(
+        /^vnwpsw:(?:slug:)?(.+):(\d+):(\d+)$/i
+    );
+
+if (
+    streamType !== "series" &&
+    movinaEpisodeIdMatch
+) {
+    const previousType = streamType;
+
+    streamType = "series";
+
+    console.log(
+        "[STREAM] MOVINA EPISODE TYPE CORRECTED:",
+        JSON.stringify({
+            previousType,
+            correctedType: streamType,
+            id: rawId,
+            slug: movinaEpisodeIdMatch[1],
+            season: Number(movinaEpisodeIdMatch[2]),
+            episode: Number(movinaEpisodeIdMatch[3])
+        })
+    );
+}
 
 console.log(
     "[STREAM] Original ID:",
