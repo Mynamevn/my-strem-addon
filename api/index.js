@@ -26927,6 +26927,136 @@ async function asupnimerResolveVideoSource(sourceUrl) {
 }
 
 /* ============================================================
+   [PRV-ASUPNIMER.11] [PROVIDERS: ASUPNIMER]
+   LOADVID / DIRECT / HYDRAX SOURCE DISPATCHER
+   ============================================================ */
+
+async function asupnimerResolveVideoSource(sourceUrl) {
+    const url = String(sourceUrl || "").trim();
+
+    if (!url) return null;
+
+    if (/loadvid\.com\/videos\/play\//i.test(url)) {
+        return await asupnimerResolveLoadVid(url);
+    }
+
+    if (
+        /\.m3u8(?:$|[?#])/i.test(url) ||
+        /\.mp4(?:$|[?#])/i.test(url)
+    ) {
+        return {
+            provider: "asupnimer",
+            resolver: "direct",
+            url
+        };
+    }
+
+    if (
+        /youtube\.com\/watch|youtu\.be\//i.test(url)
+    ) {
+        return {
+            provider: "asupnimer",
+            resolver: "youtube",
+            url
+        };
+    }
+
+    if (/playhydrax\.com|abysscdn\.com/i.test(url)) {
+        try {
+            console.log(
+                "[ASUPNIMER HYDRAX] OPEN:",
+                url
+            );
+
+            const response = await axios.get(
+                url,
+                {
+                    timeout: 20000,
+                    maxRedirects: 5,
+                    responseType: "text",
+                    headers: {
+                        "User-Agent":
+                            ASUPNIMER_USER_AGENT,
+                        "Referer":
+                            "https://www.asupnimer.com/",
+                        "Accept":
+                            "text/html,application/xhtml+xml,*/*"
+                    },
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            const decoded =
+                asupnimerHydraxDecodeDatas(
+                    String(response?.data || "")
+                );
+
+            if (!decoded) {
+                console.log(
+                    "[ASUPNIMER HYDRAX] DECODE FAILED"
+                );
+                return null;
+            }
+
+            const selected =
+                asupnimerHydraxSelectSource(decoded);
+
+            if (!selected) {
+                console.log(
+                    "[ASUPNIMER HYDRAX] NO VALID SOURCE"
+                );
+                return null;
+            }
+
+            const proxyUrl =
+                asupnimerHydraxCreateProxyUrl(
+                    selected
+                );
+
+            if (!proxyUrl) {
+                console.log(
+                    "[ASUPNIMER HYDRAX] PROXY URL NOT CREATED"
+                );
+                return null;
+            }
+
+            const result = {
+                provider: "asupnimer",
+                resolver: "hydrax",
+                url: proxyUrl,
+                type: "mp4",
+                quality: selected.label || "Auto",
+                source: selected
+            };
+
+            console.log(
+                "[ASUPNIMER HYDRAX] RESOLVED:",
+                JSON.stringify({
+                    quality: result.quality,
+                    codec: selected.codec,
+                    proxyReady: true
+                })
+            );
+
+            return result;
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER HYDRAX] RESOLVE ERROR:",
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+
+            return null;
+        }
+    }
+
+    return null;
+}
+
+/* ============================================================
    [PRV-ASUPNIMER.12] [PROVIDERS: ASUPNIMER]
    HYDRAX DATA DECODER
    ============================================================ */
@@ -27562,6 +27692,303 @@ async function asupnimerHydraxFetchRange(
     return Buffer.concat(parts);
 }
 
+/* ============================================================
+   [PRV-ASUPNIMER.18] [PROVIDERS: ASUPNIMER]
+   STRICT TITLE / YEAR / TYPE MATCH AND STREAM BUILDER
+   ============================================================ */
+
+function asupnimerBuildTitleKey(value = "") {
+    return asupnimerNormalizeText(
+        String(value || "")
+            .replace(/\b(vietsub|thuyet minh|long tieng|full hd|full)\b/gi, " ")
+            .replace(/\b(19|20)\d{2}\b/g, " ")
+            .replace(/\[[^\]]*\]/g, " ")
+            .replace(/\([^)]*\)/g, " ")
+    );
+}
+
+async function asupnimerFetchStreams({
+    title,
+    titleVariants = [],
+    year = 0,
+    type = "movie",
+    season = 1,
+    episode = 0
+} = {}) {
+    const requestedTitle = String(title || "").trim();
+
+    if (!requestedTitle) return [];
+
+    const requestedType =
+        type === "series" ? "series" : "movie";
+
+    const requestedYear =
+        Number(year) || 0;
+
+    const requestedEpisode =
+        Number(episode) || 0;
+
+    const titleKeys = [
+        requestedTitle,
+        ...titleVariants
+    ]
+        .map(asupnimerBuildTitleKey)
+        .filter(Boolean);
+
+    const uniqueTitleKeys = [
+        ...new Set(titleKeys)
+    ];
+
+    if (!uniqueTitleKeys.length) return [];
+
+    console.log(
+        "[ASUPNIMER] SEARCH START:",
+        JSON.stringify({
+            title: requestedTitle,
+            year: requestedYear,
+            type: requestedType,
+            season,
+            episode: requestedEpisode,
+            variants: uniqueTitleKeys
+        })
+    );
+
+    const postMap = new Map();
+
+    for (const query of [
+        requestedTitle,
+        ...titleVariants
+    ]) {
+        const searchTitle =
+            String(query || "").trim();
+
+        if (!searchTitle) continue;
+
+        const posts =
+            await asupnimerSearchPosts(
+                searchTitle,
+                15
+            );
+
+        for (const post of posts) {
+            if (post?.url && !postMap.has(post.url)) {
+                postMap.set(post.url, post);
+            }
+        }
+    }
+
+    const candidates = [
+        ...postMap.values()
+    ].filter(post => {
+        const candidateKey =
+            asupnimerBuildTitleKey(post.title);
+
+        return candidateKey &&
+            uniqueTitleKeys.includes(candidateKey);
+    });
+
+    console.log(
+        "[ASUPNIMER] STRICT TITLE MATCH:",
+        JSON.stringify({
+            searchedPosts: postMap.size,
+            exactCandidates: candidates.length
+        })
+    );
+
+    if (!candidates.length) return [];
+
+    const matchedDetails = [];
+
+    for (const post of candidates.slice(0, 5)) {
+        const detail =
+            await asupnimerBuildPostDetail(post);
+
+        if (!detail) continue;
+
+        const detailKey =
+            asupnimerBuildTitleKey(detail.title);
+
+        if (
+            !detailKey ||
+            !uniqueTitleKeys.includes(detailKey)
+        ) {
+            continue;
+        }
+
+        const detailYear =
+            Number(detail.year) || 0;
+
+        if (
+            requestedYear &&
+            detailYear &&
+            requestedYear !== detailYear
+        ) {
+            console.log(
+                "[ASUPNIMER] YEAR MISMATCH:",
+                JSON.stringify({
+                    title: detail.title,
+                    requestedYear,
+                    detailYear
+                })
+            );
+            continue;
+        }
+
+        if (
+            requestedType === "series" &&
+            detail.type !== "series"
+        ) {
+            continue;
+        }
+
+        if (
+            requestedType === "movie" &&
+            detail.type !== "movie"
+        ) {
+            continue;
+        }
+
+        matchedDetails.push(detail);
+    }
+
+    if (!matchedDetails.length) {
+        console.log(
+            "[ASUPNIMER] NO VERIFIED DETAIL MATCH"
+        );
+        return [];
+    }
+
+    for (const detail of matchedDetails) {
+        let selectedEpisode = null;
+        let selectedSource = null;
+
+        if (requestedType === "series") {
+            selectedEpisode =
+                detail.episodes.find(item =>
+                    Number(item?.number) === requestedEpisode
+                );
+
+            if (!selectedEpisode) {
+                console.log(
+                    "[ASUPNIMER] EPISODE NOT FOUND:",
+                    JSON.stringify({
+                        title: detail.title,
+                        requestedEpisode,
+                        availableEpisodes:
+                            detail.episodes.map(item =>
+                                item.number
+                            )
+                    })
+                );
+                continue;
+            }
+
+            selectedSource = selectedEpisode;
+
+        } else {
+            selectedSource = detail.movieSource;
+        }
+
+        const videoUrl =
+            String(selectedSource?.video || "").trim();
+
+        if (!videoUrl) continue;
+
+        const resolved =
+            await asupnimerResolveVideoSource(
+                videoUrl
+            );
+
+        if (!resolved) continue;
+
+        let playableUrl =
+            String(
+                resolved.url ||
+                resolved.playlistUrl ||
+                ""
+            ).trim();
+
+        if (!playableUrl) continue;
+
+        if (resolved.resolver === "youtube") {
+            continue;
+        }
+
+        const isHls =
+            /\.m3u8(?:$|[?#])/i.test(playableUrl);
+
+        const stream = {
+            name:
+                "ASUPNIMER" +
+                (
+                    resolved.quality
+                        ? " · " + resolved.quality
+                        : ""
+                ),
+
+            title:
+                detail.title +
+                (
+                    requestedType === "series"
+                        ? " · Tập " + requestedEpisode
+                        : ""
+                ) +
+                (
+                    detail.year
+                        ? " (" + detail.year + ")"
+                        : ""
+                ),
+
+            url: playableUrl,
+
+            type: isHls ? "m3u8" : "mp4",
+
+            provider: "asupnimer",
+            source: "asupnimer",
+
+            description:
+                "Nguồn ASUPNIMER" +
+                (
+                    detail.description
+                        ? "\n" + detail.description.slice(0, 500)
+                        : ""
+                )
+        };
+
+        if (resolved.resolver === "loadvid") {
+            stream.type = "m3u8";
+            stream.behaviorHints = {
+                proxyHeaders: {
+                    request: {
+                        "Referer":
+                            "https://cdn.loadvid.com/"
+                    }
+                }
+            };
+        }
+
+        console.log(
+            "[ASUPNIMER] STREAM READY:",
+            JSON.stringify({
+                title: detail.title,
+                year: detail.year,
+                type: detail.type,
+                episode: requestedEpisode || null,
+                resolver: resolved.resolver,
+                quality: resolved.quality || null,
+                url: playableUrl
+            })
+        );
+
+        return [stream];
+    }
+
+    console.log(
+        "[ASUPNIMER] NO PLAYABLE SOURCE"
+    );
+
+    return [];
+}
 
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
@@ -43376,6 +43803,88 @@ const animeProvidersEnabled =
       }
   })();
 
+// =====================================================
+// ASUPNIMER — ANIME / ANIMATION FALLBACK
+// Chỉ tìm khi metadata xác nhận anime hoặc hoạt hình.
+// Chạy song song, không chặn các provider khác.
+// =====================================================
+
+const asupnimerPromise = (async () => {
+    const asupnimerEnabled =
+        hasAnimationMetadata ||
+        (
+            hasJapaneseMetadata &&
+            hasExplicitAnimeTitle
+        );
+
+    if (!asupnimerEnabled) {
+        console.log(
+            "[ASUPNIMER] SKIPPED: Không phải anime/hoạt hình."
+        );
+        return [];
+    }
+
+    let timeoutHandle;
+
+    try {
+        const titleVariants = [
+            resolvedMetadata?.name,
+            resolvedMetadata?.original_name,
+            resolvedMetadata?.origin_name
+        ]
+            .map(value => String(value || "").trim())
+            .filter(Boolean);
+
+        const fetchPromise =
+            asupnimerFetchStreams({
+                title: movieName,
+                titleVariants,
+                year: movieYear,
+                type: streamType,
+                season: seasonNumber || 1,
+                episode: episodeNumber
+            });
+
+        const timeoutPromise =
+            new Promise(resolve => {
+                timeoutHandle = setTimeout(
+                    () => resolve(null),
+                    16000
+                );
+            });
+
+        const result = await Promise.race([
+            fetchPromise,
+            timeoutPromise
+        ]);
+
+        const streams =
+            Array.isArray(result) ? result : [];
+
+        console.log(
+            "[ASUPNIMER] FETCH COMPLETE:",
+            JSON.stringify({
+                count: streams.length,
+                timedOut: result === null
+            })
+        );
+
+        return streams;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER] FETCH ERROR:",
+            error?.message || error
+        );
+
+        return [];
+
+    } finally {
+        if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+        }
+    }
+})();
   
   // =====================================================
   // MOVINA — ONFLIX PROVIDER
@@ -43817,6 +44326,35 @@ console.log(
     )
 );
 
+// =====================================================
+// ASUPNIMER — COLLECT VERIFIED STREAMS
+// =====================================================
+
+let asupnimerStreams = [];
+
+try {
+    const result = await asupnimerPromise;
+
+    asupnimerStreams =
+        Array.isArray(result) ? result : [];
+
+} catch (error) {
+    console.log(
+        "[ASUPNIMER] COLLECT ERROR:",
+        error?.message || error
+    );
+
+    asupnimerStreams = [];
+}
+
+console.log(
+    "[ASUPNIMER] FINAL STREAM COUNT:",
+    asupnimerStreams.length
+);
+
+// Gộp vào pipeline direct stream hiện có.
+// Không thay đổi kết quả của các provider khác.
+animehay.push(...asupnimerStreams);
 
 const directStreams = [
 
