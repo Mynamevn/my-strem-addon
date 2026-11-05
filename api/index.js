@@ -44698,11 +44698,48 @@ console.log(
 // =====================================================
 
 
+
 let animehay = [];
+let animeHayTimeoutHandle;
+
 try {
-    animehay = await animehayPromise;
+    const animeHayTimeoutPromise = new Promise(resolve => {
+        animeHayTimeoutHandle = setTimeout(
+            () => resolve(null),
+            8000
+        );
+    });
+
+    const animeHayResult = await Promise.race([
+        animehayPromise,
+        animeHayTimeoutPromise
+    ]);
+
+    if (animeHayResult === null) {
+        animehay = [];
+
+        console.log(
+            "[ANIMEHAY] SOFT TIMEOUT:",
+            "Quá 8 giây, bỏ chờ AnimeHay để trả kết quả các nguồn khác."
+        );
+    } else {
+        animehay = Array.isArray(animeHayResult)
+            ? animeHayResult
+            : [];
+    }
+
 } catch (e) {
-    console.error("[ANIMEHAY] FETCH ERROR:", e.message);
+    console.error(
+        "[ANIMEHAY] FETCH ERROR:",
+        e?.message || e
+    );
+
+    animehay = [];
+
+} finally {
+    if (animeHayTimeoutHandle) {
+        clearTimeout(animeHayTimeoutHandle);
+    }
 }
 
 console.log(
@@ -44711,6 +44748,7 @@ console.log(
         ? animehay.length
         : 0
 );
+
 
 
   // =====================================================
