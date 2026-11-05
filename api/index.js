@@ -8110,26 +8110,59 @@ function movinaIdentityStripSeasonSuffix(value) {
         .trim();
 }
 
+
 function movinaIdentityTitles(
     item,
     type = "movie"
 ) {
-    /*
-     * Chỉ dùng tên chính từ nguồn và tên gốc.
-     *
-     * Với series:
-     * - Cho phép bỏ hậu tố Phần / Mùa / Season.
-     * - Không sử dụng alternative_names hoặc aliases
-     *   để tránh ghép nhầm phim.
-     *
-     * Với movie:
-     * - Giữ nguyên quy tắc so sánh tên hiện tại.
-     */
+    const collectNames = value => {
+        if (Array.isArray(value)) {
+            return value.map(entry =>
+                typeof entry === "string"
+                    ? entry
+                    : (
+                        entry?.title ||
+                        entry?.name ||
+                        entry?.value ||
+                        ""
+                    )
+            );
+        }
+
+        if (typeof value === "string") {
+            return [value];
+        }
+
+        if (value && typeof value === "object") {
+            const name =
+                value.title ||
+                value.name ||
+                value.value ||
+                "";
+
+            return name ? [name] : [];
+        }
+
+        return [];
+    };
 
     const values = [
         item?.name,
         item?.origin_name,
-        item?.original_name
+        item?.original_name,
+        item?.title,
+        item?.original_title,
+        item?.english_name,
+        item?.title_en,
+        item?.en_name,
+        item?.alternative_title,
+
+        ...collectNames(item?.alternative_names),
+        ...collectNames(item?.alternative_titles),
+        ...collectNames(item?.aliases),
+        ...collectNames(item?.aka),
+        ...collectNames(item?.other_names),
+        ...collectNames(item?.also_known_as)
     ];
 
     return [
@@ -8144,6 +8177,7 @@ function movinaIdentityTitles(
         )
     ];
 }
+
 
 function movinaIdentityMatches(
     source,
@@ -8546,18 +8580,93 @@ async function movinaResolveAndVerifyImdb(
     // 2. CINEMETA SEARCH — ƯU TIÊN ĐẦU TIÊN
     // ========================================================
 
+    
+    // ========================================================
+    // TMDB / CINEMETA TITLE QUERY BUILDER
+    // Tìm bằng tên Việt, tên gốc, tên quốc tế,
+    // tên tiếng Anh và các tên thay thế.
+    // ========================================================
+
+    const collectTitleQueries = value => {
+        if (Array.isArray(value)) {
+            return value.map(entry =>
+                typeof entry === "string"
+                    ? entry
+                    : (
+                        entry?.title ||
+                        entry?.name ||
+                        entry?.value ||
+                        ""
+                    )
+            );
+        }
+
+        if (typeof value === "string") {
+            return [value];
+        }
+
+        if (value && typeof value === "object") {
+            const name =
+                value.title ||
+                value.name ||
+                value.value ||
+                "";
+
+            return name ? [name] : [];
+        }
+
+        return [];
+    };
+
+    const rawTitleQueries = [
+        source.name,
+        source.origin_name,
+        source.original_name,
+        source.title,
+        source.original_title,
+        source.english_name,
+        source.title_en,
+        source.en_name,
+
+        ...collectTitleQueries(source.alternative_names),
+        ...collectTitleQueries(source.alternative_titles),
+        ...collectTitleQueries(source.aliases),
+        ...collectTitleQueries(source.aka),
+        ...collectTitleQueries(source.other_names),
+        ...collectTitleQueries(source.also_known_as)
+    ];
+
+    const queryMap = new Map();
+
+    for (const rawTitle of rawTitleQueries) {
+        const query = String(rawTitle || "").trim();
+
+        const normalized =
+            movinaIdentityNormalizeTitle(query);
+
+        if (
+            query &&
+            normalized &&
+            !queryMap.has(normalized)
+        ) {
+            queryMap.set(normalized, query);
+        }
+    }
+
     const queries = [
-        ...new Set([
-            source.origin_name,
-            source.original_name,
-            source.name
-        ]
-            .map(value =>
-                String(value || "").trim()
-            )
-            .filter(Boolean)
-        )
-    ].slice(0, 3);
+        ...queryMap.values()
+    ].slice(0, 6);
+
+    console.log(
+        "[MOVINA IDENTITY TITLE QUERIES]",
+        JSON.stringify({
+            title: source.name,
+            originalTitle: source.origin_name,
+            queryCount: queries.length,
+            queries
+        })
+    );
+
 
     const results = await Promise.all(
         queries.map(query =>
@@ -9006,21 +9115,40 @@ const castNames = [
         const discoverType =
             type === "series" ? "tv" : "movie";
 
+        
+        // ====================================================
+        // TMDB PEOPLE DISCOVERY — OR SEARCH
+        //
+        // Dấu | = OR:
+        // Tìm phim có ít nhất một người trong danh sách.
+        //
+        // Sau đó kiểm tra credits:
+        // - Phải khớp ít nhất 2 người.
+        // - Nếu xác định được đạo diễn thì phải khớp đạo diễn.
+        // - Năm phát hành phải khớp.
+        // ====================================================
+
+        const discoverPeopleQuery =
+            allPersonIds.join("|");
+
         const discoverResults =
             await movinaMetaCachedLoad(
                 MOVINA_META_SEARCH_CACHE,
 
-                "tmdb-discover-people:" +
+                "tmdb-discover-people-or:" +
                     discoverType +
                     ":" +
                     sourceYear +
                     ":" +
-                    allPersonIds.join(","),
+                    discoverPeopleQuery,
 
                 async () => {
                     const params = {
                         api_key: tmdbApiKey,
-                        with_people: allPersonIds.join(","),
+
+                        with_people:
+                            discoverPeopleQuery,
+
                         include_adult: false,
                         sort_by: "popularity.desc",
                         page: 1
@@ -9055,6 +9183,56 @@ const castNames = [
                 6 * 60 * 60 * 1000,
                 60 * 1000
             );
+
+        console.log(
+            "[MOVINA TMDB PEOPLE DISCOVERY]",
+            JSON.stringify({
+                sourceTitle: source.name,
+                sourceOriginalTitle: source.origin_name,
+                sourceYear,
+                type,
+
+                matchedPeople: [
+                    ...matchedPeople.values()
+                ].map(person => ({
+                    name: person.name,
+                    role: person.role,
+                    tmdbId: person.id
+                })),
+
+                peopleQuery:
+                    discoverPeopleQuery,
+
+                resultCount:
+                    discoverResults.length,
+
+                rawCandidates:
+                    discoverResults
+                        .slice(0, 20)
+                        .map(row => ({
+                            id: row.id,
+
+                            title:
+                                row.name ||
+                                row.title ||
+                                "",
+
+                            originalTitle:
+                                row.original_name ||
+                                row.original_title ||
+                                "",
+
+                            year:
+                                type === "series"
+                                    ? row.first_air_date || ""
+                                    : row.release_date || "",
+
+                            language:
+                                row.original_language || ""
+                        }))
+            })
+        );
+
 
         for (
             const row of Array.isArray(discoverResults)
@@ -49003,4 +49181,3 @@ module.exports =
         );
 
     };
-
