@@ -40306,20 +40306,17 @@ const rawId =
 let streamType =
     String(args?.type || "movie").trim();
 
+
 // =====================================================
 // MOVINA SERIES EPISODE TYPE CORRECTION
 //
-// Một số request từ Stremio gửi type=movie
-// dù ID thực tế là video của series.
+// Nhận diện cả:
+// 1. vnwpsw:slug:ten-phim:season:episode
+// 2. vnwpsw:ten-phim:season:episode
+// 3. tt12345678:season:episode
+// 4. movina-classic:tt12345678:season:episode
 //
-// Ví dụ:
-// vnwpsw:slug:hoc-vien-ca-cuoc:1:1
-//
-// Phải nhận diện đây là series để:
-// - Tách slug chính xác
-// - Lấy đúng season / episode
-// - Tìm đúng detail PhimAPI
-// - Chạy provider với đúng episode
+// Không phụ thuộc args.type từ Stremio.
 // =====================================================
 
 const movinaEpisodeIdMatch =
@@ -40327,9 +40324,18 @@ const movinaEpisodeIdMatch =
         /^vnwpsw:(?:slug:)?(.+):(\d+):(\d+)$/i
     );
 
+const imdbEpisodeIdMatch =
+    rawId.match(
+        /^(tt\d+):(\d+):(\d+)$/i
+    );
+
+const detectedEpisodeMatch =
+    imdbEpisodeIdMatch ||
+    movinaEpisodeIdMatch;
+
 if (
-    streamType !== "series" &&
-    movinaEpisodeIdMatch
+    detectedEpisodeMatch &&
+    streamType !== "series"
 ) {
     const previousType = streamType;
 
@@ -40341,12 +40347,21 @@ if (
             previousType,
             correctedType: streamType,
             id: rawId,
-            slug: movinaEpisodeIdMatch[1],
-            season: Number(movinaEpisodeIdMatch[2]),
-            episode: Number(movinaEpisodeIdMatch[3])
+            identityType: imdbEpisodeIdMatch
+                ? "IMDb"
+                : "MOVINA",
+            imdbId: imdbEpisodeIdMatch
+                ? imdbEpisodeIdMatch[1]
+                : null,
+            slug: movinaEpisodeIdMatch
+                ? movinaEpisodeIdMatch[1]
+                : null,
+            season: Number(detectedEpisodeMatch[2]),
+            episode: Number(detectedEpisodeMatch[3])
         })
     );
 }
+
 
 console.log(
     "[STREAM] Original ID:",
