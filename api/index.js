@@ -9560,11 +9560,11 @@ const castNames = [
                         candidate.people.size,
                     type
                 })
-            );
-        }
+            );        }
 
     } // Đóng if (allPersonIds.length >= 2)
 
+} // Đóng if (tmdbCandidates.size === 0 && sourceYear > 0)
 
 // --------------------------------------------------------
 // 3.4. SEARCH DIAGNOSTICS
