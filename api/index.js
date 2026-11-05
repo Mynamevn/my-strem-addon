@@ -8023,17 +8023,41 @@ function movinaIdentityGetYear(meta) {
     return match ? Number(match[0]) : 0;
 }
 
-function movinaIdentityTitles(item) {
+
+function movinaIdentityHasSeasonSuffix(value) {
+    const normalized =
+        movinaIdentityNormalizeTitle(value);
+
+    return /\b(?:phan|mua|season|part|cour)\s*(?:so\s*)?\d+\s*$/.test(
+        normalized
+    );
+}
+
+function movinaIdentityStripSeasonSuffix(value) {
+    return movinaIdentityNormalizeTitle(value)
+        .replace(
+            /\s+\b(?:phan|mua|season|part|cour)\s*(?:so\s*)?\d+\s*$/,
+            ""
+        )
+        .trim();
+}
+
+function movinaIdentityTitles(
+    item,
+    type = "movie"
+) {
     /*
-     * Chỉ dùng title identity chính.
+     * Chỉ dùng tên chính từ nguồn và tên gốc.
      *
-     * Không dùng alternative_names / aliases ở đây,
-     * vì các field đó có thể chứa dữ liệu nhiễu hoặc
-     * alias thuộc phim khác.
+     * Với series:
+     * - Cho phép bỏ hậu tố Phần / Mùa / Season.
+     * - Không sử dụng alternative_names hoặc aliases
+     *   để tránh ghép nhầm phim.
      *
-     * Alias sẽ được dùng cho SEARCH QUERY nếu cần,
-     * nhưng không được dùng để xác minh identity.
+     * Với movie:
+     * - Giữ nguyên quy tắc so sánh tên hiện tại.
      */
+
     const values = [
         item?.name,
         item?.origin_name,
@@ -8044,7 +8068,9 @@ function movinaIdentityTitles(item) {
         ...new Set(
             values
                 .map(value =>
-                    movinaIdentityNormalizeTitle(value)
+                    type === "series"
+                        ? movinaIdentityStripSeasonSuffix(value)
+                        : movinaIdentityNormalizeTitle(value)
                 )
                 .filter(Boolean)
         )
@@ -8086,32 +8112,20 @@ function movinaIdentityMatches(
     }
 
     const sourceTitles =
-        movinaIdentityTitles(source);
+        movinaIdentityTitles(source, type);
 
     const candidateTitles =
-        movinaIdentityTitles(candidate);
+        movinaIdentityTitles(candidate, type);
 
-    if (
-        !sourceTitles.some(title =>
+    const titleMatched =
+        sourceTitles.some(title =>
             candidateTitles.includes(title)
-        )
-    ) {
+        );
+
+    if (!titleMatched) {
         return false;
     }
 
-    /*
-     * QUAN TRỌNG:
-     * Lấy năm bằng helper thay vì Number(source.year).
-     *
-     * Như vậy:
-     *
-     * 1972
-     * "1972"
-     * "1972-01-01"
-     * releaseInfo: "1972"
-     *
-     * đều được nhận diện.
-     */
     const sourceYear =
         movinaIdentityGetYear(source);
 
@@ -8119,15 +8133,23 @@ function movinaIdentityMatches(
         movinaIdentityGetYear(candidate);
 
     /*
-     * Nếu source biết năm thì candidate phải có
-     * đúng năm đó.
+     * Với series có hậu tố mùa:
+     * Năm PhimAPI có thể là năm phát hành mùa phim,
+     * trong khi Cinemeta dùng năm bắt đầu của series.
      *
-     * Không cho phép:
-     *
-     * Bố Già 1972
-     * → Bố Già 2021
+     * Chỉ bỏ kiểm tra năm trong trường hợp này.
+     * Tên gốc sau khi bỏ hậu tố mùa vẫn phải khớp.
      */
-    if (sourceYear) {
+
+    const hasSeasonSuffix =
+        type === "series" &&
+        [
+            source?.name,
+            source?.origin_name,
+            source?.original_name
+        ].some(movinaIdentityHasSeasonSuffix);
+
+    if (sourceYear && !hasSeasonSuffix) {
         if (
             !candidateYear ||
             candidateYear !== sourceYear
