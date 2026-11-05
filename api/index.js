@@ -8671,147 +8671,243 @@ async function movinaResolveAndVerifyImdb(
     const sourceYear =
         movinaIdentityGetYear(source);
 
-    // --------------------------------------------------------
-    // 3.1. TÌM PHIM THEO LOẠI
-    // --------------------------------------------------------
+// --------------------------------------------------------
+// 3.1. TÌM PHIM TRÊN TMDB
+// --------------------------------------------------------
 
-    const tmdbSearchResults = await Promise.all(
-        queries.map(query =>
-            movinaMetaCachedLoad(
-                MOVINA_META_SEARCH_CACHE,
+const tmdbSearchResults = await Promise.all(
+    queries.map(query =>
+        movinaMetaCachedLoad(
+            MOVINA_META_SEARCH_CACHE,
 
-                "tmdb-imdb-search:" +
-                    type +
-                    ":" +
-                    sourceYear +
-                    ":" +
-                    movinaIdentityNormalizeTitle(query),
+            "tmdb-imdb-search:" +
+                type +
+                ":" +
+                sourceYear +
+                ":" +
+                movinaIdentityNormalizeTitle(query),
 
-                async () => {
-                    const endpoint =
-                        type === "series"
-                            ? "tv"
-                            : "movie";
-
-                    const params = {
-                        api_key: tmdbApiKey,
-                        query,
-                        include_adult: false
-                    };
-
-                    if (sourceYear) {
-                        params[
-                            type === "series"
-                                ? "first_air_date_year"
-                                : "year"
-                        ] = sourceYear;
-                    }
-
-                    const response = await axios.get(
-                        "https://api.themoviedb.org/3/search/" +
-                        endpoint,
-                        {
-                            params,
-                            timeout: 5000,
-                            headers: {
-                                "Accept": "application/json",
-                                "User-Agent": "MOVINA/1.0"
-                            }
-                        }
-                    );
-
-                    return Array.isArray(
-                        response.data?.results
-                    )
-                        ? response.data.results
-                        : [];
-                },
-
-                6 * 60 * 60 * 1000,
-                60 * 1000
-            )
-        )
-    );
-
-    // --------------------------------------------------------
-    // 3.2. ĐỐI CHIẾU CHÍNH XÁC TÊN + NĂM + LOẠI
-    // --------------------------------------------------------
-
-    const tmdbCandidates = new Map();
-
-    for (const group of tmdbSearchResults) {
-        for (
-            const row of Array.isArray(group)
-                ? group
-                : []
-        ) {
-            const rowTitles = [
-                row?.title,
-                row?.original_title,
-                row?.name,
-                row?.original_name
-            ]
-                .map(value =>
+            async () => {
+                const endpoint =
                     type === "series"
-                        ? movinaIdentityStripSeasonSuffix(value)
-                        : movinaIdentityNormalizeTitle(value)
-                )
-                .filter(Boolean);
+                        ? "tv"
+                        : "movie";
 
-            const titleMatched =
-                rowTitles.some(title =>
-                    sourceTitles.has(title)
+                const params = {
+                    api_key: tmdbApiKey,
+                    query,
+                    include_adult: false
+                };
+
+                if (sourceYear) {
+                    params[
+                        type === "series"
+                            ? "first_air_date_year"
+                            : "year"
+                    ] = sourceYear;
+                }
+
+                const response = await axios.get(
+                    "https://api.themoviedb.org/3/search/" +
+                    endpoint,
+                    {
+                        params,
+                        timeout: 5000,
+                        headers: {
+                            "Accept": "application/json",
+                            "User-Agent": "MOVINA/1.0"
+                        }
+                    }
                 );
 
-            if (!titleMatched) {
-                continue;
-            }
+                return Array.isArray(
+                    response.data?.results
+                )
+                    ? response.data.results
+                    : [];
+            },
 
-            const rawDate = String(
+            6 * 60 * 60 * 1000,
+            60 * 1000
+        )
+    )
+);
+
+// --------------------------------------------------------
+// 3.1.1. TMDB SEARCH DIAGNOSTICS
+// --------------------------------------------------------
+
+const tmdbSearchDiagnostics =
+    tmdbSearchResults.map((group, index) => ({
+        query: queries[index],
+
+        resultCount:
+            Array.isArray(group)
+                ? group.length
+                : 0,
+
+        results:
+            (
+                Array.isArray(group)
+                    ? group
+                    : []
+            )
+                .slice(0, 8)
+                .map(row => ({
+                    id: row?.id,
+
+                    title:
+                        row?.title ||
+                        row?.name ||
+                        "",
+
+                    originalTitle:
+                        row?.original_title ||
+                        row?.original_name ||
+                        "",
+
+                    releaseDate:
+                        row?.release_date ||
+                        row?.first_air_date ||
+                        "",
+
+                    overview:
+                        String(row?.overview || "")
+                            .slice(0, 120)
+                }))
+    }));
+
+console.log(
+    "[MOVINA TMDB SEARCH DIAGNOSTICS]",
+    JSON.stringify({
+        sourceTitle: source.name,
+        sourceOriginalTitle: source.origin_name,
+        sourceYear,
+        type,
+        sourceTitles: [...sourceTitles],
+        queries,
+        results: tmdbSearchDiagnostics
+    })
+);
+
+// --------------------------------------------------------
+// 3.2. ĐỐI CHIẾU CHÍNH XÁC TÊN + NĂM + LOẠI
+// --------------------------------------------------------
+
+const tmdbCandidates = new Map();
+
+for (const group of tmdbSearchResults) {
+    for (
+        const row of Array.isArray(group)
+            ? group
+            : []
+    ) {
+        const rowTitles = [
+            row?.title,
+            row?.original_title,
+            row?.name,
+            row?.original_name
+        ]
+            .map(value =>
                 type === "series"
-                    ? row?.first_air_date || ""
-                    : row?.release_date || ""
+                    ? movinaIdentityStripSeasonSuffix(value)
+                    : movinaIdentityNormalizeTitle(value)
+            )
+            .filter(Boolean);
+
+        const titleMatched =
+            rowTitles.some(title =>
+                sourceTitles.has(title)
             );
 
-            const rowYear =
-                Number(rawDate.slice(0, 4)) || 0;
-
-            if (
-                sourceYear &&
-                rowYear !== sourceYear
-            ) {
-                continue;
-            }
-
-            const tmdbId = Number(row?.id);
-
-            if (
-                !Number.isInteger(tmdbId) ||
-                tmdbId <= 0
-            ) {
-                continue;
-            }
-
-            tmdbCandidates.set(
-                String(tmdbId),
-                row
-            );
+        if (!titleMatched) {
+            continue;
         }
-    }
 
-    if (tmdbCandidates.size !== 1) {
-        console.log(
-            "[MOVINA TMDB IMDb SAFE FAIL]",
-            JSON.stringify({
-                title: source.name,
-                year: sourceYear,
-                candidates: tmdbCandidates.size,
-                type
-            })
+        const rawDate = String(
+            type === "series"
+                ? row?.first_air_date || ""
+                : row?.release_date || ""
         );
 
-        return "";
+        const rowYear =
+            Number(rawDate.slice(0, 4)) || 0;
+
+        if (
+            sourceYear &&
+            rowYear !== sourceYear
+        ) {
+            continue;
+        }
+
+        const tmdbId = Number(row?.id);
+
+        if (
+            !Number.isInteger(tmdbId) ||
+            tmdbId <= 0
+        ) {
+            continue;
+        }
+
+        tmdbCandidates.set(
+            String(tmdbId),
+            row
+        );
     }
+}
+
+// --------------------------------------------------------
+// 3.2.1. MATCH DIAGNOSTICS
+// --------------------------------------------------------
+
+console.log(
+    "[MOVINA TMDB MATCH DIAGNOSTICS]",
+    JSON.stringify({
+        sourceTitle: source.name,
+        sourceOriginalTitle: source.origin_name,
+        sourceYear,
+        type,
+
+        sourceTitles: [...sourceTitles],
+
+        matchedCandidates:
+            [...tmdbCandidates.values()].map(row => ({
+                id: row.id,
+
+                title:
+                    row.title ||
+                    row.name ||
+                    "",
+
+                originalTitle:
+                    row.original_title ||
+                    row.original_name ||
+                    "",
+
+                releaseDate:
+                    row.release_date ||
+                    row.first_air_date ||
+                    ""
+            }))
+    })
+);
+
+if (tmdbCandidates.size !== 1) {
+    console.log(
+        "[MOVINA TMDB IMDb SAFE FAIL]",
+        JSON.stringify({
+            title: source.name,
+            originalTitle: source.origin_name,
+            year: sourceYear,
+            candidates: tmdbCandidates.size,
+            type,
+            queries,
+            keepInternalId: true
+        })
+    );
+
+    return "";
+}
 
     const tmdbCandidate =
         tmdbCandidates.values().next().value;
