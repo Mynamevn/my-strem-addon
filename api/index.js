@@ -30344,7 +30344,7 @@ async function onflixSoraGet(url, options = {}) {
 }
 
 
-async function onflixFetchSoraMaster(record) {
+async function onflixFetchSoraMasterLegacy(record) {
     const TAG = "[ONFLIX-SORA]";
 
     const epId = String(record?.id || "").trim();
@@ -30596,7 +30596,7 @@ async function onflixResolveSora(record) {
     const TAG = "[ONFLIX-SORA]";
 
     try {
-        const sora = await onflixFetchSoraMaster(record);
+        const sora = await onflixFetchSoraMasterLegacy(record);
 
         if (!sora?.master || !sora?.dataVodUrl) {
             console.warn(TAG, "Cannot continue", {
