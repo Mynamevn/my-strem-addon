@@ -25861,60 +25861,139 @@ function asupnimerGetEntryValue(value) {
    ACTIVE DOMAIN DISCOVERY AND BLOGGER FEED
    ============================================================ */
 
+
 async function asupnimerResolveActiveDomain() {
     if (asupnimerActiveDomain) {
         return asupnimerActiveDomain;
     }
 
-    for (const candidate of ASUPNIMER_BOOTSTRAP_DOMAINS) {
+    const isAllowedDomain = hostname =>
+        /(^|\.)asupnimer\.com$/i.test(hostname) ||
+        /(^|\.)asup\.autos$/i.test(hostname);
+
+    const extractNewDomain = html => {
+        const match = String(html || "").match(
+            /const\s+newDomain\s*=\s*['"]([^'"]+)['"]/i
+        );
+
+        return match?.[1]?.trim() || "";
+    };
+
+    for (const bootstrap of ASUPNIMER_BOOTSTRAP_DOMAINS) {
+        let currentDomain = bootstrap;
+        let requestPath = "/search?m=1";
+        let splashHops = 0;
+
         try {
-            const response = await axios.get(
-                candidate + "/search?m=1",
-                {
-                    timeout: 12000,
-                    maxRedirects: 5,
-                    headers: {
-                        "User-Agent": ASUPNIMER_USER_AGENT,
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                    },
-                    validateStatus: status =>
-                        status >= 200 && status < 400
+            for (let attempt = 0; attempt < 4; attempt++) {
+                const response = await axios.get(
+                    currentDomain + requestPath,
+                    {
+                        timeout: 12000,
+                        maxRedirects: 5,
+                        headers: {
+                            "User-Agent": ASUPNIMER_USER_AGENT,
+                            "Accept":
+                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                        },
+                        validateStatus: status =>
+                            status >= 200 && status < 400
+                    }
+                );
+
+                const html = String(response?.data || "");
+
+                const responseUrl =
+                    response?.request?.res?.responseUrl ||
+                    response?.request?.responseURL ||
+                    currentDomain;
+
+                let responseOrigin = currentDomain;
+
+                try {
+                    responseOrigin = new URL(responseUrl).origin;
+                } catch (_) {}
+
+                const responseHost =
+                    new URL(responseOrigin).hostname;
+
+                if (!isAllowedDomain(responseHost)) {
+                    throw new Error(
+                        "Unexpected ASUPNIMER domain: " +
+                        responseHost
+                    );
                 }
-            );
 
-            const finalUrl =
-                response?.request?.res?.responseUrl ||
-                response?.request?.responseURL ||
-                candidate;
+                const newDomainValue =
+                    extractNewDomain(html);
 
-            let finalOrigin = candidate;
+                const isSplashPage =
+                    Boolean(newDomainValue) &&
+                    !html.includes("[id]");
 
-            try {
-                finalOrigin = new URL(finalUrl).origin;
-            } catch (_) {}
+                if (isSplashPage) {
+                    let nextOrigin = "";
 
-            if (
-                !/asupnimer|asup\.autos/i.test(
-                    new URL(finalOrigin).hostname
-                )
-            ) {
-                continue;
+                    try {
+                        nextOrigin = new URL(
+                            newDomainValue,
+                            currentDomain
+                        ).origin;
+                    } catch (_) {}
+
+                    if (!nextOrigin) {
+                        throw new Error(
+                            "Invalid ASUPNIMER newDomain"
+                        );
+                    }
+
+                    const nextHost =
+                        new URL(nextOrigin).hostname;
+
+                    if (!isAllowedDomain(nextHost)) {
+                        throw new Error(
+                            "Blocked ASUPNIMER redirect: " +
+                            nextHost
+                        );
+                    }
+
+                    if (nextOrigin === currentDomain) {
+                        break;
+                    }
+
+                    console.log(
+                        "[ASUPNIMER] DOMAIN TRANSITION:",
+                        JSON.stringify({
+                            from: currentDomain,
+                            to: nextOrigin,
+                            hop: splashHops + 1
+                        })
+                    );
+
+                    currentDomain = nextOrigin;
+                    requestPath = "/?m=1";
+                    splashHops++;
+                    continue;
+                }
+
+                asupnimerActiveDomain = responseOrigin;
+
+                console.log(
+                    "[ASUPNIMER] ACTIVE DOMAIN:",
+                    JSON.stringify({
+                        domain: asupnimerActiveDomain,
+                        splashHops,
+                        responseUrl
+                    })
+                );
+
+                return asupnimerActiveDomain;
             }
-
-            asupnimerActiveDomain = finalOrigin;
-
-            console.log(
-                "[ASUPNIMER] ACTIVE DOMAIN:",
-                asupnimerActiveDomain
-            );
-
-            return asupnimerActiveDomain;
 
         } catch (error) {
             console.log(
                 "[ASUPNIMER] DOMAIN CHECK FAILED:",
-                candidate,
+                currentDomain,
                 error?.response?.status ||
                 error?.message ||
                 error
@@ -25928,6 +26007,7 @@ async function asupnimerResolveActiveDomain() {
 
     return null;
 }
+
 
 async function asupnimerFetchFeed(
     feedUrl,
@@ -26091,16 +26171,32 @@ async function asupnimerFetchFeed(
             }
         );
 
-        console.log(
-            "[ASUPNIMER] FEED PARSED:",
-            JSON.stringify({
-                cacheKey: key,
-                count: entries.length,
-                format: rawText
-                    ? "text"
-                    : "object"
-            })
-        );
+        
+console.log(
+    "[ASUPNIMER] FEED PARSED:",
+    JSON.stringify({
+        cacheKey: key,
+        count: entries.length,
+        format: data?.feed
+            ? "json"
+            : validFeed
+                ? "xml"
+                : "unknown",
+        status: response?.status || null,
+        contentType:
+            response?.headers?.["content-type"] || null,
+        responseUrl:
+            response?.request?.res?.responseUrl ||
+            feedUrl,
+        feedTitle:
+            asupnimerGetEntryValue(
+                data?.feed?.title
+            ),
+        hasEntries:
+            Boolean(data?.feed?.entry)
+    })
+);
+
 
         return entries;
 
