@@ -3065,7 +3065,7 @@ async function movinaFetchClassicCatalogUncached(type) {
                 ) &&
                 String(item?.image || "").trim()
             )
-            .slice(0, CATALOG_TARGET)
+            .slice(0, 250)
             .map(ranked => ({
 
                 name:
@@ -3245,6 +3245,107 @@ function movinaTrendingDaySeed() {
     return new Date(
         Date.now() + 7 * 60 * 60 * 1000
     ).toISOString().slice(0, 10);
+}
+
+// =====================================================
+// [CLASSIC-002] [PROVIDERS: MOVINA]
+// DAILY ROTATION — IMDb TOP 250
+//
+// Top 1–10: cố định.
+// Top 11–250: luân phiên 40 phim/ngày.
+// Chu kỳ 6 ngày, sau đó lặp lại.
+// Mốc Ngày 1: 2026-11-06 (UTC+7).
+// =====================================================
+
+const MOVINA_CLASSIC_ROTATION_START =
+    "2026-11-06";
+
+const MOVINA_CLASSIC_FIXED_COUNT = 10;
+const MOVINA_CLASSIC_ROTATION_SIZE = 40;
+const MOVINA_CLASSIC_ROTATION_CYCLES = 6;
+
+function movinaClassicSelectDaily(items, type) {
+    const source = Array.isArray(items)
+        ? items
+        : [];
+
+    if (!source.length) {
+        return [];
+    }
+
+    const today = movinaTrendingDaySeed();
+
+    const startDay = Date.parse(
+        MOVINA_CLASSIC_ROTATION_START + "T00:00:00Z"
+    );
+
+    const currentDay = Date.parse(
+        today + "T00:00:00Z"
+    );
+
+    const elapsedDays = Math.floor(
+        (currentDay - startDay) / 86400000
+    );
+
+    const cycleDay =
+        (
+            (
+                elapsedDays %
+                MOVINA_CLASSIC_ROTATION_CYCLES
+            ) +
+            MOVINA_CLASSIC_ROTATION_CYCLES
+        ) %
+        MOVINA_CLASSIC_ROTATION_CYCLES;
+
+    const rotatingStart =
+        MOVINA_CLASSIC_FIXED_COUNT +
+        1 +
+        cycleDay * MOVINA_CLASSIC_ROTATION_SIZE;
+
+    const rotatingEnd =
+        rotatingStart +
+        MOVINA_CLASSIC_ROTATION_SIZE -
+        1;
+
+    const selected = source
+        .filter(item => {
+            const rank = Number(
+                item?.__movinaClassicRank || 0
+            );
+
+            return (
+                rank >= 1 &&
+                rank <= MOVINA_CLASSIC_FIXED_COUNT
+            ) || (
+                rank >= rotatingStart &&
+                rank <= rotatingEnd
+            );
+        })
+        .sort((a, b) =>
+            Number(a.__movinaClassicRank || 9999) -
+            Number(b.__movinaClassicRank || 9999)
+        );
+
+    console.log(
+        "[MOVINA CLASSIC DAILY ROTATION]",
+        JSON.stringify({
+            type,
+            date: today,
+            cycleDay: cycleDay + 1,
+            fixedRanks: "1-10",
+            rotatingRanks:
+                rotatingStart + "-" + rotatingEnd,
+            available: source.length,
+            returned: selected.length,
+            firstRank:
+                selected[0]?.__movinaClassicRank || 0,
+            lastRank:
+                selected[selected.length - 1]
+                    ?.__movinaClassicRank || 0
+        })
+    );
+
+    return selected;
 }
 
 // Ánh xạ tên thể loại giao diện sang slug PhimAPI.
@@ -4489,13 +4590,12 @@ if (!allowAnimation) {
 
         
 if (isClassic) {
-    // Giữ thứ hạng từ danh sách kinh điển đã đối chiếu.
-    items.sort((a, b) =>
-        (a.__movinaClassicRank || 9999) -
-        (b.__movinaClassicRank || 9999)
+    // Top 1–10 cố định.
+    // 40 phim tiếp theo thay đổi theo ngày.
+    result = movinaClassicSelectDaily(
+        items,
+        type
     );
-
-    result = items.slice(0, CATALOG_TARGET);
 
 } else if (isLatest) {
     // Mới nhất: giữ thứ tự từ phim mới đến phim cũ.
