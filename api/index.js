@@ -20128,8 +20128,10 @@ async function fetchKKPhim(
     seasonNumber = 0,
     episodeNumber = 0,
     streamType = "movie",
-    imdbId = ""
+    imdbId = "",
+    titleVariants = []
 ) {
+
     const streams = [];
 
     try {
@@ -20516,8 +20518,37 @@ if (!movie) {
     // B. FALLBACK 2: GENERIC TITLE SEARCH
     // -------------------------------------------------
 
-    let uniqueSearchTerms =
-        kkphimBuildBasicTitleVariants(movieName);
+    // =================================================
+// KKPHIM — MERGE MOVINA METADATA TITLE VARIANTS
+// =================================================
+
+const suppliedTitleVariants = [
+    ...new Set(
+        (Array.isArray(titleVariants) ? titleVariants : [])
+            .map(value => String(value || "").trim())
+            .filter(value =>
+                value.length >= 2 &&
+                kkphimNormalizeTitle(value) !==
+                    kkphimNormalizeTitle(movieName)
+            )
+    )
+];
+
+let uniqueSearchTerms = [
+    ...new Set([
+        ...kkphimBuildBasicTitleVariants(movieName),
+        ...suppliedTitleVariants
+    ])
+].slice(0, 12);
+
+console.log(
+    "[KKPHIM] MOVINA TITLE VARIANTS:",
+    JSON.stringify({
+        primary: movieName,
+        variants: suppliedTitleVariants,
+        searchTerms: uniqueSearchTerms
+    })
+);
 
     let searchGroups = [];
     let items = [];
@@ -39688,6 +39719,24 @@ let kkphim = [];
 
 const kkphimPromise = (async () => {
     try {
+        const kkphimTitleVariants = [
+            resolvedMetadata?.name,
+            resolvedMetadata?.origin_name,
+            resolvedMetadata?.original_name
+        ]
+            .map(value => String(value || "").trim())
+            .filter(Boolean);
+
+        console.log(
+            "[KKPHIM] MOVINA METADATA TITLES:",
+            JSON.stringify({
+                primary: movieName,
+                variants: kkphimTitleVariants,
+                year: movieYear,
+                type: streamType
+            })
+        );
+
         return await fetchKKPhim(
             movieName,
             movieYear,
@@ -39696,8 +39745,10 @@ const kkphimPromise = (async () => {
             streamType,
             rawId.startsWith("tt")
                 ? rawId.split(":")[0]
-                : ""
+                : "",
+            kkphimTitleVariants
         );
+
     } catch (e) {
         console.log(
             "[KKPHIM PRELOAD ERROR]:",
