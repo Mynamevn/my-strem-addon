@@ -28238,13 +28238,19 @@ aliasQueries.push(query);
     }
 
     console.log(
-        "[ASUPNIMER] STRICT TITLE MATCH:",
-        JSON.stringify({
-            searchedPosts: postMap.size,
-            exactCandidates: candidates.length,
-            acceptedTitleKeys: [...titleKeys]
-        })
-    );
+    "[ASUPNIMER] STRICT TITLE MATCH:",
+    JSON.stringify({
+        searchedPosts: postMap.size,
+        searchedTitles: [...postMap.values()].map(post => ({
+            title: post.title,
+            url: post.url,
+            categories: post.categories
+        })),
+        exactCandidates: candidates.length,
+        matchedTitles: candidates.map(post => post.title),
+        acceptedTitleKeys: [...titleKeys]
+    })
+);
 
     if (!candidates.length) {
         console.log(
