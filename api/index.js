@@ -26625,6 +26625,307 @@ async function asupnimerBuildPostDetail(post) {
     return result;
 }
 
+
+/* ============================================================
+   [PRV-ASUPNIMER.09] [PROVIDERS: ASUPNIMER]
+   LOADVID CACHE
+   ============================================================ */
+
+const ASUPNIMER_LOADVID_CACHE = new Map();
+const ASUPNIMER_LOADVID_CACHE_TTL = 3 * 60 * 1000;
+
+function asupnimerGetLoadVidHash(sourceUrl = "") {
+    const value = String(sourceUrl || "").trim();
+
+    const match = value.match(
+        /(?:https?:\/\/)?(?:cdn\.)?loadvid\.com\/videos\/play\/([A-Za-z0-9]+)/i
+    );
+
+    return match?.[1] || null;
+}
+
+function asupnimerGetLoadVidCookies(headers = {}) {
+    const setCookie =
+        headers["set-cookie"] ||
+        headers["Set-Cookie"] ||
+        [];
+
+    const cookies = Array.isArray(setCookie)
+        ? setCookie
+        : [setCookie];
+
+    return cookies
+        .map(cookie =>
+            String(cookie || "").split(";")[0].trim()
+        )
+        .filter(Boolean)
+        .join("; ");
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.10] [PROVIDERS: ASUPNIMER]
+   LOADVID TOKEN AND HLS RESOLUTION
+   ============================================================ */
+
+async function asupnimerResolveLoadVid(sourceUrl) {
+    const hash =
+        asupnimerGetLoadVidHash(sourceUrl);
+
+    if (!hash) {
+        return null;
+    }
+
+    const cached =
+        ASUPNIMER_LOADVID_CACHE.get(hash);
+
+    if (
+        cached &&
+        Date.now() - cached.at <
+            ASUPNIMER_LOADVID_CACHE_TTL
+    ) {
+        console.log(
+            "[ASUPNIMER LOADVID] CACHE HIT:",
+            hash
+        );
+
+        return cached.data;
+    }
+
+    const playUrl =
+        "https://cdn.loadvid.com/videos/play/" +
+        hash;
+
+    try {
+        console.log(
+            "[ASUPNIMER LOADVID] OPEN:",
+            hash
+        );
+
+        const playResponse = await axios.get(
+            playUrl,
+            {
+                timeout: 20000,
+                maxRedirects: 5,
+                responseType: "text",
+                headers: {
+                    "User-Agent": ASUPNIMER_USER_AGENT,
+                    "Accept":
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        const playHtml =
+            String(playResponse?.data || "");
+
+        const tokenMatch = playHtml.match(
+            /videoToken\s*:\s*['"]([^'"]+)['"]/i
+        );
+
+        const videoToken =
+            tokenMatch?.[1] || "";
+
+        if (!videoToken) {
+            console.log(
+                "[ASUPNIMER LOADVID] VIDEO TOKEN NOT FOUND:",
+                hash
+            );
+
+            return null;
+        }
+
+        const $ = cheerio.load(playHtml);
+
+        const csrfToken =
+            String(
+                $("meta[name='csrf-token']")
+                    .attr("content") || ""
+            ).trim();
+
+        const isProtected =
+            /isProtected\s*:\s*true/i.test(
+                playHtml
+            );
+
+        if (!csrfToken || !isProtected) {
+            console.log(
+                "[ASUPNIMER LOADVID] PROTECTION CHECK FAILED:",
+                JSON.stringify({
+                    hash,
+                    hasCsrf: Boolean(csrfToken),
+                    isProtected
+                })
+            );
+
+            return null;
+        }
+
+        const cookies =
+            asupnimerGetLoadVidCookies(
+                playResponse?.headers || {}
+            );
+
+        const postHeaders = {
+            "User-Agent": ASUPNIMER_USER_AGENT,
+            "Accept":
+                "application/vnd.apple.mpegurl,*/*",
+            "X-CSRF-TOKEN": csrfToken,
+            "X-XSRF-TOKEN": csrfToken,
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": "https://cdn.loadvid.com",
+            "Referer": playUrl,
+            "Content-Type": "application/json"
+        };
+
+        if (cookies) {
+            postHeaders.Cookie = cookies;
+        }
+
+        console.log(
+            "[ASUPNIMER LOADVID] RESOLVE TOKEN:",
+            hash
+        );
+
+        const resolveResponse = await axios.post(
+            "https://cdn.loadvid.com/videos/resolve-token",
+            {
+                token: videoToken,
+                hash
+            },
+            {
+                timeout: 25000,
+                maxRedirects: 5,
+                responseType: "text",
+                headers: postHeaders,
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        const playlist =
+            String(resolveResponse?.data || "").trim();
+
+        if (
+            !playlist ||
+            !playlist.includes("#EXTM3U")
+        ) {
+            console.log(
+                "[ASUPNIMER LOADVID] INVALID HLS RESPONSE:",
+                JSON.stringify({
+                    hash,
+                    status: resolveResponse?.status,
+                    responseLength: playlist.length,
+                    responsePreview:
+                        playlist.slice(0, 180)
+                })
+            );
+
+            return null;
+        }
+
+        const result = {
+            provider: "asupnimer",
+            resolver: "loadvid",
+            hash,
+            playlist,
+            playlistUrl:
+                "https://cdn.loadvid.com/resolve/" +
+                hash +
+                ".m3u8",
+            contentType:
+                "application/vnd.apple.mpegurl",
+            resolvedAt: Date.now()
+        };
+
+        ASUPNIMER_LOADVID_CACHE.set(
+            hash,
+            {
+                at: Date.now(),
+                data: result
+            }
+        );
+
+        console.log(
+            "[ASUPNIMER LOADVID] RESOLVED:",
+            JSON.stringify({
+                hash,
+                playlistLength: playlist.length,
+                hasSegments:
+                    /#EXTINF/i.test(playlist),
+                hasVariant:
+                    /#EXT-X-STREAM-INF/i.test(playlist)
+            })
+        );
+
+        return result;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER LOADVID] ERROR:",
+            JSON.stringify({
+                hash,
+                status: error?.response?.status || 0,
+                message:
+                    error?.response?.data
+                        ? String(error.response.data).slice(0, 250)
+                        : error?.message || String(error)
+            })
+        );
+
+        return null;
+    }
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.11] [PROVIDERS: ASUPNIMER]
+   LOADVID SOURCE DISPATCHER
+   ============================================================ */
+
+async function asupnimerResolveVideoSource(sourceUrl) {
+    const url = String(sourceUrl || "").trim();
+
+    if (!url) return null;
+
+    if (/loadvid\.com\/videos\/play\//i.test(url)) {
+        return await asupnimerResolveLoadVid(url);
+    }
+
+    if (
+        /\.m3u8(?:$|[?#])/i.test(url) ||
+        /\.mp4(?:$|[?#])/i.test(url)
+    ) {
+        return {
+            provider: "asupnimer",
+            resolver: "direct",
+            url
+        };
+    }
+
+    if (
+        /youtube\.com\/watch|youtu\.be\//i.test(url)
+    ) {
+        return {
+            provider: "asupnimer",
+            resolver: "youtube",
+            url
+        };
+    }
+
+    if (/playhydrax\.com|abysscdn\.com/i.test(url)) {
+        return {
+            provider: "asupnimer",
+            resolver: "hydrax-pending",
+            url
+        };
+    }
+
+    return null;
+}
+
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
 // ============================================================
