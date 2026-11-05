@@ -39,7 +39,7 @@ const manifest = {
         "community.paproplayer.multisource.v2000",
 
     version:
-        "15.1",
+        "1.5.1",
 
     name:
         "MOVINA",
