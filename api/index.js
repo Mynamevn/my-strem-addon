@@ -7421,7 +7421,91 @@ if (
         }
     }
 
+    // [ANIMATION DIAGNOSTICS] Kiểm tra dữ liệu trước khi xác minh.
+    const phimapiImdbCount = Array.from(
+        animationByImdb.values()
+    ).reduce(
+        (total, matches) => total + matches.length,
+        0
+    );
+
+    const phimapiDuplicateImdbGroups = Array.from(
+        animationByImdb.entries()
+    )
+        .filter(([, matches]) => matches.length > 1);
+
+    const getAnimationDiagnostic = item => ({
+        name: item?.name || "",
+        origin_name: item?.origin_name || "",
+        original_name: item?.original_name || "",
+        year: movinaIdentityGetYear(item),
+        type: isSeriesItem(item) ? "series" : "movie",
+        imdbDetected: getAnimationImdbId(item),
+        imdbRaw:
+            typeof item?.imdb === "object"
+                ? {
+                    id: item.imdb?.id || "",
+                    imdb_id: item.imdb?.imdb_id || ""
+                }
+                : item?.imdb || null,
+        imdb_id: item?.imdb_id || "",
+        imdbId: item?.imdbId || "",
+        id: item?.id || ""
+    });
+
+    console.log(
+        "[ANIMATION ID DIAGNOSTIC - PHIMAPI]",
+        JSON.stringify({
+            genre: genreLabel,
+            type,
+            records: items.length,
+            recordsWithImdb: phimapiImdbCount,
+            uniqueImdbIds: animationByImdb.size,
+            duplicateImdbGroups:
+                phimapiDuplicateImdbGroups.length,
+            duplicateSamples:
+                phimapiDuplicateImdbGroups
+                    .slice(0, 5)
+                    .map(([imdbId, matches]) => ({
+                        imdbId,
+                        count: matches.length,
+                        records: matches
+                            .slice(0, 3)
+                            .map(getAnimationDiagnostic)
+                    })),
+            samples: items
+                .slice(0, 5)
+                .map(getAnimationDiagnostic)
+        })
+    );
+
+    console.log(
+        "[ANIMATION ID DIAGNOSTIC - CINEMETA]",
+        JSON.stringify({
+            genre: genreLabel,
+            type,
+            records: cinemetaAnimationItems.length,
+            recordsWithImdb:
+                cinemetaAnimationItems.filter(
+                    item => Boolean(getAnimationImdbId(item))
+                ).length,
+            samples: cinemetaAnimationItems
+                .slice(0, 8)
+                .map(getAnimationDiagnostic)
+        })
+    );
+
     const verifiedCinemetaItems = [];
+
+    const identityStats = {
+        cinemetaRecords: cinemetaAnimationItems.length,
+        matchedByImdb: 0,
+        matchedByTitleYear: 0,
+        unmatchedWithImdb: 0,
+        unmatchedWithoutImdb: 0,
+        ambiguousImdb: 0,
+        unmatchedSamples: []
+    };
 
     for (const cinemeta of cinemetaAnimationItems) {
         const cinemetaType =
@@ -7437,14 +7521,20 @@ if (
             getAnimationImdbId(cinemeta);
 
         let matchedAnimation = null;
+        let matchMethod = "";
 
-        // Ưu tiên IMDb ID duy nhất.
+        let imdbMatches = [];
+
+        // Ưu tiên IMDb ID.
         if (imdbId) {
-            const matches =
+            imdbMatches =
                 animationByImdb.get(imdbId) || [];
 
-            if (matches.length === 1) {
-                matchedAnimation = matches[0];
+            if (imdbMatches.length === 1) {
+                matchedAnimation = imdbMatches[0];
+                matchMethod = "imdb";
+            } else if (imdbMatches.length > 1) {
+                identityStats.ambiguousImdb++;
             }
         }
 
@@ -7478,16 +7568,47 @@ if (
                     }
                 }
 
-                // Chỉ nhận khi có duy nhất một ứng viên.
                 if (candidates.size === 1) {
                     matchedAnimation =
                         candidates.values().next().value;
+
+                    matchMethod = "title-year";
                 }
             }
         }
 
         if (!matchedAnimation) {
+            if (imdbId) {
+                identityStats.unmatchedWithImdb++;
+            } else {
+                identityStats.unmatchedWithoutImdb++;
+            }
+
+            if (identityStats.unmatchedSamples.length < 10) {
+                identityStats.unmatchedSamples.push({
+                    cinemeta:
+                        getAnimationDiagnostic(cinemeta),
+
+                    phimapiMatchesForImdb:
+                        imdbMatches.length,
+
+                    sameImdbCandidates:
+                        imdbMatches
+                            .slice(0, 3)
+                            .map(getAnimationDiagnostic),
+
+                    cinemetaTitles:
+                        movinaIdentityTitles(cinemeta)
+                });
+            }
+
             continue;
+        }
+
+        if (matchMethod === "imdb") {
+            identityStats.matchedByImdb++;
+        } else if (matchMethod === "title-year") {
+            identityStats.matchedByTitleYear++;
         }
 
         // Giữ danh tính và poster PhimAPI.
@@ -7499,7 +7620,6 @@ if (
             id: matchedAnimation.id,
             _id: matchedAnimation._id,
             slug: matchedAnimation.slug,
-
             name: matchedAnimation.name,
             origin_name: matchedAnimation.origin_name,
             original_name: matchedAnimation.original_name,
@@ -7522,6 +7642,11 @@ if (
 
         verifiedCinemetaItems.push(enrichedAnimation);
     }
+
+    console.log(
+        "[ANIMATION ID DIAGNOSTIC - RESULT]",
+        JSON.stringify(identityStats)
+    );
 
     cinemetaAnimationItems =
         verifiedCinemetaItems;
