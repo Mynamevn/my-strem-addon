@@ -13815,6 +13815,297 @@ if (!imdbId) {
     }
 }
 
+
+// ============================================================
+// B.5. KKPHIM IMDb IDENTITY FALLBACK
+// Chỉ chạy khi Cinemeta không tìm được IMDb ID.
+// Xác minh chính xác tên + năm + loại phim.
+// ============================================================
+
+let imdbResolvedByKKPhim = false;
+
+if (
+    !imdbId &&
+    targetYear > 0
+) {
+    const kkIdentityQueries = [
+        ...new Set(
+            sourceTitleValues
+                .map(value => String(value || "").trim())
+                .filter(Boolean)
+        )
+    ].slice(0, 4);
+
+    const kkIdentityResults = await Promise.all(
+        kkIdentityQueries.map(query =>
+            movinaMetaCachedLoad(
+                MOVINA_META_SEARCH_CACHE,
+
+                "kkphim-identity:" +
+                    metaType +
+                    ":" +
+                    targetYear +
+                    ":" +
+                    normalizeTitle(query),
+
+                async () => {
+                    try {
+                        const response = await axios.get(
+                            "https://phimapi.com/v1/api/tim-kiem?keyword=" +
+                                encodeURIComponent(query) +
+                                "&limit=64",
+                            {
+                                timeout: 3500,
+                                headers: {
+                                    "User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"
+                                }
+                            }
+                        );
+
+                        const rows =
+                            response.data?.data?.items ||
+                            response.data?.items ||
+                            [];
+
+                        return Array.isArray(rows)
+                            ? rows
+                            : [];
+
+                    } catch (error) {
+                        console.log(
+                            "[META KKPHIM SEARCH ERROR]",
+                            JSON.stringify({
+                                query,
+                                status: error?.response?.status || 0,
+                                message: error?.message || String(error)
+                            })
+                        );
+
+                        return [];
+                    }
+                },
+
+                MOVINA_META_SEARCH_TTL,
+                60 * 1000
+            )
+        )
+    );
+
+    // Kiểm tra ứng viên KKPhim.
+    const kkIdentityMatchesSource = candidate => {
+        if (!candidate) return false;
+
+        const candidateType = String(
+            candidate.type || ""
+        ).trim().toLowerCase();
+
+        const validType =
+            metaType === "series"
+                ? ["series", "tv", "tvshow", "tvshows"]
+                    .includes(candidateType)
+                : ["single", "movie", "film"]
+                    .includes(candidateType);
+
+        if (!validType) return false;
+
+        const candidateYear =
+            Number(candidate.year) || 0;
+
+        // Có năm nguồn thì bắt buộc phải trùng năm.
+        if (
+            !candidateYear ||
+            candidateYear !== targetYear
+        ) {
+            return false;
+        }
+
+        const candidateTitles = [
+            candidate.name,
+            candidate.origin_name,
+            candidate.original_name
+        ]
+            .map(normalizeTitle)
+            .filter(Boolean);
+
+        // Chỉ chấp nhận tên khớp chính xác.
+        return candidateTitles.some(title =>
+            sourceTitleSet.has(title)
+        );
+    };
+
+    const kkMatchedCandidates = new Map();
+
+    for (const group of kkIdentityResults) {
+        const rows = Array.isArray(group)
+            ? group
+            : [];
+
+        for (const candidate of rows) {
+            if (
+                !kkIdentityMatchesSource(candidate)
+            ) {
+                continue;
+            }
+
+            const key = String(
+                candidate.slug ||
+                candidate._id ||
+                candidate.id ||
+                ""
+            ).trim();
+
+            if (!key) continue;
+
+            if (!kkMatchedCandidates.has(key)) {
+                kkMatchedCandidates.set(
+                    key,
+                    candidate
+                );
+            }
+        }
+    }
+
+    console.log(
+        "[META KKPHIM IDENTITY SEARCH]",
+        JSON.stringify({
+            title: movieName,
+            year: targetYear,
+            type: metaType,
+            queries: kkIdentityQueries,
+            matchedCandidates: kkMatchedCandidates.size
+        })
+    );
+
+    // Chỉ tiếp tục khi có duy nhất một phim phù hợp.
+    if (kkMatchedCandidates.size === 1) {
+        const selectedKKPhim =
+            kkMatchedCandidates.values().next().value;
+
+        let kkIdentityDetail = selectedKKPhim;
+
+        let kkImdbId = getValidImdbId(
+            selectedKKPhim?.imdb?.id,
+            selectedKKPhim?.imdb_id,
+            selectedKKPhim?.imdbId
+        );
+
+        // Nếu kết quả tìm kiếm chưa có IMDb,
+        // lấy chi tiết phim KKPhim để kiểm tra thêm.
+        if (
+            !kkImdbId &&
+            selectedKKPhim?.slug
+        ) {
+            const kkSlug = String(
+                selectedKKPhim.slug
+            ).trim();
+
+            const kkDetail =
+                await movinaMetaCachedLoad(
+                    MOVINA_META_DETAIL_CACHE,
+
+                    "kkphim-identity-detail:" + kkSlug,
+
+                    async () => {
+                        try {
+                            const response = await axios.get(
+                                "https://phimapi.com/v1/api/phim/" +
+                                    encodeURIComponent(kkSlug),
+                                {
+                                    timeout: 3500,
+                                    headers: {
+                                        "User-Agent": "Mozilla/5.0",
+                                        "Accept": "application/json"
+                                    }
+                                }
+                            );
+
+                            return (
+                                response.data?.data?.item ||
+                                response.data?.item ||
+                                null
+                            );
+
+                        } catch (error) {
+                            console.log(
+                                "[META KKPHIM DETAIL ERROR]",
+                                kkSlug,
+                                error?.response?.status ||
+                                error?.message ||
+                                error
+                            );
+
+                            return null;
+                        }
+                    },
+
+                    MOVINA_META_DETAIL_TTL,
+                    60 * 1000
+                );
+
+            if (kkDetail) {
+                kkIdentityDetail = {
+                    ...selectedKKPhim,
+                    ...kkDetail
+                };
+
+                kkImdbId = getValidImdbId(
+                    kkDetail?.imdb?.id,
+                    kkDetail?.imdb_id,
+                    kkDetail?.imdbId,
+                    kkIdentityDetail?.imdb?.id,
+                    kkIdentityDetail?.imdb_id,
+                    kkIdentityDetail?.imdbId
+                );
+            }
+        }
+
+        // Kiểm tra lại toàn bộ dữ liệu chi tiết.
+        if (
+            kkImdbId &&
+            kkIdentityMatchesSource(kkIdentityDetail)
+        ) {
+            imdbId = kkImdbId;
+            metaId = kkImdbId;
+            imdbResolvedByKKPhim = true;
+
+            console.log(
+                "[META KKPHIM IDENTITY PASS]",
+                JSON.stringify({
+                    imdbId,
+                    title: kkIdentityDetail.name,
+                    originalTitle: kkIdentityDetail.origin_name,
+                    year: kkIdentityDetail.year,
+                    type: kkIdentityDetail.type
+                })
+            );
+
+        } else {
+            console.log(
+                "[META KKPHIM IDENTITY FAIL]",
+                JSON.stringify({
+                    title: movieName,
+                    candidate: kkIdentityDetail?.name || "",
+                    year: kkIdentityDetail?.year || 0,
+                    imdbId: kkImdbId || null
+                })
+            );
+        }
+
+    } else {
+        console.log(
+            "[META KKPHIM IDENTITY SAFE FAIL]",
+            JSON.stringify({
+                title: movieName,
+                year: targetYear,
+                candidates: kkMatchedCandidates.size,
+                keepInternalId: true
+            })
+        );
+    }
+}
+
+
 // ============================================================
 // C. FINAL ID
 // ============================================================
@@ -13825,8 +14116,8 @@ if (!imdbId) {
 // FAIL:
 //     metaId = vnwpsw:...
 //
-// Không bao giờ thay internal ID bằng IMDb
-// nếu chưa vượt qua kiểm tra identity.
+// Chỉ sử dụng IMDb ID đã được xác minh
+// bởi Cinemeta hoặc KKPhim.
 
 console.log(
     "[META FINAL IDENTITY]:",
@@ -13835,30 +14126,71 @@ console.log(
         finalId: metaId,
         imdbId: imdbId || null,
         imdbResolvedByCinemeta,
+        imdbResolvedByKKPhim,
         type: metaType
     })
 );
 
-// Đồng bộ IMDb PASS vào Catalog cache.
-// Lần mở Discover tiếp theo sẽ dùng tt... thay vì vnwpsw.
+// ============================================================
+// IMDb → PHIMAPI MATCH CACHE
+// Giữ khả năng lấy stream MOVINA khi Stremio
+// chuyển từ ID nội bộ sang IMDb ID.
+// ============================================================
 
 if (
     imdbId &&
     slug &&
     /^tt\d+$/i.test(imdbId)
 ) {
-    movinaPromoteCatalogIdentity(
+    const normalizedImdbId =
+        String(imdbId).trim().toLowerCase();
+
+    const matchedPhimApiItem = {
+        ...item,
+        ...detail,
+        slug:
+            slug ||
+            detail?.slug ||
+            item?.slug
+    };
+
+    MOVINA_PHIMAPI_MATCH_BY_IMDB.set(
+        metaType + ":" + normalizedImdbId,
         {
-            ...item,
-            ...detail,
-            slug
-        },
+            expiresAt:
+                Date.now() +
+                MOVINA_PHIMAPI_MATCH_BY_IMDB_TTL,
+
+            item: matchedPhimApiItem
+        }
+    );
+
+    // Đồng bộ IMDb ID vào catalog cache.
+    movinaPromoteCatalogIdentity(
+        matchedPhimApiItem,
         metaType,
-        imdbId
+        normalizedImdbId
+    );
+
+    console.log(
+        "[META IMDb → PHIMAPI CACHE SAVED]",
+        JSON.stringify({
+            imdbId: normalizedImdbId,
+            type: metaType,
+            slug: matchedPhimApiItem.slug,
+            source: imdbResolvedByKKPhim
+                ? "KKPHIM"
+                : (
+                    imdbResolvedByCinemeta
+                        ? "CINEMETA"
+                        : "PHIMAPI"
+                )
+        })
     );
 }
 
-        // =====================================================
+
+// =====================================================
 // [STREMIO-013.15] [PROVIDERS: ALL] IMDB RATING EXTRACTION
 // CACHE-FIRST CINEMETA RATING
 // =====================================================
