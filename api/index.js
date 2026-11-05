@@ -30204,21 +30204,50 @@ async function onflixLoad(url) {
         const extracted = onflixExtractNextData(html);
         const records = onflixParseEpisodeRecords(extracted);
 
-        // Gom các record theo tên/slug tập, giữ nguyên thứ tự
-        // xuất hiện trong dữ liệu gốc của Onflix.
+        
+        // Gom record theo số tập chuẩn hóa.
+        // Ví dụ: "1" và "01" đều thuộc tập 1.
+        // Giữ tất cả server record của cùng một tập.
         const groups = new Map();
 
         for (const record of records) {
-            const key = String(
-                record.slug || record.name || ""
+            const rawName = String(
+                record.name ||
+                record.slug ||
+                ""
             ).trim();
 
-            if (!key) continue;
+            if (!rawName) continue;
+
+            const explicitMatch =
+                rawName.match(
+                    /^(?:tập|ep(?:isode)?)\s*0*(\d+)$/i
+                ) ||
+                rawName.match(/^0*(\d+)$/);
+
+            const explicitNumber = explicitMatch
+                ? Number(explicitMatch[1])
+                : 0;
+
+            const number =
+                explicitNumber > 0
+                    ? explicitNumber
+                    : null;
+
+            // Các tập có số sẽ dùng chung một key,
+            // không phân biệt 1, 01, 001.
+            const key = number !== null
+                ? "episode:" + number
+                : "label:" + rawName.toLowerCase();
 
             if (!groups.has(key)) {
                 groups.set(key, {
-                    name: String(record.name || key).trim(),
-                    slug: String(record.slug || key).trim(),
+                    name: rawName,
+                    slug: String(
+                        record.slug ||
+                        rawName
+                    ).trim(),
+                    number,
                     records: []
                 });
             }
@@ -30226,39 +30255,43 @@ async function onflixLoad(url) {
             groups.get(key).records.push(record);
         }
 
-        const episodes = [...groups.values()].map((group, index) => {
-            const rawName = String(group.name || group.slug || "").trim();
+        const episodes = [...groups.values()].map(
+            (group, index) => {
+                const number =
+                    group.number ||
+                    index + 1;
 
-            // Chỉ dùng số tập có trong tên nếu tên thực sự chứa
-            // một số tập rõ ràng; nếu không, dùng vị trí trong danh sách.
-            const explicitMatch = rawName.match(
-                /^(?:tập|ep(?:isode)?)\s*0*(\d+)$/i
-            ) || rawName.match(/^0*(\d+)$/);
+                return {
+                    id:
+                        `${detailUrl}#onflix-${encodeURIComponent(group.slug)}`,
 
-            const explicitNumber = explicitMatch
-                ? Number(explicitMatch[1])
-                : 0;
+                    url: detailUrl,
 
-            const number = explicitNumber > 0
-                ? explicitNumber
-                : index + 1;
+                    name:
+                        group.name ||
+                        `Tập ${number}`,
 
-            return {
-                id: `${detailUrl}#onflix-${encodeURIComponent(group.slug)}`,
-                url: detailUrl,
-                name: rawName || `Tập ${number}`,
-                title: rawName || `Tập ${number}`,
-                number,
-                data: JSON.stringify({
-                    detailUrl,
-                    watchUrl,
-                    selectedEpisode: number,
-                    episodeName: rawName || `Tập ${number}`,
-                    records: group.records
-                }),
-                provider: "onflix"
-            };
-        });
+                    title:
+                        group.name ||
+                        `Tập ${number}`,
+
+                    number,
+
+                    data: JSON.stringify({
+                        detailUrl,
+                        watchUrl,
+                        selectedEpisode: number,
+                        episodeName:
+                            group.name ||
+                            `Tập ${number}`,
+                        records: group.records
+                    }),
+
+                    provider: "onflix"
+                };
+            }
+        );
+
 
         console.info("[ONFLIX] LOAD PAGE:", JSON.stringify({
             status: page.status,
