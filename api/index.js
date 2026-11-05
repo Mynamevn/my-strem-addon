@@ -25782,6 +25782,425 @@ return streams;
 }
 }
 
+
+/* ============================================================
+   [PRV-ASUPNIMER.01] [PROVIDERS: ASUPNIMER]
+   CONFIGURATION AND CACHE
+   ============================================================ */
+
+const ASUPNIMER_BOOTSTRAP_DOMAINS = [
+    "https://www.asupnimer.com",
+    "https://www.asup.autos"
+];
+
+const ASUPNIMER_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+const ASUPNIMER_FEED_CACHE = new Map();
+const ASUPNIMER_FEED_CACHE_TTL = 5 * 60 * 1000;
+
+const ASUPNIMER_POST_CACHE = new Map();
+const ASUPNIMER_POST_CACHE_TTL = 10 * 60 * 1000;
+
+let asupnimerActiveDomain = null;
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.02] [PROVIDERS: ASUPNIMER]
+   TEXT AND URL HELPERS
+   ============================================================ */
+
+function asupnimerNormalizeText(value = "") {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/gi, "d")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function asupnimerAbsoluteUrl(url, baseUrl) {
+    if (!url) return null;
+
+    try {
+        return new URL(
+            String(url).trim(),
+            baseUrl
+        ).href;
+    } catch (_) {
+        return null;
+    }
+}
+
+function asupnimerExtractPostPath(postUrl) {
+    try {
+        const parsed = new URL(postUrl);
+
+        return parsed.pathname
+            .replace(/^\/+/, "")
+            .replace(/\/+$/, "");
+
+    } catch (_) {
+        return "";
+    }
+}
+
+function asupnimerGetEntryValue(value) {
+    if (value && typeof value === "object") {
+        return String(value.$t || "");
+    }
+
+    return String(value || "");
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.03] [PROVIDERS: ASUPNIMER]
+   ACTIVE DOMAIN DISCOVERY AND BLOGGER FEED
+   ============================================================ */
+
+async function asupnimerResolveActiveDomain() {
+    if (asupnimerActiveDomain) {
+        return asupnimerActiveDomain;
+    }
+
+    for (const candidate of ASUPNIMER_BOOTSTRAP_DOMAINS) {
+        try {
+            const response = await axios.get(
+                candidate + "/search?m=1",
+                {
+                    timeout: 12000,
+                    maxRedirects: 5,
+                    headers: {
+                        "User-Agent": ASUPNIMER_USER_AGENT,
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    },
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            const finalUrl =
+                response?.request?.res?.responseUrl ||
+                response?.request?.responseURL ||
+                candidate;
+
+            let finalOrigin = candidate;
+
+            try {
+                finalOrigin = new URL(finalUrl).origin;
+            } catch (_) {}
+
+            if (
+                !/asupnimer|asup\.autos/i.test(
+                    new URL(finalOrigin).hostname
+                )
+            ) {
+                continue;
+            }
+
+            asupnimerActiveDomain = finalOrigin;
+
+            console.log(
+                "[ASUPNIMER] ACTIVE DOMAIN:",
+                asupnimerActiveDomain
+            );
+
+            return asupnimerActiveDomain;
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] DOMAIN CHECK FAILED:",
+                candidate,
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+        }
+    }
+
+    console.log(
+        "[ASUPNIMER] DOMAIN DISCOVERY FAILED"
+    );
+
+    return null;
+}
+
+async function asupnimerFetchFeed(
+    feedUrl,
+    cacheKey = ""
+) {
+    const key = cacheKey || feedUrl;
+    const cached = ASUPNIMER_FEED_CACHE.get(key);
+
+    if (
+        cached &&
+        Date.now() - cached.at <
+            ASUPNIMER_FEED_CACHE_TTL
+    ) {
+        return cached.data;
+    }
+
+    try {
+        const response = await axios.get(
+            feedUrl,
+            {
+                timeout: 15000,
+                maxRedirects: 5,
+                responseType: "json",
+                headers: {
+                    "User-Agent": ASUPNIMER_USER_AGENT,
+                    "Accept":
+                        "application/json,application/atom+xml,*/*"
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 300
+            }
+        );
+
+        const data = response?.data || {};
+
+        const entries = Array.isArray(
+            data?.feed?.entry
+        )
+            ? data.feed.entry
+            : [];
+
+        ASUPNIMER_FEED_CACHE.set(
+            key,
+            {
+                at: Date.now(),
+                data: entries
+            }
+        );
+
+        return entries;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER] FEED ERROR:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return [];
+    }
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.04] [PROVIDERS: ASUPNIMER]
+   SEARCH POSTS AND LOAD POST DETAILS
+   ============================================================ */
+
+async function asupnimerSearchPosts(
+    query,
+    maxResults = 25
+) {
+    const title = String(query || "").trim();
+
+    if (!title) return [];
+
+    const domain =
+        await asupnimerResolveActiveDomain();
+
+    if (!domain) return [];
+
+    const feedUrl =
+        domain +
+        "/feeds/posts/summary?alt=json&q=" +
+        encodeURIComponent(title) +
+        "&max-results=" +
+        Math.max(1, Math.min(25, Number(maxResults) || 25)) +
+        "&start-index=1";
+
+    const entries = await asupnimerFetchFeed(
+        feedUrl,
+        "search:" + asupnimerNormalizeText(title)
+    );
+
+    const posts = [];
+
+    for (const entry of entries) {
+        const postTitle =
+            asupnimerGetEntryValue(
+                entry?.title
+            ).trim();
+
+        if (!postTitle) continue;
+
+        const links = Array.isArray(entry?.link)
+            ? entry.link
+            : [];
+
+        const alternate = links.find(
+            item => item?.rel === "alternate"
+        );
+
+        const postUrl =
+            asupnimerAbsoluteUrl(
+                alternate?.href,
+                domain
+            );
+
+        if (!postUrl) continue;
+
+        const thumbnail =
+            entry?.media$thumbnail?.url ||
+            "";
+
+        const categories = Array.isArray(
+            entry?.category
+        )
+            ? entry.category
+                .map(item =>
+                    String(item?.term || "").trim()
+                )
+                .filter(Boolean)
+            : [];
+
+        posts.push({
+            title: postTitle,
+            url: postUrl,
+            poster: asupnimerAbsoluteUrl(
+                thumbnail,
+                domain
+            ),
+            published:
+                asupnimerGetEntryValue(
+                    entry?.published
+                ),
+            categories
+        });
+    }
+
+    console.log(
+        "[ASUPNIMER] SEARCH RESULT:",
+        JSON.stringify({
+            query: title,
+            count: posts.length
+        })
+    );
+
+    return posts;
+}
+
+async function asupnimerFetchPost(postUrl) {
+    const url = String(postUrl || "").trim();
+
+    if (!url) return null;
+
+    const cached = ASUPNIMER_POST_CACHE.get(url);
+
+    if (
+        cached &&
+        Date.now() - cached.at <
+            ASUPNIMER_POST_CACHE_TTL
+    ) {
+        return cached.data;
+    }
+
+    const domain =
+        await asupnimerResolveActiveDomain();
+
+    if (!domain) return null;
+
+    const path =
+        asupnimerExtractPostPath(url);
+
+    if (!path) return null;
+
+    const feedUrl =
+        domain +
+        "/feeds/posts/default?alt=json&path=" +
+        encodeURIComponent(path) +
+        "&max-results=1";
+
+    const entries = await asupnimerFetchFeed(
+        feedUrl,
+        "post:" + path
+    );
+
+    const entry = entries[0];
+
+    if (!entry) {
+        console.log(
+            "[ASUPNIMER] POST NOT FOUND:",
+            path
+        );
+
+        return null;
+    }
+
+    const links = Array.isArray(entry?.link)
+        ? entry.link
+        : [];
+
+    const alternate = links.find(
+        item => item?.rel === "alternate"
+    );
+
+    const categories = Array.isArray(
+        entry?.category
+    )
+        ? entry.category
+            .map(item =>
+                String(item?.term || "").trim()
+            )
+            .filter(Boolean)
+        : [];
+
+    const result = {
+        title: asupnimerGetEntryValue(
+            entry?.title
+        ).trim(),
+
+        content: asupnimerGetEntryValue(
+            entry?.content
+        ),
+
+        poster:
+            entry?.media$thumbnail?.url
+                ? asupnimerAbsoluteUrl(
+                    entry.media$thumbnail.url,
+                    domain
+                )
+                : null,
+
+        categories,
+
+        url:
+            asupnimerAbsoluteUrl(
+                alternate?.href,
+                domain
+            ) || url
+    };
+
+    ASUPNIMER_POST_CACHE.set(
+        url,
+        {
+            at: Date.now(),
+            data: result
+        }
+    );
+
+    console.log(
+        "[ASUPNIMER] POST LOADED:",
+        JSON.stringify({
+            title: result.title,
+            categories: result.categories,
+            contentLength: result.content.length,
+            hasPoster: Boolean(result.poster)
+        })
+    );
+
+    return result;
+}
+
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
 // ============================================================
