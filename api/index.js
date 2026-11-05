@@ -9114,44 +9114,71 @@ const castNames = [
     if (allPersonIds.length >= 2) {
         const discoverType =
             type === "series" ? "tv" : "movie";
+        // ====================================================
+        // TMDB PEOPLE DISCOVERY 2.0
+        //
+        // Tìm riêng từng diễn viên / đạo diễn.
+        // - Tối đa 4 hồ sơ nhân sự đáng tin cậy.
+        // - Tối đa 3 trang cho mỗi hồ sơ.
+        // - OR search trang 1 làm nguồn bổ sung.
+        // - Gộp ứng viên, ưu tiên phim có nhiều nhân sự trùng.
+        // - Chỉ kiểm tra credits tối đa 30 ứng viên.
+        // - Giữ nguyên điều kiện xác minh nghiêm ngặt.
+        // ====================================================
 
-        
-        // ====================================================
-        // TMDB PEOPLE DISCOVERY — OR SEARCH
-        //
-        // Dấu | = OR:
-        // Tìm phim có ít nhất một người trong danh sách.
-        //
-        // Sau đó kiểm tra credits:
-        // - Phải khớp ít nhất 2 người.
-        // - Nếu xác định được đạo diễn thì phải khớp đạo diễn.
-        // - Năm phát hành phải khớp.
-        // ====================================================
+        const discoverType =
+            type === "series" ? "tv" : "movie";
 
         const discoverPeopleQuery =
             allPersonIds.join("|");
 
-        const discoverResults =
-            await movinaMetaCachedLoad(
+        const peopleForDiscovery = [
+            ...matchedPeople.values()
+        ]
+            .sort((a, b) => {
+                if (
+                    a.role === "director" &&
+                    b.role !== "director"
+                ) return -1;
+
+                if (
+                    b.role === "director" &&
+                    a.role !== "director"
+                ) return 1;
+
+                return 0;
+            })
+            .slice(0, 4);
+
+        const discoveryHeaders = {
+            "Accept": "application/json",
+            "User-Agent": "MOVINA/1.0"
+        };
+
+        async function movinaTmdbDiscoverPage(
+            peopleQuery,
+            page,
+            cacheLabel
+        ) {
+            return await movinaMetaCachedLoad(
                 MOVINA_META_SEARCH_CACHE,
 
-                "tmdb-discover-people-or:" +
+                "tmdb-people-discover-v2:" +
                     discoverType +
                     ":" +
                     sourceYear +
                     ":" +
-                    discoverPeopleQuery,
+                    cacheLabel +
+                    ":" +
+                    page,
 
                 async () => {
                     const params = {
                         api_key: tmdbApiKey,
-
-                        with_people:
-                            discoverPeopleQuery,
-
+                        with_people: peopleQuery,
                         include_adult: false,
                         sort_by: "popularity.desc",
-                        page: 1
+                        page
                     };
 
                     params[
@@ -9162,30 +9189,205 @@ const castNames = [
 
                     const response = await axios.get(
                         "https://api.themoviedb.org/3/discover/" +
-                        discoverType,
+                            discoverType,
                         {
                             params,
                             timeout: 5000,
-                            headers: {
-                                "Accept": "application/json",
-                                "User-Agent": "MOVINA/1.0"
-                            }
+                            headers: discoveryHeaders
                         }
                     );
 
-                    return Array.isArray(
-                        response.data?.results
-                    )
-                        ? response.data.results
-                        : [];
+                    return {
+                        results: Array.isArray(
+                            response.data?.results
+                        )
+                            ? response.data.results
+                            : [],
+
+                        totalPages: Math.max(
+                            1,
+                            Math.min(
+                                3,
+                                Number(
+                                    response.data?.total_pages || 1
+                                )
+                            )
+                        )
+                    };
                 },
 
                 6 * 60 * 60 * 1000,
                 60 * 1000
             );
+        }
+
+        const candidatePool = new Map();
+
+        function addDiscoveryCandidates(
+            rows,
+            matchedPersonId = null
+        ) {
+            for (
+                const row of Array.isArray(rows)
+                    ? rows
+                    : []
+            ) {
+                if (!movinaTmdbCandidateValid(row)) {
+                    continue;
+                }
+
+                const candidateId = String(row.id);
+
+                if (!candidatePool.has(candidateId)) {
+                    candidatePool.set(
+                        candidateId,
+                        {
+                            row,
+                            people: new Set()
+                        }
+                    );
+                }
+
+                if (matchedPersonId !== null) {
+                    candidatePool
+                        .get(candidateId)
+                        .people
+                        .add(Number(matchedPersonId));
+                }
+            }
+        }
+
+        // ----------------------------------------------------
+        // A. Tìm riêng từng nhân sự.
+        // Trang 1 được tải trước; trang 2-3 chỉ tải nếu tồn tại.
+        // ----------------------------------------------------
+
+        const individualDiscoveryJobs =
+            peopleForDiscovery.map(async person => {
+                const personId = Number(person.id);
+
+                const firstPage =
+                    await movinaTmdbDiscoverPage(
+                        String(personId),
+                        1,
+                        "person-" + personId
+                    );
+
+                const firstRows =
+                    Array.isArray(firstPage?.results)
+                        ? firstPage.results
+                        : [];
+
+                addDiscoveryCandidates(
+                    firstRows,
+                    personId
+                );
+
+                const totalPages = Math.min(
+                    3,
+                    Math.max(
+                        1,
+                        Number(firstPage?.totalPages || 1)
+                    )
+                );
+
+                const remainingPages = [];
+
+                for (
+                    let page = 2;
+                    page <= totalPages;
+                    page++
+                ) {
+                    remainingPages.push(page);
+                }
+
+                const remainingResults =
+                    await Promise.all(
+                        remainingPages.map(page =>
+                            movinaTmdbDiscoverPage(
+                                String(personId),
+                                page,
+                                "person-" + personId
+                            )
+                        )
+                    );
+
+                for (const result of remainingResults) {
+                    addDiscoveryCandidates(
+                        result?.results,
+                        personId
+                    );
+                }
+
+                return {
+                    personId,
+                    name: person.name,
+                    role: person.role,
+                    totalPages,
+                    resultCount:
+                        firstRows.length +
+                        remainingResults.reduce(
+                            (sum, result) =>
+                                sum +
+                                (
+                                    Array.isArray(result?.results)
+                                        ? result.results.length
+                                        : 0
+                                ),
+                            0
+                        )
+                };
+            });
+
+        const individualDiscoverySummary =
+            await Promise.all(individualDiscoveryJobs);
+
+        // ----------------------------------------------------
+        // B. OR search bổ sung.
+        // Chỉ lấy trang đầu để giới hạn số request.
+        // ----------------------------------------------------
+
+        const orDiscovery =
+            await movinaTmdbDiscoverPage(
+                discoverPeopleQuery,
+                1,
+                "people-or-" +
+                    discoverPeopleQuery
+            );
+
+        const orResults =
+            Array.isArray(orDiscovery?.results)
+                ? orDiscovery.results
+                : [];
+
+        addDiscoveryCandidates(orResults);
+
+        // ----------------------------------------------------
+        // C. Hợp nhất và xếp ưu tiên ứng viên.
+        // Ưu tiên ứng viên được tìm thấy qua nhiều nhân sự.
+        // ----------------------------------------------------
+
+        const rankedCandidates = [
+            ...candidatePool.values()
+        ].sort((a, b) => {
+            const peopleDifference =
+                b.people.size - a.people.size;
+
+            if (peopleDifference !== 0) {
+                return peopleDifference;
+            }
+
+            return (
+                Number(b.row?.popularity || 0) -
+                Number(a.row?.popularity || 0)
+            );
+        });
+
+        const discoverResults =
+            rankedCandidates.map(item => item.row);
 
         console.log(
-            "[MOVINA TMDB PEOPLE DISCOVERY]",
+            "[MOVINA TMDB PEOPLE DISCOVERY 2.0]",
             JSON.stringify({
                 sourceTitle: source.name,
                 sourceOriginalTitle: source.origin_name,
@@ -9200,15 +9402,20 @@ const castNames = [
                     tmdbId: person.id
                 })),
 
-                peopleQuery:
-                    discoverPeopleQuery,
+                peopleQuery: discoverPeopleQuery,
 
-                resultCount:
+                individualSearches:
+                    individualDiscoverySummary,
+
+                orResultCount:
+                    orResults.length,
+
+                mergedCandidateCount:
                     discoverResults.length,
 
                 rawCandidates:
                     discoverResults
-                        .slice(0, 20)
+                        .slice(0, 30)
                         .map(row => ({
                             id: row.id,
 
@@ -9233,16 +9440,16 @@ const castNames = [
             })
         );
 
+        // ----------------------------------------------------
+        // D. Kiểm tra credits.
+        // Giới hạn 30 ứng viên để tránh tăng thời gian xử lý.
+        // ----------------------------------------------------
 
-        for (
-            const row of Array.isArray(discoverResults)
-                ? discoverResults
-                : []
-        ) {
-            if (!movinaTmdbCandidateValid(row)) {
-                continue;
-            }
+        const candidatesToVerify =
+            rankedCandidates.slice(0, 30);
 
+        for (const candidate of candidatesToVerify) {
+            const row = candidate.row;
             const tmdbId = Number(row.id);
 
             const credits =
@@ -9257,19 +9464,16 @@ const castNames = [
                     async () => {
                         const response = await axios.get(
                             "https://api.themoviedb.org/3/" +
-                            discoverType +
-                            "/" +
-                            tmdbId +
-                            "/credits",
+                                discoverType +
+                                "/" +
+                                tmdbId +
+                                "/credits",
                             {
                                 params: {
                                     api_key: tmdbApiKey
                                 },
                                 timeout: 4500,
-                                headers: {
-                                    "Accept": "application/json",
-                                    "User-Agent": "MOVINA/1.0"
-                                }
+                                headers: discoveryHeaders
                             }
                         );
 
@@ -9283,18 +9487,20 @@ const castNames = [
             if (!credits) continue;
 
             const creditedCastIds = new Set(
-                (Array.isArray(credits.cast)
-                    ? credits.cast
-                    : []
+                (
+                    Array.isArray(credits.cast)
+                        ? credits.cast
+                        : []
                 )
                     .map(person => Number(person.id))
                     .filter(Number.isInteger)
             );
 
             const creditedCrewIds = new Set(
-                (Array.isArray(credits.crew)
-                    ? credits.crew
-                    : []
+                (
+                    Array.isArray(credits.crew)
+                        ? credits.crew
+                        : []
                 )
                     .filter(person =>
                         /director|creator/i.test(
@@ -9323,8 +9529,8 @@ const castNames = [
                         : 0
                 ) >= 2;
 
-            // Nếu đã tìm được hồ sơ đạo diễn,
-            // bắt buộc phải khớp đạo diễn.
+            // Nếu đã nhận diện được đạo diễn,
+            // ứng viên bắt buộc phải có đúng đạo diễn đó.
             const directorRequirement =
                 directorIds.length === 0 ||
                 matchedDirector;
@@ -9348,16 +9554,18 @@ const castNames = [
                         row.name ||
                         row.title ||
                         "",
+
                     tmdbId,
                     year: sourceYear,
                     matchedCastCount,
                     matchedDirector,
+                    discoveryPeopleHits:
+                        candidate.people.size,
                     type
                 })
             );
         }
-    }
-}
+
 
 // --------------------------------------------------------
 // 3.4. SEARCH DIAGNOSTICS
