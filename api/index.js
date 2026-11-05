@@ -25950,24 +25950,138 @@ async function asupnimerFetchFeed(
             {
                 timeout: 15000,
                 maxRedirects: 5,
-                responseType: "json",
+                responseType: "text",
                 headers: {
                     "User-Agent": ASUPNIMER_USER_AGENT,
                     "Accept":
-                        "application/json,application/atom+xml,*/*"
+                        "application/json,application/atom+xml,text/xml,*/*"
                 },
                 validateStatus: status =>
                     status >= 200 && status < 300
             }
         );
 
-        const data = response?.data || {};
+        const rawText =
+            typeof response?.data === "string"
+                ? response.data.trim()
+                : "";
 
-        const entries = Array.isArray(
-            data?.feed?.entry
-        )
-            ? data.feed.entry
-            : [];
+        let data = response?.data || null;
+
+        // Blogger JSON.
+        if (rawText) {
+            try {
+                data = JSON.parse(rawText);
+            } catch (_) {
+                // Một số phản hồi có thể bọc JSON.
+                const first = rawText.indexOf("{");
+                const last = rawText.lastIndexOf("}");
+
+                if (first >= 0 && last > first) {
+                    try {
+                        data = JSON.parse(
+                            rawText.slice(first, last + 1)
+                        );
+                    } catch (_) {
+                        data = null;
+                    }
+                }
+            }
+        }
+
+        let entries = [];
+        let validFeed = Boolean(data?.feed);
+
+        if (validFeed) {
+            const rawEntries = data.feed.entry;
+
+            if (Array.isArray(rawEntries)) {
+                entries = rawEntries;
+            } else if (
+                rawEntries &&
+                typeof rawEntries === "object"
+            ) {
+                entries = [rawEntries];
+            }
+        }
+
+        // Dự phòng trường hợp Blogger trả Atom XML.
+        if (!validFeed && rawText) {
+            try {
+                const $ = cheerio.load(
+                    rawText,
+                    { xmlMode: true }
+                );
+
+                const feedNode = $("feed").first();
+
+                if (feedNode.length) {
+                    validFeed = true;
+
+                    $("feed > entry").each((_, element) => {
+                        const entry = $(element);
+
+                        const links = [];
+                        entry.children("link").each(
+                            (_, link) => {
+                                links.push({
+                                    rel: $(link).attr("rel"),
+                                    href: $(link).attr("href")
+                                });
+                            }
+                        );
+
+                        const categories = [];
+                        entry.children("category").each(
+                            (_, category) => {
+                                categories.push({
+                                    term: $(category).attr("term")
+                                });
+                            }
+                        );
+
+                        const thumbnail = entry.find(
+                            "thumbnail, media\\:thumbnail"
+                        ).first();
+
+                        entries.push({
+                            title: {
+                                $t: entry.children("title").first().text()
+                            },
+                            content: {
+                                $t: entry.children("content").first().text()
+                            },
+                            published: {
+                                $t: entry.children("published").first().text()
+                            },
+                            link: links,
+                            category: categories,
+                            "media$thumbnail": {
+                                url: thumbnail.attr("url") || ""
+                            }
+                        });
+                    });
+                }
+            } catch (_) {}
+        }
+
+        // Không lưu phản hồi lỗi hoặc trang xác minh vào cache.
+        if (!validFeed) {
+            console.log(
+                "[ASUPNIMER] FEED INVALID RESPONSE:",
+                JSON.stringify({
+                    status: response?.status || null,
+                    contentType:
+                        response?.headers?.["content-type"] || null,
+                    url:
+                        response?.request?.res?.responseUrl ||
+                        feedUrl,
+                    body: rawText.slice(0, 220)
+                })
+            );
+
+            return [];
+        }
 
         ASUPNIMER_FEED_CACHE.set(
             key,
@@ -25975,6 +26089,17 @@ async function asupnimerFetchFeed(
                 at: Date.now(),
                 data: entries
             }
+        );
+
+        console.log(
+            "[ASUPNIMER] FEED PARSED:",
+            JSON.stringify({
+                cacheKey: key,
+                count: entries.length,
+                format: rawText
+                    ? "text"
+                    : "object"
+            })
         );
 
         return entries;
@@ -26010,6 +26135,9 @@ async function asupnimerSearchPosts(
 
     if (!domain) return [];
 
+    const queryKey =
+        asupnimerBuildTitleKey(title);
+
     const feedUrl =
         domain +
         "/feeds/posts/summary?alt=json&q=" +
@@ -26018,71 +26146,138 @@ async function asupnimerSearchPosts(
         Math.max(1, Math.min(25, Number(maxResults) || 25)) +
         "&start-index=1";
 
-    const entries = await asupnimerFetchFeed(
+    let entries = await asupnimerFetchFeed(
         feedUrl,
         "search:" + asupnimerNormalizeText(title)
     );
 
-    const posts = [];
+    const convertEntriesToPosts = sourceEntries => {
+        const posts = [];
 
-    for (const entry of entries) {
-        const postTitle =
-            asupnimerGetEntryValue(
-                entry?.title
-            ).trim();
+        for (const entry of sourceEntries || []) {
+            const postTitle =
+                asupnimerGetEntryValue(
+                    entry?.title
+                ).trim();
 
-        if (!postTitle) continue;
+            if (!postTitle) continue;
 
-        const links = Array.isArray(entry?.link)
-            ? entry.link
-            : [];
+            const links = Array.isArray(entry?.link)
+                ? entry.link
+                : [];
 
-        const alternate = links.find(
-            item => item?.rel === "alternate"
-        );
-
-        const postUrl =
-            asupnimerAbsoluteUrl(
-                alternate?.href,
-                domain
+            const alternate = links.find(
+                item => item?.rel === "alternate"
             );
 
-        if (!postUrl) continue;
+            const postUrl =
+                asupnimerAbsoluteUrl(
+                    alternate?.href,
+                    domain
+                );
 
-        const thumbnail =
-            entry?.media$thumbnail?.url ||
-            "";
+            if (!postUrl) continue;
 
-        const categories = Array.isArray(
-            entry?.category
-        )
-            ? entry.category
-                .map(item =>
-                    String(item?.term || "").trim()
-                )
-                .filter(Boolean)
-            : [];
+            const thumbnail =
+                entry?.media$thumbnail?.url ||
+                "";
 
-        posts.push({
-            title: postTitle,
-            url: postUrl,
-            poster: asupnimerAbsoluteUrl(
-                thumbnail,
-                domain
-            ),
-            published:
-                asupnimerGetEntryValue(
-                    entry?.published
+            const categories = Array.isArray(
+                entry?.category
+            )
+                ? entry.category
+                    .map(item =>
+                        String(item?.term || "").trim()
+                    )
+                    .filter(Boolean)
+                : [];
+
+            posts.push({
+                title: postTitle,
+                url: postUrl,
+                poster: asupnimerAbsoluteUrl(
+                    thumbnail,
+                    domain
                 ),
-            categories
-        });
+                published:
+                    asupnimerGetEntryValue(
+                        entry?.published
+                    ),
+                categories
+            });
+        }
+
+        return posts;
+    };
+
+    let posts = convertEntriesToPosts(entries);
+
+    // -----------------------------------------------------
+    // Blogger q không tìm thấy tên chính xác:
+    // thử đối chiếu với 150 bài mới nhất.
+    // Chỉ dùng với tên đủ mạnh, tránh khóa ngắn như "fx".
+    // -----------------------------------------------------
+
+    const exactPosts = posts.filter(post =>
+        asupnimerBuildTitleKey(post.title) === queryKey
+    );
+
+    if (
+        !exactPosts.length &&
+        asupnimerIsStrongTitleKey(queryKey)
+    ) {
+        console.log(
+            "[ASUPNIMER] QUERY EMPTY; TRY RECENT FEED:",
+            title
+        );
+
+        const recentUrl =
+            domain +
+            "/feeds/posts/summary?alt=json&max-results=150&start-index=1";
+
+        const recentEntries =
+            await asupnimerFetchFeed(
+                recentUrl,
+                "recent:150"
+            );
+
+        const recentPosts =
+            convertEntriesToPosts(recentEntries);
+
+        const recentMatches =
+            recentPosts.filter(post =>
+                asupnimerBuildTitleKey(post.title) === queryKey
+            );
+
+        if (recentMatches.length) {
+            posts = recentMatches;
+
+            console.log(
+                "[ASUPNIMER] RECENT FEED TITLE MATCH:",
+                JSON.stringify({
+                    query: title,
+                    matches: recentMatches.map(item => item.title)
+                })
+            );
+        } else {
+            console.log(
+                "[ASUPNIMER] RECENT FEED NO EXACT MATCH:",
+                JSON.stringify({
+                    query: title,
+                    scanned: recentEntries.length
+                })
+            );
+        }
     }
 
     console.log(
         "[ASUPNIMER] SEARCH RESULT:",
         JSON.stringify({
             query: title,
-            count: posts.length
+            count: posts.length,
+            exactCount: posts.filter(post =>
+                asupnimerBuildTitleKey(post.title) === queryKey
+            ).length
         })
     );
 
@@ -27707,6 +27902,21 @@ function asupnimerBuildTitleKey(value = "") {
     );
 }
 
+function asupnimerIsStrongTitleKey(value = "") {
+    const key = asupnimerBuildTitleKey(value);
+
+    if (key.length < 5) {
+        return false;
+    }
+
+    const words = key.split(/\s+/).filter(Boolean);
+
+    return (
+        words.length >= 2 ||
+        key.length >= 7
+    );
+}
+
 async function asupnimerFetchStreams({
     title,
     titleVariants = [],
@@ -27759,10 +27969,10 @@ async function asupnimerFetchStreams({
     ];
 
     const titleKeys = new Set(
-        initialQueries
-            .map(asupnimerBuildTitleKey)
-            .filter(Boolean)
-    );
+    initialQueries
+        .map(asupnimerBuildTitleKey)
+        .filter(asupnimerIsStrongTitleKey)
+);
 
     if (!titleKeys.size) return [];
 
@@ -27890,12 +28100,18 @@ async function asupnimerFetchStreams({
 
                         if (!query || !key) continue;
 
-                        // Không tìm lại tên đã gửi ở lượt đầu.
-                        if (queryMap.has(key)) continue;
+// Không tìm lại tên đã gửi ở lượt đầu.
+if (queryMap.has(key)) continue;
 
-                        queryMap.set(key, query);
-                        titleKeys.add(key);
-                        aliasQueries.push(query);
+queryMap.set(key, query);
+
+// Chỉ dùng khóa đủ mạnh để xác nhận danh tính.
+// Tên gốc vẫn được phép gửi đi tìm kiếm.
+if (asupnimerIsStrongTitleKey(key)) {
+    titleKeys.add(key);
+}
+
+aliasQueries.push(query);
                     }
                 }
 
