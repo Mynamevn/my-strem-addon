@@ -14301,18 +14301,26 @@ const cachedPreviewFields =
 const hasCachedPreview =
     Object.keys(cachedPreviewFields).length > 0;
 
+// Phim hoạt hình có thể mang type "hoathinh",
+// không đồng nghĩa với phim lẻ.
+// Phải tải detail để kiểm tra cấu trúc tập.
+const isAmbiguousAnimation =
+    isAnimation(item);
+
 const expectedSeries =
     args.type === "series" ||
-    ["series", "tvshows"].includes(
-        String(item?.type || "").toLowerCase()
+    ["series", "tvshows", "tvshow"].includes(
+        String(item?.type || "").trim().toLowerCase()
     );
 
 let detailRequestSkipped = false;
 
 if (
     hasCachedPreview &&
-    !expectedSeries
+    !expectedSeries &&
+    !isAmbiguousAnimation
 ) {
+
     // Phim lẻ: preview cache đã đủ cho metadata,
     // không cần tải lại detail từ PhimAPI.
     detailRequestSkipped = true;
@@ -14521,25 +14529,98 @@ console.log(
 );
 
         // =====================================================
-        // [STREMIO-013.09] [PROVIDERS: ALL] MOVIE AND SERIES TYPE RESOLUTION
-        // =====================================================
+// [STREMIO-013.09] [PROVIDERS: ALL]
+// MOVIE / SERIES TYPE RESOLUTION
+// ANIMATION EPISODE-AWARE DETECTION
+// =====================================================
 
-        const sourceType =
+const sourceType =
+    String(
+        detail?.type ||
+        item?.type ||
+        ""
+    ).trim().toLowerCase();
+
+// Thu thập số tập thực tế từ detail PhimAPI.
+const episodeNumberSet = new Set();
+
+const detailEpisodeGroups =
+    Array.isArray(detail?.episodes)
+        ? detail.episodes
+        : [];
+
+for (const group of detailEpisodeGroups) {
+    const serverData =
+        Array.isArray(group?.server_data)
+            ? group.server_data
+            : [];
+
+    for (const ep of serverData) {
+        const episodeName =
             String(
-                detail?.type ||
-                item?.type ||
+                ep?.name ||
+                ep?.slug ||
                 ""
-            ).toLowerCase();
+            ).trim();
 
-        const isSeries =
-            args.type === "series" ||
-            sourceType === "series" ||
-            sourceType === "tvshows";
+        const match = episodeName.match(
+            /(?:tập|tap|episode|ep\.?|part|phần)\s*0*(\d+)/i
+        );
 
-        const metaType =
-            isSeries
-                ? "series"
-                : "movie";
+        if (match) {
+            const number = Number(match[1]);
+
+            if (
+                Number.isFinite(number) &&
+                number > 0
+            ) {
+                episodeNumberSet.add(number);
+            }
+        }
+    }
+}
+
+const hasMultipleNumberedEpisodes =
+    episodeNumberSet.size > 1;
+
+// Kiểm tra thêm episode_current / episode_total.
+// Bỏ nhãn __catalogType để không bị ép theo
+// loại của catalog ban đầu.
+const hasSeriesEpisodeMarkers =
+    isSeriesItem({
+        ...item,
+        ...detail,
+        __catalogType: undefined
+    });
+
+const isSeries =
+    args.type === "series" ||
+    ["series", "tvshows", "tvshow"].includes(sourceType) ||
+    hasMultipleNumberedEpisodes ||
+    hasSeriesEpisodeMarkers;
+
+const metaType =
+    isSeries
+        ? "series"
+        : "movie";
+
+console.log(
+    "[META TYPE RESOLUTION]",
+    JSON.stringify({
+        requestedType: args.type,
+        sourceType,
+        animation: isAnimation({
+            ...item,
+            ...detail
+        }),
+        episodeCount: episodeNumberSet.size,
+        numberedEpisodes: Array.from(
+            episodeNumberSet
+        ).sort((a, b) => a - b),
+        hasSeriesEpisodeMarkers,
+        finalType: metaType
+    })
+);
 
         // =====================================================
         // [STREMIO-013.10] [PROVIDERS: ALL] POSTER RESOLUTION
@@ -41146,73 +41227,77 @@ const kkphimPromise = (async () => {
   // 8.1. PHÂN LOẠI NỘI DUNG + CHẠY PROVIDER ANIME CÓ ĐIỀU KIỆN
   // =====================
 
-  const animeMetadataGenres = Array.isArray(resolvedMetadata?.genres)
-      ? resolvedMetadata.genres
-          .map(value =>
-              String(
-                  typeof value === "string"
-                      ? value
-                      : value?.name || ""
-              ).trim().toLowerCase()
-          )
-          .filter(Boolean)
-      : [];
+const animeMetadataGenres = [
+    ...(Array.isArray(resolvedMetadata?.genres)
+        ? resolvedMetadata.genres
+        : []),
 
-  const animeMetadataText = [
-      resolvedMetadata?.country,
-      resolvedMetadata?.countries,
-      resolvedMetadata?.original_language,
-      resolvedMetadata?.language,
-      resolvedMetadata?.type
-  ]
-      .flatMap(value =>
-          Array.isArray(value) ? value : [value]
-      )
-      .map(value =>
-          String(
-              typeof value === "object"
-                  ? value?.name || value?.code || ""
-                  : value || ""
-          ).trim().toLowerCase()
-      )
-      .filter(Boolean)
-      .join(" ");
+    ...(Array.isArray(resolvedMetadata?.category)
+        ? resolvedMetadata.category
+        : [])
+]
+    .map(value =>
+        String(
+            typeof value === "string"
+                ? value
+                : value?.name || ""
+        ).trim().toLowerCase()
+    )
+    .filter(Boolean);
 
-  const hasAnimationMetadata = animeMetadataGenres.some(genre =>
-      /\banime\b|animation|animated|hoat hinh/.test(genre)
-  );
+const animeMetadataText = [
+    resolvedMetadata?.country,
+    resolvedMetadata?.countries,
+    resolvedMetadata?.original_language,
+    resolvedMetadata?.language,
+    resolvedMetadata?.type,
+    resolvedMetadata?.type_name
+]
+    .flatMap(value =>
+        Array.isArray(value) ? value : [value]
+    )
+    .map(value =>
+        String(
+            typeof value === "object"
+                ? value?.name || value?.code || ""
+                : value || ""
+        ).trim().toLowerCase()
+    )
+    .filter(Boolean)
+    .join(" ");
 
-  const hasJapaneseMetadata =
-      /\bjapan\b|\bjapanese\b|nhat ban|日本|ja-jp/.test(
-          animeMetadataText
-      );
+const hasAnimationMetadata =
+    isAnimation(resolvedMetadata) ||
+    animeMetadataGenres.some(genre =>
+        /\banime\b|animation|animated|hoat hinh/.test(genre)
+    ) ||
+    /\bhoathinh\b|\bhoat hinh\b|\banime\b|\banimation\b/.test(
+        animeMetadataText
+    );
 
-  const hasExplicitAnimeTitle = /\banime\b|anime movie|anime series/i.test(
-      String(
-          resolvedMetadata?.name ||
-          resolvedMetadata?.original_name ||
-          movieName ||
-          ""
-      )
-  );
+const hasJapaneseMetadata =
+    /\bjapan\b|\bjapanese\b|nhat ban|日本|ja-jp/.test(
+        animeMetadataText
+    );
 
-  /*
-   * Quy tắc:
-   * 1. Thể loại Animation/Anime: chạy AnimeHay + AnimeT.
-   * 2. Metadata Nhật Bản + dấu hiệu anime trong tên: vẫn chạy.
-   * 3. Metadata có thể loại rõ ràng nhưng không phải hoạt hình:
-   *    bỏ qua hai provider anime.
-   * 4. Metadata không có/không đủ: vẫn chạy để tránh bỏ sót anime
-   *    khi dùng ID MOVINA tùy chỉnh hoặc Cinemeta không trả dữ liệu.
-   */
-  const hasUsableMetadata =
-      animeMetadataGenres.length > 0 ||
-      Boolean(animeMetadataText.trim());
+const hasExplicitAnimeTitle =
+    /\banime\b|anime movie|anime series/i.test(
+        String(
+            resolvedMetadata?.name ||
+            resolvedMetadata?.original_name ||
+            movieName ||
+            ""
+        )
+    );
 
-  const animeProvidersEnabled =
-      hasAnimationMetadata ||
-      (hasJapaneseMetadata && hasExplicitAnimeTitle) ||
-      !hasUsableMetadata;
+const hasUsableMetadata =
+    animeMetadataGenres.length > 0 ||
+    Boolean(animeMetadataText.trim());
+
+const animeProvidersEnabled =
+    hasAnimationMetadata ||
+    (hasJapaneseMetadata && hasExplicitAnimeTitle) ||
+    !hasUsableMetadata;
 
   console.log(
       "[ANIME PROVIDER GATE]",
