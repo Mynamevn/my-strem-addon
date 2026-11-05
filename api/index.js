@@ -27193,7 +27193,6 @@ function asupnimerHydraxCreateToken({
 }) {
     try {
         const indexValue = Number(index);
-
         const sizeValue = String(size || "");
         const md5IdValue = String(md5Id || "");
         const resIdValue = String(resId || "");
@@ -27210,18 +27209,13 @@ function asupnimerHydraxCreateToken({
             return null;
         }
 
-        // Smali: mỗi chữ số của size được chuyển
-        // thành byte mang giá trị số 0–9, không phải ASCII.
+        // Mỗi chữ số size được chuyển thành byte số 0–9.
         const digitBytes = Buffer.from(
-            [...sizeValue].map(char =>
-                Number(char)
-            )
+            [...sizeValue].map(Number)
         );
 
         const keyHex =
-            asupnimerHydraxMd5Hex(
-                digitBytes
-            );
+            asupnimerHydraxMd5Hex(digitBytes);
 
         const key = Buffer.from(
             keyHex,
@@ -27230,12 +27224,13 @@ function asupnimerHydraxCreateToken({
 
         const iv = key.subarray(0, 16);
 
+        // Thứ tự đã đối chiếu trực tiếp với Smali:
+        // /mp4/{md5Id}/{resId}/{size}/{frag}/{index}
         const path = Buffer.from(
             `/mp4/${md5IdValue}/${resIdValue}/${sizeValue}/${fragValue}/${indexValue}`,
             "utf8"
         );
 
-        // AES-CTR dùng cùng phép biến đổi cho mã hóa và giải mã.
         const encrypted =
             asupnimerHydraxAesCtrDecrypt(
                 path,
@@ -27243,13 +27238,10 @@ function asupnimerHydraxCreateToken({
                 iv
             );
 
-        // Base64 lần 1, bỏ dấu "=" cuối chuỗi.
         const first = encrypted
             .toString("base64")
             .replace(/=+$/g, "");
 
-        // Smali chuyển chuỗi Base64 lần 1 sang ISO-8859-1,
-        // sau đó Base64 lần 2 và tiếp tục bỏ dấu "=".
         const second = Buffer
             .from(first, "latin1")
             .toString("base64")
@@ -27266,6 +27258,310 @@ function asupnimerHydraxCreateToken({
         return null;
     }
 }
+
+/* ============================================================
+   [PRV-ASUPNIMER.15] [PROVIDERS: ASUPNIMER]
+   HYDRAX PROXY URL AND SIGNED TOKEN
+   ============================================================ */
+
+const ASUPNIMER_HYDRAX_FRAG =
+    2 * 1024 * 1024;
+
+const ASUPNIMER_HYDRAX_TOKEN_TTL =
+    30 * 60 * 1000;
+
+function asupnimerHydraxPublicBaseUrl() {
+    const configured =
+        process.env.MOVINA_PUBLIC_URL ||
+        process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+        process.env.VERCEL_URL ||
+        "";
+
+    if (!configured) return null;
+
+    try {
+        const value = /^https?:\/\//i.test(configured)
+            ? configured
+            : "https://" + configured;
+
+        return new URL(value).origin;
+
+    } catch (_) {
+        return null;
+    }
+}
+
+function asupnimerHydraxSigningSecret() {
+    return String(
+        process.env.ASUPNIMER_PROXY_SECRET ||
+        process.env.VERCEL_PROJECT_ID ||
+        process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+        ""
+    );
+}
+
+function asupnimerHydraxSignPayload(payload) {
+    const secret =
+        asupnimerHydraxSigningSecret();
+
+    if (!secret) return null;
+
+    const encoded = Buffer
+        .from(JSON.stringify(payload))
+        .toString("base64url");
+
+    const signature = crypto
+        .createHmac("sha256", secret)
+        .update(encoded)
+        .digest("base64url");
+
+    return encoded + "." + signature;
+}
+
+function asupnimerHydraxVerifyToken(token) {
+    try {
+        const parts = String(token || "").split(".");
+
+        if (parts.length !== 2) return null;
+
+        const [encoded, suppliedSignature] = parts;
+
+        const secret =
+            asupnimerHydraxSigningSecret();
+
+        if (!secret) return null;
+
+        const expectedSignature = crypto
+            .createHmac("sha256", secret)
+            .update(encoded)
+            .digest();
+
+        const suppliedBuffer = Buffer.from(
+            suppliedSignature,
+            "base64url"
+        );
+
+        if (
+            suppliedBuffer.length !== expectedSignature.length ||
+            !crypto.timingSafeEqual(
+                suppliedBuffer,
+                expectedSignature
+            )
+        ) {
+            return null;
+        }
+
+        const payload = JSON.parse(
+            Buffer.from(
+                encoded,
+                "base64url"
+            ).toString("utf8")
+        );
+
+        if (
+            !payload ||
+            Number(payload.exp || 0) < Date.now()
+        ) {
+            return null;
+        }
+
+        return payload;
+
+    } catch (_) {
+        return null;
+    }
+}
+
+function asupnimerHydraxCreateProxyUrl(source) {
+    try {
+        const baseUrl =
+            asupnimerHydraxPublicBaseUrl();
+
+        if (!baseUrl || !source) return null;
+
+        const sub = String(source.sub || "")
+            .trim()
+            .replace(/\.$/, "");
+
+        const suffix = String(source.suffix || "")
+            .trim()
+            .replace(/^\./, "");
+
+        const size = String(source.size || "");
+        const md5Id = String(source.md5Id || "");
+        const resId = String(source.resId || "");
+
+        if (
+            !/^[a-z0-9-]+$/i.test(sub) ||
+            !/^[a-z0-9.-]+$/i.test(suffix) ||
+            !/^\d+$/.test(size) ||
+            !/^\d+$/.test(md5Id) ||
+            !/^\d+$/.test(resId)
+        ) {
+            return null;
+        }
+
+        const payload = {
+            provider: "asupnimer",
+            resolver: "hydrax",
+            sub,
+            suffix,
+            size,
+            md5Id,
+            resId,
+            exp:
+                Date.now() +
+                ASUPNIMER_HYDRAX_TOKEN_TTL
+        };
+
+        const token =
+            asupnimerHydraxSignPayload(payload);
+
+        if (!token) {
+            console.log(
+                "[ASUPNIMER HYDRAX] SIGNING SECRET NOT CONFIGURED"
+            );
+            return null;
+        }
+
+        return (
+            baseUrl +
+            "/asupnimer/hydrax/" +
+            encodeURIComponent(token)
+        );
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] PROXY URL ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.16] [PROVIDERS: ASUPNIMER]
+   HYDRAX FRAGMENT RANGE FETCHER
+   ============================================================ */
+
+async function asupnimerHydraxFetchRange(
+    source,
+    start,
+    end
+) {
+    const total = Number(source?.size);
+
+    if (
+        !Number.isSafeInteger(total) ||
+        total <= 0 ||
+        !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        start < 0 ||
+        end < start ||
+        end >= total
+    ) {
+        throw new Error(
+            "Invalid Hydrax byte range"
+        );
+    }
+
+    const baseCdn =
+        `https://${source.sub}.${source.suffix}`;
+
+    const parts = [];
+
+    let position = start;
+
+    while (position <= end) {
+        const index = Math.floor(
+            position / ASUPNIMER_HYDRAX_FRAG
+        );
+
+        const offset =
+            position % ASUPNIMER_HYDRAX_FRAG;
+
+        const remaining =
+            end - position + 1;
+
+        const take = Math.min(
+            remaining,
+            ASUPNIMER_HYDRAX_FRAG - offset
+        );
+
+        const token =
+            asupnimerHydraxCreateToken({
+                index,
+                size: source.size,
+                md5Id: source.md5Id,
+                resId: source.resId,
+                frag: ASUPNIMER_HYDRAX_FRAG
+            });
+
+        if (!token) {
+            throw new Error(
+                "Hydrax fragment token generation failed"
+            );
+        }
+
+        const segmentUrl =
+            baseCdn +
+            "/sora/" +
+            source.size +
+            "/" +
+            token;
+
+        const response = await axios.get(
+            segmentUrl,
+            {
+                responseType: "arraybuffer",
+                timeout: 25000,
+                maxRedirects: 3,
+                headers: {
+                    "Range":
+                        `bytes=${offset}-${offset + take - 1}`,
+                    "Referer":
+                        "https://abysscdn.com/",
+                    "User-Agent":
+                        ASUPNIMER_USER_AGENT,
+                    "Accept": "*/*"
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 300
+            }
+        );
+
+        let data = Buffer.from(
+            response.data || []
+        );
+
+        // Nếu CDN bỏ qua Range và trả cả fragment,
+        // lấy đúng phần byte mà MOVINA đang cần.
+        if (data.length !== take) {
+            if (
+                data.length >= offset + take
+            ) {
+                data = data.subarray(
+                    offset,
+                    offset + take
+                );
+            }
+        }
+
+        if (data.length !== take) {
+            throw new Error(
+                `Hydrax fragment length mismatch: expected ${take}, received ${data.length}`
+            );
+        }
+
+        parts.push(data);
+
+        position += take;
+    }
+
+    return Buffer.concat(parts);
+}
+
 
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
@@ -44155,6 +44451,169 @@ app.use(
 );
 
 
+/* ============================================================
+   [ROUTE-ASUPNIMER.17] [PROVIDERS: ASUPNIMER]
+   HYDRAX VIDEO RANGE PROXY
+   ============================================================ */
+
+app.get(
+    "/asupnimer/hydrax/:token",
+    async (req, res) => {
+        try {
+            const payload =
+                asupnimerHydraxVerifyToken(
+                    req.params.token
+                );
+
+            if (
+                !payload ||
+                payload.provider !== "asupnimer" ||
+                payload.resolver !== "hydrax"
+            ) {
+                return res
+                    .status(403)
+                    .send("Invalid or expired Hydrax token");
+            }
+
+            const source = {
+                sub: String(payload.sub || ""),
+                suffix: String(payload.suffix || ""),
+                size: String(payload.size || ""),
+                md5Id: String(payload.md5Id || ""),
+                resId: String(payload.resId || "")
+            };
+
+            const total = Number(source.size);
+
+            if (
+                !Number.isSafeInteger(total) ||
+                total <= 0 ||
+                !/^[a-z0-9-]+$/i.test(source.sub) ||
+                !/^[a-z0-9.-]+$/i.test(source.suffix) ||
+                !/^\d+$/.test(source.md5Id) ||
+                !/^\d+$/.test(source.resId)
+            ) {
+                return res
+                    .status(400)
+                    .send("Invalid Hydrax source parameters");
+            }
+
+            const rangeHeader =
+                String(req.headers.range || "");
+
+            let start = 0;
+            let end = Math.min(
+                total - 1,
+                8 * 1024 * 1024 - 1
+            );
+
+            let partial = true;
+
+            if (rangeHeader) {
+                const match = rangeHeader.match(
+                    /^bytes=(\d+)-(\d*)$/i
+                );
+
+                if (!match) {
+                    res.setHeader(
+                        "Content-Range",
+                        `bytes */${total}`
+                    );
+
+                    return res
+                        .status(416)
+                        .send("Invalid byte range");
+                }
+
+                start = Number(match[1]);
+
+                end = match[2]
+                    ? Number(match[2])
+                    : total - 1;
+
+                if (
+                    !Number.isSafeInteger(start) ||
+                    !Number.isSafeInteger(end) ||
+                    start < 0 ||
+                    start >= total ||
+                    end < start
+                ) {
+                    res.setHeader(
+                        "Content-Range",
+                        `bytes */${total}`
+                    );
+
+                    return res
+                        .status(416)
+                        .send("Range not satisfiable");
+                }
+
+                end = Math.min(
+                    end,
+                    total - 1
+                );
+            }
+
+            const data =
+                await asupnimerHydraxFetchRange(
+                    source,
+                    start,
+                    end
+                );
+
+            res.setHeader(
+                "Content-Type",
+                "video/mp4"
+            );
+
+            res.setHeader(
+                "Accept-Ranges",
+                "bytes"
+            );
+
+            res.setHeader(
+                "Content-Length",
+                String(data.length)
+            );
+
+            res.setHeader(
+                "Cache-Control",
+                "private, no-store"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+            res.setHeader(
+                "Content-Range",
+                `bytes ${start}-${end}/${total}`
+            );
+
+            return res
+                .status(206)
+                .send(data);
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER HYDRAX PROXY ERROR]",
+                JSON.stringify({
+                    status:
+                        error?.response?.status || 0,
+                    message:
+                        error?.message || String(error)
+                })
+            );
+
+            if (!res.headersSent) {
+                return res
+                    .status(502)
+                    .send("ASUPNIMER Hydrax proxy error");
+            }
+        }
+    }
+);
 
 /* ============================================================
    [ROUTE-006] [PROVIDERS: NGUONC] NGUONC PLAYLIST PROXY ENDPOINT
