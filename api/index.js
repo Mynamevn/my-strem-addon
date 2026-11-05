@@ -27728,18 +27728,43 @@ async function asupnimerFetchStreams({
     const requestedEpisode =
         Number(episode) || 0;
 
-    const titleKeys = [
-        requestedTitle,
-        ...titleVariants
-    ]
-        .map(asupnimerBuildTitleKey)
-        .filter(Boolean);
+    // -----------------------------------------------------
+    // 1. Chuẩn hóa và loại tên trùng.
+    // -----------------------------------------------------
 
-    const uniqueTitleKeys = [
-        ...new Set(titleKeys)
+    const allTitleVariants = [
+        requestedTitle,
+        ...(Array.isArray(titleVariants) ? titleVariants : [])
     ];
 
-    if (!uniqueTitleKeys.length) return [];
+    const queryMap = new Map();
+
+    const addQuery = value => {
+        const query = String(value || "").trim();
+        const key = asupnimerBuildTitleKey(query);
+
+        if (!query || !key || queryMap.has(key)) {
+            return;
+        }
+
+        queryMap.set(key, query);
+    };
+
+    for (const value of allTitleVariants) {
+        addQuery(value);
+    }
+
+    const initialQueries = [
+        ...queryMap.values()
+    ];
+
+    const titleKeys = new Set(
+        initialQueries
+            .map(asupnimerBuildTitleKey)
+            .filter(Boolean)
+    );
+
+    if (!titleKeys.size) return [];
 
     console.log(
         "[ASUPNIMER] SEARCH START:",
@@ -27749,53 +27774,177 @@ async function asupnimerFetchStreams({
             type: requestedType,
             season,
             episode: requestedEpisode,
-            variants: uniqueTitleKeys
+            initialQueries
         })
     );
 
     const postMap = new Map();
 
-    for (const query of [
-        requestedTitle,
-        ...titleVariants
-    ]) {
-        const searchTitle =
-            String(query || "").trim();
+    // -----------------------------------------------------
+    // 2. Hàm tìm kiếm nhiều tên, không gửi truy vấn trùng.
+    // -----------------------------------------------------
 
-        if (!searchTitle) continue;
+    const searchQueries = async queries => {
+        const uniqueQueries = [];
+        const seen = new Set();
 
-        const posts =
-            await asupnimerSearchPosts(
-                searchTitle,
-                15
-            );
+        for (const value of queries) {
+            const query = String(value || "").trim();
+            const key = asupnimerBuildTitleKey(query);
 
-        for (const post of posts) {
-            if (post?.url && !postMap.has(post.url)) {
-                postMap.set(post.url, post);
+            if (!query || !key || seen.has(key)) {
+                continue;
+            }
+
+            seen.add(key);
+            uniqueQueries.push(query);
+        }
+
+        if (!uniqueQueries.length) return;
+
+        console.log(
+            "[ASUPNIMER] SEARCH QUERIES:",
+            JSON.stringify(uniqueQueries)
+        );
+
+        const results = await Promise.all(
+            uniqueQueries.slice(0, 5).map(query =>
+                asupnimerSearchPosts(query, 15)
+                    .catch(error => {
+                        console.log(
+                            "[ASUPNIMER] QUERY ERROR:",
+                            JSON.stringify({
+                                query,
+                                message: error?.message || String(error)
+                            })
+                        );
+
+                        return [];
+                    })
+            )
+        );
+
+        for (const posts of results) {
+            for (const post of posts) {
+                if (post?.url && !postMap.has(post.url)) {
+                    postMap.set(post.url, post);
+                }
             }
         }
-    }
+    };
 
-    const candidates = [
+    // -----------------------------------------------------
+    // 3. Tìm bằng tên metadata hiện có trước.
+    // -----------------------------------------------------
+
+    await searchQueries(initialQueries);
+
+    let candidates = [
         ...postMap.values()
     ].filter(post => {
         const candidateKey =
             asupnimerBuildTitleKey(post.title);
 
-        return candidateKey &&
-            uniqueTitleKeys.includes(candidateKey);
+        return candidateKey && titleKeys.has(candidateKey);
     });
 
     console.log(
-        "[ASUPNIMER] STRICT TITLE MATCH:",
+        "[ASUPNIMER] PRIMARY TITLE MATCH:",
         JSON.stringify({
             searchedPosts: postMap.size,
             exactCandidates: candidates.length
         })
     );
 
-    if (!candidates.length) return [];
+    // -----------------------------------------------------
+    // 4. Nếu chưa tìm được bài khớp, dùng AniList lấy alias.
+    //    Chỉ sử dụng tên từ kết quả AniList có độ tin cậy.
+    // -----------------------------------------------------
+
+    if (!candidates.length) {
+        try {
+            if (
+                typeof animeHayGetAniListTitleVariants ===
+                "function"
+            ) {
+                console.log(
+                    "[ASUPNIMER] PRIMARY SEARCH EMPTY; TRY ANILIST:",
+                    JSON.stringify({
+                        title: requestedTitle,
+                        year: requestedYear
+                    })
+                );
+
+                const aniListVariants =
+                    await animeHayGetAniListTitleVariants(
+                        requestedTitle,
+                        requestedYear
+                    );
+
+                const aliasQueries = [];
+
+                if (Array.isArray(aniListVariants)) {
+                    for (const alias of aniListVariants) {
+                        const query = String(alias || "").trim();
+                        const key = asupnimerBuildTitleKey(query);
+
+                        if (!query || !key) continue;
+
+                        // Không tìm lại tên đã gửi ở lượt đầu.
+                        if (queryMap.has(key)) continue;
+
+                        queryMap.set(key, query);
+                        titleKeys.add(key);
+                        aliasQueries.push(query);
+                    }
+                }
+
+                console.log(
+                    "[ASUPNIMER] ANILIST ALIASES:",
+                    JSON.stringify(aliasQueries)
+                );
+
+                if (aliasQueries.length) {
+                    await searchQueries(aliasQueries);
+                }
+            }
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] ANILIST FALLBACK ERROR:",
+                error?.message || error
+            );
+        }
+
+        candidates = [
+            ...postMap.values()
+        ].filter(post => {
+            const candidateKey =
+                asupnimerBuildTitleKey(post.title);
+
+            return candidateKey && titleKeys.has(candidateKey);
+        });
+    }
+
+    console.log(
+        "[ASUPNIMER] STRICT TITLE MATCH:",
+        JSON.stringify({
+            searchedPosts: postMap.size,
+            exactCandidates: candidates.length,
+            acceptedTitleKeys: [...titleKeys]
+        })
+    );
+
+    if (!candidates.length) {
+        console.log(
+            "[ASUPNIMER] NO EXACT TITLE CANDIDATE"
+        );
+
+        return [];
+    }
+
+    // -----------------------------------------------------
+    // 5. Tải chi tiết và kiểm tra tên / năm / loại phim.
+    // -----------------------------------------------------
 
     const matchedDetails = [];
 
@@ -27810,7 +27959,7 @@ async function asupnimerFetchStreams({
 
         if (
             !detailKey ||
-            !uniqueTitleKeys.includes(detailKey)
+            !titleKeys.has(detailKey)
         ) {
             continue;
         }
@@ -27831,6 +27980,7 @@ async function asupnimerFetchStreams({
                     detailYear
                 })
             );
+
             continue;
         }
 
@@ -27855,8 +28005,13 @@ async function asupnimerFetchStreams({
         console.log(
             "[ASUPNIMER] NO VERIFIED DETAIL MATCH"
         );
+
         return [];
     }
+
+    // -----------------------------------------------------
+    // 6. Chọn đúng tập hoặc nguồn phim lẻ.
+    // -----------------------------------------------------
 
     for (const detail of matchedDetails) {
         let selectedEpisode = null;
@@ -27880,6 +28035,7 @@ async function asupnimerFetchStreams({
                             )
                     })
                 );
+
                 continue;
             }
 
@@ -27894,10 +28050,12 @@ async function asupnimerFetchStreams({
 
         if (!videoUrl) continue;
 
+        // -------------------------------------------------
+        // 7. Giải mã nguồn video.
+        // -------------------------------------------------
+
         const resolved =
-            await asupnimerResolveVideoSource(
-                videoUrl
-            );
+            await asupnimerResolveVideoSource(videoUrl);
 
         if (!resolved) continue;
 
@@ -27942,7 +28100,6 @@ async function asupnimerFetchStreams({
             url: playableUrl,
 
             type: isHls ? "m3u8" : "mp4",
-
             provider: "asupnimer",
             source: "asupnimer",
 
@@ -27957,6 +28114,7 @@ async function asupnimerFetchStreams({
 
         if (resolved.resolver === "loadvid") {
             stream.type = "m3u8";
+
             stream.behaviorHints = {
                 proxyHeaders: {
                     request: {
