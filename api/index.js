@@ -8404,6 +8404,7 @@ const internalIds = new Set([
         : [])
 ]);
 
+
 for (
     const cached of MOVINA_FINAL_CATALOG_CACHE.values()
 ) {
@@ -8414,11 +8415,11 @@ for (
     cached.metas =
         cached.metas.map(meta => {
             if (
-                meta?.type === type &&
                 internalIds.has(meta?.id)
             ) {
                 return {
                     ...meta,
+                    type,
                     id: imdbId
                 };
             }
@@ -8426,6 +8427,7 @@ for (
             return meta;
         });
 }
+
 
     console.log(
         "[MOVINA CATALOG ID PROMOTED]",
@@ -13977,6 +13979,7 @@ let metaId = rawId;
         })
     );
 
+
 } else if (rawId.startsWith("tt")) {
 
     imdbId =
@@ -13985,48 +13988,106 @@ let metaId = rawId;
     metaId =
         imdbId;
 
-    try {
+    // Ưu tiên bản ghi PhimAPI series đã xác minh.
+    // Không để args.type = movie làm mất tên series.
+    const seriesCacheKey =
+        "series:" +
+        String(imdbId).trim().toLowerCase();
 
-        const cinemetaRes =
-            await axios.get(
-                "https://v3-cinemeta.strem.io/meta/" +
-                (
-                    args.type === "series"
-                        ? "series"
-                        : "movie"
-                ) +
-                "/" +
-                encodeURIComponent(
-                    imdbId
-                ) +
-                ".json",
-                {
-                    timeout: 8000,
-
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0",
-
-                        "Accept":
-                            "application/json"
-                    }
-                }
-            );
-
-        movieName =
-            cinemetaRes.data?.meta?.name ||
-            "";
-
-    } catch (e) {
-
-        console.log(
-            "[META CINEMETA ERROR]",
-            e?.response?.status ||
-            e?.message ||
-            e
+    const seriesCacheEntry =
+        MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
+            seriesCacheKey
         );
 
+    const cachedSeriesItem =
+        seriesCacheEntry &&
+        seriesCacheEntry.expiresAt > Date.now()
+            ? seriesCacheEntry.item
+            : null;
+
+    if (
+        cachedSeriesItem?.slug
+    ) {
+        requestedSlug =
+            String(cachedSeriesItem.slug).trim();
+
+        requestedSlugItem =
+            cachedSeriesItem;
+
+        movieName =
+            cachedSeriesItem.name ||
+            cachedSeriesItem.origin_name ||
+            "";
+
+        console.log(
+            "[META IMDb → PHIMAPI SERIES CACHE HIT]",
+            JSON.stringify({
+                imdbId,
+                title: movieName,
+                slug: requestedSlug,
+                requestedType: args.type,
+                resolvedType: "series"
+            })
+        );
     }
+
+    // Nếu không có cache, thử Cinemeta.
+    if (!movieName) {
+        const lookupTypes =
+            args.type === "series"
+                ? ["series"]
+                : ["movie", "series"];
+
+        for (const lookupType of lookupTypes) {
+            try {
+                const cinemetaRes =
+                    await axios.get(
+                        "https://v3-cinemeta.strem.io/meta/" +
+                        lookupType +
+                        "/" +
+                        encodeURIComponent(imdbId) +
+                        ".json",
+                        {
+                            timeout: 5000,
+                            headers: {
+                                "User-Agent": "Mozilla/5.0",
+                                "Accept": "application/json"
+                            }
+                        }
+                    );
+
+                const cinemetaMeta =
+                    cinemetaRes.data?.meta || {};
+
+                if (cinemetaMeta.name) {
+                    movieName =
+                        cinemetaMeta.name;
+
+                    console.log(
+                        "[META IMDb CINEMETA FALLBACK]",
+                        JSON.stringify({
+                            imdbId,
+                            title: movieName,
+                            type: lookupType
+                        })
+                    );
+
+                    break;
+                }
+
+            } catch (e) {
+                console.log(
+                    "[META CINEMETA TYPE FALLBACK]",
+                    lookupType,
+                    e?.response?.status ||
+                    e?.message ||
+                    e
+                );
+            }
+        }
+    }
+}
+
 
         } else {
 
@@ -40990,6 +41051,56 @@ let episodeNumber = 0;
                 e
             );
 
+        }
+
+
+        // -------------------------------------------------
+        // FALLBACK: IMDb → PHIMAPI MATCH CACHE
+        // Cinemeta có thể không trả Meta JSON cho IMDb ID.
+        // Dùng bản ghi đã xác minh và lưu khi Meta xử lý.
+        // -------------------------------------------------
+
+        if (!movieName) {
+            const cacheKey =
+                "series:" +
+                String(imdbId).trim().toLowerCase();
+
+            const cachedEntry =
+                MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
+                    cacheKey
+                );
+
+            const cachedItem =
+                cachedEntry &&
+                cachedEntry.expiresAt > Date.now()
+                    ? cachedEntry.item
+                    : null;
+
+            if (cachedItem) {
+                movieName =
+                    cachedItem.name ||
+                    cachedItem.origin_name ||
+                    "";
+
+                movieYear =
+                    movinaIdentityGetYear(
+                        cachedItem
+                    );
+
+                resolvedMetadata =
+                    cachedItem;
+
+                console.log(
+                    "[STREAM] IMDb → PHIMAPI CACHE FALLBACK:",
+                    JSON.stringify({
+                        imdbId,
+                        title: movieName,
+                        year: movieYear,
+                        type: "series",
+                        slug: cachedItem.slug || ""
+                    })
+                );
+            }
         }
 
     }
