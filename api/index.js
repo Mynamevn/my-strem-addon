@@ -26380,6 +26380,7 @@ async function asupnimerSearchPosts(
     return posts;
 }
 
+
 async function asupnimerFetchPost(postUrl) {
     const url = String(postUrl || "").trim();
 
@@ -26403,73 +26404,246 @@ async function asupnimerFetchPost(postUrl) {
     const path =
         asupnimerExtractPostPath(url);
 
-    if (!path) return null;
+    let result = null;
 
-    const feedUrl =
-        domain +
-        "/feeds/posts/default?alt=json&path=" +
-        encodeURIComponent(path) +
-        "&max-results=1";
+    // -----------------------------------------------------
+    // 1. Thử lấy nội dung bằng Blogger Feed API.
+    // -----------------------------------------------------
 
-    const entries = await asupnimerFetchFeed(
-        feedUrl,
-        "post:" + path
-    );
+    if (path) {
+        const feedUrl =
+            domain +
+            "/feeds/posts/default?alt=json&path=" +
+            encodeURIComponent(path) +
+            "&max-results=1";
 
-    const entry = entries[0];
-
-    if (!entry) {
-        console.log(
-            "[ASUPNIMER] POST NOT FOUND:",
-            path
+        const entries = await asupnimerFetchFeed(
+            feedUrl,
+            "post:" + path
         );
 
-        return null;
+        const entry = entries[0];
+
+        if (entry) {
+            const links = Array.isArray(entry?.link)
+                ? entry.link
+                : [];
+
+            const alternate = links.find(
+                item => item?.rel === "alternate"
+            );
+
+            const categories = Array.isArray(
+                entry?.category
+            )
+                ? entry.category
+                    .map(item =>
+                        String(item?.term || "").trim()
+                    )
+                    .filter(Boolean)
+                : [];
+
+            result = {
+                title: asupnimerGetEntryValue(
+                    entry?.title
+                ).trim(),
+
+                content: asupnimerGetEntryValue(
+                    entry?.content
+                ),
+
+                poster:
+                    entry?.media$thumbnail?.url
+                        ? asupnimerAbsoluteUrl(
+                            entry.media$thumbnail.url,
+                            domain
+                        )
+                        : null,
+
+                categories,
+
+                url:
+                    asupnimerAbsoluteUrl(
+                        alternate?.href,
+                        domain
+                    ) || url
+            };
+
+            console.log(
+                "[ASUPNIMER] POST LOADED FROM FEED:",
+                JSON.stringify({
+                    title: result.title,
+                    contentLength: result.content.length
+                })
+            );
+        }
     }
 
-    const links = Array.isArray(entry?.link)
-        ? entry.link
-        : [];
+    // -----------------------------------------------------
+    // 2. Blogger Feed API lỗi hoặc không tìm thấy bài:
+    //    tải trực tiếp URL bài viết.
+    // -----------------------------------------------------
 
-    const alternate = links.find(
-        item => item?.rel === "alternate"
-    );
+    if (!result || !result.content) {
+        try {
+            console.log(
+                "[ASUPNIMER] FEED EMPTY; TRY DIRECT POST:",
+                url
+            );
 
-    const categories = Array.isArray(
-        entry?.category
-    )
-        ? entry.category
-            .map(item =>
-                String(item?.term || "").trim()
-            )
-            .filter(Boolean)
-        : [];
+            const response = await axios.get(
+                url,
+                {
+                    timeout: 15000,
+                    maxRedirects: 5,
+                    responseType: "text",
 
-    const result = {
-        title: asupnimerGetEntryValue(
-            entry?.title
-        ).trim(),
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
 
-        content: asupnimerGetEntryValue(
-            entry?.content
-        ),
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 
-        poster:
-            entry?.media$thumbnail?.url
-                ? asupnimerAbsoluteUrl(
-                    entry.media$thumbnail.url,
-                    domain
-                )
-                : null,
+                        "Referer": domain + "/"
+                    },
 
-        categories,
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
 
-        url:
-            asupnimerAbsoluteUrl(
-                alternate?.href,
-                domain
-            ) || url
-    };
+            const html = String(
+                response.data || ""
+            );
+
+            const $ = cheerio.load(html);
+
+            const contentSelectors = [
+                ".post-body.entry-content",
+                ".post-body",
+                ".entry-content",
+                "article .post-body",
+                "article"
+            ];
+
+            let content = "";
+
+            for (const selector of contentSelectors) {
+                const candidate =
+                    $(selector).first().html() || "";
+
+                if (
+                    candidate.length > content.length
+                ) {
+                    content = candidate;
+                }
+
+                if (content.length > 100) {
+                    break;
+                }
+            }
+
+            const title =
+                $('meta[property="og:title"]').attr("content") ||
+                $("h1.post-title").first().text() ||
+                $("h1.entry-title").first().text() ||
+                $("title").first().text() ||
+                "";
+
+            const poster =
+                $('meta[property="og:image"]').attr("content") ||
+                $('meta[name="twitter:image"]').attr("content") ||
+                "";
+
+            const categories = [];
+
+            $(
+                ".post-labels a, .post-labels span, .labels a"
+            ).each((_, element) => {
+                const value = $(element)
+                    .text()
+                    .trim();
+
+                if (
+                    value &&
+                    !categories.includes(value)
+                ) {
+                    categories.push(value);
+                }
+            });
+
+            if (
+                !content ||
+                content.length < 50
+            ) {
+                console.log(
+                    "[ASUPNIMER] DIRECT POST EMPTY:",
+                    JSON.stringify({
+                        status: response.status,
+                        finalUrl:
+                            response.request?.res?.responseUrl ||
+                            url,
+                        htmlLength: html.length,
+                        title
+                    })
+                );
+
+                return null;
+            }
+
+            result = {
+                title: String(title).trim(),
+
+                content,
+
+                poster: poster
+                    ? asupnimerAbsoluteUrl(
+                        poster,
+                        url
+                    )
+                    : null,
+
+                categories,
+
+                url:
+                    response.request?.res?.responseUrl ||
+                    url
+            };
+
+            console.log(
+                "[ASUPNIMER] POST LOADED DIRECT:",
+                JSON.stringify({
+                    title: result.title,
+                    contentLength: result.content.length,
+                    categories: result.categories,
+                    hasPoster: Boolean(result.poster),
+                    finalUrl: result.url
+                })
+            );
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] DIRECT POST ERROR:",
+                JSON.stringify({
+                    status:
+                        error?.response?.status || 0,
+                    message:
+                        error?.message || String(error),
+                    url
+                })
+            );
+
+            return null;
+        }
+    }
+
+    if (
+        !result ||
+        !result.content
+    ) {
+        return null;
+    }
 
     ASUPNIMER_POST_CACHE.set(
         url,
