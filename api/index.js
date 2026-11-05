@@ -8305,10 +8305,12 @@ for (
 }
 
 // Xác minh IMDb bằng Cinemeta.
+
 async function movinaVerifyImdbIdentity(
     item,
     imdbId,
-    type
+    type,
+    options = {}
 ) {
     imdbId = String(imdbId || "")
         .trim()
@@ -8399,13 +8401,56 @@ async function movinaVerifyImdbIdentity(
             ""
     };
 
-    if (
-        !movinaIdentityMatches(
+    let identityMatched =
+        movinaIdentityMatches(
             source,
             candidate,
             type
-        )
+        );
+
+    /*
+     * TMDB đã xác nhận chính xác tên + năm + loại phim
+     * và cung cấp IMDb external ID.
+     *
+     * Trong trường hợp tên hiển thị trên Cinemeta
+     * khác tên TMDB, chỉ cho phép bỏ kiểm tra tên.
+     * Vẫn bắt buộc kiểm tra type và year.
+     */
+    if (
+        !identityMatched &&
+        options?.trustedTmdbMatch === true &&
+        candidate
     ) {
+        const candidateType =
+            String(candidate.type || "")
+                .trim()
+                .toLowerCase();
+
+        const allowedTypes =
+            type === "series"
+                ? ["series", "tv", "tvshow", "tvshows"]
+                : ["movie", "film"];
+
+        const typeMatched =
+            !candidateType ||
+            allowedTypes.includes(candidateType);
+
+        const sourceYear =
+            movinaIdentityGetYear(source);
+
+        const candidateYear =
+            movinaIdentityGetYear(candidate);
+
+        const yearMatched =
+            !sourceYear ||
+            candidateYear === sourceYear;
+
+        identityMatched =
+            typeMatched &&
+            yearMatched;
+    }
+
+    if (!identityMatched) {
         console.log(
             "[MOVINA IMDb VERIFY FAIL]",
             imdbId,
@@ -8424,14 +8469,18 @@ async function movinaVerifyImdbIdentity(
     console.log(
         "[MOVINA IMDb VERIFY PASS]",
         imdbId,
-        source.name
+        source.name,
+        options?.trustedTmdbMatch
+            ? "TMDB"
+            : "CINEMETA"
     );
 
     return imdbId;
 }
 
+
 // Tìm IMDb ID khi PhimAPI không cung cấp ID.
-// Chỉ chấp nhận duy nhất một ứng viên khớp.
+// Ưu tiên Cinemeta, sau đó mới dùng TMDB.
 async function movinaResolveAndVerifyImdb(
     item,
     detail,
@@ -8457,6 +8506,10 @@ async function movinaResolveAndVerifyImdb(
             0
     };
 
+    // ========================================================
+    // 1. XÁC MINH ID ĐÃ CÓ TỪ PHIMAPI / CLASSIC
+    // ========================================================
+
     const possibleIds = [
         item?.__movinaClassicImdbId,
         item?.imdb?.id,
@@ -8468,7 +8521,11 @@ async function movinaResolveAndVerifyImdb(
     ];
 
     for (const possibleId of possibleIds) {
-        if (!/^tt\d+$/i.test(String(possibleId || "").trim())) {
+        if (
+            !/^tt\d+$/i.test(
+                String(possibleId || "").trim()
+            )
+        ) {
             continue;
         }
 
@@ -8479,26 +8536,33 @@ async function movinaResolveAndVerifyImdb(
                 type
             );
 
-        if (verified) return verified;
+        if (verified) {
+            return verified;
+        }
     }
 
+    // ========================================================
+    // 2. CINEMETA SEARCH — ƯU TIÊN ĐẦU TIÊN
+    // ========================================================
+
     const queries = [
-    ...new Set([
-        source.origin_name,
-        source.original_name,
-        source.name
-    ]
-        .map(value =>
-            String(value || "").trim()
+        ...new Set([
+            source.origin_name,
+            source.original_name,
+            source.name
+        ]
+            .map(value =>
+                String(value || "").trim()
+            )
+            .filter(Boolean)
         )
-        .filter(Boolean)
-    )
-].slice(0, 3);
+    ].slice(0, 3);
 
     const results = await Promise.all(
         queries.map(query =>
             movinaMetaCachedLoad(
                 MOVINA_META_SEARCH_CACHE,
+
                 "identity:" +
                     type +
                     ":" +
@@ -8551,7 +8615,22 @@ async function movinaResolveAndVerifyImdb(
         );
     }
 
-    if (matched.size !== 1) {
+    if (matched.size === 1) {
+        const candidate =
+            matched.values().next().value;
+
+        const verified =
+            await movinaVerifyImdbIdentity(
+                source,
+                candidate.id,
+                type
+            );
+
+        if (verified) {
+            return verified;
+        }
+
+    } else {
         console.log(
             "[MOVINA IMDb SEARCH SAFE FAIL]",
             JSON.stringify({
@@ -8561,19 +8640,276 @@ async function movinaResolveAndVerifyImdb(
                 type
             })
         );
+    }
+
+    // ========================================================
+    // 3. TMDB FALLBACK — CHỈ CHẠY KHI CINEMETA THẤT BẠI
+    // ========================================================
+
+    const tmdbApiKey = String(
+        process.env.TMDB_API_KEY || ""
+    ).trim();
+
+    if (!tmdbApiKey) {
+        console.log(
+            "[MOVINA TMDB IMDb FALLBACK SKIP]",
+            "TMDB_API_KEY missing"
+        );
 
         return "";
     }
 
-    const candidate =
-        matched.values().next().value;
+    if (!queries.length) {
+        return "";
+    }
 
-    return movinaVerifyImdbIdentity(
-        source,
-        candidate.id,
-        type
+    const sourceTitles = new Set(
+        movinaIdentityTitles(source, type)
     );
+
+    const sourceYear =
+        movinaIdentityGetYear(source);
+
+    // --------------------------------------------------------
+    // 3.1. TÌM PHIM THEO LOẠI
+    // --------------------------------------------------------
+
+    const tmdbSearchResults = await Promise.all(
+        queries.map(query =>
+            movinaMetaCachedLoad(
+                MOVINA_META_SEARCH_CACHE,
+
+                "tmdb-imdb-search:" +
+                    type +
+                    ":" +
+                    sourceYear +
+                    ":" +
+                    movinaIdentityNormalizeTitle(query),
+
+                async () => {
+                    const endpoint =
+                        type === "series"
+                            ? "tv"
+                            : "movie";
+
+                    const params = {
+                        api_key: tmdbApiKey,
+                        query,
+                        include_adult: false
+                    };
+
+                    if (sourceYear) {
+                        params[
+                            type === "series"
+                                ? "first_air_date_year"
+                                : "year"
+                        ] = sourceYear;
+                    }
+
+                    const response = await axios.get(
+                        "https://api.themoviedb.org/3/search/" +
+                        endpoint,
+                        {
+                            params,
+                            timeout: 5000,
+                            headers: {
+                                "Accept": "application/json",
+                                "User-Agent": "MOVINA/1.0"
+                            }
+                        }
+                    );
+
+                    return Array.isArray(
+                        response.data?.results
+                    )
+                        ? response.data.results
+                        : [];
+                },
+
+                6 * 60 * 60 * 1000,
+                60 * 1000
+            )
+        )
+    );
+
+    // --------------------------------------------------------
+    // 3.2. ĐỐI CHIẾU CHÍNH XÁC TÊN + NĂM + LOẠI
+    // --------------------------------------------------------
+
+    const tmdbCandidates = new Map();
+
+    for (const group of tmdbSearchResults) {
+        for (
+            const row of Array.isArray(group)
+                ? group
+                : []
+        ) {
+            const rowTitles = [
+                row?.title,
+                row?.original_title,
+                row?.name,
+                row?.original_name
+            ]
+                .map(value =>
+                    type === "series"
+                        ? movinaIdentityStripSeasonSuffix(value)
+                        : movinaIdentityNormalizeTitle(value)
+                )
+                .filter(Boolean);
+
+            const titleMatched =
+                rowTitles.some(title =>
+                    sourceTitles.has(title)
+                );
+
+            if (!titleMatched) {
+                continue;
+            }
+
+            const rawDate = String(
+                type === "series"
+                    ? row?.first_air_date || ""
+                    : row?.release_date || ""
+            );
+
+            const rowYear =
+                Number(rawDate.slice(0, 4)) || 0;
+
+            if (
+                sourceYear &&
+                rowYear !== sourceYear
+            ) {
+                continue;
+            }
+
+            const tmdbId = Number(row?.id);
+
+            if (
+                !Number.isInteger(tmdbId) ||
+                tmdbId <= 0
+            ) {
+                continue;
+            }
+
+            tmdbCandidates.set(
+                String(tmdbId),
+                row
+            );
+        }
+    }
+
+    if (tmdbCandidates.size !== 1) {
+        console.log(
+            "[MOVINA TMDB IMDb SAFE FAIL]",
+            JSON.stringify({
+                title: source.name,
+                year: sourceYear,
+                candidates: tmdbCandidates.size,
+                type
+            })
+        );
+
+        return "";
+    }
+
+    const tmdbCandidate =
+        tmdbCandidates.values().next().value;
+
+    // --------------------------------------------------------
+    // 3.3. LẤY IMDb ID TỪ TMDB EXTERNAL IDS
+    // --------------------------------------------------------
+
+    const endpointType =
+        type === "series"
+            ? "tv"
+            : "movie";
+
+    const externalIds =
+        await movinaMetaCachedLoad(
+            MOVINA_META_SEARCH_CACHE,
+
+            "tmdb-imdb-external:" +
+                endpointType +
+                ":" +
+                tmdbCandidate.id,
+
+            async () => {
+                const response = await axios.get(
+                    "https://api.themoviedb.org/3/" +
+                    endpointType +
+                    "/" +
+                    tmdbCandidate.id +
+                    "/external_ids",
+                    {
+                        params: {
+                            api_key: tmdbApiKey
+                        },
+                        timeout: 5000,
+                        headers: {
+                            "Accept": "application/json",
+                            "User-Agent": "MOVINA/1.0"
+                        }
+                    }
+                );
+
+                return response.data || null;
+            },
+
+            24 * 60 * 60 * 1000,
+            60 * 1000
+        );
+
+    const tmdbImdbId = String(
+        externalIds?.imdb_id || ""
+    )
+        .trim()
+        .toLowerCase();
+
+    if (!/^tt\d+$/.test(tmdbImdbId)) {
+        console.log(
+            "[MOVINA TMDB IMDb MISSING]",
+            JSON.stringify({
+                title: source.name,
+                tmdbId: tmdbCandidate.id,
+                type
+            })
+        );
+
+        return "";
+    }
+
+    // --------------------------------------------------------
+    // 3.4. XÁC MINH LẠI BẰNG CINEMETA
+    // --------------------------------------------------------
+
+    const verified =
+        await movinaVerifyImdbIdentity(
+            source,
+            tmdbImdbId,
+            type,
+            {
+                trustedTmdbMatch: true
+            }
+        );
+
+    if (!verified) {
+        return "";
+    }
+
+    console.log(
+        "[MOVINA TMDB IMDb RESOLVED]",
+        JSON.stringify({
+            title: source.name,
+            imdbId: verified,
+            tmdbId: tmdbCandidate.id,
+            year: sourceYear,
+            type
+        })
+    );
+
+    return verified;
 }
+
 
 const MOVINA_CINEMETA_PREVIEW_TTL =
     6 * 60 * 60 * 1000;
