@@ -6925,7 +6925,7 @@ const MOVINA_ANIMATION_GENRES = {
         ]
     },
     "tinh cam": {
-        slugs: ["tinh-cam", "lang-man"],
+        slugs: ["tinh-cam"],
         aliases: [
             "tinh cam",
             "lang man",
@@ -7335,23 +7335,35 @@ if (
     cinemetaAnimationItems.length > 0 &&
     items.length > 0
 ) {
+    
     const getAnimationImdbId = item => {
         const candidates = [
             item?.__movinaCinemetaImdbId,
+
+            // PhimAPI có thể trả IMDb dưới dạng chuỗi.
+            typeof item?.imdb === "string"
+                ? item.imdb
+                : "",
+
+            // Một số nguồn trả IMDb dưới dạng object.
+            item?.imdb?.id,
+            item?.imdb?.imdb_id,
+
             item?.imdb_id,
             item?.imdbId,
-            item?.imdb?.id,
             item?.tmdb?.imdb_id,
             item?.id
         ];
 
         for (const value of candidates) {
-            const id = String(value || "")
+            const text = String(value || "")
                 .trim()
                 .toLowerCase();
 
-            if (/^tt\d+$/.test(id)) {
-                return id;
+            const match = text.match(/\btt\d+\b/);
+
+            if (match) {
+                return match[0];
             }
         }
 
