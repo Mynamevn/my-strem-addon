@@ -28013,6 +28013,40 @@ function asupnimerIsStrongTitleKey(value = "") {
     );
 }
 
+function asupnimerTitleMatches(
+    candidateTitle = "",
+    titleKeys = new Set()
+) {
+    const candidateKey =
+        asupnimerBuildTitleKey(candidateTitle);
+
+    if (!candidateKey) return false;
+
+    const paddedCandidate =
+        ` ${candidateKey} `;
+
+    for (const key of titleKeys) {
+        const normalizedKey =
+            asupnimerBuildTitleKey(key);
+
+        if (
+            !asupnimerIsStrongTitleKey(normalizedKey)
+        ) {
+            continue;
+        }
+
+        if (
+            paddedCandidate.includes(
+                ` ${normalizedKey} `
+            )
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 async function asupnimerFetchStreams({
     title,
     titleVariants = [],
@@ -28146,13 +28180,13 @@ async function asupnimerFetchStreams({
     await searchQueries(initialQueries);
 
     let candidates = [
-        ...postMap.values()
-    ].filter(post => {
-        const candidateKey =
-            asupnimerBuildTitleKey(post.title);
-
-        return candidateKey && titleKeys.has(candidateKey);
-    });
+    ...postMap.values()
+].filter(post =>
+    asupnimerTitleMatches(
+        post.title,
+        titleKeys
+    )
+);
 
     console.log(
         "[ASUPNIMER] PRIMARY TITLE MATCH:",
@@ -28228,13 +28262,13 @@ aliasQueries.push(query);
         }
 
         candidates = [
-            ...postMap.values()
-        ].filter(post => {
-            const candidateKey =
-                asupnimerBuildTitleKey(post.title);
-
-            return candidateKey && titleKeys.has(candidateKey);
-        });
+    ...postMap.values()
+].filter(post =>
+    asupnimerTitleMatches(
+        post.title,
+        titleKeys
+    )
+);
     }
 
     console.log(
@@ -28276,11 +28310,23 @@ aliasQueries.push(query);
             asupnimerBuildTitleKey(detail.title);
 
         if (
-            !detailKey ||
-            !titleKeys.has(detailKey)
-        ) {
-            continue;
-        }
+    !detailKey ||
+    !asupnimerTitleMatches(
+        detail.title,
+        titleKeys
+    )
+) {
+    console.log(
+        "[ASUPNIMER] DETAIL TITLE MISMATCH:",
+        JSON.stringify({
+            title: detail.title,
+            detailKey,
+            acceptedTitleKeys: [...titleKeys]
+        })
+    );
+
+    continue;
+}
 
         const detailYear =
             Number(detail.year) || 0;
