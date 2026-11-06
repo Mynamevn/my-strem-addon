@@ -29001,7 +29001,7 @@ aliasQueries.push(query);
             })
         );
 
-        return stream;
+        return streams;
     }
 
     console.log(
