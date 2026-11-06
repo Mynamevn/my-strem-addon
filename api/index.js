@@ -29332,15 +29332,12 @@ aliasQueries.push(query);
             const normalizedLanguage =
                 asupnimerNormalizeText(rawLanguage);
 
-            const serverName =
+                        const serverName =
                 rawServer || "Server";
 
             let languageName = "Video";
 
-            if (resolved.resolver === "youtube") {
-                languageName = "YT";
-
-            } else if (
+            if (
                 normalizedLanguage.includes("thuyet minh") ||
                 normalizedLanguage.includes("long tieng")
             ) {
@@ -29357,10 +29354,20 @@ aliasQueries.push(query);
                 languageName = rawLanguage;
             }
 
+            const deliveryName =
+                resolved.resolver === "youtube"
+                    ? "YT"
+                    : "";
+
             const streamName =
-                "ASUPNIMER · " +
+                "ASUPNIMER - " +
                 serverName +
-                " · " +
+                (
+                    deliveryName
+                        ? " - " + deliveryName
+                        : ""
+                ) +
+                " - " +
                 languageName;
 
             const streamTitle =
