@@ -14885,19 +14885,26 @@ console.log(
 // Không cho phim cùng tên nhưng khác năm được chọn.
 // -------------------------------------------------
 
+
 const cinemetaYearRaw =
     cinemetaFallbackMeta?.year ||
     cinemetaFallbackMeta?.releaseInfo ||
     cinemetaFallbackMeta?.released ||
     "";
 
-const cinemetaYearMatch =
-    String(cinemetaYearRaw).match(/\b(19|20)\d{2}\b/);
+const cinemetaYearMatches = [
+    ...String(cinemetaYearRaw).matchAll(
+        /\b(?:19|20)\d{2}\b/g
+    )
+].map(match => Number(match[0]));
 
 const authoritativeCinemetaYear =
-    cinemetaYearMatch
-        ? Number(cinemetaYearMatch[0])
-        : 0;
+    cinemetaYearMatches[0] || 0;
+
+const authoritativeCinemetaYearEnd =
+    cinemetaYearMatches.length > 1
+        ? cinemetaYearMatches[cinemetaYearMatches.length - 1]
+        : authoritativeCinemetaYear;
 
 const isCompatiblePhimApiCandidate = candidate => {
 
@@ -14913,8 +14920,13 @@ const isCompatiblePhimApiCandidate = candidate => {
             0
         );
 
+    if (!candidateYear) {
+        return false;
+    }
+
     return (
-        candidateYear === authoritativeCinemetaYear
+        candidateYear >= authoritativeCinemetaYear &&
+        candidateYear <= authoritativeCinemetaYearEnd
     );
 };
 
@@ -14927,8 +14939,10 @@ console.log(
     "[META PHIMAPI YEAR FILTER]",
     JSON.stringify({
         title: movieName,
-        imdbId,
-        sourceYear: authoritativeCinemetaYear || null,
+        imdbId,    
+sourceYear: cinemetaYearRaw || null,
+sourceYearStart: authoritativeCinemetaYear || null,
+sourceYearEnd: authoritativeCinemetaYearEnd || null,
         before: Array.isArray(items) ? items.length : 0,
         after: identitySafeItems.length
     })
@@ -42182,9 +42196,8 @@ parseDetail(
         }
 
         const episodeNumber =
-            extractEpisodeNumber(
-                name
-            );
+    extractEpisodeNumber(name) ||
+    extractEpisodeNumber(absoluteUrl);
 
         const serverName =
             detectServerName(
