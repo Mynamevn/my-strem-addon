@@ -29318,9 +29318,7 @@ aliasQueries.push(query);
 
             // -------------------------------------------------
             // Chuẩn hóa tên server và ngôn ngữ.
-            // -------------------------------------------------
-
-            const rawServer =
+            // -------------------------------------------------            const rawServer =
                 String(source.server || "").trim();
 
             const rawLanguage =
@@ -29332,26 +29330,53 @@ aliasQueries.push(query);
             const normalizedLanguage =
                 asupnimerNormalizeText(rawLanguage);
 
-                        const serverName =
+            const serverName =
                 rawServer || "Server";
 
-            let languageName = "Video";
+            // -------------------------------------------------
+            // XÁC ĐỊNH NGÔN NGỮ VIDEO
+            //
+            // Khi có audio riêng được khai báo bằng a=...,
+            // video chính được ưu tiên nhận diện là VietSub.
+            // Audio phụ không được tạo thành stream độc lập.
+            // -------------------------------------------------
 
-            if (
-                normalizedLanguage.includes("thuyet minh") ||
-                normalizedLanguage.includes("long tieng")
-            ) {
-                languageName = "TM";
+            let languageName = "Chưa xác định";
+
+            let languageBasis = "unknown";
+
+            if (source.audio) {
+
+                languageName = "Vsub";
+
+                languageBasis = "separate-audio";
 
             } else if (
                 normalizedLanguage.includes("vietsub") ||
                 normalizedLanguage.includes("viet sub") ||
+                normalizedLanguage.includes("phu de") ||
                 normalizedLanguage.includes("sub")
             ) {
+
                 languageName = "Vsub";
 
+                languageBasis = "source-language";
+
+            } else if (
+                normalizedLanguage.includes("thuyet minh") ||
+                normalizedLanguage.includes("long tieng") ||
+                normalizedLanguage.includes("dub")
+            ) {
+
+                languageName = "TM";
+
+                languageBasis = "source-language";
+
             } else if (rawLanguage) {
+
                 languageName = rawLanguage;
+
+                languageBasis = "source-language";
             }
 
             const deliveryName =
@@ -29447,8 +29472,11 @@ aliasQueries.push(query);
                     year: detail.year,
                     type: detail.type,
                     episode: requestedEpisode || null,
-                    server: serverName,
+                    server: serverName,                    
                     language: languageName,
+                    rawLanguage,
+                    hasSeparateAudio: Boolean(source.audio),
+                    languageBasis,
                     resolver: resolved.resolver,
                     quality: resolved.quality || null,
                     url: playableUrl
