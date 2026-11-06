@@ -27472,6 +27472,20 @@ async function asupnimerResolveVideoSource(sourceUrl) {
         }
     }
 
+    console.log(
+        "[ASUPNIMER] UNSUPPORTED VIDEO SOURCE:",
+        JSON.stringify({
+            url,
+            hostname: (() => {
+                try {
+                    return new URL(url).hostname;
+                } catch (_) {
+                    return null;
+                }
+            })()
+        })
+    );
+
     return null;
 }
 
@@ -28540,7 +28554,29 @@ aliasQueries.push(query);
         const videoUrl =
             String(selectedSource?.video || "").trim();
 
-        if (!videoUrl) continue;
+        console.log(
+            "[ASUPNIMER] SELECTED VIDEO SOURCE:",
+            JSON.stringify({
+                title: detail.title,
+                episode: requestedEpisode,
+                availableEpisodes: detail.episodes.map(
+                    item => item.number
+                ),
+                videoUrl,
+                audioUrl: selectedSource?.audio || null
+            })
+        );
+
+        if (!videoUrl) {
+            console.log(
+                "[ASUPNIMER] SELECTED SOURCE HAS NO VIDEO:",
+                JSON.stringify({
+                    title: detail.title,
+                    episode: requestedEpisode
+                })
+            );
+            continue;
+        }
 
         // -------------------------------------------------
         // 7. Giải mã nguồn video.
