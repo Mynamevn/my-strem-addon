@@ -27347,52 +27347,6 @@ async function asupnimerResolveLoadVid(sourceUrl) {
 
 /* ============================================================
    [PRV-ASUPNIMER.11] [PROVIDERS: ASUPNIMER]
-   LOADVID SOURCE DISPATCHER
-   ============================================================ */
-
-async function asupnimerResolveVideoSource(sourceUrl) {
-    const url = String(sourceUrl || "").trim();
-
-    if (!url) return null;
-
-    if (/loadvid\.com\/videos\/play\//i.test(url)) {
-        return await asupnimerResolveLoadVid(url);
-    }
-
-    if (
-        /\.m3u8(?:$|[?#])/i.test(url) ||
-        /\.mp4(?:$|[?#])/i.test(url)
-    ) {
-        return {
-            provider: "asupnimer",
-            resolver: "direct",
-            url
-        };
-    }
-
-    if (
-        /youtube\.com\/watch|youtu\.be\//i.test(url)
-    ) {
-        return {
-            provider: "asupnimer",
-            resolver: "youtube",
-            url
-        };
-    }
-
-    if (/playhydrax\.com|abysscdn\.com/i.test(url)) {
-        return {
-            provider: "asupnimer",
-            resolver: "hydrax-pending",
-            url
-        };
-    }
-
-    return null;
-}
-
-/* ============================================================
-   [PRV-ASUPNIMER.11] [PROVIDERS: ASUPNIMER]
    LOADVID / DIRECT / HYDRAX SOURCE DISPATCHER
    ============================================================ */
 
