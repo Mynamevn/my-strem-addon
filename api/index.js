@@ -44860,56 +44860,121 @@ console.log(
         }
 
 
+                // -------------------------------------------------
+        // IMDb → PHIMAPI MATCH CACHE
+        //
+        // Luôn đọc cache PhimAPI đã xác minh,
+        // kể cả khi Cinemeta đã trả về tên phim.
+        //
+        // Cinemeta cung cấp tên và metadata chung.
+        // PhimAPI bổ sung category, country, type
+        // để nhận diện anime / hoạt hình chính xác.
         // -------------------------------------------------
-        // FALLBACK: IMDb → PHIMAPI MATCH CACHE
-        // Cinemeta có thể không trả Meta JSON cho IMDb ID.
-        // Dùng bản ghi đã xác minh và lưu khi Meta xử lý.
-        // -------------------------------------------------
 
-        if (!movieName) {
-            const cacheKey =
-                "series:" +
-                String(imdbId).trim().toLowerCase();
+        const cacheKey =
+            "series:" +
+            String(imdbId).trim().toLowerCase();
 
-            const cachedEntry =
-                MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
-                    cacheKey
-                );
+        const cachedEntry =
+            MOVINA_PHIMAPI_MATCH_BY_IMDB.get(
+                cacheKey
+            );
 
-            const cachedItem =
-                cachedEntry &&
-                cachedEntry.expiresAt > Date.now()
-                    ? cachedEntry.item
-                    : null;
+        const cachedItem =
+            cachedEntry &&
+            cachedEntry.expiresAt > Date.now()
+                ? cachedEntry.item
+                : null;
 
-            if (cachedItem) {
+        if (cachedItem) {
+
+            const cinemetaMetadata =
+                resolvedMetadata &&
+                typeof resolvedMetadata === "object"
+                    ? resolvedMetadata
+                    : {};
+
+            const cachedCategories =
+                Array.isArray(cachedItem.category) &&
+                cachedItem.category.length
+                    ? cachedItem.category
+                    : cinemetaMetadata.category;
+
+            const cachedCountries =
+                Array.isArray(cachedItem.country) &&
+                cachedItem.country.length
+                    ? cachedItem.country
+                    : cinemetaMetadata.country;
+
+            resolvedMetadata = {
+                ...cachedItem,
+                ...cinemetaMetadata,
+
+                // Giữ lại phân loại gốc của PhimAPI.
+                category:
+                    cachedCategories,
+
+                country:
+                    cachedCountries,
+
+                // Không để metadata Cinemeta
+                // ghi đè loại nội dung gốc.
+                type:
+                    cachedItem.type ||
+                    cinemetaMetadata.type,
+
+                type_name:
+                    cachedItem.type_name ||
+                    cinemetaMetadata.type_name,
+
+                // Giữ bằng chứng hoạt hình đã xác minh.
+                __isAnimation:
+                    isAnimation(cachedItem) ||
+                    cinemetaMetadata.__isAnimation === true
+            };
+
+            // Chỉ lấy tên từ PhimAPI nếu Cinemeta
+            // thực sự không trả về tên.
+            if (!movieName) {
                 movieName =
                     cachedItem.name ||
                     cachedItem.origin_name ||
                     "";
+            }
 
+            if (!movieYear) {
                 movieYear =
                     movinaIdentityGetYear(
                         cachedItem
                     );
-
-                resolvedMetadata =
-                    cachedItem;
-
-                console.log(
-                    "[STREAM] IMDb → PHIMAPI CACHE FALLBACK:",
-                    JSON.stringify({
-                        imdbId,
-                        title: movieName,
-                        year: movieYear,
-                        type: "series",
-                        slug: cachedItem.slug || ""
-                    })
-                );
             }
-        }
 
-    }
+            console.log(
+                "[STREAM] IMDb → PHIMAPI METADATA ENRICHED:",
+                JSON.stringify({
+                    imdbId,
+                    title: movieName,
+                    year: movieYear,
+                    category: cachedCategories,
+                    country: cachedCountries,
+                    animation: isAnimation(resolvedMetadata),
+                    slug: cachedItem.slug || ""
+                })
+            );
+
+        } else {
+
+            console.log(
+                "[STREAM] IMDb → PHIMAPI CACHE MISS:",
+                JSON.stringify({
+                    imdbId,
+                    cacheKey,
+                    cinemetaAvailable: Boolean(
+                        resolvedMetadata
+                    )
+                })
+            );
+        }
 
     // =====================================================
     // C. IMDb MOVIE
