@@ -28903,6 +28903,7 @@ aliasQueries.push(query);
         const isHls =
             /\.m3u8(?:$|[?#])/i.test(playableUrl);
 
+        
         const stream = {
             name:
                 "ASUPNIMER" +
@@ -28915,17 +28916,9 @@ aliasQueries.push(query);
                 ),
 
             title:
-                detail.title +
-                (
-                    requestedType === "series"
-                        ? " · Tập " + requestedEpisode
-                        : ""
-                ) +
-                (
-                    detail.year
-                        ? " (" + detail.year + ")"
-                        : ""
-                ),
+                requestedType === "series"
+                    ? requestedTitle + " · Tập " + requestedEpisode
+                    : requestedTitle,
 
             ...(resolved.resolver === "youtube"
                 ? {
@@ -28935,17 +28928,19 @@ aliasQueries.push(query);
                     url: playableUrl,
                     type: isHls ? "m3u8" : "mp4"
                 }),
+
             provider: "asupnimer",
             source: "asupnimer",
 
             description:
-                "Nguồn ASUPNIMER" +
+                "ASUPNIMER · " +
                 (
-                    detail.description
-                        ? "\n" + detail.description.slice(0, 500)
-                        : ""
+                    resolved.resolver === "youtube"
+                        ? "YouTube"
+                        : resolved.quality || "Video"
                 )
         };
+
 
         if (resolved.resolver === "loadvid") {
             stream.type = "m3u8";
