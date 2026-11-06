@@ -27285,6 +27285,7 @@ function asupnimerParseEpisodeSources(html = "") {
 /* ============================================================
    [PRV-ASUPNIMER.08] [PROVIDERS: ASUPNIMER]
    NORMALIZED POST DETAIL
+   MULTI-SERVER PRESERVATION
    ============================================================ */
 
 async function asupnimerBuildPostDetail(post) {
@@ -27333,9 +27334,6 @@ async function asupnimerBuildPostDetail(post) {
     const categoryText =
         categories.join(" ").toLowerCase();
 
-    const titleText =
-        metadata.title.toLowerCase();
-
     const isMovieLabel =
         /\bmovie\b/i.test(metadata.title) ||
         /\banime-sp\b/i.test(categoryText);
@@ -27346,6 +27344,10 @@ async function asupnimerBuildPostDetail(post) {
     const hasNumberedEpisodes =
         parsedSources.episodes.length > 0;
 
+    const hasMovieSources =
+        Array.isArray(parsedSources.movieSources) &&
+        parsedSources.movieSources.length > 0;
+
     const isMovie =
         isMovieLabel &&
         !hasNumberedEpisodes;
@@ -27354,7 +27356,7 @@ async function asupnimerBuildPostDetail(post) {
         ? "movie"
         : isSeriesLabel || hasNumberedEpisodes
             ? "series"
-            : parsedSources.movieSource
+            : hasMovieSources
                 ? "movie"
                 : "unknown";
 
@@ -27366,9 +27368,21 @@ async function asupnimerBuildPostDetail(post) {
         categories,
         url: detail.url || post.url,
         type,
-        movieSource: parsedSources.movieSource,
-        episodes: parsedSources.episodes,
-        episodeCount: parsedSources.episodes.length
+
+        // Giữ nguồn phim lẻ tương thích với code cũ.
+        movieSource:
+            parsedSources.movieSource,
+
+        // Danh sách đầy đủ server của phim lẻ.
+        movieSources:
+            parsedSources.movieSources || [],
+
+        // Danh sách tập và tất cả server của từng tập.
+        episodes:
+            parsedSources.episodes,
+
+        episodeCount:
+            parsedSources.episodes.length
     };
 
     console.log(
@@ -27379,9 +27393,19 @@ async function asupnimerBuildPostDetail(post) {
             type: result.type,
             categories: result.categories,
             episodeCount: result.episodeCount,
-            hasMovieSource: Boolean(result.movieSource),
-            hasDescription: Boolean(result.description),
-            hasPoster: Boolean(result.poster)
+            movieSourceCount:
+                result.movieSources.length,
+            episodeSourceCount:
+                result.episodes.reduce(
+                    (total, item) =>
+                        total +
+                        (item.sources?.length || 0),
+                    0
+                ),
+            hasDescription:
+                Boolean(result.description),
+            hasPoster:
+                Boolean(result.poster)
         })
     );
 
@@ -29175,16 +29199,13 @@ aliasQueries.push(query);
                      * cho một stream chỉ phát video gốc.
                      */
 
-                    const hasSeparateAudio =
-                        Boolean(source.audio);
+// YouTube luôn hiển thị nhãn YT.
+// Audio riêng không làm thay đổi cách phân loại
+// vì Stremio vẫn có thể phát video YouTube gốc.
 
-                    if (
-                        resolved.resolver === "youtube" &&
-                        hasSeparateAudio
-                    ) {
-                        languageName = "YouTube";
-                    }
-
+if (resolved.resolver === "youtube") {
+    languageName = "YT";
+}
 
                     // -------------------------------------
                     // 7.4. Tên stream
@@ -29234,19 +29255,13 @@ aliasQueries.push(query);
                         provider: "asupnimer",
                         source: "asupnimer",
 
-                        description:
-                            streamName +
-                            (
-                                resolved.quality
-                                    ? " · " + resolved.quality
-                                    : ""
-                            ) +
-                            (
-                                hasSeparateAudio &&
-                                resolved.resolver === "youtube"
-                                    ? " · Audio thuyết minh riêng, chưa ghép vào stream Stremio"
-                                    : ""
-                            )
+description:
+    streamName +
+    (
+        resolved.quality
+            ? " · " + resolved.quality
+            : ""
+    )
                     };
 
 
