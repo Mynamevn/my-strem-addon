@@ -28596,7 +28596,23 @@ aliasQueries.push(query);
 
         if (!playableUrl) continue;
 
-        if (resolved.resolver === "youtube") {
+        const youtubeId =
+            resolved.resolver === "youtube"
+                ? (
+                    playableUrl.match(
+                        /(?:youtube\.com\/watch\?[^#]*\bv=|youtu\.be\/)([A-Za-z0-9_-]{11})/i
+                    )?.[1] || null
+                )
+                : null;
+
+        if (
+            resolved.resolver === "youtube" &&
+            !youtubeId
+        ) {
+            console.log(
+                "[ASUPNIMER] INVALID YOUTUBE ID:",
+                playableUrl
+            );
             continue;
         }
 
@@ -28607,9 +28623,11 @@ aliasQueries.push(query);
             name:
                 "ASUPNIMER" +
                 (
-                    resolved.quality
-                        ? " · " + resolved.quality
-                        : ""
+                    resolved.resolver === "youtube"
+                        ? " · YouTube"
+                        : resolved.quality
+                            ? " · " + resolved.quality
+                            : ""
                 ),
 
             title:
@@ -28625,9 +28643,14 @@ aliasQueries.push(query);
                         : ""
                 ),
 
-            url: playableUrl,
-
-            type: isHls ? "m3u8" : "mp4",
+            ...(resolved.resolver === "youtube"
+                ? {
+                    ytId: youtubeId
+                }
+                : {
+                    url: playableUrl,
+                    type: isHls ? "m3u8" : "mp4"
+                }),
             provider: "asupnimer",
             source: "asupnimer",
 
