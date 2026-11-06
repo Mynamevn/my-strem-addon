@@ -36767,10 +36767,14 @@ function responseBody(response) {
     const record = records[i];
     const src = String(record.src || "").trim();
 
-    // Theo yêu cầu hiện tại: chỉ xử lý SN và PA.
-    if (!["sn", "pa"].includes(src.toLowerCase())) {
+    // SN / PA: xử lý playlist và các resolver tương ứng.
+    // NC: cho phép thử playlist và Streamc embed resolver.
+    // OP: cho phép thử playlist thực tế; chưa giả định OP embed
+    // tương thích với Sora hoặc Streamc.
+    if (!["sn", "pa", "nc", "op"].includes(src.toLowerCase())) {
         continue;
     }
+
         const server = record.server_name || "Onflix";
         const before = streams.length;
 
