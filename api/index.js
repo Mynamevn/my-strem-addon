@@ -28408,6 +28408,65 @@ function asupnimerTitleMatches(
     return false;
 }
 
+
+function asupnimerGetExplicitSeason(value = "") {
+    const normalized =
+        asupnimerNormalizeText(value);
+
+    const patterns = [
+        /\bseason\s*(\d{1,2})\b/,
+        /\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/,
+        /\b(?:phan|mua|ss)\s*(\d{1,2})\b/
+    ];
+
+    for (const pattern of patterns) {
+        const match = normalized.match(pattern);
+
+        if (match?.[1]) {
+            const season = Number(match[1]);
+
+            if (
+                Number.isInteger(season) &&
+                season > 0
+            ) {
+                return season;
+            }
+        }
+    }
+
+    return null;
+}
+
+function asupnimerMatchesRequestedEdition(
+    post,
+    titleKeys,
+    requestedType,
+    requestedSeason
+) {
+    if (
+        !asupnimerTitleMatches(
+            post?.title,
+            titleKeys
+        )
+    ) {
+        return false;
+    }
+
+    if (requestedType !== "series") {
+        return true;
+    }
+
+    const postSeason =
+        asupnimerGetExplicitSeason(post?.title);
+
+    // Bài không ghi rõ mùa: chưa đủ căn cứ để loại.
+    if (postSeason === null) {
+        return true;
+    }
+
+    return postSeason === requestedSeason;
+}
+
 async function asupnimerFetchStreams({
     title,
     titleVariants = [],
@@ -28425,6 +28484,9 @@ async function asupnimerFetchStreams({
 
     const requestedYear =
         Number(year) || 0;
+
+    const requestedSeason =
+        Math.max(1, Number(season) || 1);
 
     const requestedEpisode =
         Number(episode) || 0;
@@ -28543,9 +28605,11 @@ async function asupnimerFetchStreams({
     let candidates = [
     ...postMap.values()
 ].filter(post =>
-    asupnimerTitleMatches(
-        post.title,
-        titleKeys
+    asupnimerMatchesRequestedEdition(
+        post,
+        titleKeys,
+        requestedType,
+        requestedSeason
     )
 );
 
@@ -28844,17 +28908,51 @@ aliasQueries.push(query);
         const detailYear =
             Number(detail.year) || 0;
 
+        const detailSeason =
+            asupnimerGetExplicitSeason(
+                detail.title
+            );
+
+        // Không nhận nhầm mùa khác của cùng một anime.
+        if (
+            requestedType === "series" &&
+            detailSeason !== null &&
+            detailSeason !== requestedSeason
+        ) {
+            console.log(
+                "[ASUPNIMER] SEASON MISMATCH:",
+                JSON.stringify({
+                    title: detail.title,
+                    requestedSeason,
+                    detailSeason
+                })
+            );
+
+            continue;
+        }
+
+        // Với bài ghi rõ đúng mùa, năm phát hành của mùa
+        // có thể khác năm phát hành ban đầu của cả series.
+        // Chỉ bỏ qua chênh lệch năm trong trường hợp này.
+        const sameExplicitSeason =
+            requestedType === "series" &&
+            detailSeason !== null &&
+            detailSeason === requestedSeason;
+
         if (
             requestedYear &&
             detailYear &&
-            requestedYear !== detailYear
+            requestedYear !== detailYear &&
+            !sameExplicitSeason
         ) {
             console.log(
                 "[ASUPNIMER] YEAR MISMATCH:",
                 JSON.stringify({
                     title: detail.title,
                     requestedYear,
-                    detailYear
+                    detailYear,
+                    requestedSeason,
+                    detailSeason
                 })
             );
 
