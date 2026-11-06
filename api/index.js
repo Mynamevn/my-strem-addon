@@ -15886,6 +15886,75 @@ console.log(
         let videos =
             undefined;
 
+// -------------------------------------------------
+// SEASON-AWARE SERIES METADATA
+// Không mặc định tất cả series đều là Season 1.
+// -------------------------------------------------
+
+const seriesMetadataTitles = [
+    detail?.name,
+    detail?.origin_name,
+    detail?.original_name,
+    item?.name,
+    item?.origin_name,
+    item?.original_name,
+    item?.title
+]
+    .map(value =>
+        String(value || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/gi, "d")
+            .toLowerCase()
+    )
+    .filter(Boolean);
+
+const seriesSeasonMatch =
+    seriesMetadataTitles
+        .map(value =>
+            value.match(
+                /\b(?:season|mua|phan|part)\s*(\d+)\b/i
+            )
+        )
+        .find(Boolean);
+
+const seriesNumericSeason = [
+    detail?.season_number,
+    detail?.seasonNumber,
+    item?.season_number,
+    item?.seasonNumber,
+    detail?.season,
+    item?.season
+]
+    .map(Number)
+    .find(value =>
+        Number.isInteger(value) &&
+        value > 0
+    );
+
+const seriesSeasonNumber =
+    seriesNumericSeason ||
+    Number(seriesSeasonMatch?.[1]) ||
+    1;
+
+const seriesSeasonYear =
+    Number(
+        detail?.year ||
+        detail?.release_year ||
+        item?.year ||
+        item?.release_year ||
+        targetYear
+    ) || 0;
+
+console.log(
+    "[META SERIES SEASON CONTEXT]:",
+    JSON.stringify({
+        title: detail?.name || item?.name || "",
+        season: seriesSeasonNumber,
+        year: seriesSeasonYear
+    })
+);
+
         if (
             isSeries
         ) {
@@ -16027,10 +16096,25 @@ console.log(
                     .map(
                         ep => {
 
-                            const videoId =
-                                metaId +
-                                ":1:" +
-                                ep.number;
+const videoId =
+    /^tt\d+$/i.test(String(metaId || "")) &&
+    seriesSeasonYear
+        ? (
+            metaId +
+            ":" +
+            seriesSeasonNumber +
+            ":" +
+            ep.number +
+            ":" +
+            seriesSeasonYear
+        )
+        : (
+            metaId +
+            ":" +
+            seriesSeasonNumber +
+            ":" +
+            ep.number
+        );
 
                             let released =
                                 ep.released;
@@ -16080,7 +16164,7 @@ console.log(
                                     released,
 
                                 season:
-                                    1,
+                                    seriesSeasonNumber,
 
                                 episode:
                                     ep.number,
@@ -28532,6 +28616,9 @@ async function asupnimerFetchStreams({
     const requestedYear =
         Number(year) || 0;
 
+    const requestedSeason =
+    Number(season) || 1;
+
     const requestedEpisode =
         Number(episode) || 0;
 
@@ -28948,24 +29035,64 @@ aliasQueries.push(query);
 }
 
         const detailYear =
-            Number(detail.year) || 0;
+    Number(detail.year) || 0;
 
-        if (
-            requestedYear &&
-            detailYear &&
-            requestedYear !== detailYear
-        ) {
-            console.log(
-                "[ASUPNIMER] YEAR MISMATCH:",
-                JSON.stringify({
-                    title: detail.title,
-                    requestedYear,
-                    detailYear
-                })
-            );
+// -----------------------------------------------------
+// STRICT SEASON VALIDATION
+// Nếu bài ghi rõ Season/Phần/Mùa,
+// phải trùng mùa mà Stremio yêu cầu.
+// -----------------------------------------------------
 
-            continue;
-        }
+const normalizedDetailTitle =
+    asupnimerNormalizeText(detail.title);
+
+const detailSeasonMatch =
+    normalizedDetailTitle.match(
+        /\b(?:season|mua|phan|part)\s*(\d+)\b/i
+    );
+
+const detailSeason =
+    Number(detailSeasonMatch?.[1]) || 0;
+
+if (
+    requestedType === "series" &&
+    detailSeason &&
+    detailSeason !== requestedSeason
+) {
+    console.log(
+        "[ASUPNIMER] SEASON MISMATCH:",
+        JSON.stringify({
+            title: detail.title,
+            requestedSeason,
+            detailSeason
+        })
+    );
+
+    continue;
+}
+
+// -----------------------------------------------------
+// STRICT YEAR VALIDATION
+// -----------------------------------------------------
+
+if (
+    requestedYear &&
+    detailYear &&
+    requestedYear !== detailYear
+) {
+    console.log(
+        "[ASUPNIMER] YEAR MISMATCH:",
+        JSON.stringify({
+            title: detail.title,
+            requestedYear,
+            detailYear,
+            requestedSeason,
+            detailSeason
+        })
+    );
+
+    continue;
+}
 
         if (
             requestedType === "series" &&
@@ -44412,6 +44539,8 @@ console.log(
 
 let movieYear = 0;
 
+let streamSeasonYear = 0;
+
 // Metadata Cinemeta, dùng để quyết định có nên gọi AnimeHay/AnimeT.
 let resolvedMetadata = null;
 
@@ -44622,6 +44751,16 @@ let episodeNumber = 0;
 
         const idParts =
             rawId.split(":");
+
+streamSeasonYear =
+    /^\d{4}$/.test(idParts[3] || "")
+        ? Number(idParts[3])
+        : 0;
+
+console.log(
+    "[STREAM] IMDb season year:",
+    streamSeasonYear || "USE CINEMETA YEAR"
+);
 
         seasonNumber =
             Number(
@@ -45263,15 +45402,19 @@ const asupnimerPromise = (async () => {
             .map(value => String(value || "").trim())
             .filter(Boolean);
 
-        const fetchPromise =
-            asupnimerFetchStreams({
-                title: movieName,
-                titleVariants,
-                year: movieYear,
-                type: streamType,
-                season: seasonNumber || 1,
-                episode: episodeNumber
-            });
+const fetchPromise =
+    asupnimerFetchStreams({
+        title: movieName,
+        titleVariants,
+
+        year:
+            streamSeasonYear ||
+            movieYear,
+
+        type: streamType,
+        season: seasonNumber || 1,
+        episode: episodeNumber
+    });
 
         const timeoutPromise =
             new Promise(resolve => {
