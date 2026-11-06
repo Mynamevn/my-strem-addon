@@ -28535,14 +28535,166 @@ aliasQueries.push(query);
             );
         }
 
+
         candidates = [
-    ...postMap.values()
-].filter(post =>
-    asupnimerTitleMatches(
-        post.title,
-        titleKeys
-    )
-);
+            ...postMap.values()
+        ].filter(post =>
+            asupnimerTitleMatches(
+                post.title,
+                titleKeys
+            )
+        );
+    }
+
+    // -----------------------------------------------------
+    // 4.1. DEEP RECENT FEED FALLBACK
+    // Nếu tìm kiếm và alias AniList đều thất bại,
+    // quét thêm các trang bài đăng cũ hơn của Blogger.
+    // Chỉ kích hoạt khi chưa có ứng viên.
+    // -----------------------------------------------------
+
+    if (!candidates.length) {
+        const deepFeedDomain =
+            await asupnimerResolveActiveDomain();
+
+        if (deepFeedDomain) {
+            const pageStarts = [
+                1,
+                52,
+                103,
+                154,
+                205
+            ];
+
+            console.log(
+                "[ASUPNIMER] DEEP FEED SCAN START:",
+                JSON.stringify({
+                    title: requestedTitle,
+                    pages: pageStarts.length
+                })
+            );
+
+            const pageResults = await Promise.all(
+                pageStarts.map(async startIndex => {
+                    const feedUrl =
+                        deepFeedDomain +
+                        "/feeds/posts/summary?alt=json&max-results=50&start-index=" +
+                        startIndex;
+
+                    try {
+                        const entries =
+                            await asupnimerFetchFeed(
+                                feedUrl,
+                                "deep-recent:" + startIndex
+                            );
+
+                        return {
+                            startIndex,
+                            entries
+                        };
+
+                    } catch (error) {
+                        console.log(
+                            "[ASUPNIMER] DEEP FEED PAGE ERROR:",
+                            JSON.stringify({
+                                startIndex,
+                                message:
+                                    error?.message ||
+                                    String(error)
+                            })
+                        );
+
+                        return {
+                            startIndex,
+                            entries: []
+                        };
+                    }
+                })
+            );
+
+            let deepScanned = 0;
+
+            for (const page of pageResults) {
+                for (const entry of page.entries || []) {
+                    const postTitle =
+                        asupnimerGetEntryValue(
+                            entry?.title
+                        ).trim();
+
+                    if (!postTitle) continue;
+
+                    const links = Array.isArray(entry?.link)
+                        ? entry.link
+                        : [];
+
+                    const alternate = links.find(
+                        item => item?.rel === "alternate"
+                    );
+
+                    const postUrl =
+                        asupnimerAbsoluteUrl(
+                            alternate?.href,
+                            deepFeedDomain
+                        );
+
+                    if (!postUrl) continue;
+
+                    const categories = Array.isArray(
+                        entry?.category
+                    )
+                        ? entry.category
+                            .map(item =>
+                                String(item?.term || "").trim()
+                            )
+                            .filter(Boolean)
+                        : [];
+
+                    const post = {
+                        title: postTitle,
+                        url: postUrl,
+                        poster: asupnimerAbsoluteUrl(
+                            entry?.media$thumbnail?.url || "",
+                            deepFeedDomain
+                        ),
+                        published:
+                            asupnimerGetEntryValue(
+                                entry?.published
+                            ),
+                        categories
+                    };
+
+                    if (!postMap.has(postUrl)) {
+                        postMap.set(postUrl, post);
+                        deepScanned++;
+                    }
+                }
+            }
+
+            candidates = [
+                ...postMap.values()
+            ].filter(post =>
+                asupnimerTitleMatches(
+                    post.title,
+                    titleKeys
+                )
+            );
+
+            console.log(
+                "[ASUPNIMER] DEEP FEED SCAN RESULT:",
+                JSON.stringify({
+                    pages: pageResults.map(page => ({
+                        startIndex: page.startIndex,
+                        count: page.entries.length
+                    })),
+                    newlyScanned: deepScanned,
+                    totalPosts: postMap.size,
+                    matchedCandidates: candidates.length,
+                    matchedTitles: candidates.map(
+                        post => post.title
+                    )
+                })
+            );
+        }
     }
 
     console.log(
