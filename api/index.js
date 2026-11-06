@@ -36802,9 +36802,50 @@ const embedUrl = rawEmbedUrl
             embedUrl: embedUrl || ""
         }));
 
-        // A. Ưu tiên endpoint playlist mà Onflix cung cấp.
-        // Không yêu cầu URL phải có đuôi .m3u8.
-        if (playlistUrl) {
+                // A. Ưu tiên endpoint playlist mà Onflix cung cấp.
+        // OP: nếu Onflix trả URL M3U8 trực tiếp thì nhận ngay,
+        // không chờ request kiểm tra playlist từ server MOVINA.
+        const isDirectM3u8 =
+            /^https?:\/\/[^\s"'<>]+\.m3u8(?:[?#][^\s"'<>]*)?$/i
+                .test(playlistUrl);
+
+        if (
+            src.toLowerCase() === "op" &&
+            isDirectM3u8
+        ) {
+            let opOrigin = "";
+
+            try {
+                opOrigin = new URL(playlistUrl).origin;
+            } catch (_) {}
+
+            if (opOrigin) {
+                const added = addStream({
+                    url: playlistUrl,
+                    name: server,
+                    title: record.name || server,
+                    type: "m3u8",
+                    headers: {
+                        Referer: opOrigin + "/",
+                        Origin: opOrigin,
+                        "User-Agent": ONFLIX_USER_AGENT
+                    }
+                });
+
+                console.info(
+                    TAG,
+                    "OP DIRECT PLAYLIST ACCEPTED",
+                    {
+                        index: i + 1,
+                        server,
+                        added,
+                        url: playlistUrl,
+                        origin: opOrigin
+                    }
+                );
+            }
+
+        } else if (playlistUrl) {
             try {
                 const response = await onflixRequest(playlistUrl, {
                     timeout: 7000,
@@ -36823,6 +36864,7 @@ const embedUrl = rawEmbedUrl
                 );
 
                 let isHls = /^#EXTM3U(?:\s|$)/i.test(body);
+
                 let actualUrl = onflixAbsoluteUrl(
                     response?.url || playlistUrl
                 ) || playlistUrl;
@@ -36856,16 +36898,22 @@ const embedUrl = rawEmbedUrl
 
                             if (/^#EXTM3U(?:\s|$)/i.test(mediaBody)) {
                                 isHls = true;
+
                                 actualUrl = onflixAbsoluteUrl(
                                     mediaResponse?.url || mediaUrl
                                 ) || mediaUrl;
                             }
                         } catch (error) {
-                            console.warn(TAG, "MEDIA URL CHECK FAILED", {
-                                src,
-                                status: error?.response?.status || 0,
-                                message: error?.message || String(error)
-                            });
+                            console.warn(
+                                TAG,
+                                "MEDIA URL CHECK FAILED",
+                                {
+                                    src,
+                                    status: error?.response?.status || 0,
+                                    message:
+                                        error?.message || String(error)
+                                }
+                            );
                         }
                     }
                 }
@@ -36889,6 +36937,7 @@ const embedUrl = rawEmbedUrl
                         status: response?.status || 0,
                         contentType
                     });
+
                 } else {
                     console.warn(TAG, "PLAYLIST NOT HLS", {
                         index: i + 1,
@@ -36899,6 +36948,7 @@ const embedUrl = rawEmbedUrl
                         preview: body.slice(0, 120)
                     });
                 }
+
             } catch (error) {
                 console.warn(TAG, "PLAYLIST FAILED", {
                     index: i + 1,
