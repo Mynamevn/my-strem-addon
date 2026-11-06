@@ -26340,10 +26340,13 @@ async function asupnimerSearchPosts(
         const recentPosts =
             convertEntriesToPosts(recentEntries);
 
-        const recentMatches =
-            recentPosts.filter(post =>
-                asupnimerBuildTitleKey(post.title) === queryKey
-            );
+const recentMatches =
+    recentPosts.filter(post =>
+        asupnimerTitleMatches(
+            post.title,
+            new Set([queryKey])
+        )
+    );
 
         if (recentMatches.length) {
             posts = recentMatches;
@@ -28611,22 +28614,22 @@ async function asupnimerFetchStreams({
             JSON.stringify(uniqueQueries)
         );
 
-        const results = await Promise.all(
-            uniqueQueries.slice(0, 5).map(query =>
-                asupnimerSearchPosts(query, 15)
-                    .catch(error => {
-                        console.log(
-                            "[ASUPNIMER] QUERY ERROR:",
-                            JSON.stringify({
-                                query,
-                                message: error?.message || String(error)
-                            })
-                        );
-
-                        return [];
+const results = await Promise.all(
+    uniqueQueries.map(query =>
+        asupnimerSearchPosts(query, 15)
+            .catch(error => {
+                console.log(
+                    "[ASUPNIMER] QUERY ERROR:",
+                    JSON.stringify({
+                        query,
+                        message: error?.message || String(error)
                     })
-            )
-        );
+                );
+
+                return [];
+            })
+    )
+);
 
         for (const posts of results) {
             for (const post of posts) {
