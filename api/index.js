@@ -26936,9 +26936,10 @@ function asupnimerExtractPostMetadata(
 }
 
 
+
 /* ============================================================
    [PRV-ASUPNIMER.07] [PROVIDERS: ASUPNIMER]
-   EPISODE SOURCE PARSING
+   MULTI-SERVER / MULTI-LANGUAGE EPISODE SOURCE PARSING
    ============================================================ */
 
 function asupnimerExtractEpisodeBlock(html = "") {
@@ -27026,15 +27027,73 @@ function asupnimerParseEpisodeSources(html = "") {
     const episodeBlock =
         asupnimerExtractEpisodeBlock(html);
 
-    const lines = String(episodeBlock || "")
-        .split("|");
+    const segments =
+        String(episodeBlock || "").split("|");
 
     const episodesByNumber = new Map();
 
-    let movieSource = null;
+    const movieSources = [];
 
-    for (const rawLine of lines) {
-        const parts = String(rawLine || "")
+    let currentLanguage = "";
+    let currentServer = "";
+
+    const addSource = (
+        collection,
+        source
+    ) => {
+        if (!Array.isArray(collection)) return;
+
+        const duplicate = collection.some(item =>
+            item.video === source.video &&
+            item.server === source.server &&
+            item.language === source.language
+        );
+
+        if (!duplicate) {
+            collection.push(source);
+        }
+    };
+
+    for (const rawSegment of segments) {
+        const segment = String(rawSegment || "").trim();
+
+        if (!segment) continue;
+
+        // -------------------------------------------------
+        // Cập nhật nhóm ngôn ngữ.
+        // Ví dụ: {TT Thuyết Minh}, {TT VietSub}
+        // -------------------------------------------------
+
+        const languageMatch =
+            segment.match(
+                /\{\s*TT\s+([^}]+)\s*\}/i
+            );
+
+        if (languageMatch?.[1]) {
+            currentLanguage =
+                languageMatch[1].trim();
+        }
+
+        // -------------------------------------------------
+        // Cập nhật server.
+        // Ví dụ: (TS Muse), (TS Ani-One)
+        // -------------------------------------------------
+
+        const serverMatch =
+            segment.match(
+                /\(\s*TS\s+([^)]+)\s*\)/i
+            );
+
+        if (serverMatch?.[1]) {
+            currentServer =
+                serverMatch[1].trim();
+        }
+
+        // -------------------------------------------------
+        // Đọc dữ liệu tập: 01;URL;...;a=audio
+        // -------------------------------------------------
+
+        const parts = segment
             .split(";")
             .map(value => value.trim());
 
@@ -27077,6 +27136,9 @@ function asupnimerParseEpisodeSources(html = "") {
         }
 
         const source = {
+            label,
+            server: currentServer || "",
+            language: currentLanguage || "",
             video,
             audio
         };
@@ -27089,32 +27151,57 @@ function asupnimerParseEpisodeSources(html = "") {
                 Number(numberMatch[1]);
 
             if (
-                Number.isInteger(episodeNumber) &&
-                episodeNumber > 0 &&
-                !episodesByNumber.has(episodeNumber)
+                !Number.isInteger(episodeNumber) ||
+                episodeNumber <= 0
             ) {
+                continue;
+            }
+
+            if (!episodesByNumber.has(episodeNumber)) {
                 episodesByNumber.set(
                     episodeNumber,
                     {
                         number: episodeNumber,
                         label,
                         video,
-                        audio
+                        audio,
+                        sources: []
                     }
                 );
             }
-        } else if (!movieSource) {
-            movieSource = source;
+
+            const episode =
+                episodesByNumber.get(episodeNumber);
+
+            addSource(
+                episode.sources,
+                source
+            );
+
+            // Giữ tương thích với code cũ.
+            if (!episode.video) {
+                episode.video = video;
+                episode.audio = audio;
+            }
+
+        } else {
+            addSource(
+                movieSources,
+                source
+            );
         }
     }
 
+    const episodes = [
+        ...episodesByNumber.values()
+    ].sort((a, b) => a.number - b.number);
+
     return {
-        movieSource,
-        episodes: [...episodesByNumber.values()]
-            .sort((a, b) => a.number - b.number)
+        movieSource: movieSources[0] || null,
+        movieSources,
+        episodes
     };
 }
-
 
 /* ============================================================
    [PRV-ASUPNIMER.08] [PROVIDERS: ASUPNIMER]
@@ -28799,16 +28886,19 @@ aliasQueries.push(query);
         return [];
     }
 
+    
     // -----------------------------------------------------
-    // 6. Chọn đúng tập hoặc nguồn phim lẻ.
+    // 6. Chọn toàn bộ nguồn của tập hoặc phim lẻ.
     // -----------------------------------------------------
+
+    const allStreams = [];
+    const emittedKeys = new Set();
 
     for (const detail of matchedDetails) {
-        let selectedEpisode = null;
-        let selectedSource = null;
+        let selectedSources = [];
 
         if (requestedType === "series") {
-            selectedEpisode =
+            const selectedEpisode =
                 detail.episodes.find(item =>
                     Number(item?.number) === requestedEpisode
                 );
@@ -28829,186 +28919,276 @@ aliasQueries.push(query);
                 continue;
             }
 
-            selectedSource = selectedEpisode;
+            selectedSources =
+                Array.isArray(selectedEpisode.sources) &&
+                selectedEpisode.sources.length
+                    ? selectedEpisode.sources
+                    : selectedEpisode.video
+                        ? [{
+                            video: selectedEpisode.video,
+                            audio: selectedEpisode.audio,
+                            server: "",
+                            language: ""
+                        }]
+                        : [];
 
         } else {
-            selectedSource = detail.movieSource;
+            selectedSources =
+                Array.isArray(detail.movieSources) &&
+                detail.movieSources.length
+                    ? detail.movieSources
+                    : detail.movieSource
+                        ? [detail.movieSource]
+                        : [];
         }
 
-        const videoUrl =
-            String(selectedSource?.video || "").trim();
-
         console.log(
-            "[ASUPNIMER] SELECTED VIDEO SOURCE:",
+            "[ASUPNIMER] EPISODE SOURCES:",
             JSON.stringify({
                 title: detail.title,
-                episode: requestedEpisode,
-                availableEpisodes: detail.episodes.map(
-                    item => item.number
-                ),
-                videoUrl,
-                audioUrl: selectedSource?.audio || null
+                episode: requestedEpisode || null,
+                sourceCount: selectedSources.length,
+                sources: selectedSources.map(source => ({
+                    server: source.server,
+                    language: source.language,
+                    video: source.video,
+                    hasAudio: Boolean(source.audio)
+                }))
             })
         );
 
-        if (!videoUrl) {
-            console.log(
-                "[ASUPNIMER] SELECTED SOURCE HAS NO VIDEO:",
-                JSON.stringify({
-                    title: detail.title,
-                    episode: requestedEpisode
+        if (!selectedSources.length) {
+            continue;
+        }
+
+        // -------------------------------------------------
+        // 7. Giải mã TẤT CẢ nguồn video.
+        // -------------------------------------------------
+
+        const resolvedResults =
+            await Promise.allSettled(
+                selectedSources.map(async source => {
+                    const videoUrl =
+                        String(source?.video || "").trim();
+
+                    if (!videoUrl) return null;
+
+                    const resolved =
+                        await asupnimerResolveVideoSource(
+                            videoUrl
+                        );
+
+                    if (!resolved) return null;
+
+                    const playableUrl =
+                        String(
+                            resolved.url ||
+                            resolved.playlistUrl ||
+                            ""
+                        ).trim();
+
+                    if (!playableUrl) return null;
+
+                    return {
+                        source,
+                        resolved,
+                        playableUrl
+                    };
                 })
             );
-            continue;
-        }
 
-        // -------------------------------------------------
-        // 7. Giải mã nguồn video.
-        // -------------------------------------------------
+        for (const result of resolvedResults) {
+            if (result.status !== "fulfilled") {
+                console.log(
+                    "[ASUPNIMER] SOURCE RESOLVE ERROR:",
+                    result.reason?.message ||
+                    String(result.reason)
+                );
 
-        const resolved =
-            await asupnimerResolveVideoSource(videoUrl);
+                continue;
+            }
 
-        if (!resolved) continue;
+            const item = result.value;
 
-        let playableUrl =
-            String(
-                resolved.url ||
-                resolved.playlistUrl ||
-                ""
-            ).trim();
+            if (!item) continue;
 
-        if (!playableUrl) continue;
-
-        const youtubeId =
-            resolved.resolver === "youtube"
-                ? (
-                    playableUrl.match(
-                        /(?:youtube\.com\/watch\?[^#]*\bv=|youtu\.be\/)([A-Za-z0-9_-]{11})/i
-                    )?.[1] || null
-                )
-                : null;
-
-        if (
-            resolved.resolver === "youtube" &&
-            !youtubeId
-        ) {
-            console.log(
-                "[ASUPNIMER] INVALID YOUTUBE ID:",
+            const {
+                source,
+                resolved,
                 playableUrl
-            );
-            continue;
-        }
+            } = item;
 
-        const isHls =
-            /\.m3u8(?:$|[?#])/i.test(playableUrl);
+            const youtubeId =
+                resolved.resolver === "youtube"
+                    ? (
+                        playableUrl.match(
+                            /(?:youtube\.com\/watch\?[^#]*\bv=|youtu\.be\/)([A-Za-z0-9_-]{11})/i
+                        )?.[1] || null
+                    )
+                    : null;
 
-        
-        const stream = {
-            name:
-                "ASUPNIMER" +
-                (
-                    resolved.resolver === "youtube"
-                        ? " · YouTube"
-                        : resolved.quality
-                            ? " · " + resolved.quality
-                            : ""
-                ),
+            if (
+                resolved.resolver === "youtube" &&
+                !youtubeId
+            ) {
+                console.log(
+                    "[ASUPNIMER] INVALID YOUTUBE ID:",
+                    playableUrl
+                );
 
-            title:
-                requestedType === "series"
-                    ? requestedTitle + " · Tập " + requestedEpisode
-                    : requestedTitle,
+                continue;
+            }
 
-            ...(resolved.resolver === "youtube"
-                ? {
-                    ytId: youtubeId
-                }
-                : {
-                    url: playableUrl,
-                    type: isHls ? "m3u8" : "mp4"
-                }),
+            const isHls =
+                /\.m3u8(?:$|[?#])/i.test(playableUrl);
 
-            provider: "asupnimer",
-            source: "asupnimer",
+            // -------------------------------------------------
+            // Chuẩn hóa tên server và ngôn ngữ.
+            // -------------------------------------------------
 
-            description:
+            const rawServer =
+                String(source.server || "").trim();
+
+            const rawLanguage =
+                String(source.language || "").trim();
+
+            const normalizedServer =
+                asupnimerNormalizeText(rawServer);
+
+            const normalizedLanguage =
+                asupnimerNormalizeText(rawLanguage);
+
+            const serverName =
+                rawServer || "Server";
+
+            let languageName = "Video";
+
+            if (resolved.resolver === "youtube") {
+                languageName = "YT";
+
+            } else if (
+                normalizedLanguage.includes("thuyet minh") ||
+                normalizedLanguage.includes("long tieng")
+            ) {
+                languageName = "TM";
+
+            } else if (
+                normalizedLanguage.includes("vietsub") ||
+                normalizedLanguage.includes("viet sub") ||
+                normalizedLanguage.includes("sub")
+            ) {
+                languageName = "Vsub";
+
+            } else if (rawLanguage) {
+                languageName = rawLanguage;
+            }
+
+            const streamName =
                 "ASUPNIMER · " +
-                (
-                    resolved.resolver === "youtube"
-                        ? "YouTube"
-                        : resolved.quality || "Video"
-                )
-        };
+                serverName +
+                " · " +
+                languageName;
 
-        const streams = [stream];
+            const streamTitle =
+                requestedType === "series"
+                    ? requestedTitle +
+                      " · Tập " +
+                      requestedEpisode
+                    : requestedTitle;
 
-        /*
-         * Fallback cho Stremio client không phát được ytId:
-         * mở trang gốc ASUPNIMER để trang tự đồng bộ
-         * video YouTube và audio thuyết minh.
-         */
-        if (
-            resolved.resolver === "youtube" &&
-            /^https?:\/\//i.test(
-                String(detail.url || "")
-            )
-        ) {
-            streams.push({
-                name:
-                    "ASUPNIMER · Đồng bộ thuyết minh",
+            // -------------------------------------------------
+            // Không tạo stream trùng cùng server / ngôn ngữ
+            // / URL video.
+            // -------------------------------------------------
 
-                title:
-                    requestedType === "series"
-                        ? requestedTitle +
-                          " · Tập " +
-                          requestedEpisode
-                        : requestedTitle,
+            const streamKey = [
+                serverName.toLowerCase(),
+                languageName.toLowerCase(),
+                playableUrl.toLowerCase()
+            ].join("|");
 
-                externalUrl: detail.url,
+            if (emittedKeys.has(streamKey)) {
+                continue;
+            }
+
+            emittedKeys.add(streamKey);
+
+            // -------------------------------------------------
+            // Tạo Stremio stream.
+            // MP3 chỉ giữ trong dữ liệu parser, không tạo
+            // thành stream độc lập hoặc externalUrl.
+            // -------------------------------------------------
+
+            const stream = {
+                name: streamName,
+                title: streamTitle,
+
+                ...(resolved.resolver === "youtube"
+                    ? {
+                        ytId: youtubeId
+                    }
+                    : {
+                        url: playableUrl,
+                        type: isHls ? "m3u8" : "mp4"
+                    }),
 
                 provider: "asupnimer",
                 source: "asupnimer",
 
                 description:
-                    "Mở trình phát gốc ASUPNIMER để đồng bộ video và tiếng thuyết minh"
-            });
-        }
-
-        if (resolved.resolver === "loadvid") {
-            stream.type = "m3u8";
-
-            stream.behaviorHints = {
-                proxyHeaders: {
-                    request: {
-                        "Referer":
-                            "https://cdn.loadvid.com/"
-                    }
-                }
+                    streamName +
+                    (
+                        resolved.quality
+                            ? " · " + resolved.quality
+                            : ""
+                    )
             };
+
+            if (resolved.resolver === "loadvid") {
+                stream.type = "m3u8";
+
+                stream.behaviorHints = {
+                    proxyHeaders: {
+                        request: {
+                            "Referer":
+                                "https://cdn.loadvid.com/"
+                        }
+                    }
+                };
+            }
+
+            allStreams.push(stream);
+
+            console.log(
+                "[ASUPNIMER] STREAM READY:",
+                JSON.stringify({
+                    title: detail.title,
+                    year: detail.year,
+                    type: detail.type,
+                    episode: requestedEpisode || null,
+                    server: serverName,
+                    language: languageName,
+                    resolver: resolved.resolver,
+                    quality: resolved.quality || null,
+                    url: playableUrl
+                })
+            );
         }
-
-        console.log(
-            "[ASUPNIMER] STREAM READY:",
-            JSON.stringify({
-                title: detail.title,
-                year: detail.year,
-                type: detail.type,
-                episode: requestedEpisode || null,
-                resolver: resolved.resolver,
-                quality: resolved.quality || null,
-                url: playableUrl
-            })
-        );
-
-        return streams;
     }
 
     console.log(
-        "[ASUPNIMER] NO PLAYABLE SOURCE"
+        "[ASUPNIMER] FINAL STREAM COUNT:",
+        allStreams.length
     );
 
-    return [];
+    console.log(
+        "[ASUPNIMER] FINAL STREAM NAMES:",
+        JSON.stringify(
+            allStreams.map(stream => stream.name)
+        )
+    );
+
+    return allStreams;
 }
 
 // ============================================================
