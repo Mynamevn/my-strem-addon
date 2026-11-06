@@ -45142,7 +45142,7 @@ console.log(
     // D. ID KHÁC
     // =====================================================
 
-    else {
+        else if (!rawId.startsWith("tt")) {
 
         movieName =
             decodeMovieName(
