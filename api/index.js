@@ -34327,7 +34327,7 @@ const ONFLIX_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
 
 const ONFLIX_SORA_KEY = "onflix_secure_stream_v2_2026";
-const ONFLIX_SRC_PRIORITY = ["pa", "sn", "nc", "op"];
+const ONFLIX_SRC_PRIORITY = ["pa", "sn", "nc"];
 
 // [PRV-ONFLIX.02] [PROVIDERS: ONFLIX] ENCRYPTED URL DECODING
 
@@ -36767,11 +36767,9 @@ function responseBody(response) {
     const record = records[i];
     const src = String(record.src || "").trim();
 
-    // SN / PA: xử lý playlist và các resolver tương ứng.
-    // NC: cho phép thử playlist và Streamc embed resolver.
-    // OP: cho phép thử playlist thực tế; chưa giả định OP embed
-    // tương thích với Sora hoặc Streamc.
-    if (!["sn", "pa", "nc", "op"].includes(src.toLowerCase())) {
+    // Chỉ xử lý SN, PA và NC.
+    // OP (Ophim) đã ngừng hoạt động, không tiếp tục xử lý.
+    if (!["sn", "pa", "nc"].includes(src.toLowerCase())) {
         continue;
     }
 
@@ -36801,49 +36799,8 @@ const embedUrl = rawEmbedUrl
             playlistUrl: playlistUrl || "",
             embedUrl: embedUrl || ""
         }));
-
-                // A. Ưu tiên endpoint playlist mà Onflix cung cấp.
-        // OP: nếu Onflix trả URL M3U8 trực tiếp thì nhận ngay,
-        // không chờ request kiểm tra playlist từ server MOVINA.
-        const isDirectM3u8 =
-            /^https?:\/\/[^\s"'<>]+\.m3u8(?:[?#][^\s"'<>]*)?$/i
-                .test(playlistUrl);
-
-        if (
-            src.toLowerCase() === "op" &&
-            isDirectM3u8
-        ) {
-            let opOrigin = "";
-
-            try {
-                opOrigin = new URL(playlistUrl).origin;
-            } catch (_) {}
-
-            if (opOrigin) {
-                const added = addStream({
-                    url: playlistUrl,
-                    name: server,
-                    title: record.name || server,
-                    type: "m3u8",
-                    headers: {
-                        Referer: opOrigin + "/",
-                        Origin: opOrigin,
-                        "User-Agent": ONFLIX_USER_AGENT
-                    }
-                });
-
-                console.info(
-                    TAG,
-                    "OP DIRECT PLAYLIST ACCEPTED",
-                    {
-                        index: i + 1,
-                        server,
-                        added,
-                        url: playlistUrl,
-                        origin: opOrigin
-                    }
-                );
-            }
+        // A. Ưu tiên endpoint playlist mà Onflix cung cấp.
+        if (playlistUrl) {
 
         } else if (playlistUrl) {
             try {
