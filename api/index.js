@@ -28941,6 +28941,39 @@ aliasQueries.push(query);
                 )
         };
 
+        const streams = [stream];
+
+        /*
+         * Fallback cho Stremio client không phát được ytId:
+         * mở trang gốc ASUPNIMER để trang tự đồng bộ
+         * video YouTube và audio thuyết minh.
+         */
+        if (
+            resolved.resolver === "youtube" &&
+            /^https?:\/\//i.test(
+                String(detail.url || "")
+            )
+        ) {
+            streams.push({
+                name:
+                    "ASUPNIMER · Đồng bộ thuyết minh",
+
+                title:
+                    requestedType === "series"
+                        ? requestedTitle +
+                          " · Tập " +
+                          requestedEpisode
+                        : requestedTitle,
+
+                externalUrl: detail.url,
+
+                provider: "asupnimer",
+                source: "asupnimer",
+
+                description:
+                    "Mở trình phát gốc ASUPNIMER để đồng bộ video và tiếng thuyết minh"
+            });
+        }
 
         if (resolved.resolver === "loadvid") {
             stream.type = "m3u8";
@@ -28968,7 +29001,7 @@ aliasQueries.push(query);
             })
         );
 
-        return [stream];
+        return stream;
     }
 
     console.log(
