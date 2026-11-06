@@ -44981,7 +44981,7 @@ console.log(
     // Không chạy nhánh Movie đối với IMDb Series.
     // =====================================================
 
-    else if (
+    if (
         streamType !== "series" &&
         rawId.startsWith("tt")
     ) {
