@@ -26480,6 +26480,138 @@ async function asupnimerFetchPost(postUrl) {
     }
 
     // -----------------------------------------------------
+    // 1B. FALLBACK: BLOGGER FULL POST FEED
+    // Dùng khi feed theo path không trả bài.
+    // Ưu tiên nội dung đầy đủ từ Blogger thay vì trang HTML
+    // có thể bị Cloudflare trả 429.
+    // -----------------------------------------------------
+
+    if (!result || !result.content) {
+        try {
+            const fullFeedUrl =
+                domain +
+                "/feeds/posts/default?alt=json&max-results=150&start-index=1";
+
+            console.log(
+                "[ASUPNIMER] TRY FULL POST FEED:",
+                JSON.stringify({
+                    path,
+                    title: postUrl
+                })
+            );
+
+            const fullEntries =
+                await asupnimerFetchFeed(
+                    fullFeedUrl,
+                    "full-post-feed:150"
+                );
+
+            const targetPath =
+                String(path || "").toLowerCase();
+
+            const entry = fullEntries.find(item => {
+                const links = Array.isArray(item?.link)
+                    ? item.link
+                    : [];
+
+                const alternate = links.find(
+                    link => link?.rel === "alternate"
+                );
+
+                const entryPath =
+                    asupnimerExtractPostPath(
+                        asupnimerAbsoluteUrl(
+                            alternate?.href,
+                            domain
+                        ) || ""
+                    ).toLowerCase();
+
+                return (
+                    targetPath &&
+                    entryPath === targetPath
+                );
+            });
+
+            if (entry) {
+                const links = Array.isArray(entry?.link)
+                    ? entry.link
+                    : [];
+
+                const alternate = links.find(
+                    item => item?.rel === "alternate"
+                );
+
+                const categories = Array.isArray(
+                    entry?.category
+                )
+                    ? entry.category
+                        .map(item =>
+                            String(item?.term || "").trim()
+                        )
+                        .filter(Boolean)
+                    : [];
+
+                const content =
+                    asupnimerGetEntryValue(
+                        entry?.content
+                    );
+
+                if (content.length > 50) {
+                    result = {
+                        title:
+                            asupnimerGetEntryValue(
+                                entry?.title
+                            ).trim(),
+
+                        content,
+
+                        poster:
+                            entry?.media$thumbnail?.url
+                                ? asupnimerAbsoluteUrl(
+                                    entry.media$thumbnail.url,
+                                    domain
+                                )
+                                : null,
+
+                        categories,
+
+                        url:
+                            asupnimerAbsoluteUrl(
+                                alternate?.href,
+                                domain
+                            ) || url
+                    };
+
+                    console.log(
+                        "[ASUPNIMER] POST LOADED FROM FULL FEED:",
+                        JSON.stringify({
+                            title: result.title,
+                            contentLength: content.length,
+                            categories
+                        })
+                    );
+                }
+            } else {
+                console.log(
+                    "[ASUPNIMER] FULL FEED POST NOT FOUND:",
+                    JSON.stringify({
+                        path,
+                        scanned: fullEntries.length
+                    })
+                );
+            }
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] FULL FEED FALLBACK ERROR:",
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+        }
+    }
+
+    // -----------------------------------------------------
     // 2. Blogger Feed API lỗi hoặc không tìm thấy bài:
     //    tải trực tiếp URL bài viết.
     // -----------------------------------------------------
@@ -44558,7 +44690,7 @@ const asupnimerPromise = (async () => {
             new Promise(resolve => {
                 timeoutHandle = setTimeout(
                     () => resolve(null),
-                    16000
+                    24000
                 );
             });
 
@@ -45396,23 +45528,34 @@ if (animetFallbackTitle && animeProvidersEnabled) {
     // =====================================================
 
     const validDirectStreams =
-        directStreams.filter(
-            stream => {
+        directStreams.filter(stream => {
 
-                if (
-                    !stream ||
-                    typeof stream !== "object"
-                ) {
-                    return false;
-                }
+            if (
+                !stream ||
+                typeof stream !== "object"
+            ) {
+                return false;
+            }
 
-                return Boolean(
-                    stream.url ||
-                    stream.externalUrl
+            const hasHttpUrl =
+                /^https?:\/\//i.test(
+                    String(
+                        stream.url ||
+                        stream.externalUrl ||
+                        ""
+                    ).trim()
                 );
 
-            }
-        );
+            const hasValidYoutubeId =
+                /^[A-Za-z0-9_-]{11}$/.test(
+                    String(stream.ytId || "").trim()
+                );
+
+            return (
+                hasHttpUrl ||
+                hasValidYoutubeId
+            );
+        });
 
     // =====================================================
     // 14. LỌC FALLBACK
@@ -45455,25 +45598,40 @@ if (animetFallbackTitle && animeProvidersEnabled) {
     const seen = new Set();
     const uniqueStreams = [];
 
-    // 16A. Gộp và loại URL trùng như trước.
+    // 16A. Gộp và loại URL trùng.
+    // Hỗ trợ cả URL media và YouTube ytId.
+
     for (const stream of allStreams) {
         if (!stream || typeof stream !== "object") {
             continue;
         }
 
         const url = String(
-            stream.url || stream.externalUrl || ""
+            stream.url ||
+            stream.externalUrl ||
+            ""
         ).trim();
 
-        if (!/^https?:\/\//i.test(url)) {
+        const youtubeId =
+            String(stream.ytId || "").trim();
+
+        let dedupeKey = "";
+
+        if (/^https?:\/\//i.test(url)) {
+            dedupeKey = "url:" + url;
+        } else if (
+            /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
+        ) {
+            dedupeKey = "youtube:" + youtubeId;
+        } else {
             continue;
         }
 
-        if (seen.has(url)) {
+        if (seen.has(dedupeKey)) {
             continue;
         }
 
-        seen.add(url);
+        seen.add(dedupeKey);
         uniqueStreams.push(stream);
     }
 
