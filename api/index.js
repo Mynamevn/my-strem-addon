@@ -6023,6 +6023,332 @@ console.log(
  10. ANIMATION NEW
    ============================================================ */
 
+/* ============================================================
+   [ANIMATION-DEDUP.01] CROSS-LANGUAGE ANIMATION IDENTITY
+   Chống trùng phim hoạt hình giữa tên Việt / Nhật / Anh.
+   Chỉ áp dụng cho catalog Hoạt hình.
+   ============================================================ */
+
+function movinaAnimationDedupe(items) {
+
+    const list =
+        Array.isArray(items)
+            ? items
+            : [];
+
+    if (list.length <= 1) {
+        return list;
+    }
+
+    const parent =
+        list.map((_, index) => index);
+
+    function find(index) {
+
+        if (parent[index] !== index) {
+            parent[index] =
+                find(parent[index]);
+        }
+
+        return parent[index];
+    }
+
+    function union(a, b) {
+
+        const rootA = find(a);
+        const rootB = find(b);
+
+        if (rootA !== rootB) {
+            parent[rootB] = rootA;
+        }
+    }
+
+    const identityOwners = new Map();
+
+    const identityKeys =
+        list.map(item => {
+
+            const keys = new Set();
+
+            // ---------------------------------------------
+            // 1. IMDb ID: định danh mạnh nhất.
+            // ---------------------------------------------
+
+            const imdbCandidates = [
+                item?.__movinaCinemetaImdbId,
+                item?.imdb,
+                item?.imdb?.id,
+                item?.imdb?.imdb_id,
+                item?.imdb_id,
+                item?.imdbId,
+                item?.tmdb?.imdb_id
+            ];
+
+            for (const value of imdbCandidates) {
+
+                const match =
+                    String(
+                        typeof value === "object"
+                            ? ""
+                            : value || ""
+                    )
+                    .trim()
+                    .match(/^tt\d+$/i);
+
+                if (match) {
+                    keys.add(
+                        "imdb:" +
+                        match[0].toLowerCase()
+                    );
+                }
+            }
+
+            // ---------------------------------------------
+            // 2. TMDB ID.
+            // ---------------------------------------------
+
+            const tmdbCandidates = [
+                item?.tmdb_id,
+                item?.tmdbId,
+                item?.tmdb?.id
+            ];
+
+            for (const value of tmdbCandidates) {
+
+                const id =
+                    String(value || "").trim();
+
+                if (/^\d+$/.test(id)) {
+                    keys.add(
+                        "tmdb:" + id
+                    );
+                }
+            }
+
+            // ---------------------------------------------
+            // 3. Tập hợp các tên và tên thay thế.
+            // ---------------------------------------------
+
+            const titleFields = [
+                "name",
+                "origin_name",
+                "original_name",
+                "title",
+                "english_name",
+                "japanese_name",
+                "romaji_name"
+            ];
+
+            const aliases = new Set();
+
+            for (const field of titleFields) {
+
+                const value =
+                    item?.[field];
+
+                if (typeof value === "string") {
+
+                    const normalized =
+                        catalogNormalize(value);
+
+                    if (normalized.length >= 4) {
+                        aliases.add(normalized);
+                    }
+                }
+            }
+
+            const aliasFields = [
+                "aliases",
+                "alternative_titles",
+                "alternativeTitles",
+                "titles"
+            ];
+
+            for (const field of aliasFields) {
+
+                const values =
+                    item?.[field];
+
+                if (!Array.isArray(values)) {
+                    continue;
+                }
+
+                for (const value of values) {
+
+                    const title =
+                        typeof value === "string"
+                            ? value
+                            : (
+                                value?.name ||
+                                value?.title ||
+                                ""
+                            );
+
+                    const normalized =
+                        catalogNormalize(title);
+
+                    if (normalized.length >= 4) {
+                        aliases.add(normalized);
+                    }
+                }
+            }
+
+            // ---------------------------------------------
+            // 4. Chỉ ghép tên khi cùng năm và cùng loại.
+            //
+            // Tránh ghép nhầm phim remake hoặc movie/series.
+            // ---------------------------------------------
+
+            const year =
+                Number(itemYear(item)) || 0;
+
+            const type =
+                item?.__catalogType ||
+                (
+                    isSeriesItem(item)
+                        ? "series"
+                        : "movie"
+                );
+
+            if (year >= 1900 && year <= 2100) {
+
+                for (const alias of aliases) {
+
+                    keys.add(
+                        "title:" +
+                        type +
+                        ":" +
+                        year +
+                        ":" +
+                        alias
+                    );
+                }
+            }
+
+            return Array.from(keys);
+        });
+
+    // ---------------------------------------------
+    // 5. Ghép các bản ghi có chung định danh.
+    // ---------------------------------------------
+
+    for (
+        let index = 0;
+        index < identityKeys.length;
+        index++
+    ) {
+
+        for (const key of identityKeys[index]) {
+
+            if (identityOwners.has(key)) {
+
+                union(
+                    index,
+                    identityOwners.get(key)
+                );
+
+            } else {
+
+                identityOwners.set(
+                    key,
+                    index
+                );
+            }
+        }
+    }
+
+    // ---------------------------------------------
+    // 6. Gộp bản ghi, giữ thông tin đầy đủ.
+    // ---------------------------------------------
+
+    const groups = new Map();
+
+    for (
+        let index = 0;
+        index < list.length;
+        index++
+    ) {
+
+        const root = find(index);
+
+        if (!groups.has(root)) {
+            groups.set(root, []);
+        }
+
+        groups.get(root).push(index);
+    }
+
+    const result = [];
+
+    const duplicateSamples = [];
+
+    for (const indexes of groups.values()) {
+
+        let merged = {
+            ...list[indexes[0]]
+        };
+
+        for (const index of indexes.slice(1)) {
+
+            const next = list[index];
+
+            merged = {
+                ...next,
+                ...merged,
+
+                __isAnimation:
+                    merged.__isAnimation === true ||
+                    next.__isAnimation === true
+            };
+
+            if (!merged.__catalogType) {
+                merged.__catalogType =
+                    next.__catalogType;
+            }
+        }
+
+        result.push(merged);
+
+        if (indexes.length > 1) {
+
+            duplicateSamples.push({
+                kept:
+                    merged.name ||
+                    merged.origin_name ||
+                    "",
+
+                mergedCount:
+                    indexes.length,
+
+                aliases:
+                    indexes.map(index => ({
+                        name:
+                            list[index]?.name || "",
+
+                        origin_name:
+                            list[index]?.origin_name || "",
+
+                        year:
+                            itemYear(list[index])
+                    }))
+            });
+        }
+    }
+
+    console.log(
+        "[ANIMATION CROSS-LANGUAGE DEDUPE]",
+        JSON.stringify({
+            before: list.length,
+            after: result.length,
+            removed: list.length - result.length,
+            duplicateGroups: duplicateSamples.length,
+            samples: duplicateSamples.slice(0, 10)
+        })
+    );
+
+    return result;
+}
+
 async function fetchAnimationNew() {
 
     const sources = [];
@@ -6061,10 +6387,11 @@ async function fetchAnimationNew() {
         );
 
     const all =
-        catalogDedupe(
+        movinaAnimationDedupe(
             groups.flat()
         )
             .map(
+
                 item => {
 
                     const series =
@@ -7288,7 +7615,10 @@ const requests = [];
         }
     }
 
-    let items = Array.from(merged.values());
+    let items =
+        movinaAnimationDedupe(
+            Array.from(merged.values())
+        );
 
     /*
      * Chỉ giữ hoạt hình đúng loại.
