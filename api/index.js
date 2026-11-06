@@ -14438,6 +14438,11 @@ if (
 // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID.
 let imdbId = "";
 
+// Cinemeta gốc, dùng làm nguồn dự phòng khi PhimAPI
+// không tìm được kết quả phù hợp.
+let cinemetaFallbackMeta = null;
+let cinemetaFallbackType = "";
+
 // Trạng thái riêng cho từng Meta request.
 // Không để các request đồng thời dùng chung biến.
 let requestedSlug = "";
@@ -14629,6 +14634,8 @@ let metaId = rawId;
                     cinemetaRes.data?.meta || {};
 
                 if (cinemetaMeta.name) {
+cinemetaFallbackMeta = cinemetaMeta;
+cinemetaFallbackType = lookupType;
                     movieName =
                         cinemetaMeta.name;
 
@@ -14869,14 +14876,72 @@ console.log(
             };
 
         const normalizedName =
-            normalizeTitle(
-                movieName
-            );
+    normalizeTitle(
+        movieName
+    );
 
-        let item =
+// -------------------------------------------------
+// KIỂM TRA NĂM THEO CINEMETA GỐC
+// Không cho phim cùng tên nhưng khác năm được chọn.
+// -------------------------------------------------
+
+const cinemetaYearRaw =
+    cinemetaFallbackMeta?.year ||
+    cinemetaFallbackMeta?.releaseInfo ||
+    cinemetaFallbackMeta?.released ||
+    "";
+
+const cinemetaYearMatch =
+    String(cinemetaYearRaw).match(/\b(19|20)\d{2}\b/);
+
+const authoritativeCinemetaYear =
+    cinemetaYearMatch
+        ? Number(cinemetaYearMatch[0])
+        : 0;
+
+const isCompatiblePhimApiCandidate = candidate => {
+
+    if (!authoritativeCinemetaYear) {
+        return true;
+    }
+
+    const candidateYear =
+        Number(
+            candidate?.year ||
+            candidate?.release_year ||
+            candidate?.releaseYear ||
+            0
+        );
+
+    return (
+        candidateYear === authoritativeCinemetaYear
+    );
+};
+
+const identitySafeItems =
+    Array.isArray(items)
+        ? items.filter(isCompatiblePhimApiCandidate)
+        : [];
+
+console.log(
+    "[META PHIMAPI YEAR FILTER]",
+    JSON.stringify({
+        title: movieName,
+        imdbId,
+        sourceYear: authoritativeCinemetaYear || null,
+        before: Array.isArray(items) ? items.length : 0,
+        after: identitySafeItems.length
+    })
+);
+
+let item =
     requestedSlugItem ||
-    cachedPhimApiMatch ||
-    null;
+    (
+        cachedPhimApiMatch &&
+        isCompatiblePhimApiCandidate(cachedPhimApiMatch)
+            ? cachedPhimApiMatch
+            : null
+    );
 
 if (
     !item &&
@@ -14888,7 +14953,7 @@ if (
             // -------------------------------------------------
 
             item =
-                items.find(x => {
+                identitySafeItems.find(x => {
 
                     const name =
                         normalizeTitle(
@@ -14909,7 +14974,7 @@ if (
             if (!item) {
 
                 item =
-                    items.find(x => {
+                    identitySafeItems.find(x => {
 
                         const origin =
                             normalizeTitle(
@@ -14933,7 +14998,7 @@ if (
             if (!item) {
 
                 item =
-                    items.find(x => {
+                    identitySafeItems.find(x => {
 
                         const alternatives =
                             Array.isArray(
@@ -14961,29 +15026,111 @@ if (
 
            }
 
-        if (!item) {
+if (!item) {
 
-            console.log(
-                "[META] Không tìm thấy:",
-                movieName
-            );
+    const fallbackMeta =
+        cinemetaFallbackMeta || {};
 
-            return {
-                meta: {
-                    id:
-                        metaId,
+    const fallbackVideos =
+        args.type === "series" &&
+        cinemetaFallbackType === "series" &&
+        Array.isArray(fallbackMeta.videos)
+            ? fallbackMeta.videos
+                .map(video => {
 
-                    type:
-                        args.type === "series"
-                            ? "series"
-                            : "movie",
+                    const rawVideoId =
+                        String(video?.id || "");
 
-                    name:
-                        movieName
-                }
-            };
+                    const episodeMatch =
+                        rawVideoId.match(
+                            /^tt\d+:(\d+):(\d+)$/i
+                        );
 
+                    const seasonNumber =
+                        Number(
+                            video?.season ??
+                            episodeMatch?.[1]
+                        );
+
+                    const episodeNumber =
+                        Number(
+                            video?.episode ??
+                            episodeMatch?.[2]
+                        );
+
+                    if (
+                        !Number.isInteger(seasonNumber) ||
+                        seasonNumber < 0 ||
+                        !Number.isInteger(episodeNumber) ||
+                        episodeNumber < 1
+                    ) {
+                        return null;
+                    }
+
+                    return {
+                        ...video,
+
+                        id:
+                            metaId +
+                            ":" +
+                            seasonNumber +
+                            ":" +
+                            episodeNumber,
+
+                        season: seasonNumber,
+                        episode: episodeNumber
+                    };
+
+                })
+                .filter(Boolean)
+            : [];
+
+    console.log(
+        "[META PHIMAPI MISS; CINEMETA FALLBACK]",
+        JSON.stringify({
+            imdbId: metaId,
+            title:
+                fallbackMeta.name ||
+                movieName,
+            type: args.type,
+            sourceYear:
+                fallbackMeta.year ||
+                fallbackMeta.releaseInfo ||
+                null,
+            videoCount: fallbackVideos.length,
+            seasons: [
+                ...new Set(
+                    fallbackVideos.map(
+                        video => video.season
+                    )
+                )
+            ]
+        })
+    );
+
+    return {
+        meta: {
+            ...fallbackMeta,
+
+            id: metaId,
+
+            type:
+                args.type === "series"
+                    ? "series"
+                    : "movie",
+
+            name:
+                fallbackMeta.name ||
+                movieName,
+
+            videos:
+                args.type === "series"
+                    ? fallbackVideos
+                    : undefined
         }
+    };
+
+}
 
         console.log(
             "[META] Selected:",
