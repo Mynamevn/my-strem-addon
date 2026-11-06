@@ -45398,16 +45398,40 @@ const animeProvidersEnabled =
     (hasJapaneseMetadata && hasExplicitAnimeTitle) ||
     !hasUsableMetadata;
 
-  console.log(
-      "[ANIME PROVIDER GATE]",
-      JSON.stringify({
-          enabled: animeProvidersEnabled,
-          genres: animeMetadataGenres,
-          japaneseMetadata: hasJapaneseMetadata,
-          explicitAnimeTitle: hasExplicitAnimeTitle,
-          metadataAvailable: hasUsableMetadata
-      })
-  );
+console.log(
+    "[ANIME PROVIDER GATE]",
+    JSON.stringify({
+        id: rawId,
+        title: movieName,
+        metadataTitle:
+            resolvedMetadata?.name || "",
+        originalTitle:
+            resolvedMetadata?.original_name || "",
+        year: movieYear,
+        streamType,
+        season: seasonNumber,
+        episode: episodeNumber,
+
+        genres: animeMetadataGenres,
+        metadataText: animeMetadataText,
+
+        hasAnimationMetadata,
+        hasJapaneseMetadata,
+        hasExplicitAnimeTitle,
+        metadataAvailable: hasUsableMetadata,
+
+        phimapCategory:
+            resolvedMetadata?.category || [],
+
+        phimapType:
+            resolvedMetadata?.type || "",
+
+        animationFlag:
+            resolvedMetadata?.__isAnimation ?? null,
+
+        asupnimerEnabled
+    })
+);
 
   // AnimeHay: chỉ khởi chạy khi điều kiện cho phép.
   const animehayPromise = (async () => {
