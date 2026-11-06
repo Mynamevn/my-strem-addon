@@ -44982,10 +44982,10 @@ console.log(
     // Không chạy nhánh Movie đối với IMDb Series.
     // =====================================================
 
-    if (
-        streamType !== "series" &&
-        rawId.startsWith("tt")
-    ) {
+else if (
+    streamType !== "series" &&
+    rawId.startsWith("tt")
+) {
 
         const imdbId =
             rawId.split(":")[0];
@@ -45142,7 +45142,7 @@ console.log(
     // D. ID KHÁC
     // =====================================================
 
-        else if (!rawId.startsWith("tt")) {
+      else {
 
         movieName =
             decodeMovieName(
