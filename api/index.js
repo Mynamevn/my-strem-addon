@@ -45407,28 +45407,28 @@ const directStreams = [
 
 ];
 
+
 console.log(
     "[DEBUG] DIRECT STREAM DETAILS:",
     JSON.stringify(
         directStreams.map(
             (stream, index) => ({
                 index,
-                name:
-                    stream?.name,
-                title:
-                    stream?.title,
-                url:
-                    stream?.url,
-                externalUrl:
-                    stream?.externalUrl,
-                behaviorHints:
-                    stream?.behaviorHints
+                name: stream?.name,
+                title: stream?.title,
+                url: stream?.url,
+                ytId: stream?.ytId,
+                provider: stream?.provider,
+                source: stream?.source,
+                externalUrl: stream?.externalUrl,
+                behaviorHints: stream?.behaviorHints
             })
         ),
         null,
         2
     )
 );
+
 
 // =====================================================
 // 12. FALLBACK CHUNG
@@ -45998,13 +45998,37 @@ console.log(
         "========== STREAM END =========="
     );
 
+    
     // =====================================================
     // 18. TRẢ VỀ STREMIO
     // =====================================================
 
+    console.log(
+        "[ASUPNIMER] FINAL RESPONSE CHECK:",
+        JSON.stringify({
+            count: uniqueStreams.filter(
+                stream =>
+                    stream?.provider === "asupnimer" ||
+                    stream?.source === "asupnimer"
+            ).length,
+
+            streams: uniqueStreams.filter(
+                stream =>
+                    stream?.provider === "asupnimer" ||
+                    stream?.source === "asupnimer"
+            ).map(stream => ({
+                name: stream.name,
+                title: stream.title,
+                ytId: stream.ytId,
+                url: stream.url,
+                provider: stream.provider,
+                source: stream.source
+            }))
+        }, null, 2)
+    );
+
     return {
-        streams:
-            uniqueStreams
+        streams: uniqueStreams
     };
 
 });
