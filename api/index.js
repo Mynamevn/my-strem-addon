@@ -15870,244 +15870,420 @@ console.log(
                         : undefined
                 );
 
+        
         // =====================================================
         // [STREMIO-013.17] [PROVIDERS: ALL] SERIES VIDEO METADATA
         //
-        // Stremio:
-        //   video.id = metaId:season:episode
+        // IMDb ID gốc:
+        //   meta.id = tt1234567
         //
-        // Nếu Cinemeta resolve được IMDb:
-        //   tt26258200:1:1
+        // Episode ID:
+        //   tt1234567:1:1
+        //   tt1234567:2:1
         //
-        // Nếu không:
-        //   vnwpsw:...:1:1
+        // Ưu tiên danh sách mùa/tập từ Cinemeta.
+        // PhimAPI chỉ là fallback nếu Cinemeta không có videos.
         // =====================================================
 
-        let videos =
-            undefined;
+        let videos = undefined;
 
-        if (
-            isSeries
-        ) {
+        if (isSeries) {
 
-            const episodeMap =
-                new Map();
+            let cinemetaSeriesMeta = null;
 
-            const episodeGroups =
-                Array.isArray(
-                    detail?.episodes
-                )
-                    ? detail.episodes
-                    : [];
+            // -------------------------------------------------
+            // A. LẤY CINEMETA SERIES META TỪ CACHE
+            // -------------------------------------------------
 
-            for (
-                const group
-                of episodeGroups
+            if (
+                /^tt\d+$/i.test(String(imdbId || "")) &&
+                metaType === "series"
             ) {
 
-                const serverData =
-                    Array.isArray(
-                        group?.server_data
-                    )
-                        ? group.server_data
-                        : [];
+                const identityCacheKey =
+                    metaType + ":" + imdbId;
 
-                for (
-                    const ep
-                    of serverData
+                const cachedIdentity =
+                    MOVINA_IMDB_IDENTITY_CACHE.get(
+                        identityCacheKey
+                    );
+
+                if (
+                    cachedIdentity &&
+                    cachedIdentity.expiresAt > Date.now()
                 ) {
 
-                    const rawEpisodeName =
-                        String(
-                            ep?.name ||
-                            ep?.slug ||
-                            ""
-                        ).trim();
-
-                    if (
-                        !rawEpisodeName
-                    ) {
-
-                        continue;
-
-                    }
-
-                    const match =
-                        rawEpisodeName.match(
-                            /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
-                        );
-
-                    if (
-                        !match
-                    ) {
-
-                        continue;
-
-                    }
-
-                    const episodeNumber =
-                        Number(
-                            match[1]
-                        );
-
-                    if (
-                        !Number.isFinite(
-                            episodeNumber
-                        ) ||
-                        episodeNumber <= 0
-                    ) {
-
-                        continue;
-
-                    }
-
-                    if (
-                        !episodeMap.has(
-                            episodeNumber
-                        )
-                    ) {
-
-                        episodeMap.set(
-                            episodeNumber,
-                            {
-                                number:
-                                    episodeNumber,
-
-                                name:
-                                    rawEpisodeName,
-
-                                released:
-                                    ep?.released ||
-                                    ep?.air_date ||
-                                    ep?.release_date ||
-                                    ep?.created_at ||
-                                    null
-                            }
-                        );
-
+                    try {
+                        cinemetaSeriesMeta =
+                            await cachedIdentity.promise;
+                    } catch (error) {
+                        cinemetaSeriesMeta = null;
                     }
 
                 }
 
+                // -------------------------------------------------
+                // B. CACHE MISS → FETCH CINEMETA
+                // -------------------------------------------------
+
+                if (!cinemetaSeriesMeta) {
+
+                    const identityPromise = (async () => {
+
+                        try {
+
+                            const response =
+                                await axios.get(
+                                    "https://v3-cinemeta.strem.io/meta/series/" +
+                                    encodeURIComponent(imdbId) +
+                                    ".json",
+                                    {
+                                        timeout: 4500,
+
+                                        headers: {
+                                            "User-Agent": "Mozilla/5.0",
+                                            "Accept": "application/json"
+                                        }
+                                    }
+                                );
+
+                            return response.data?.meta || null;
+
+                        } catch (error) {
+
+                            console.log(
+                                "[META CINEMETA SERIES VIDEOS ERROR]:",
+                                JSON.stringify({
+                                    imdbId,
+                                    status:
+                                        error?.response?.status || 0,
+                                    message:
+                                        error?.message || String(error)
+                                })
+                            );
+
+                            return null;
+                        }
+
+                    })();
+
+                    MOVINA_IMDB_IDENTITY_CACHE.set(
+                        identityCacheKey,
+                        {
+                            expiresAt:
+                                Date.now() +
+                                MOVINA_IMDB_IDENTITY_CACHE_TTL,
+
+                            promise: identityPromise
+                        }
+                    );
+
+                    cinemetaSeriesMeta =
+                        await identityPromise;
+
+                    MOVINA_IMDB_IDENTITY_CACHE.set(
+                        identityCacheKey,
+                        {
+                            expiresAt:
+                                Date.now() +
+                                (
+                                    cinemetaSeriesMeta
+                                        ? MOVINA_IMDB_IDENTITY_CACHE_TTL
+                                        : MOVINA_IMDB_IDENTITY_FAIL_TTL
+                                ),
+
+                            promise:
+                                Promise.resolve(cinemetaSeriesMeta)
+                        }
+                    );
+                }
             }
 
             // -------------------------------------------------
-            // Năm fallback cho released
+            // C. ƯU TIÊN CINEMETA VIDEOS
             // -------------------------------------------------
 
-            const fallbackYear =
-                Number(
-                    detail?.year ||
-                    item?.year ||
-                    new Date().getFullYear()
+            const cinemetaSourceVideos =
+                Array.isArray(cinemetaSeriesMeta?.videos)
+                    ? cinemetaSeriesMeta.videos
+                    : [];
+
+            if (cinemetaSourceVideos.length > 0) {
+
+                videos = cinemetaSourceVideos
+                    .map(video => {
+
+                        const sourceId =
+                            String(video?.id || "").trim();
+
+                        const idMatch =
+                            sourceId.match(
+                                /^tt\d+:(\d+):(\d+)$/i
+                            );
+
+                        const seasonNumber =
+                            Number(video?.season) >= 0 &&
+                            Number.isInteger(Number(video?.season))
+                                ? Number(video.season)
+                                : (
+                                    idMatch
+                                        ? Number(idMatch[1])
+                                        : 1
+                                );
+
+                        const episodeNumber =
+                            Number(video?.episode) > 0 &&
+                            Number.isInteger(Number(video?.episode))
+                                ? Number(video.episode)
+                                : (
+                                    idMatch
+                                        ? Number(idMatch[2])
+                                        : 0
+                                );
+
+                        if (
+                            !Number.isInteger(seasonNumber) ||
+                            seasonNumber < 0 ||
+                            !Number.isInteger(episodeNumber) ||
+                            episodeNumber <= 0
+                        ) {
+                            return null;
+                        }
+
+                        // IMDb ID gốc không bị thay đổi.
+                        // Chỉ episode ID có thêm season và episode.
+                        const videoId =
+                            metaId +
+                            ":" +
+                            seasonNumber +
+                            ":" +
+                            episodeNumber;
+
+                        return {
+                            id: videoId,
+
+                            title:
+                                video?.title ||
+                                "Tập " + episodeNumber,
+
+                            released:
+                                video?.released ||
+                                undefined,
+
+                            season:
+                                seasonNumber,
+
+                            episode:
+                                episodeNumber
+                        };
+
+                    })
+                    .filter(Boolean);
+
+                // Loại ID tập trùng nhưng giữ các mùa khác nhau.
+                const uniqueVideos = new Map();
+
+                for (const video of videos) {
+
+                    if (!uniqueVideos.has(video.id)) {
+                        uniqueVideos.set(
+                            video.id,
+                            video
+                        );
+                    }
+                }
+
+                videos =
+                    Array.from(uniqueVideos.values())
+                        .sort(
+                            (a, b) =>
+                                a.season - b.season ||
+                                a.episode - b.episode
+                        );
+
+                console.log(
+                    "[META] CINEMETA SEASONS LOADED:",
+                    JSON.stringify({
+                        imdbId,
+                        count: videos.length,
+                        seasons: [
+                            ...new Set(
+                                videos.map(video => video.season)
+                            )
+                        ],
+                        sample: videos.slice(0, 12).map(video => ({
+                            id: video.id,
+                            season: video.season,
+                            episode: video.episode
+                        }))
+                    })
                 );
+            }
 
-            const fallbackReleased =
-                Number.isFinite(
-                    fallbackYear
-                )
-                    ? new Date(
-                        Date.UTC(
-                            fallbackYear,
-                            0,
-                            1
+            // -------------------------------------------------
+            // D. PHIMAPI FALLBACK
+            // Chỉ dùng khi Cinemeta không có videos.
+            // PhimAPI hiện tại chỉ cung cấp danh sách tập
+            // thông thường, không mặc định rằng có nhiều mùa.
+            // -------------------------------------------------
+
+            if (!videos || videos.length === 0) {
+
+                const episodeMap = new Map();
+
+                const episodeGroups =
+                    Array.isArray(detail?.episodes)
+                        ? detail.episodes
+                        : [];
+
+                for (const group of episodeGroups) {
+
+                    const serverData =
+                        Array.isArray(group?.server_data)
+                            ? group.server_data
+                            : [];
+
+                    for (const ep of serverData) {
+
+                        const rawEpisodeName =
+                            String(
+                                ep?.name ||
+                                ep?.slug ||
+                                ""
+                            ).trim();
+
+                        if (!rawEpisodeName) {
+                            continue;
+                        }
+
+                        const match =
+                            rawEpisodeName.match(
+                                /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
+                            );
+
+                        if (!match) {
+                            continue;
+                        }
+
+                        const episodeNumber =
+                            Number(match[1]);
+
+                        if (
+                            !Number.isInteger(episodeNumber) ||
+                            episodeNumber <= 0
+                        ) {
+                            continue;
+                        }
+
+                        if (!episodeMap.has(episodeNumber)) {
+
+                            episodeMap.set(
+                                episodeNumber,
+                                {
+                                    number: episodeNumber,
+
+                                    name: rawEpisodeName,
+
+                                    released:
+                                        ep?.released ||
+                                        ep?.air_date ||
+                                        ep?.release_date ||
+                                        ep?.created_at ||
+                                        null
+                                }
+                            );
+                        }
+                    }
+                }
+
+                const fallbackYear =
+                    Number(
+                        detail?.year ||
+                        item?.year ||
+                        new Date().getFullYear()
+                    );
+
+                const fallbackReleased =
+                    Number.isFinite(fallbackYear)
+                        ? new Date(
+                            Date.UTC(fallbackYear, 0, 1)
+                        ).toISOString()
+                        : new Date().toISOString();
+
+                videos =
+                    Array.from(episodeMap.values())
+                        .sort(
+                            (a, b) =>
+                                a.number - b.number
                         )
-                    ).toISOString()
-                    : new Date().toISOString();
-
-            videos =
-                Array.from(
-                    episodeMap.values()
-                )
-                    .sort(
-                        (a, b) =>
-                            a.number -
-                            b.number
-                    )
-                    .map(
-                        ep => {
-
-                            const videoId =
-                                metaId +
-                                ":1:" +
-                                ep.number;
+                        .map(ep => {
 
                             let released =
                                 ep.released;
 
-                            if (
-                                released
-                            ) {
+                            if (released) {
 
                                 const parsedDate =
-                                    new Date(
-                                        released
-                                    );
+                                    new Date(released);
 
-                                if (
+                                released =
                                     !Number.isNaN(
                                         parsedDate.getTime()
                                     )
-                                ) {
-
-                                    released =
-                                        parsedDate.toISOString();
-
-                                } else {
-
-                                    released =
-                                        fallbackReleased;
-
-                                }
+                                        ? parsedDate.toISOString()
+                                        : fallbackReleased;
 
                             } else {
-
-                                released =
-                                    fallbackReleased;
-
+                                released = fallbackReleased;
                             }
 
                             return {
-
                                 id:
-                                    videoId,
+                                    metaId +
+                                    ":1:" +
+                                    ep.number,
 
                                 title:
-                                    "Tập " +
-                                    ep.number,
+                                    "Tập " + ep.number,
 
-                                released:
-                                    released,
+                                released,
 
-                                season:
-                                    1,
+                                season: 1,
 
-                                episode:
-                                    ep.number,
-
-                                number:
-                                    ep.number,
-
-                                name:
-                                    "Tập " +
-                                    ep.number
-
+                                episode: ep.number
                             };
+                        });
 
-                        }
-                    );
+                console.log(
+                    "[META] PHIMAPI SEASON 1 FALLBACK:",
+                    JSON.stringify({
+                        imdbId: imdbId || null,
+                        count: videos.length,
+                        season: 1
+                    })
+                );
+            }
 
             console.log(
-                "[META] Series episodes:",
-                videos.length
+                "[META] SERIES EPISODES FINAL:",
+                JSON.stringify({
+                    metaId,
+                    imdbId: imdbId || null,
+                    total: videos.length,
+                    seasons: [
+                        ...new Set(
+                            videos.map(video => video.season)
+                        )
+                    ],
+                    sample: videos.slice(0, 12).map(video => ({
+                        id: video.id,
+                        season: video.season,
+                        episode: video.episode
+                    }))
+                })
             );
-
-            console.log(
-                "[META] Video ID base:",
-                metaId
-            );
-
         }
+
 
         // =====================================================
         // [STREMIO-013.18] [PROVIDERS: ALL] SERIES META AND VIDEOS OUTPUT
