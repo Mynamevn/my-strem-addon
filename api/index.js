@@ -452,28 +452,267 @@ return (
 }
 
 // [CORE-003.03] [PROVIDERS: ALL] CATALOG DEDUPLICATION
-function catalogDedupe(items) {
+// CROSS-LANGUAGE TITLE IDENTITY
 
-const seen = new Set();
-const result = [];
+function catalogIdentityKeys(item) {
 
-for (const item of items || []) {
+    const keys = new Set();
 
-    const key = catalogKey(item);
-
-    if (!key || seen.has(key)) {
-        continue;
+    if (!item) {
+        return [];
     }
 
-    seen.add(key);
-    result.push(item);
+    const series =
+        isSeriesItem(item);
+
+    const type =
+        series ? "series" : "movie";
+
+    // -----------------------------------------------------
+    // 1. IMDb ID
+    // -----------------------------------------------------
+
+    const imdbCandidates = [
+        item?.imdb_id,
+        item?.imdbId,
+        item?.imdb,
+        item?.imdb?.id
+    ];
+
+    for (const value of imdbCandidates) {
+
+        const raw =
+            typeof value === "string" ||
+            typeof value === "number"
+                ? String(value).trim()
+                : "";
+
+        const match =
+            raw.match(/^tt\d+$/i);
+
+        if (match) {
+
+            keys.add(
+                "imdb:" +
+                match[0].toLowerCase() +
+                ":" +
+                type
+            );
+        }
+    }
+
+    // -----------------------------------------------------
+    // 2. TMDB ID
+    // -----------------------------------------------------
+
+    const tmdbCandidates = [
+        item?.tmdb_id,
+        item?.tmdbId,
+        item?.tmdb?.id
+    ];
+
+    for (const value of tmdbCandidates) {
+
+        const id =
+            String(value || "").trim();
+
+        if (/^\d+$/.test(id)) {
+
+            keys.add(
+                "tmdb:" +
+                id +
+                ":" +
+                type
+            );
+        }
+    }
+
+    // -----------------------------------------------------
+    // 3. RELEASE YEAR
+    // -----------------------------------------------------
+
+    const year =
+        itemYear(item);
+
+    if (
+        !Number.isInteger(year) ||
+        year < 1900 ||
+        year > 2100
+    ) {
+        return Array.from(keys);
+    }
+
+    // -----------------------------------------------------
+    // 4. COLLECT ALL AVAILABLE TITLE ALIASES
+    // -----------------------------------------------------
+
+    const aliases = new Set();
+
+    const titleFields = [
+        "name",
+        "origin_name",
+        "original_name",
+        "title",
+        "english_name",
+        "englishName",
+        "japanese_name",
+        "japaneseName",
+        "romaji_name",
+        "romajiName"
+    ];
+
+    for (const field of titleFields) {
+
+        const value =
+            item?.[field];
+
+        if (typeof value !== "string") {
+            continue;
+        }
+
+        const normalized =
+            catalogNormalize(value);
+
+        if (normalized.length >= 3) {
+            aliases.add(normalized);
+        }
+    }
+
+    // -----------------------------------------------------
+    // 5. ALTERNATIVE TITLES
+    // -----------------------------------------------------
+
+    const aliasFields = [
+        "aliases",
+        "alternative_titles",
+        "alternativeTitles",
+        "titles"
+    ];
+
+    for (const field of aliasFields) {
+
+        const values =
+            item?.[field];
+
+        if (!Array.isArray(values)) {
+            continue;
+        }
+
+        for (const value of values) {
+
+            const title =
+                typeof value === "string"
+                    ? value
+                    : (
+                        value?.name ||
+                        value?.title ||
+                        value?.english_name ||
+                        ""
+                    );
+
+            const normalized =
+                catalogNormalize(title);
+
+            if (normalized.length >= 3) {
+                aliases.add(normalized);
+            }
+        }
+    }
+
+    // -----------------------------------------------------
+    // 6. TITLE + YEAR + TYPE IDENTITY
+    //
+    // Không gộp nếu khác năm hoặc khác loại phim.
+    // -----------------------------------------------------
+
+    for (const alias of aliases) {
+
+        keys.add(
+            "title:" +
+            type +
+            ":" +
+            year +
+            ":" +
+            alias
+        );
+    }
+
+    return Array.from(keys);
 }
 
-return result;
 
+// ---------------------------------------------------------
+// GLOBAL CATALOG DEDUPLICATION
+// ---------------------------------------------------------
+
+function catalogDedupe(items) {
+
+    const seenExact = new Set();
+
+    const seenIdentity = new Set();
+
+    const result = [];
+
+    let removed = 0;
+
+    for (const item of items || []) {
+
+        if (!item) {
+            continue;
+        }
+
+        // Giữ nguyên cơ chế nhận diện trùng cũ.
+        const exactKey =
+            catalogKey(item);
+
+        const identityKeys =
+            catalogIdentityKeys(item);
+
+        // Trùng ID / slug cũ.
+        if (
+            exactKey &&
+            seenExact.has(exactKey)
+        ) {
+            removed++;
+            continue;
+        }
+
+        // Trùng định danh tác phẩm.
+        const duplicateIdentity =
+            identityKeys.some(
+                key => seenIdentity.has(key)
+            );
+
+        if (duplicateIdentity) {
+            removed++;
+            continue;
+        }
+
+        if (exactKey) {
+            seenExact.add(exactKey);
+        }
+
+        for (const key of identityKeys) {
+            seenIdentity.add(key);
+        }
+
+        result.push(item);
+    }
+
+    if (removed > 0) {
+
+        console.log(
+            "[CATALOG DEDUPE]",
+            JSON.stringify({
+                before: (items || []).length,
+                after: result.length,
+                removed
+            })
+        );
+    }
+
+    return result;
 }
-
-
 
 /* ============================================================
    [CORE-003.04] [PROVIDERS: ALL] PHIMAPI REQUEST COORDINATOR
