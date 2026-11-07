@@ -33,6 +33,60 @@ const crypto = require('crypto');
 const http2 = require('http2');
 const express = require('express');
 
+// =========================================================================
+// [MỚI CHÈN] - CÁC HÀM TIỆN ÍCH BYPASS ANIMESUB (MIỄN PHÍ)
+// =========================================================================
+const { HttpsProxyAgent } = require("https-proxy-agent");
+
+let cachedFreeProxy = null;
+
+async function getFreeVietnameseProxy() {
+    if (cachedFreeProxy) return cachedFreeProxy;
+    try {
+        const proxyApiUrl = "https://proxyscrape.com";
+        const response = await axios.get(proxyApiUrl, { timeout: 4000 });
+        const proxyList = response.data.split("\r\n").filter(p => p.trim() !== "");
+        for (let i = 0; i < Math.min(proxyList.length, 5); i++) {
+            const [host, port] = proxyList[i].split(":");
+            try {
+                const agent = new HttpsProxyAgent(`http://${host}:${port}`);
+                await axios.get("https://httpbin.org", { httpsAgent: agent, proxy: false, timeout: 2000 });
+                cachedFreeProxy = `http://${host}:${port}`;
+                return cachedFreeProxy;
+            } catch (err) {}
+        }
+    } catch (e) {}
+    return null;
+}
+
+function unpackPacker(p, a, c, k) {
+    const baseConvert = (n) => {
+        return (n < a ? '' : baseConvert(Math.floor(n / a))) + 
+               ((n % a) > 35 ? String.fromCharCode((n % a) + 29) : (n % a).toString(36));
+    };
+    const dict = {};
+    while (c--) { if (k[c]) dict[baseConvert(c)] = k[c]; }
+    return p.replace(/\b\w+\b/g, (match) => dict[match] || match);
+}
+
+function generateHydraxToken(index, size, md5Id, resId, frag) {
+    try {
+        const sizeStr = String(size);
+        const digitBytes = Buffer.alloc(sizeStr.length);
+        for (let i = 0; i < sizeStr.length; i++) { digitBytes[i] = sizeStr.charCodeAt(i) - 0x30; }
+        const keyHexStr = crypto.createHash('md5').update(digitBytes).digest('hex');
+        const keyHex = Buffer.from(keyHexStr, 'ascii');
+        const iv = Buffer.alloc(16); keyHex.copy(iv, 0, 0, 16);
+        const pathStr = `/mp4/${md5Id}/${resId}/${size}/${frag}/${index}`;
+        const path = Buffer.from(pathStr, 'utf-8');
+        const cipher = crypto.createCipheriv('aes-128-ctr', keyHex.slice(0, 16), iv);
+        let enc = Buffer.concat([cipher.update(path), cipher.final()]);
+        let firstBase64 = enc.toString('base64').replace(/=+$/, '');
+        const firstBytes = Buffer.from(firstBase64, 'binary');
+        return firstBytes.toString('base64').replace(/=+$/, '');
+    } catch (e) { return null; }
+}
+
 const manifest = {
 
     id:
@@ -61,6 +115,7 @@ const manifest = {
 
         idPrefixes: [
         "tt",
+        "animet:",
         "vnwpsw:",
         "movina-classic:",
         "vmttv:",
@@ -43089,6 +43144,83 @@ function rewriteNguonCPlaylist(
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
+
+    // -----------------------------------------------------------------
+    // [MỚI CHÈN] - NHÁNH XỬ LÝ KHÔI PHỤC LUỒNG ANIMESUB BYPASS (FREE PROXY)
+    // -----------------------------------------------------------------
+    if (args.id.startsWith("animet:")) {
+        let embedUrl;
+        try {
+            const base64Part = args.id.replace("animet:", "");
+            embedUrl = Buffer.from(base64Part, 'base64').toString('utf-8');
+        } catch (e) { return { streams: [] }; }
+
+        const MAIN_URL = "https://animesub.site";
+        const fakeVietnameseIP = "115.79.139.142"; 
+        const commonHeaders = {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            "Origin": MAIN_URL,
+            "Referer": MAIN_URL + "/",
+            "X-Forwarded-For": fakeVietnameseIP, "X-Real-IP": fakeVietnameseIP, "Client-IP": fakeVietnameseIP
+        };
+
+        let requestOptions = { headers: commonHeaders, timeout: 8000 };
+        const freeProxyUrl = await getFreeVietnameseProxy();
+        if (freeProxyUrl) {
+            requestOptions.httpsAgent = new HttpsProxyAgent(freeProxyUrl);
+            requestOptions.proxy = false;
+        }
+
+        try {
+            const response = await axios.get(embedUrl, requestOptions);
+            const html = response.data;
+            const streams = [];
+
+            // Xử lý Hydrax Player
+            if (embedUrl.includes("hydrax") || html.includes("atoken") || html.includes("slug")) {
+                const sizeMatch = html.match(/size\s*=\s*"([^"]+)"|size\s*=\s*(\d+)/);
+                const md5IdMatch = html.match(/md5Id\s*=\s*"([^"]+)"|id\s*=\s*(\d+)/); 
+                if (sizeMatch && md5IdMatch) {
+                    const size = parseInt(sizeMatch[1] || sizeMatch[2], 10);
+                    const md5Id = md5IdMatch[1] || md5IdMatch[2];
+                    const generatedToken = generateHydraxToken(0, size, md5Id, 0, 2097152);
+                    if (generatedToken) {
+                        streams.push({
+                            title: "MOVINA - Hydrax Highspeed",
+                            url: `https://abysscdn.com{size}/${generatedToken}`,
+                            behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": "https://abysscdn.com" } }
+                        });
+                    }
+                }
+            }
+
+            // Xử lý SSPlay Player
+            const packerRegex = /eval\(function\(p,a,c,k,e,d\)\{.*?\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)\)\)/s;
+            const ssplayMatch = html.match(packerRegex);
+            if (ssplayMatch) {
+                const decodedJs = unpackPacker(ssplayMatch[1], parseInt(ssplayMatch[2], 10), parseInt(ssplayMatch[3], 10), ssplayMatch[4].split("|"));
+                const fileMatch = decodedJs.match(/"file"\s*:\s*"([^"]+\.m3u8)"/);
+                if (fileMatch) {
+                    let directLink = fileMatch[1];
+                    if (directLink.startsWith("/")) directLink = `${new URL(embedUrl).origin}${directLink}`;
+                    streams.push({
+                        title: "MOVINA - SSPlay Ultra (HLS)",
+                        url: directLink,
+                        behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": embedUrl } }
+                    });
+                }
+            }
+
+            if (streams.length > 0) return { streams };
+            throw new Error("Proxy miễn phí bận.");
+
+        } catch (error) {
+            cachedFreeProxy = null;
+            return {
+                streams: [{ title: "Free Proxy đang bận. Vui lòng bấm PLAY lại để thử proxy mới!", externalUrl: MAIN_URL }]
+            };
+        }
+    }
 
     console.log(
         "========== STREAM REQUEST =========="
