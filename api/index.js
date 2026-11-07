@@ -19591,17 +19591,9 @@ async function xem20Request(
 // AUTOMATIC LOGIN
 // ------------------------------------------------------------
 
-
 async function xem20EnsureLogin(force = false) {
-
-    if (
-        !XEM20_EMAIL.trim() ||
-        !XEM20_PASSWORD
-    ) {
-        console.log(
-            "[XEM20] LOGIN DISABLED: Chưa điền tài khoản."
-        );
-
+    if (!XEM20_EMAIL.trim() || !XEM20_PASSWORD) {
+        console.log("[XEM20] LOGIN DISABLED: Chưa điền tài khoản.");
         return false;
     }
 
@@ -19618,15 +19610,12 @@ async function xem20EnsureLogin(force = false) {
     }
 
     XEM20_LOGIN_PROMISE = (async () => {
-
         try {
-
             console.log("[XEM20] LOGIN START");
 
-            const loginPage =
-                await xem20Request(
-                    `${XEM20_BASE_URL}/login`
-                );
+            const loginPage = await xem20Request(
+                `${XEM20_BASE_URL}/login`
+            );
 
             if (
                 !loginPage ||
@@ -19638,20 +19627,16 @@ async function xem20EnsureLogin(force = false) {
                 );
             }
 
-            const loginHtml =
-                String(loginPage.data || "");
+            const login$ = cheerio.load(
+                String(loginPage.data || "")
+            );
 
-            const login$ =
-                cheerio.load(loginHtml);
-
-            const csrf =
-                login$('input[name="_token"]').attr("value") ||
-                "";
+            const csrf = String(
+                login$('input[name="_token"]').attr("value") || ""
+            ).trim();
 
             if (!csrf) {
-                throw new Error(
-                    "Không tìm thấy CSRF token."
-                );
+                throw new Error("Không tìm thấy CSRF token.");
             }
 
             const xsrfCookie =
@@ -19660,102 +19645,179 @@ async function xem20EnsureLogin(force = false) {
             let xsrfToken = xsrfCookie;
 
             try {
-                xsrfToken =
-                    decodeURIComponent(xsrfCookie);
+                xsrfToken = decodeURIComponent(xsrfCookie);
             } catch (_) {}
 
-            const body =
-                new URLSearchParams({
-                    _token: csrf,
-                    login: XEM20_EMAIL.trim(),
-                    password: XEM20_PASSWORD,
-                    remember: "on"
-                }).toString();
+            const body = new URLSearchParams({
+                _token: csrf,
+                login: XEM20_EMAIL.trim(),
+                password: XEM20_PASSWORD,
+                remember: "on"
+            }).toString();
 
-            const loginResponse =
-                await xem20Request(
-                    `${XEM20_BASE_URL}/login`,
-                    {
-                        method: "POST",
-                        data: body,
-                        headers: {
-                            "Referer":
-                                `${XEM20_BASE_URL}/login`,
-                            "Origin":
-                                XEM20_BASE_URL,
-                            "Content-Type":
-                                "application/x-www-form-urlencoded",
-                            "X-XSRF-TOKEN":
-                                xsrfToken,
-                            "Accept":
-                                "text/html,application/xhtml+xml,*/*"
-                        }
-                    }
-                );
-
-            const hasSession =
-                XEM20_COOKIE_JAR.has(
-                    "phimhdchill-session"
-                );
-
-            console.log(
-                "[XEM20] LOGIN RESPONSE:",
+            const loginResponse = await xem20Request(
+                `${XEM20_BASE_URL}/login`,
                 {
-                    status: loginResponse?.status,
-                    finalUrl:
-                        loginResponse?.xem20FinalUrl,
-                    hasSession
+                    method: "POST",
+                    data: body,
+                    headers: {
+                        "User-Agent": XEM20_UA,
+                        "Referer": `${XEM20_BASE_URL}/login`,
+                        "Origin": XEM20_BASE_URL,
+                        "Content-Type":
+                            "application/x-www-form-urlencoded",
+                        "X-XSRF-TOKEN": xsrfToken,
+                        "Accept":
+                            "text/html,application/xhtml+xml,*/*"
+                    }
                 }
             );
 
-            const home =
-                await xem20Request(
-                    `${XEM20_BASE_URL}/`
-                );
+            const hasSession =
+                XEM20_COOKIE_JAR.has("phimhdchill-session");
 
-            const homeHtml =
-                String(home?.data || "");
+            const loginResponse$ = cheerio.load(
+                String(loginResponse?.data || "")
+            );
 
-            const home$ =
-                cheerio.load(homeHtml);
+            const loginResponseUrl = String(
+                loginResponse?.xem20FinalUrl || ""
+            );
 
-            const stillLogin =
+            const loginErrors = [];
+
+            loginResponse$(
+                ".alert, [role='alert'], .invalid-feedback, .text-danger"
+            ).each((_, element) => {
+                const message = String(
+                    loginResponse$(element).text() || ""
+                ).replace(/\s+/g, " ").trim();
+
+                if (
+                    message &&
+                    !loginErrors.includes(message)
+                ) {
+                    loginErrors.push(message.slice(0, 180));
+                }
+            });
+
+            console.log("[XEM20] LOGIN RESPONSE:", {
+                status: loginResponse?.status,
+                finalUrl: loginResponseUrl,
+                hasSession,
+                loginErrors: loginErrors.slice(0, 5)
+            });
+
+            const home = await xem20Request(
+                `${XEM20_BASE_URL}/`
+            );
+
+            const homeHtml = String(home?.data || "");
+            const home$ = cheerio.load(homeHtml);
+
+            const loginLinks = [];
+            const logoutLinks = [];
+            const accountLinks = [];
+
+            home$("a[href]").each((_, element) => {
+                const node = home$(element);
+
+                const href = String(
+                    node.attr("href") || ""
+                ).trim();
+
+                const label = String(
+                    node.text() || ""
+                ).replace(/\s+/g, " ").trim();
+
+                const path = (() => {
+                    try {
+                        return new URL(
+                            href,
+                            XEM20_BASE_URL
+                        ).pathname.toLowerCase();
+                    } catch (_) {
+                        return "";
+                    }
+                })();
+
+                if (
+                    /\/login\/?$|\/dang-nhap\/?/.test(path) ||
+                    /đăng nhập|log in|sign in/i.test(label)
+                ) {
+                    loginLinks.push({
+                        text: label.slice(0, 100),
+                        path
+                    });
+                }
+
+                if (
+                    /\/logout\/?$|\/dang-xuat\/?/.test(path) ||
+                    /đăng xuất|log out|sign out/i.test(label)
+                ) {
+                    logoutLinks.push({
+                        text: label.slice(0, 100),
+                        path
+                    });
+                }
+
+                if (
+                    /\/account|\/profile|\/tai-khoan/i.test(path)
+                ) {
+                    accountLinks.push({
+                        text: label.slice(0, 100),
+                        path
+                    });
+                }
+            });
+
+            const loginWall =
                 home$("#cd-login-form").length > 0 ||
-                home$('input[type="password"][name="password"]').length > 0;
+                home$('input[type="password"][name="password"]').length > 0 ||
+                loginLinks.length > 0;
 
-            if (
-                !home ||
-                home.status < 200 ||
-                home.status >= 300 ||
-                stillLogin ||
-                !hasSession
-            ) {
-                throw new Error(
-                    "Phiên Xem20 chưa được xác nhận: " +
-                    JSON.stringify({
-                        status: home?.status,
-                        finalUrl: home?.xem20FinalUrl,
-                        stillLogin,
-                        hasSession
-                    })
+            const authenticated =
+                Boolean(
+                    home &&
+                    home.status >= 200 &&
+                    home.status < 300 &&
+                    hasSession &&
+                    !loginWall &&
+                    logoutLinks.length > 0
                 );
+
+            console.log("[XEM20] AUTH VERIFICATION:", {
+                status: home?.status,
+                finalUrl: home?.xem20FinalUrl,
+                hasSession,
+                loginWall,
+                loginLinks: loginLinks.slice(0, 5),
+                logoutLinks: logoutLinks.slice(0, 5),
+                accountLinks: accountLinks.slice(0, 5),
+                authenticated
+            });
+
+            if (!authenticated) {
+                XEM20_AUTH_AT = 0;
+
+                console.log(
+                    "[XEM20] LOGIN REJECTED: Website chưa xác nhận tài khoản đăng nhập."
+                );
+
+                return false;
             }
 
             XEM20_AUTH_AT = Date.now();
 
-            console.log(
-                "[XEM20] LOGIN VERIFIED:",
-                {
-                    status: home.status,
-                    finalUrl: home.xem20FinalUrl,
-                    hasSession: true
-                }
-            );
+            console.log("[XEM20] LOGIN VERIFIED:", {
+                status: home.status,
+                hasSession: true,
+                hasLogoutLink: true
+            });
 
             return true;
 
         } catch (error) {
-
             XEM20_AUTH_AT = 0;
 
             console.error(
@@ -19766,16 +19828,12 @@ async function xem20EnsureLogin(force = false) {
             return false;
 
         } finally {
-
             XEM20_LOGIN_PROMISE = null;
-
         }
-
     })();
 
     return XEM20_LOGIN_PROMISE;
 }
-
 
 // ------------------------------------------------------------
 // AUTHENTICATED DOCUMENT FETCH
