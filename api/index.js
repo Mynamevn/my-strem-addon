@@ -19896,22 +19896,14 @@ function xem20NormalizeTitle(value) {
 
 
 function xem20TitleScore(a, b) {
-
-    const first =
-        xem20NormalizeTitle(a);
-
-    const second =
-        xem20NormalizeTitle(b);
+    const first = xem20NormalizeTitle(a);
+    const second = xem20NormalizeTitle(b);
 
     if (!first || !second) return 0;
-
     if (first === second) return 1;
 
-    const aWords =
-        new Set(first.split(" "));
-
-    const bWords =
-        new Set(second.split(" "));
+    const aWords = new Set(first.split(" "));
+    const bWords = new Set(second.split(" "));
 
     let common = 0;
 
@@ -19919,105 +19911,255 @@ function xem20TitleScore(a, b) {
         if (bWords.has(word)) common++;
     }
 
-    return common /
-        Math.max(aWords.size, bWords.size);
+    return common / Math.max(aWords.size, bWords.size);
 }
 
 
 // ------------------------------------------------------------
-// SEARCH RESULT PARSER
+// MATCH TITLE WITH ORIGINAL TITLE / SEARCH RESULT TEXT
+// ------------------------------------------------------------
+
+function xem20SearchMatchScore(query, item = {}) {
+    const normalizedQuery =
+        xem20NormalizeTitle(query);
+
+    if (!normalizedQuery) return 0;
+
+    const searchable =
+        xem20NormalizeTitle([
+            item.title,
+            item.originalTitle,
+            item.searchText
+        ].filter(Boolean).join(" "));
+
+    // Ưu tiên khớp nguyên cụm tên phim.
+    if (searchable.includes(normalizedQuery)) {
+        return 1;
+    }
+
+    let slugTitle = "";
+
+    try {
+        const pathname =
+            new URL(
+                item.url,
+                XEM20_BASE_URL
+            ).pathname;
+
+        slugTitle =
+            decodeURIComponent(
+                pathname.split("/").filter(Boolean).pop() || ""
+            ).replace(/[-_]+/g, " ");
+
+    } catch (_) {}
+
+    return Math.max(
+        xem20TitleScore(query, item.title),
+        xem20TitleScore(query, slugTitle)
+    );
+}
+
+
+// ------------------------------------------------------------
+// SEARCH RESULT PARSER — LEGACY + FALLBACK
 // ------------------------------------------------------------
 
 function xem20ParseSearch(html) {
-
     const $ = cheerio.load(html);
 
     const results = [];
+    const seen = new Set();
 
-    $(".cd-card").each((_, element) => {
+    const reservedPaths = new Set([
+        "tim-kiem",
+        "login",
+        "logout",
+        "register",
+        "dang-nhap",
+        "danh-muc",
+        "the-loai",
+        "category",
+        "tag",
+        "trailer",
+        "download"
+    ]);
 
-        const card = $(element);
-
-        const anchor =
-            card.find("a[href]").first();
-
+    function addResult(anchor, preferredContainer = null) {
         const href =
-            String(
-                anchor.attr("href") || ""
-            ).trim();
+            String(anchor.attr("href") || "").trim();
 
-        const title =
-            String(
-                card.find(".cd-card__title").first().text() ||
-                card.find("img").first().attr("alt") ||
-                ""
-            ).trim();
+        if (!href) return;
 
-        if (!href || !title) return;
+        let target;
+
+        try {
+            target = new URL(href, XEM20_BASE_URL);
+        } catch (_) {
+            return;
+        }
 
         if (
-            /^(tập|full)\s*\d+/i.test(title)
+            target.protocol !== "http:" &&
+            target.protocol !== "https:"
         ) {
             return;
         }
 
+        const host =
+            target.hostname.toLowerCase();
+
+        if (
+            host !== "xem20.net" &&
+            !host.endsWith(".xem20.net")
+        ) {
+            return;
+        }
+
+        const segments =
+            target.pathname.split("/").filter(Boolean);
+
+        if (!segments.length || segments.length > 2) {
+            return;
+        }
+
+        const slug =
+            segments[segments.length - 1].toLowerCase();
+
+        if (reservedPaths.has(slug)) return;
+
+        let container =
+            preferredContainer ||
+            anchor.closest(
+                "article, li, .cd-card, .movie-item, .film-item, .card, [class*='movie'], [class*='film'], [class*='poster'], [class*='item']"
+            );
+
+        if (!container || !container.length) {
+            container = anchor.parent();
+        }
+
+        const containerText =
+            String(container.text() || "")
+                .replace(/\s+/g, " ")
+                .trim();
+
+        const anchorText =
+            String(anchor.text() || "")
+                .replace(/\s+/g, " ")
+                .trim();
+
+        const heading =
+            String(
+                container.find(
+                    "h1, h2, h3, h4, .cd-card__title, [class*='title']"
+                ).first().text() || ""
+            ).replace(/\s+/g, " ").trim();
+
+        const imageNode =
+            anchor.find("img").first().length
+                ? anchor.find("img").first()
+                : container.find("img").first();
+
+        const imageAlt =
+            String(imageNode.attr("alt") || "").trim();
+
+        const slugTitle =
+            decodeURIComponent(slug)
+                .replace(/[-_]+/g, " ");
+
+        const titleOptions = [
+            heading,
+            imageAlt,
+            anchor.attr("title"),
+            anchor.attr("aria-label"),
+            anchorText,
+            slugTitle
+        ].map(value =>
+            String(value || "")
+                .replace(/\s+/g, " ")
+                .trim()
+        );
+
+        const title =
+            titleOptions.find(value =>
+                value.length >= 2 &&
+                value.length <= 180 &&
+                !/^(xem|xem phim|xem ngay|chi tiết|tải|bản tải|download|trailer)$/i.test(
+                    xem20NormalizeTitle(value)
+                )
+            ) || "";
+
+        if (!title) return;
+
+        const pageUrl = target.href;
+
+        if (seen.has(pageUrl)) return;
+        seen.add(pageUrl);
+
         const image =
             String(
-                card.find("img").first().attr("src") ||
+                imageNode.attr("data-src") ||
+                imageNode.attr("data-original") ||
+                imageNode.attr("src") ||
                 ""
             ).trim();
 
         const badges = [];
 
-        card.find(
-            ".cd-poster-badge--bottom-left"
-        ).each((__, badge) => {
+        container.find(
+            ".cd-poster-badge--bottom-left, [class*='badge'], [class*='quality']"
+        ).each((_, element) => {
             const value =
-                String($(badge).text() || "").trim();
+                String($(element).text() || "").trim();
 
-            if (value) badges.push(value);
+            if (value && !badges.includes(value)) {
+                badges.push(value);
+            }
         });
-
-        let pageUrl = href;
-
-        try {
-            pageUrl =
-                new URL(href, XEM20_BASE_URL).href;
-        } catch (_) {
-            return;
-        }
 
         results.push({
             title,
             url: pageUrl,
             image,
-            badges
+            badges,
+            searchText: [
+                title,
+                imageAlt,
+                anchorText,
+                containerText
+            ].filter(Boolean).join(" ").slice(0, 1500)
         });
+    }
+
+    // Cách cũ: giữ nguyên hỗ trợ .cd-card.
+    $(".cd-card").each((_, element) => {
+        const card = $(element);
+        const anchor = card.find("a[href]").first();
+
+        if (anchor.length) {
+            addResult(anchor, card);
+        }
     });
 
-    const seen = new Set();
-
-    return results.filter(item => {
-        if (seen.has(item.url)) return false;
-        seen.add(item.url);
-        return true;
+    // Cách mới: dự phòng khi website thay đổi class CSS.
+    $("a[href]").each((_, element) => {
+        addResult($(element));
     });
+
+    return results;
 }
-
 
 // ------------------------------------------------------------
 // RELEASE PARSER
 // ------------------------------------------------------------
 
-function xem20ParseDetail(
-    html,
-    pageUrl
-) {
+
+function xem20ParseDetail(html, pageUrl) {
     const $ = cheerio.load(html);
 
     const title =
         String(
             $('meta[property="og:title"]').attr("content") ||
+            $("h1").first().text() ||
             $("title").text() ||
             ""
         )
@@ -20038,10 +20180,13 @@ function xem20ParseDetail(
             ""
         ).trim();
 
+    const pageText =
+        String($("body").text() || "")
+            .replace(/\s+/g, " ");
+
     const yearMatch =
-        (summary + " " + information).match(
-            /Năm\s*([1-2]\d{3})/i
-        );
+        (summary + " " + information + " " + pageText)
+            .match(/(?:Năm|Year)\s*[:：]?\s*([12]\d{3})/i);
 
     const year =
         yearMatch
@@ -20055,13 +20200,11 @@ function xem20ParseDetail(
         ).trim();
 
     const releases = [];
+    const seenReleaseIds = new Set();
 
-    $("article.cd-release").each((_, element) => {
-
-        const article = $(element);
-
-        const form =
-            article.find("form[action]").first();
+    // Không phụ thuộc duy nhất vào article.cd-release.
+    $("form[action*='download-links']").each((_, element) => {
+        const form = $(element);
 
         const action =
             String(form.attr("action") || "").trim();
@@ -20073,20 +20216,64 @@ function xem20ParseDetail(
 
         if (!idMatch) return;
 
+        const releaseId = idMatch[1];
+
+        if (seenReleaseIds.has(releaseId)) return;
+        seenReleaseIds.add(releaseId);
+
+        let container =
+            form.closest(
+                "article.cd-release, article, li, details, .cd-release, [class*='release'], .card, [class*='file']"
+            );
+
+        if (!container.length) {
+            container = form.parent();
+        }
+
+        const containerText =
+            String(container.text() || "")
+                .replace(/\s+/g, " ")
+                .trim();
+
         const releaseName =
             String(
-                article.find(".cd-release__name").first().text() ||
+                container.find(
+                    ".cd-release__name, [class*='release__name'], h2, h3, h4, strong"
+                ).first().text() ||
+                form.find("button").first().text() ||
+                form.find("input[type='submit']").attr("value") ||
                 ""
-            ).trim();
+            ).replace(/\s+/g, " ").trim();
 
-        const releaseMeta =
+        const filenameMatch =
+            containerText.match(
+                /[^\s"'<>]{2,180}\.(?:mp4|mkv|avi|mov)/i
+            );
+
+        const finalName =
+            releaseName ||
+            filenameMatch?.[0] ||
+            "Server";
+
+        let releaseMeta =
             String(
-                article.find(".cd-release__meta").first().text() ||
-                ""
-            ).trim();
+                container.find(
+                    ".cd-release__meta, [class*='release__meta']"
+                ).first().text() || ""
+            ).replace(/\s+/g, " ").trim();
+
+        if (!releaseMeta) {
+            releaseMeta =
+                containerText
+                    .replace(finalName, "")
+                    .trim()
+                    .slice(0, 500);
+        }
 
         const seasonElement =
-            article.closest("details.cd-season");
+            container.closest(
+                "details.cd-season, details, [class*='season']"
+            );
 
         const seasonText =
             String(
@@ -20095,24 +20282,11 @@ function xem20ParseDetail(
             ).trim();
 
         const seasonMatch =
-            (seasonText + " " + releaseMeta).match(
-                /(?:season|mùa|phần)\s*(\d+)/i
-            );
+            (seasonText + " " + releaseMeta)
+                .match(/(?:season|mùa|phần)\s*(\d+)/i);
 
         const episodeMatch =
-            releaseMeta.match(
-                /Tập\s*(\d+)/i
-            );
-
-        const season =
-            seasonMatch
-                ? Number(seasonMatch[1])
-                : 0;
-
-        const episode =
-            episodeMatch
-                ? Number(episodeMatch[1])
-                : 0;
+            releaseMeta.match(/Tập\s*(\d+)/i);
 
         let absoluteAction = action;
 
@@ -20124,11 +20298,15 @@ function xem20ParseDetail(
         }
 
         releases.push({
-            id: idMatch[1],
-            name: releaseName || "Server",
+            id: releaseId,
+            name: finalName,
             meta: releaseMeta,
-            season,
-            episode,
+            season: seasonMatch
+                ? Number(seasonMatch[1])
+                : 0,
+            episode: episodeMatch
+                ? Number(episodeMatch[1])
+                : 0,
             action: absoluteAction,
             pageUrl
         });
@@ -20141,7 +20319,6 @@ function xem20ParseDetail(
         releases
     };
 }
-
 
 // ------------------------------------------------------------
 // SELECT REQUESTED EPISODE / SEASON
@@ -20362,6 +20539,55 @@ function xem20StoreDownCookies(jar, responseUrl, headers) {
     }
 }
 
+// ------------------------------------------------------------
+// READ LIMITED HTML FROM STREAM
+// ------------------------------------------------------------
+
+async function xem20ReadLimitedText(
+    stream,
+    maxBytes = 1500000
+) {
+    if (!stream) return "";
+
+    const chunks = [];
+    let total = 0;
+
+    try {
+        for await (const chunk of stream) {
+            const buffer =
+                Buffer.isBuffer(chunk)
+                    ? chunk
+                    : Buffer.from(chunk);
+
+            const remaining =
+                maxBytes - total;
+
+            if (remaining > 0) {
+                const part =
+                    buffer.subarray(0, remaining);
+
+                chunks.push(part);
+                total += part.length;
+            }
+
+            if (
+                buffer.length > remaining ||
+                total >= maxBytes
+            ) {
+                stream.destroy?.();
+                break;
+            }
+        }
+
+    } catch (error) {
+        if (!stream.destroyed) {
+            throw error;
+        }
+    }
+
+    return Buffer.concat(chunks).toString("utf8");
+}
+
 
 // ------------------------------------------------------------
 // FOLLOW DOWNFSHARE / SSO REDIRECTS
@@ -20384,13 +20610,13 @@ async function xem20WalkSso(
         initialReferer || XEM20_BASE_URL + "/";
 
     for (let hop = 0; hop < 12; hop++) {
-
         let response;
 
-        try {
+        let host = "";
 
-            const host =
-                new URL(currentUrl).hostname;
+        try {
+            host =
+                new URL(currentUrl).hostname.toLowerCase();
 
             const cookies =
                 xem20DownCookieHeader(
@@ -20401,7 +20627,8 @@ async function xem20WalkSso(
             const headers = {
                 "User-Agent": XEM20_UA,
                 "Referer": referer,
-                "Accept": "*/*"
+                "Accept":
+                    "text/html,application/xhtml+xml,application/json,*/*"
             };
 
             if (cookies) {
@@ -20416,7 +20643,7 @@ async function xem20WalkSso(
                         timeout: 15000,
                         maxRedirects: 0,
                         validateStatus: () => true,
-                        responseType: "text"
+                        responseType: "stream"
                     }
                 );
 
@@ -20427,11 +20654,12 @@ async function xem20WalkSso(
             );
 
         } catch (error) {
-
             console.log(
                 "[XEM20] SSO HOP ERROR:",
                 hop,
-                error?.message || error
+                error?.response?.status ||
+                error?.message ||
+                error
             );
 
             return null;
@@ -20450,24 +20678,26 @@ async function xem20WalkSso(
                 response.headers?.["content-type"] || ""
             ).toLowerCase();
 
+        const disposition =
+            String(
+                response.headers?.["content-disposition"] || ""
+            );
+
         console.log(
             "[XEM20] SSO HOP:",
             {
                 hop,
                 status,
-                host: (() => {
-                    try {
-                        return new URL(currentUrl).hostname;
-                    } catch (_) {
-                        return "";
-                    }
-                })(),
+                host,
                 contentType,
-                hasLocation: Boolean(location)
+                hasLocation: Boolean(location),
+                hasDisposition: Boolean(disposition)
             }
         );
 
         if (status === 429) {
+            response.data?.destroy?.();
+
             console.log(
                 "[XEM20] DOWNFSHARE QUOTA LIMIT"
             );
@@ -20475,27 +20705,14 @@ async function xem20WalkSso(
             return null;
         }
 
-        // Direct media.
-        if (
-            /\.m3u8(?:$|[?#])/i.test(currentUrl) ||
-            /\.mp4(?:$|[?#])/i.test(currentUrl) ||
-            /video\/|application\/vnd\.apple\.mpegurl|application\/x-mpegurl/i.test(contentType)
-        ) {
-            return {
-                url: currentUrl,
-                headers: {
-                    "User-Agent": XEM20_UA,
-                    "Referer": referer
-                },
-                contentType
-            };
-        }
-
+        // Redirect phải được xử lý trước khi đọc body.
         if (
             status >= 300 &&
             status < 400 &&
             location
         ) {
+            response.data?.destroy?.();
+
             referer = currentUrl;
 
             try {
@@ -20508,19 +20725,76 @@ async function xem20WalkSso(
             continue;
         }
 
-        const html =
-            typeof response.data === "string"
-                ? response.data
-                : "";
+        const isDownFshare =
+            host === "dl.downfshare.top" ||
+            host.endsWith(".downfshare.top");
 
-        // CloudStream source dùng const playUrl = "..."
+        const hasMediaFilename =
+            /\.(m3u8|mp4|mkv)(?:["';\s]|$)/i.test(
+                disposition
+            );
+
+        const looksLikeMedia =
+            /video\/|mpegurl|matroska/i.test(contentType) ||
+            /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(currentUrl) ||
+            (
+                /application\/octet-stream|binary\/octet-stream/i.test(contentType) &&
+                (isDownFshare || hasMediaFilename)
+            ) ||
+            hasMediaFilename;
+
+        if (
+            (status === 200 || status === 206) &&
+            looksLikeMedia
+        ) {
+            response.data?.destroy?.();
+
+            const playbackHeaders = {
+                "User-Agent": XEM20_UA,
+                "Referer": referer
+            };
+
+            const playbackCookies =
+                xem20DownCookieHeader(
+                    cookieJar,
+                    host
+                );
+
+            if (playbackCookies) {
+                playbackHeaders.Cookie =
+                    playbackCookies;
+            }
+
+            console.log(
+                "[XEM20] DIRECT MEDIA FOUND:",
+                {
+                    host,
+                    status,
+                    contentType
+                }
+            );
+
+            return {
+                url: currentUrl,
+                headers: playbackHeaders,
+                contentType
+            };
+        }
+
+        // Chỉ đọc HTML có giới hạn.
+        const html =
+            await xem20ReadLimitedText(
+                response.data,
+                1500000
+            );
+
+        // CloudStream source: const playUrl = "..."
         const playMatch =
             html.match(
-                /const\s+playUrl\s*=\s*"([^"]+)"/i
+                /(?:const|let|var)\s+playUrl\s*=\s*["']([^"']+)["']/i
             );
 
         if (playMatch?.[1]) {
-
             const playUrl =
                 playMatch[1].replace(/\\\//g, "/");
 
@@ -20536,14 +20810,35 @@ async function xem20WalkSso(
             continue;
         }
 
-        // Hỗ trợ meta refresh.
+        // JavaScript location redirect.
+        const jsLocationMatch =
+            html.match(
+                /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
+            );
+
+        if (jsLocationMatch?.[1]) {
+            referer = currentUrl;
+
+            try {
+                currentUrl =
+                    new URL(
+                        jsLocationMatch[1],
+                        currentUrl
+                    ).href;
+            } catch (_) {
+                return null;
+            }
+
+            continue;
+        }
+
+        // Meta refresh.
         const metaMatch =
             html.match(
                 /http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)/i
             );
 
         if (metaMatch?.[1]) {
-
             referer = currentUrl;
 
             try {
@@ -20558,6 +20853,17 @@ async function xem20WalkSso(
 
             continue;
         }
+
+        console.log(
+            "[XEM20] SSO PAGE HAS NO PLAY URL:",
+            {
+                hop,
+                status,
+                host,
+                contentType,
+                htmlLength: html.length
+            }
+        );
 
         return null;
     }
@@ -20588,7 +20894,6 @@ async function xem20ResolveTicket(
         );
 
     if (hashMatch) {
-
         const base =
             `https://dl.downfshare.top/x/${hashMatch[1]}`;
 
@@ -20599,7 +20904,6 @@ async function xem20ResolveTicket(
     }
 
     for (const candidate of [...new Set(candidates)]) {
-
         const resolved =
             await xem20WalkSso(
                 candidate,
@@ -20608,9 +20912,9 @@ async function xem20ResolveTicket(
 
         if (!resolved?.url) continue;
 
-        // Kiểm tra khả năng truy cập media.
         try {
-
+            // Chỉ kiểm tra header và 2 byte đầu.
+            // Không tải toàn bộ video vào bộ nhớ.
             const probe =
                 await axios.get(
                     resolved.url,
@@ -20621,9 +20925,17 @@ async function xem20ResolveTicket(
                         },
                         timeout: 12000,
                         maxRedirects: 3,
-                        validateStatus: () => true
+                        validateStatus: () => true,
+                        responseType: "stream"
                     }
                 );
+
+            const probeStatus =
+                Number(probe.status || 0);
+
+            const finalUrl =
+                probe.request?.res?.responseUrl ||
+                resolved.url;
 
             const contentType =
                 String(
@@ -20632,41 +20944,85 @@ async function xem20ResolveTicket(
                     ""
                 ).toLowerCase();
 
-            const isMedia =
-                probe.status === 200 ||
-                probe.status === 206;
+            const disposition =
+                String(
+                    probe.headers?.["content-disposition"] || ""
+                );
+
+            let finalHost = "";
+
+            try {
+                finalHost =
+                    new URL(finalUrl).hostname.toLowerCase();
+            } catch (_) {}
+
+            const sourceHost =
+                (() => {
+                    try {
+                        return new URL(resolved.url).hostname.toLowerCase();
+                    } catch (_) {
+                        return "";
+                    }
+                })();
+
+            const downFshareSource =
+                sourceHost === "dl.downfshare.top" ||
+                sourceHost.endsWith(".downfshare.top");
+
+            const hasMediaFilename =
+                /\.(m3u8|mp4|mkv)(?:["';\s]|$)/i.test(
+                    disposition
+                );
 
             const looksLikeMedia =
-                /video\/|mpegurl|octet-stream|matroska/i.test(contentType) ||
-                /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(resolved.url);
+                /video\/|mpegurl|matroska/i.test(contentType) ||
+                /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(finalUrl) ||
+                hasMediaFilename ||
+                (
+                    /application\/octet-stream|binary\/octet-stream/i.test(contentType) &&
+                    downFshareSource
+                );
 
-            if (isMedia && looksLikeMedia) {
+            // Đóng response stream ngay sau khi đọc header.
+            probe.data?.destroy?.();
+
+            console.log(
+                "[XEM20] MEDIA PROBE:",
+                {
+                    status: probeStatus,
+                    host: finalHost,
+                    contentType,
+                    hasDisposition: Boolean(disposition),
+                    looksLikeMedia
+                }
+            );
+
+            if (
+                (probeStatus === 200 || probeStatus === 206) &&
+                looksLikeMedia
+            ) {
                 return {
                     ...resolved,
+                    url: finalUrl,
                     contentType
                 };
             }
 
-            // Nếu URL là HLS/MP4 rõ ràng, giữ lại
-            // khi máy chủ không hỗ trợ Range.
-            if (
-                /\.(m3u8|mp4)(?:$|[?#])/i.test(resolved.url)
-            ) {
-                return resolved;
-            }
-
         } catch (error) {
-
-            if (
-                /\.(m3u8|mp4)(?:$|[?#])/i.test(resolved.url)
-            ) {
-                return resolved;
-            }
-
             console.log(
                 "[XEM20] MEDIA PROBE ERROR:",
-                error?.message || error
+                {
+                    status: error?.response?.status || 0,
+                    message: error?.message || String(error)
+                }
             );
+
+            if (
+                /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(resolved.url) &&
+                !error?.response
+            ) {
+                return resolved;
+            }
         }
     }
 
@@ -20718,33 +21074,57 @@ async function scrapeXem20(
             }
         );
 
-
-        // ----------------------------------------------------
-// 1. SEARCH — EXACT TITLE + FALLBACK WITHOUT YEAR
+// ----------------------------------------------------
+// 1. SEARCH — EXACT + YEARLESS + TITLE PREFIX
 // ----------------------------------------------------
 
+const originalQuery =
+    String(movieName || "").trim();
+
 const searchQueries = [
-    String(movieName || "").trim()
+    originalQuery
 ];
 
 const titleWithoutYear =
-    String(movieName || "")
+    originalQuery
         .replace(/\b(?:19|20)\d{2}\b/g, " ")
         .replace(/\s+/g, " ")
         .trim();
 
-if (
-    titleWithoutYear &&
-    titleWithoutYear.toLowerCase() !==
-    String(movieName || "").trim().toLowerCase()
-) {
+if (titleWithoutYear) {
     searchQueries.push(titleWithoutYear);
 }
 
+// Ví dụ:
+// Final Destination: Bloodlines
+// -> Final Destination
+const titlePrefix =
+    originalQuery
+        .split(/\s*[:：|–—]\s*/)
+        [0]
+        .trim();
+
+if (
+    titlePrefix &&
+    titlePrefix.split(/\s+/).length >= 2
+) {
+    searchQueries.push(titlePrefix);
+}
+
+const uniqueQueries = [
+    ...new Map(
+        searchQueries
+            .filter(Boolean)
+            .map(query => [
+                xem20NormalizeTitle(query),
+                query
+            ])
+    ).values()
+];
+
 let candidates = [];
 
-for (const searchQuery of [...new Set(searchQueries)]) {
-
+for (const searchQuery of uniqueQueries) {
     const searchUrl =
         XEM20_BASE_URL +
         "/tim-kiem?keyword=" +
@@ -20762,7 +21142,6 @@ for (const searchQuery of [...new Set(searchQueries)]) {
         await xem20FetchDoc(searchUrl);
 
     if (!searchPage?.html) {
-
         console.log(
             "[XEM20] SEARCH EMPTY RESPONSE:",
             searchQuery
@@ -20785,34 +21164,41 @@ for (const searchQuery of [...new Set(searchQueries)]) {
             finalUrl: searchPage.url,
             htmlLength: searchPage.html.length,
             pageTitle: $search("title").text().trim(),
-            cardCount: $search(".cd-card").length,
+            legacyCardCount: $search(".cd-card").length,
+            anchorCount: $search("a[href]").length,
             parsedCount: parsedResults.length,
             sampleTitles:
                 parsedResults
                     .slice(0, 8)
-                    .map(item => item.title)
+                    .map(item => ({
+                        title: item.title,
+                        searchText:
+                            String(item.searchText || "").slice(0, 160)
+                    }))
         }
     );
 
-    candidates =
+    const ranked =
         parsedResults
             .map(item => ({
                 ...item,
                 score:
-                    xem20TitleScore(
-                        movieName,
-                        item.title
+                    xem20SearchMatchScore(
+                        originalQuery,
+                        item
                     )
             }))
-            .filter(item =>
-                item.score >= 0.35
-            )
-            .sort((a, b) =>
-                b.score - a.score
-            )
-            .slice(0, 3);
+            .filter(item => item.score >= 0.30)
+            .sort((a, b) => b.score - a.score);
+
+    candidates = ranked.slice(0, 8);
 
     if (candidates.length) {
+        console.log(
+            "[XEM20] SEARCH MATCH FOUND:",
+            searchQuery
+        );
+
         break;
     }
 }
@@ -20827,7 +21213,6 @@ console.log(
 );
 
 if (!candidates.length) {
-
     console.log(
         "[XEM20] NO SEARCH MATCH"
     );
@@ -20835,124 +21220,160 @@ if (!candidates.length) {
     return streams;
 }
 
-        // ----------------------------------------------------
-        // 2. DETAIL — CHỌN PHIM ĐÚNG NĂM
-        // ----------------------------------------------------
+// ----------------------------------------------------
+// 2. DETAIL — VERIFY TITLE + YEAR
+// ----------------------------------------------------
 
-        let selectedMovie = null;
+let selectedMovie = null;
 
-        for (const candidate of candidates) {
+for (const candidate of candidates) {
+    const detailPage =
+        await xem20FetchDoc(candidate.url);
 
-            const detailPage =
-                await xem20FetchDoc(candidate.url);
+    if (!detailPage?.html) continue;
 
-            if (!detailPage?.html) continue;
+    const detail =
+        xem20ParseDetail(
+            detailPage.html,
+            candidate.url
+        );
 
-            const detail =
-                xem20ParseDetail(
-                    detailPage.html,
-                    candidate.url
-                );
+    const detail$ =
+        cheerio.load(detailPage.html);
 
-            const detailScore =
-                xem20TitleScore(
-                    movieName,
-                    detail.title || candidate.title
-                );
+    const detailText =
+        String(detail$("body").text() || "")
+            .replace(/\s+/g, " ");
 
-            if (
-                detailScore < 0.35
-            ) {
-                continue;
-            }
-
-            if (
-                Number(movieYear) > 0 &&
-                detail.year > 0 &&
-                Math.abs(
-                    Number(movieYear) - detail.year
-                ) > 1
-            ) {
-                console.log(
-                    "[XEM20] YEAR MISMATCH:",
-                    {
-                        requested: movieYear,
-                        found: detail.year,
-                        title: detail.title
-                    }
-                );
-
-                continue;
-            }
-
-            selectedMovie = {
-                ...candidate,
-                ...detail,
-                html: detailPage.html,
-                url: candidate.url
-            };
-
-            break;
-        }
-
-        if (!selectedMovie) {
-            console.log(
-                "[XEM20] NO VERIFIED DETAIL MATCH"
-            );
-
-            return streams;
-        }
-
-
-        // ----------------------------------------------------
-        // 3. SELECT RELEASES
-        // ----------------------------------------------------
-
-        const selectedReleases =
-            xem20SelectReleases(
-                selectedMovie.releases,
-                streamType,
-                seasonNumber,
-                episodeNumber
-            );
-
-        console.log(
-            "[XEM20] RELEASE SELECTION:",
+    const detailScore =
+        xem20SearchMatchScore(
+            movieName,
             {
-                title: selectedMovie.title,
-                siteYear: selectedMovie.year,
-                total: selectedMovie.releases.length,
-                selected: selectedReleases.length,
-                season: seasonNumber,
-                episode: episodeNumber
+                ...candidate,
+                title:
+                    detail.title ||
+                    candidate.title,
+                searchText: [
+                    candidate.searchText,
+                    detailText
+                ].filter(Boolean).join(" ")
             }
         );
 
-        if (!selectedReleases.length) {
-            return streams;
+    console.log(
+        "[XEM20] DETAIL MATCH CHECK:",
+        {
+            candidate: candidate.title,
+            detailTitle: detail.title,
+            requestedYear: movieYear,
+            foundYear: detail.year,
+            score: detailScore,
+            releaseCount: detail.releases.length
         }
+    );
+
+    if (detailScore < 0.30) {
+        continue;
+    }
+
+    if (
+        Number(movieYear) > 0 &&
+        detail.year > 0 &&
+        Math.abs(
+            Number(movieYear) - detail.year
+        ) > 1
+    ) {
+        console.log(
+            "[XEM20] YEAR MISMATCH:",
+            {
+                requested: movieYear,
+                found: detail.year,
+                title: detail.title
+            }
+        );
+
+        continue;
+    }
+
+    selectedMovie = {
+        ...candidate,
+        ...detail,
+        html: detailPage.html,
+        url: candidate.url
+    };
+
+    break;
+}
+
+if (!selectedMovie) {
+    console.log(
+        "[XEM20] NO VERIFIED DETAIL MATCH"
+    );
+
+    return streams;
+}
 
 
-        // ----------------------------------------------------
-        // 4. CSRF TOKEN
-        // ----------------------------------------------------
+// ----------------------------------------------------
+// 3. SELECT RELEASES
+// ----------------------------------------------------
 
-        const csrfMatch =
-            selectedMovie.html.match(
-                /name="_token"\s+value="([^"]+)"/i
-            );
+const selectedReleases =
+    xem20SelectReleases(
+        selectedMovie.releases,
+        streamType,
+        seasonNumber,
+        episodeNumber
+    );
 
-        if (!csrfMatch) {
-            console.log(
-                "[XEM20] DETAIL CSRF NOT FOUND"
-            );
+console.log(
+    "[XEM20] RELEASE SELECTION:",
+    {
+        title: selectedMovie.title,
+        siteYear: selectedMovie.year,
+        total: selectedMovie.releases.length,
+        selected: selectedReleases.length,
+        season: seasonNumber,
+        episode: episodeNumber,
+        releases:
+            selectedReleases.map(item => ({
+                id: item.id,
+                name: item.name,
+                meta: item.meta
+            }))
+    }
+);
 
-            return streams;
-        }
+if (!selectedReleases.length) {
+    console.log(
+        "[XEM20] NO SELECTED RELEASES"
+    );
 
-        const csrf =
-            csrfMatch[1];
+    return streams;
+}
 
+
+// ----------------------------------------------------
+// 4. CSRF TOKEN
+// ----------------------------------------------------
+
+const selectedDetail$ =
+    cheerio.load(selectedMovie.html);
+
+const csrf =
+    String(
+        selectedDetail$('input[name="_token"]').attr("value") ||
+        selectedDetail$('input[name="_token"]').val() ||
+        ""
+    ).trim();
+
+if (!csrf) {
+    console.log(
+        "[XEM20] DETAIL CSRF NOT FOUND"
+    );
+
+    return streams;
+}
 
         // ----------------------------------------------------
         // 5. REQUEST TICKETS — PARALLEL
@@ -21107,16 +21528,24 @@ if (!candidates.length) {
         // ----------------------------------------------------
 
         console.log(
-            "[XEM20] FINAL STREAMS:",
-            JSON.stringify(
-                streams.map(stream => ({
-                    name: stream.name,
-                    title: stream.title,
-                    url: stream.url,
-                    type: stream.type
-                }))
-            )
-        );
+    "[XEM20] FINAL STREAMS:",
+    JSON.stringify(
+        streams.map(stream => {
+            let host = "";
+
+            try {
+                host = new URL(stream.url).hostname;
+            } catch (_) {}
+
+            return {
+                name: stream.name,
+                title: stream.title,
+                host,
+                type: stream.type
+            };
+        })
+    )
+);
 
         console.log(
             "[XEM20] COMPLETE:",
@@ -43382,15 +43811,15 @@ function rewriteNguonCPlaylist(
 builder.defineStreamHandler(async (args) => {
 
     // -----------------------------------------------------------------
-    // [MỚI CHÈN] - NHÁNH XỬ LÝ CHO NGUỒN ANIMESUB (TỰ ĐỘNG TÌM LINK THEO TÊN PHIM/MÃ IMDB)
+    // [CẬP NHẬT ANILIST] - NHÁNH TỰ ĐỘNG TÌM KIẾM THEO ANILIST MAPPING (CHÍNH XÁC 100%)
     // -----------------------------------------------------------------
-    // Đoạn code này chạy khi người dùng bấm nút PLAY một bộ phim bất kỳ trên Stremio
     if (args.type === "movie" || args.type === "series") {
         const MAIN_URL = "https://animesub.site";
         const fakeVietnameseIP = "115.79.139.142"; 
         const commonHeaders = {
             "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-            "Origin": MAIN_URL, "Referer": MAIN_URL + "/",
+            "Origin": MAIN_URL, 
+            "Referer": MAIN_URL + "/",
             "X-Forwarded-For": fakeVietnameseIP, "X-Real-IP": fakeVietnameseIP, "Client-IP": fakeVietnameseIP
         };
 
@@ -43402,60 +43831,105 @@ builder.defineStreamHandler(async (args) => {
         }
 
         try {
-            // 1. LẤY TÊN PHIM TỪ TRÌNH PHÁT STREMIO
-            // Stremio truyền vào mã args.id (Ví dụ: tt1234567:1:5 tương ứng [id_imdb]:[mùa]:[tập])
+            // 1. TRÍCH XUẤT THÔNG TIN TẬP PHIM
             const idParts = args.id.split(":");
             const imdbId = idParts[0];
-            const season = idParts[1] ? parseInt(idParts[1], 10) : 1;
             const episode = idParts[2] ? parseInt(idParts[2], 10) : 1;
 
-            // Gọi API phụ của Stremio (hoặc dùng hàm có sẵn trong Movina của bạn) để quy đổi mã IMDB sang Tên Phim dạng Tiếng Việt/Tiếng Anh
-            // Ở đây tôi giả định bạn gọi đến API Cinmeta miễn phí để lấy tiêu đề gốc của phim nhằm đi tìm kiếm trên trang Anime
-            const metaRes = await axios.get(`https://stremio.com{args.type}/${imdbId}.json`);
-            if (!metaRes.data || !metaRes.data.meta) return { streams: [] };
-            
-            const movieTitle = metaRes.data.meta.name; // Lấy tên phim (Ví dụ: "Naruto")
+            const searchQueries = [];
 
-            // 2. GỬI LỆNH TÌM KIẾM SANG WEB ANIMESUB
-            const searchResponse = await axios.get(`${MAIN_URL}/tim-kiem/${encode製造 = encodeURIComponent(movieTitle)}/`, requestOptions);
-            const searchHtml = searchResponse.data;
+            try {
+                // 2. KHAI THÁC API MAPPING ĐỂ QUY ĐỔI IMDB ID SANG ANILIST DATA
+                // Sử dụng API trung gian mở của Stremio để lấy thông tin đồng bộ
+                const mappingRes = await axios.get(`https://metahub.space{args.type}/${imdbId}.json`, { timeout: 4000 });
+                if (mappingRes.data && mappingRes.data.meta) {
+                    const meta = mappingRes.data.meta;
+                    if (meta.name) searchQueries.push(meta.name);
+                    
+                    // Thử gọi trực tiếp AniList GraphQL nếu có tiêu đề tiếng Anh từ Metahub để lấy thêm tên Romaji/Native
+                    const query = `
+                        query ($search: String) {
+                            Media (search: $search, type: ANIME) {
+                                title {
+                                    romaji
+                                    english
+                                    native
+                                }
+                                synonyms
+                            }
+                        }
+                    `;
+                    const anilistRes = await axios.post("https://anilist.co", {
+                        query: query,
+                        variables: { search: meta.name }
+                    }, { timeout: 3000 });
 
-            // Dùng Regex quét mã HTML tìm link của bộ phim phù hợp nhất trong danh sách kết quả
-            // Khớp với cấu trúc thẻ div.Image figure img hoặc article a trong mapElementToSearchResponse của Smali
-            const slugRegex = /href="([^"]+\/phim\/[^"]+)"/g;
-            const slugMatch = searchHtml.match(slugRegex);
-            if (!slugMatch) throw new Error("Không tìm thấy phim này trên Animesub.");
+                    if (anilistRes.data && anilistRes.data.data && anilistRes.data.data.Media) {
+                        const titles = anilistRes.data.data.data.Media.title;
+                        const synonyms = anilistRes.data.data.data.Media.synonyms || [];
+                        
+                        if (titles.romaji) searchQueries.push(titles.romaji);
+                        if (titles.english) searchQueries.push(titles.english);
+                        if (titles.native) searchQueries.push(titles.native);
+                        // Nạp thêm các tên gọi khác (synonyms) của Anime đó
+                        searchQueries.push(...synonyms);
+                    }
+                }
+            } catch (e) {
+                // Nếu API AniList/Metahub lỗi, hạ cấp xuống dùng Cinemeta làm phương án dự phòng
+                const metaRes = await axios.get(`https://stremio.com{args.type}/${imdbId}.json`).catch(() => null);
+                if (metaRes && metaRes.data && metaRes.data.meta) {
+                    searchQueries.push(metaRes.data.meta.name);
+                    if (metaRes.data.meta.aliases) searchQueries.push(...metaRes.data.meta.aliases);
+                }
+            }
 
-            // Lấy link phim đầu tiên tìm được từ kết quả tìm kiếm
-            let movieLink = slugMatch[0].replace('href="', '').replace('"', '');
-            if (movieLink.startsWith("/")) movieLink = `${MAIN_URL}${movieLink}`;
+            // Lọc trùng lặp danh sách từ khóa và xóa các ký tự đặc biệt gây nhiễu lệnh tìm kiếm
+            const cleanQueries = [...new Set(searchQueries)].map(q => 
+                q.replace(/[^a-zA-Z0-9 Tiếng Việt Tiếng Anh áàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữựýỳỷỹỵđ]/g, '').trim()
+            ).filter(q => q.length > 2);
 
-            // Chuyển đổi link phim thành link xem phim tập tương ứng (Ví dụ: /phim/abc -> /xem-phim/abc/tap-1.html)
-            // Cấu trúc URL xem phim chuẩn của hệ thống Animesub hiện tại
-            const cleanSlug = movieLink.substring(movieLink.lastIndexOf("/") + 1);
-            let watchUrl = args.type === "movie" 
-                ? `${MAIN_URL}/xem-phim/${cleanSlug}/full.html`
-                : `${MAIN_URL}/xem-phim/${cleanSlug}/tap-${episode}.html`;
+            let movieSlug = null;
 
-            // 3. TẢI TRANG XEM PHIM ĐỂ TRÍCH XUẤT LINK EMBED PLAYER (SSPLAY/HYDRAX)
+            // 3. TRA CỨU QUA API SEARCH ẨN CỦA TRANG PHIM
+            for (const query of cleanQueries) {
+                try {
+                    const searchUrl = `${MAIN_URL}/wp-admin/admin-ajax.php?action=halim_ajax_search&search=${encodeURIComponent(query)}`;
+                    const searchResponse = await axios.get(searchUrl, requestOptions);
+                    const searchData = searchResponse.data;
+
+                    if (searchData && searchData.includes("/phim/")) {
+                        const slugMatch = searchData.match(/href="([^"]+\/phim\/([^"/]+)\/?)"/);
+                        if (slugMatch && slugMatch[2]) {
+                            movieSlug = slugMatch[2];
+                            break;
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            if (!movieSlug) throw new Error("Không tìm thấy Anime này với các từ khóa từ AniList.");
+
+            // 4. XÁC ĐỊNH URL TẬP PHIM VÀ TẢI PLAYER
+            let watchUrl = args.type === "movie"
+                ? `${MAIN_URL}/xem-phim/${movieSlug}/full.html`
+                : `${MAIN_URL}/xem-phim/${movieSlug}/tap-${episode}.html`;
+
             const watchPageResponse = await axios.get(watchUrl, requestOptions);
             const watchHtml = watchPageResponse.data;
 
-            // Tìm link iframe player (Hydrax/SSplay) ẩn trong trang xem phim
-            const iframeRegex = /<iframe[^>]+src="([^"]+)"/;
-            const iframeMatch = watchHtml.match(iframeRegex);
-            if (!iframeMatch) throw new Error("Không tìm thấy iframe trình phát video của tập phim này.");
+            const iframeMatch = watchHtml.match(/<iframe[^>]+src="([^"]+)"/i) || watchHtml.match(/data-embed="([^"]+)"/i);
+            if (!iframeMatch) throw new Error("Không tìm thấy iframe phát video.");
 
             let embedUrl = iframeMatch[1];
             if (embedUrl.startsWith("//")) embedUrl = `https:${embedUrl}`;
 
-            // 4. TIẾN HÀNH GIẢI MÃ EMBED PLAYER (SSPLAY / HYDRAX) NHƯ ĐÃ BÓC TÁCH TỪ FILE SMALI
             const playerResponse = await axios.get(embedUrl, requestOptions);
             const playerHtml = playerResponse.data;
             const streams = [];
 
-            // Giải mã Hydrax
-            if (embedUrl.includes("hydrax") || playerHtml.includes("atoken")) {
+            // 5. GIẢI MÃ BẺ KHÓA LINK DIRECT (HYDRAX & SSPLAY)
+            if (embedUrl.includes("hydrax") || playerHtml.includes("atoken") || playerHtml.includes("slug")) {
                 const sizeMatch = playerHtml.match(/size\s*=\s*"([^"]+)"|size\s*=\s*(\d+)/);
                 const md5IdMatch = playerHtml.match(/md5Id\s*=\s*"([^"]+)"|id\s*=\s*(\d+)/); 
                 if (sizeMatch && md5IdMatch) {
@@ -43464,7 +43938,7 @@ builder.defineStreamHandler(async (args) => {
                     const generatedToken = generateHydraxToken(0, size, md5Id, 0, 2097152);
                     if (generatedToken) {
                         streams.push({
-                            title: `MOVINA (Animesub) - Hydrax [Tập ${episode}]`,
+                            title: `MOVINA (Animet) - Hydrax [Tập ${episode}]`,
                             url: `https://abysscdn.com{size}/${generatedToken}`,
                             behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": "https://abysscdn.com" } }
                         });
@@ -43472,31 +43946,28 @@ builder.defineStreamHandler(async (args) => {
                 }
             }
 
-            // Giải mã SSPlay
             const packerRegex = /eval\(function\(p,a,c,k,e,d\)\{.*?\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)\)\)/s;
             const ssplayMatch = playerHtml.match(packerRegex);
             if (ssplayMatch) {
                 const decodedJs = unpackPacker(ssplayMatch[1], parseInt(ssplayMatch[2], 10), parseInt(ssplayMatch[3], 10), ssplayMatch[4].split("|"));
                 const fileMatch = decodedJs.match(/"file"\s*:\s*"([^"]+\.m3u8)"/);
-                if (fileMatch) {
+                if (fileMatch && fileMatch[1]) {
                     let directLink = fileMatch[1];
                     if (directLink.startsWith("/")) directLink = `${new URL(embedUrl).origin}${directLink}`;
                     streams.push({
-                        title: `MOVINA (Animesub) - SSPlay [Tập ${episode}] (HLS)`,
+                        title: `MOVINA (Animet) - SSPlay [Tập ${episode}] (HLS)`,
                         url: directLink,
                         behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": embedUrl } }
                     });
                 }
             }
 
-            // Trả link direct về, gộp chung mượt mà vào danh sách các nguồn phim cũ của Movina
             if (streams.length > 0) {
                 return { streams: streams };
             }
 
         } catch (error) {
-            console.error("Bỏ qua nguồn Animesub do lỗi:", error.message);
-            // Không chặn đứng luồng chạy, cho phép code chạy tiếp xuống dưới để Stremio tải các nguồn phim cũ của bạn
+            console.error("Bỏ qua nguồn Animet do lỗi:", error.message);
         }
     }
     // -----------------------------------------------------------------
