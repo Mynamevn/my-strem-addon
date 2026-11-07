@@ -43381,22 +43381,16 @@ function rewriteNguonCPlaylist(
 
 builder.defineStreamHandler(async (args) => {
 
-        // -----------------------------------------------------------------
-    // [MỚI CHÈN] - NHÁNH XỬ LÝ KHÔI PHỤC LUỒNG ANIMESUB BYPASS (FREE PROXY)
     // -----------------------------------------------------------------
-    if (args.id.startsWith("animet:")) {
-        let embedUrl;
-        try {
-            const base64Part = args.id.replace("animet:", "");
-            embedUrl = Buffer.from(base64Part, 'base64').toString('utf-8');
-        } catch (e) { return { streams: [] }; }
-
+    // [MỚI CHÈN] - NHÁNH XỬ LÝ CHO NGUỒN ANIMESUB (TỰ ĐỘNG TÌM LINK THEO TÊN PHIM/MÃ IMDB)
+    // -----------------------------------------------------------------
+    // Đoạn code này chạy khi người dùng bấm nút PLAY một bộ phim bất kỳ trên Stremio
+    if (args.type === "movie" || args.type === "series") {
         const MAIN_URL = "https://animesub.site";
         const fakeVietnameseIP = "115.79.139.142"; 
         const commonHeaders = {
             "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-            "Origin": MAIN_URL,
-            "Referer": MAIN_URL + "/",
+            "Origin": MAIN_URL, "Referer": MAIN_URL + "/",
             "X-Forwarded-For": fakeVietnameseIP, "X-Real-IP": fakeVietnameseIP, "Client-IP": fakeVietnameseIP
         };
 
@@ -43408,21 +43402,69 @@ builder.defineStreamHandler(async (args) => {
         }
 
         try {
-            const response = await axios.get(embedUrl, requestOptions);
-            const html = response.data;
+            // 1. LẤY TÊN PHIM TỪ TRÌNH PHÁT STREMIO
+            // Stremio truyền vào mã args.id (Ví dụ: tt1234567:1:5 tương ứng [id_imdb]:[mùa]:[tập])
+            const idParts = args.id.split(":");
+            const imdbId = idParts[0];
+            const season = idParts[1] ? parseInt(idParts[1], 10) : 1;
+            const episode = idParts[2] ? parseInt(idParts[2], 10) : 1;
+
+            // Gọi API phụ của Stremio (hoặc dùng hàm có sẵn trong Movina của bạn) để quy đổi mã IMDB sang Tên Phim dạng Tiếng Việt/Tiếng Anh
+            // Ở đây tôi giả định bạn gọi đến API Cinmeta miễn phí để lấy tiêu đề gốc của phim nhằm đi tìm kiếm trên trang Anime
+            const metaRes = await axios.get(`https://stremio.com{args.type}/${imdbId}.json`);
+            if (!metaRes.data || !metaRes.data.meta) return { streams: [] };
+            
+            const movieTitle = metaRes.data.meta.name; // Lấy tên phim (Ví dụ: "Naruto")
+
+            // 2. GỬI LỆNH TÌM KIẾM SANG WEB ANIMESUB
+            const searchResponse = await axios.get(`${MAIN_URL}/tim-kiem/${encode製造 = encodeURIComponent(movieTitle)}/`, requestOptions);
+            const searchHtml = searchResponse.data;
+
+            // Dùng Regex quét mã HTML tìm link của bộ phim phù hợp nhất trong danh sách kết quả
+            // Khớp với cấu trúc thẻ div.Image figure img hoặc article a trong mapElementToSearchResponse của Smali
+            const slugRegex = /href="([^"]+\/phim\/[^"]+)"/g;
+            const slugMatch = searchHtml.match(slugRegex);
+            if (!slugMatch) throw new Error("Không tìm thấy phim này trên Animesub.");
+
+            // Lấy link phim đầu tiên tìm được từ kết quả tìm kiếm
+            let movieLink = slugMatch[0].replace('href="', '').replace('"', '');
+            if (movieLink.startsWith("/")) movieLink = `${MAIN_URL}${movieLink}`;
+
+            // Chuyển đổi link phim thành link xem phim tập tương ứng (Ví dụ: /phim/abc -> /xem-phim/abc/tap-1.html)
+            // Cấu trúc URL xem phim chuẩn của hệ thống Animesub hiện tại
+            const cleanSlug = movieLink.substring(movieLink.lastIndexOf("/") + 1);
+            let watchUrl = args.type === "movie" 
+                ? `${MAIN_URL}/xem-phim/${cleanSlug}/full.html`
+                : `${MAIN_URL}/xem-phim/${cleanSlug}/tap-${episode}.html`;
+
+            // 3. TẢI TRANG XEM PHIM ĐỂ TRÍCH XUẤT LINK EMBED PLAYER (SSPLAY/HYDRAX)
+            const watchPageResponse = await axios.get(watchUrl, requestOptions);
+            const watchHtml = watchPageResponse.data;
+
+            // Tìm link iframe player (Hydrax/SSplay) ẩn trong trang xem phim
+            const iframeRegex = /<iframe[^>]+src="([^"]+)"/;
+            const iframeMatch = watchHtml.match(iframeRegex);
+            if (!iframeMatch) throw new Error("Không tìm thấy iframe trình phát video của tập phim này.");
+
+            let embedUrl = iframeMatch[1];
+            if (embedUrl.startsWith("//")) embedUrl = `https:${embedUrl}`;
+
+            // 4. TIẾN HÀNH GIẢI MÃ EMBED PLAYER (SSPLAY / HYDRAX) NHƯ ĐÃ BÓC TÁCH TỪ FILE SMALI
+            const playerResponse = await axios.get(embedUrl, requestOptions);
+            const playerHtml = playerResponse.data;
             const streams = [];
 
-            // 1. Xử lý Hydrax Player
-            if (embedUrl.includes("hydrax") || html.includes("atoken") || html.includes("slug")) {
-                const sizeMatch = html.match(/size\s*=\s*"([^"]+)"|size\s*=\s*(\d+)/);
-                const md5IdMatch = html.match(/md5Id\s*=\s*"([^"]+)"|id\s*=\s*(\d+)/); 
+            // Giải mã Hydrax
+            if (embedUrl.includes("hydrax") || playerHtml.includes("atoken")) {
+                const sizeMatch = playerHtml.match(/size\s*=\s*"([^"]+)"|size\s*=\s*(\d+)/);
+                const md5IdMatch = playerHtml.match(/md5Id\s*=\s*"([^"]+)"|id\s*=\s*(\d+)/); 
                 if (sizeMatch && md5IdMatch) {
                     const size = parseInt(sizeMatch[1] || sizeMatch[2], 10);
                     const md5Id = md5IdMatch[1] || md5IdMatch[2];
                     const generatedToken = generateHydraxToken(0, size, md5Id, 0, 2097152);
                     if (generatedToken) {
                         streams.push({
-                            title: "MOVINA - Hydrax Highspeed",
+                            title: `MOVINA (Animesub) - Hydrax [Tập ${episode}]`,
                             url: `https://abysscdn.com{size}/${generatedToken}`,
                             behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": "https://abysscdn.com" } }
                         });
@@ -43430,38 +43472,34 @@ builder.defineStreamHandler(async (args) => {
                 }
             }
 
-            // 2. Xử lý SSPlay Player
+            // Giải mã SSPlay
             const packerRegex = /eval\(function\(p,a,c,k,e,d\)\{.*?\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)\)\)/s;
-            const ssplayMatch = html.match(packerRegex);
+            const ssplayMatch = playerHtml.match(packerRegex);
             if (ssplayMatch) {
-                const p = ssplayMatch[1];
-                const a = parseInt(ssplayMatch[2], 10);
-                const c = parseInt(ssplayMatch[3], 10);
-                const k = ssplayMatch[4].split("|");
-
-                const decodedJs = unpackPacker(p, a, c, k);
+                const decodedJs = unpackPacker(ssplayMatch[1], parseInt(ssplayMatch[2], 10), parseInt(ssplayMatch[3], 10), ssplayMatch[4].split("|"));
                 const fileMatch = decodedJs.match(/"file"\s*:\s*"([^"]+\.m3u8)"/);
-                if (fileMatch && fileMatch[1]) {
+                if (fileMatch) {
                     let directLink = fileMatch[1];
                     if (directLink.startsWith("/")) directLink = `${new URL(embedUrl).origin}${directLink}`;
                     streams.push({
-                        title: "MOVINA - SSPlay Ultra (HLS)",
+                        title: `MOVINA (Animesub) - SSPlay [Tập ${episode}] (HLS)`,
                         url: directLink,
                         behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": embedUrl } }
                     });
                 }
             }
 
-            if (streams.length > 0) return { streams };
-            throw new Error("Không bóc tách được link phim.");
+            // Trả link direct về, gộp chung mượt mà vào danh sách các nguồn phim cũ của Movina
+            if (streams.length > 0) {
+                return { streams: streams };
+            }
 
         } catch (error) {
-            cachedFreeProxy = null;
-            return {
-                streams: [{ title: "Free Proxy đang bận. Vui lòng bấm PLAY lại để đổi proxy mới!", externalUrl: MAIN_URL }]
-            };
+            console.error("Bỏ qua nguồn Animesub do lỗi:", error.message);
+            // Không chặn đứng luồng chạy, cho phép code chạy tiếp xuống dưới để Stremio tải các nguồn phim cũ của bạn
         }
     }
+    // -----------------------------------------------------------------
 
     console.log(
         "========== STREAM REQUEST =========="
