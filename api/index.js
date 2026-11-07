@@ -49257,59 +49257,116 @@ async function searchNguonC() {
 // =====================================================
 
 
-async function loadDetail(
-    slug
-) {
+async function loadDetail(slug) {
 
-    const detailUrl =
-        API_BASE +
-        "/film/" +
-        encodeURIComponent(
-            slug
-        );
+    const cleanSlug = String(slug || "").trim();
 
-    const response =
-        await fetch(
-            detailUrl,
-            {
-                method: "GET",
-                headers: {
-                    "Accept": "application/json"
-                },
-                cache: "no-store"
-            }
-        );
+    if (!cleanSlug) {
+        throw new Error("NguonC thiếu slug phim.");
+    }
 
-    if (!response.ok) {
+    // =================================================
+    // 1. ƯU TIÊN ENDPOINT DANH SÁCH TẬP MỚI
+    // =================================================
+
+    const episodesUrl =
+        "https://phim.nguonc.com/phim/" +
+        encodeURIComponent(cleanSlug) +
+        "/episodes";
+
+    console.log(
+        "[NGUONC CLIENT] LOAD EPISODES:",
+        episodesUrl
+    );
+
+    const episodesResponse = await fetch(
+        episodesUrl,
+        {
+            method: "GET",
+            headers: {
+                "Accept": "application/json"
+            },
+            cache: "no-store"
+        }
+    );
+
+    if (!episodesResponse.ok) {
         throw new Error(
-            "NguonC detail HTTP " +
-            response.status
+            "NguonC episodes HTTP " +
+            episodesResponse.status
         );
     }
 
-    const detail =
-        await response.json();
+    const episodesData =
+        await episodesResponse.json();
+
+    const newServers =
+        episodesData?.servers;
+
+    if (
+        !Array.isArray(newServers) ||
+        !newServers.length
+    ) {
+        throw new Error(
+            "NguonC không trả về danh sách server/tập hợp lệ."
+        );
+    }
+
+    const normalizedServers =
+        newServers.map(server => ({
+            ...server,
+            items: Array.isArray(server?.list)
+                ? server.list
+                : (
+                    Array.isArray(server?.items)
+                        ? server.items
+                        : []
+                )
+        }));
+
+    const totalEpisodes =
+        normalizedServers.reduce(
+            (total, server) =>
+                total + server.items.length,
+            0
+        );
+
+    if (!totalEpisodes) {
+        throw new Error(
+            "NguonC có server nhưng danh sách tập trống."
+        );
+    }
+
+    console.log(
+        "[NGUONC CLIENT] NEW EPISODE FORMAT:",
+        {
+            slug: cleanSlug,
+            servers: normalizedServers.length,
+            episodes: totalEpisodes,
+            firstEpisode:
+                normalizedServers[0]?.items?.[0]?.name,
+            firstEmbed:
+                normalizedServers[0]?.items?.[0]?.embed
+        }
+    );
 
     // =================================================
-    // NEW NGUONC EPISODE ENDPOINT
-    // /phim/{slug}/episodes
+    // 2. API DETAIL CŨ CHỈ LÀ DỮ LIỆU BỔ SUNG
+    // Không để API cũ 403 làm mất danh sách tập mới.
     // =================================================
+
+    let detail = {};
 
     try {
 
-        const episodesUrl =
-            "https://phim.nguonc.com/phim/" +
-            encodeURIComponent(slug) +
-            "/episodes";
+        const detailUrl =
+            API_BASE +
+            "/film/" +
+            encodeURIComponent(cleanSlug);
 
-        console.log(
-            "[NGUONC CLIENT] LOAD EPISODES:",
-            episodesUrl
-        );
-
-        const episodesResponse =
+        const detailResponse =
             await fetch(
-                episodesUrl,
+                detailUrl,
                 {
                     method: "GET",
                     headers: {
@@ -49319,90 +49376,48 @@ async function loadDetail(
                 }
             );
 
-        if (!episodesResponse.ok) {
-            throw new Error(
-                "Episodes HTTP " +
-                episodesResponse.status
+        if (detailResponse.ok) {
+            detail =
+                await detailResponse.json();
+        } else {
+            console.warn(
+                "[NGUONC CLIENT] LEGACY DETAIL UNAVAILABLE:",
+                detailResponse.status
             );
         }
 
-        const episodesData =
-            await episodesResponse.json();
-
-        const newServers =
-            episodesData?.servers;
-
-        if (
-            Array.isArray(newServers) &&
-            newServers.length > 0
-        ) {
-
-            const normalizedServers =
-                newServers.map(
-                    server => ({
-                        ...server,
-                        items:
-                            Array.isArray(server?.list)
-                                ? server.list
-                                : (
-                                    Array.isArray(server?.items)
-                                        ? server.items
-                                        : []
-                                )
-                    })
-                );
-
-            const movie =
-                detail?.movie ||
-                detail?.data?.movie ||
-                detail?.data?.item ||
-                detail?.data ||
-                {};
-
-            console.log(
-                "[NGUONC CLIENT] NEW EPISODE FORMAT:",
-                {
-                    slug,
-                    servers: normalizedServers.length,
-                    episodes: normalizedServers.reduce(
-                        (total, server) =>
-                            total + server.items.length,
-                        0
-                    )
-                }
-            );
-
-            return {
-                ...detail,
-                movie: {
-                    ...movie,
-                    episodes: normalizedServers
-                }
-            };
-        }
+    } catch (detailError) {
 
         console.warn(
-            "[NGUONC CLIENT] NEW EPISODE DATA EMPTY:",
-            slug
-        );
-
-    } catch (episodeError) {
-
-        console.warn(
-            "[NGUONC CLIENT] NEW EPISODE ENDPOINT FAILED:",
-            {
-                slug,
-                message:
-                    episodeError?.message ||
-                    String(episodeError)
-            }
+            "[NGUONC CLIENT] LEGACY DETAIL ERROR:",
+            detailError?.message ||
+            String(detailError)
         );
 
     }
 
-    // Giữ nguyên dữ liệu API cũ nếu endpoint mới thất bại.
-    return detail;
+    // =================================================
+    // 3. CHUẨN HÓA DỮ LIỆU CHO BỘ CHỌN TẬP HIỆN CÓ
+    // =================================================
+
+    const movie =
+        detail?.movie ||
+        detail?.data?.movie ||
+        detail?.data?.item ||
+        detail?.data ||
+        {};
+
+    return {
+        ...detail,
+
+        movie: {
+            ...movie,
+            slug: movie?.slug || cleanSlug,
+            episodes: normalizedServers
+        }
+    };
 }
+
 
 // =====================================================
 // MAIN
