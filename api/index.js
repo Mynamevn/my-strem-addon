@@ -20312,6 +20312,50 @@ function xem20ParseDetail(html, pageUrl) {
         });
     });
 
+    const releaseDebug = [];
+
+    $("body").find("*").each((_, element) => {
+        if (releaseDebug.length >= 10) return;
+
+        const node = $(element);
+        const nodeText = String(node.text() || "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        if (
+            nodeText.length >= 20 &&
+            nodeText.length <= 700 &&
+            /\.mp4|\.mkv|Đăng nhập để tải/i.test(nodeText)
+        ) {
+            const html = $.html(element)
+                .replace(
+                    /((?:value|content)=["'])[^"']*(["'])/gi,
+                    '$1[redacted]$2'
+                )
+                .slice(0, 1400);
+
+            releaseDebug.push({
+                tag: element.tagName,
+                className: node.attr("class") || "",
+                id: node.attr("id") || "",
+                text: nodeText.slice(0, 500),
+                html
+            });
+        }
+    });
+
+    console.log(
+        "[XEM20] RELEASE HTML DEBUG:",
+        JSON.stringify({
+            formCount: $("form").length,
+            downloadForms: $("form[action*='download-links']")
+                .length,
+            downloadAnchors: $("a[href*='download-links']")
+                .length,
+            releaseDebug
+        })
+    );
+
     return {
         title,
         year,
