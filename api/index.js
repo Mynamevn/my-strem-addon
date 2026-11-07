@@ -31211,12 +31211,13 @@ function animeHayFindBestSearchResult(
             wordOverlap * 5;
 
         const rawYear =
-            item?.year ??
-            item?.releaseYear ??
-            item?.release_year ??
-            item?.releaseDate ??
-            item?.release_date ??
-            0;
+    item?.year ??
+    item?.releaseYear ??
+    item?.release_year ??
+    item?.releaseDate ??
+    item?.release_date ??
+    candidateTitle ??
+    "";
 
         const yearMatch = String(rawYear).match(
             /\b(19\d{2}|20\d{2})\b/
@@ -31226,9 +31227,18 @@ function animeHayFindBestSearchResult(
             ? Number(yearMatch[1])
             : 0;
 
-        if (targetYear && candidateYear) {
-            score += candidateYear === targetYear ? 150 : -120;
-        }
+    if (targetYear && candidateYear) {
+    const yearDifference =
+        Math.abs(candidateYear - targetYear);
+
+    if (yearDifference === 0) {
+        score += 150;
+    } else if (yearDifference === 1) {
+        score += 100;
+    } else {
+        score -= 120;
+    }
+}
 
         console.log("[ANIMEHAY] MATCH SCORE:", {
             title: candidateTitle,
@@ -34026,26 +34036,44 @@ async function fetchAnimeHay(
                 .trim();
 
     const titleMatches = (wanted, candidate) => {
-        const a = normalize(wanted);
-        const b = normalize(candidate);
+    const normalizeTitle = value =>
+        normalize(value)
+            .replace(/\b(?:19|20)\d{2}\b/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
 
-        if (!a || !b) return false;
-        if (a === b) return true;
+    const a = normalizeTitle(wanted);
+    const b = normalizeTitle(candidate);
 
-        if (
-            Math.min(a.length, b.length) >= 12 &&
-            (a.includes(b) || b.includes(a))
-        ) {
-            return true;
-        }
+    if (!a || !b) return false;
 
-        const aWords = new Set(a.split(/\s+/).filter(Boolean));
-        const bWords = new Set(b.split(/\s+/).filter(Boolean));
-        const common = [...aWords].filter(word => bWords.has(word)).length;
+    // Khớp chính xác sau khi bỏ năm phát hành.
+    // Ví dụ: Monster (2004) và Monster (2005).
+    if (a === b) return true;
 
-        return common >= 2 &&
-            common / Math.max(aWords.size, bWords.size) >= 0.6;
-    };
+    // Giữ cơ chế khớp tên dài đã có.
+    if (
+        Math.min(a.length, b.length) >= 12 &&
+        (a.includes(b) || b.includes(a))
+    ) {
+        return true;
+    }
+
+    const aWords = new Set(
+        a.split(/\s+/).filter(Boolean)
+    );
+
+    const bWords = new Set(
+        b.split(/\s+/).filter(Boolean)
+    );
+
+    const common = [...aWords].filter(
+        word => bWords.has(word)
+    ).length;
+
+    return common >= 2 &&
+        common / Math.max(aWords.size, bWords.size) >= 0.6;
+};
 
     try {
         console.log("[ANIMEHAY] START:", {
