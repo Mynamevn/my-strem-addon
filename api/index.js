@@ -31091,7 +31091,6 @@ async function animeHaySearch(domain, title) {
 // Hỗ trợ nhiều tên thay thế, giữ nguyên ưu tiên năm.
 // ============================================================
 
-
 function animeHayFindBestSearchResult(
     candidates,
     movieName,
@@ -31107,61 +31106,6 @@ function animeHayFindBestSearchResult(
         animeHayNormalizeText(String(value || ""));
 
     // Chuẩn hóa để tên có năm phát hành vẫn nhận diện được.
-
-    try {
-
-        console.log("[ANIMEHAY] START:", {
-            movieName: originalTitle,
-            movieYear,
-            seasonNumber,
-            episodeNumber,
-            streamType,
-            imdbId
-        });
-
-        // Xác định domain AnimeHay đang hoạt động.
-        let domain =
-            animeHayActiveDomain ||
-            animeHayDirectoryActiveDomain ||
-            "";
-
-        if (!domain) {
-            try {
-                const domains =
-                    await animeHayDiscoverDirectoryDomains();
-
-                domain = await animeHayResolveActiveDomain(
-                    Array.isArray(domains) ? domains : []
-                );
-
-            } catch (error) {
-                console.log(
-                    "[ANIMEHAY] DOMAIN DISCOVERY ERROR:",
-                    error?.message || error
-                );
-            }
-        }
-
-        domain = String(
-            domain ||
-            animeHayActiveDomain ||
-            animeHayDirectoryActiveDomain ||
-            ANIMEHAY_DIRECTORY ||
-            ""
-        ).replace(/\/+$/, "");
-
-        if (!domain) {
-            console.log("[ANIMEHAY] ABORT: no active domain");
-            return [];
-        }
-
-        const searchByTitle = async (searchTitle, source) => {
-
-            console.log("[ANIMEHAY] SEARCH TITLE:", {
-                source,
-                title: searchTitle
-            });
-
     const comparisonKey = value =>
         normalize(value)
             .replace(/\b(?:19|20)\d{2}\b/g, " ")
@@ -34116,8 +34060,7 @@ async function fetchAnimeHay(
                 .replace(/[^a-z0-9]+/g, " ")
                 .trim();
 
-    
-const comparisonKey = value =>
+    const comparisonKey = value =>
     normalize(value)
         .replace(/\b(?:19|20)\d{2}\b/g, " ")
         .replace(/\s+/g, " ")
@@ -34157,25 +34100,6 @@ const titleMatches = (wanted, candidate) => {
         common / Math.max(aWords.size, bWords.size) >= 0.6
     );
 };
-
-            let candidates = [];
-
-            try {
-                const result = await animeHaySearch(
-                    domain,
-                    searchTitle
-                );
-
-                if (Array.isArray(result)) {
-                    candidates.push(...result);
-                }
-
-            } catch (error) {
-                console.log("[ANIMEHAY] SEARCH ERROR:", {
-                    title: searchTitle,
-                    message: error?.message || String(error)
-                });
-            }
 
 const getValidCandidates = items =>
     items.filter(candidate => {
@@ -34236,7 +34160,7 @@ const getValidCandidates = items =>
             titleMatches(searchTitle, candidateTitle) ||
             titleMatches(searchTitle, candidate?.cardText)
         );
-    });
+            });
 
             let validCandidates = getValidCandidates(candidates);
 
