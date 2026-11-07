@@ -48660,10 +48660,9 @@ function findVideoUrlForEpisode(
         ) {
 
             const items =
-    server?.list ||
-    server?.items ||
-    server?.server_data ||
-    [];
+                server?.items ||
+                server?.server_data ||
+                [];
 
             if (
                 !Array.isArray(
@@ -48767,10 +48766,9 @@ function findVideoUrlForEpisode(
             ).trim();
 
         const items =
-    server?.list ||
-    server?.items ||
-    server?.server_data ||
-    [];
+            server?.items ||
+            server?.server_data ||
+            [];
 
         if (
             !Array.isArray(
@@ -49256,166 +49254,50 @@ async function searchNguonC() {
 // LOAD DETAIL
 // =====================================================
 
+async function loadDetail(
+    slug
+) {
 
-async function loadDetail(slug) {
-
-    const cleanSlug = String(slug || "").trim();
-
-    if (!cleanSlug) {
-        throw new Error("NguonC thiếu slug phim.");
-    }
-
-    // =================================================
-    // 1. ƯU TIÊN ENDPOINT DANH SÁCH TẬP MỚI
-    // =================================================
-
-    const episodesUrl =
-        "https://phim.nguonc.com/phim/" +
-        encodeURIComponent(cleanSlug) +
-        "/episodes";
-
-    console.log(
-        "[NGUONC CLIENT] LOAD EPISODES:",
-        episodesUrl
-    );
-
-    const episodesResponse = await fetch(
-        episodesUrl,
-        {
-            method: "GET",
-            headers: {
-                "Accept": "application/json"
-            },
-            cache: "no-store"
-        }
-    );
-
-    if (!episodesResponse.ok) {
-        throw new Error(
-            "NguonC episodes HTTP " +
-            episodesResponse.status
+    const detailUrl =
+        API_BASE +
+        "/film/" +
+        encodeURIComponent(
+            slug
         );
-    }
 
-    const episodesData =
-        await episodesResponse.json();
+    const response =
+        await fetch(
+            detailUrl,
+            {
+                method:
+                    "GET",
 
-    const newServers =
-        episodesData?.servers;
+                headers: {
+
+                    "Accept":
+                        "application/json"
+
+                },
+
+                cache:
+                    "no-store"
+
+            }
+        );
 
     if (
-        !Array.isArray(newServers) ||
-        !newServers.length
+        !response.ok
     ) {
+
         throw new Error(
-            "NguonC không trả về danh sách server/tập hợp lệ."
-        );
-    }
-
-    const normalizedServers =
-        newServers.map(server => ({
-            ...server,
-            items: Array.isArray(server?.list)
-                ? server.list
-                : (
-                    Array.isArray(server?.items)
-                        ? server.items
-                        : []
-                )
-        }));
-
-    const totalEpisodes =
-        normalizedServers.reduce(
-            (total, server) =>
-                total + server.items.length,
-            0
-        );
-
-    if (!totalEpisodes) {
-        throw new Error(
-            "NguonC có server nhưng danh sách tập trống."
-        );
-    }
-
-    console.log(
-        "[NGUONC CLIENT] NEW EPISODE FORMAT:",
-        {
-            slug: cleanSlug,
-            servers: normalizedServers.length,
-            episodes: totalEpisodes,
-            firstEpisode:
-                normalizedServers[0]?.items?.[0]?.name,
-            firstEmbed:
-                normalizedServers[0]?.items?.[0]?.embed
-        }
-    );
-
-    // =================================================
-    // 2. API DETAIL CŨ CHỈ LÀ DỮ LIỆU BỔ SUNG
-    // Không để API cũ 403 làm mất danh sách tập mới.
-    // =================================================
-
-    let detail = {};
-
-    try {
-
-        const detailUrl =
-            API_BASE +
-            "/film/" +
-            encodeURIComponent(cleanSlug);
-
-        const detailResponse =
-            await fetch(
-                detailUrl,
-                {
-                    method: "GET",
-                    headers: {
-                        "Accept": "application/json"
-                    },
-                    cache: "no-store"
-                }
-            );
-
-        if (detailResponse.ok) {
-            detail =
-                await detailResponse.json();
-        } else {
-            console.warn(
-                "[NGUONC CLIENT] LEGACY DETAIL UNAVAILABLE:",
-                detailResponse.status
-            );
-        }
-
-    } catch (detailError) {
-
-        console.warn(
-            "[NGUONC CLIENT] LEGACY DETAIL ERROR:",
-            detailError?.message ||
-            String(detailError)
+            "NguonC detail HTTP " +
+            response.status
         );
 
     }
 
-    // =================================================
-    // 3. CHUẨN HÓA DỮ LIỆU CHO BỘ CHỌN TẬP HIỆN CÓ
-    // =================================================
+    return await response.json();
 
-    const movie =
-        detail?.movie ||
-        detail?.data?.movie ||
-        detail?.data?.item ||
-        detail?.data ||
-        {};
-
-    return {
-        ...detail,
-
-        movie: {
-            ...movie,
-            slug: movie?.slug || cleanSlug,
-            episodes: normalizedServers
-        }
-    };
 }
 
 
@@ -49440,158 +49322,17 @@ async function startNguonC() {
         MOVIE_TITLE;
 
     const items =
-    await searchNguonC();
+        await searchNguonC();
 
-let directSlugEntry = null;
-let directSlugDetail = null;
+    if (
+        !items.length
+    ) {
 
-// =====================================================
-// DIRECT SLUG FALLBACK
-// Chạy khi API search bị 403 hoặc không trả kết quả.
-// Ví dụ: Monster -> /api/film/monster
-// =====================================================
-
-if (!items.length) {
-    const directSlug = normalizeTitle(MOVIE_TITLE)
-        .replace(/\s+/g, "-")
-        .replace(/^-+|-+$/g, "");
-
-    console.warn(
-        "[NGUONC CLIENT] SEARCH EMPTY - TRY DIRECT SLUG:",
-        {
-            title: MOVIE_TITLE,
-            slug: directSlug
-        }
-    );
-
-    if (directSlug) {
-        try {
-            const detail =
-                await loadDetail(directSlug);
-
-            const movie =
-                detail?.movie ||
-                detail?.data?.movie ||
-                detail?.data?.item ||
-                detail?.data ||
-                {};
-
-            const detailNames = [
-                movie?.name,
-                movie?.origin_name,
-                movie?.original_name
-            ]
-                .map(normalizeTitle)
-                .filter(Boolean);
-
-            const exactTitleMatch =
-    detailNames.length === 0
-        ? true
-        : detailNames.includes(
-            normalizeTitle(MOVIE_TITLE)
+        throw new Error(
+            "NguonC không trả về kết quả."
         );
 
-            const rawYear =
-                movie?.year ||
-                movie?.release_year ||
-                movie?.releaseYear ||
-                "";
-
-            const detailYear =
-                Number(
-                    String(rawYear).match(
-                        /(?:19|20)\d{2}/
-                    )?.[0] || 0
-                );
-
-            const yearMatch =
-                !MOVIE_YEAR ||
-                !detailYear ||
-                Math.abs(
-                    detailYear - MOVIE_YEAR
-                ) <= 1;
-
-            const detailEpisodes =
-                movie?.episodes ||
-                detail?.episodes ||
-                detail?.data?.episodes ||
-                [];
-
-            const hasEpisodes =
-                Array.isArray(detailEpisodes) &&
-                detailEpisodes.length > 0;
-
-            console.log(
-                "[NGUONC CLIENT] DIRECT SLUG VERIFY:",
-                {
-                    requestedTitle: MOVIE_TITLE,
-                    detailNames,
-                    requestedYear: MOVIE_YEAR,
-                    detailYear,
-                    exactTitleMatch,
-                    yearMatch,
-                    episodeGroups:
-                        Array.isArray(detailEpisodes)
-                            ? detailEpisodes.length
-                            : 0
-                }
-            );
-
-            if (
-                exactTitleMatch &&
-                yearMatch &&
-                hasEpisodes
-            ) {
-                directSlugDetail = detail;
-
-                directSlugEntry = {
-                    item: {
-                        ...movie,
-                        slug: movie?.slug || directSlug
-                    },
-                    score: 10000
-                };
-
-                console.log(
-                    "[NGUONC CLIENT] DIRECT SLUG ACCEPTED:",
-                    {
-                        title: movie.name,
-                        year: detailYear,
-                        slug: directSlugEntry.item.slug
-                    }
-                );
-            } else {
-                console.warn(
-                    "[NGUONC CLIENT] DIRECT SLUG REJECTED:",
-                    {
-                        title: MOVIE_TITLE,
-                        slug: directSlug
-                    }
-                );
-            }
-
-        } catch (error) {
-            console.warn(
-                "[NGUONC CLIENT] DIRECT SLUG ERROR:",
-                {
-                    slug: directSlug,
-                    message:
-                        error?.message ||
-                        String(error)
-                }
-            );
-        }
     }
-}
-
-if (
-    !items.length &&
-    !directSlugEntry
-) {
-    throw new Error(
-        "NguonC không tìm thấy phim qua API search hoặc direct slug. Đã dừng để tránh phát nhầm phim."
-    );
-}
 
     const ranked =
         items
@@ -49662,175 +49403,152 @@ if (
 // Không loại bỏ phim chỉ vì NguonC thiếu/khác year.
 // =====================================================
 
-// =====================================================
-// NGUONC CLIENT — STRICT TITLE / YEAR MATCH
-// =====================================================
-
 let selectedEntry = null;
 let selectedDetail = null;
 
-const targetTitle =
-    normalizeTitle(MOVIE_TITLE);
+// -----------------------------------------------------
+// 1. ƯU TIÊN KẾT QUẢ ĐÚNG NĂM
+// -----------------------------------------------------
 
-function nguonCGetYear(item) {
-    const rawYear =
-        item?.year ||
-        item?.release_year ||
-        item?.releaseYear ||
-        item?.release_date ||
-        "";
+if (MOVIE_YEAR > 0) {
 
-    const numericYear =
-        Number(String(rawYear).match(/(?:19|20)\d{2}/)?.[0] || 0);
+    selectedEntry =
+        ranked.find(function (entry) {
 
-    if (numericYear) return numericYear;
+            const item =
+                entry.item || {};
 
-    const name =
-        String(item?.name || "");
+            const itemYear =
+                Number(
+                    item?.year ||
+                    item?.release_year ||
+                    item?.releaseYear ||
+                    0
+                );
 
-    const match =
-        name.match(/\b(?:19|20)\d{2}\b/);
+            const rawName =
+                String(
+                    item?.name ||
+                    ""
+                ).trim();
 
-    return match ? Number(match[0]) : 0;
-}
+            const yearMatch =
+                rawName.match(
+                    /\((19|20)[0-9]{2}\)/
+                );
 
-function nguonCIsTitleMatch(item) {
-    const names = [
-        item?.name,
-        item?.origin_name,
-        item?.original_name
-    ]
-        .map(normalizeTitle)
-        .filter(Boolean);
+            let nameYear = 0;
 
-    if (!targetTitle || !names.length) {
-        return false;
-    }
+            if (yearMatch) {
+                nameYear =
+                    Number(
+                        yearMatch[0].replace(
+                            /[^0-9]/g,
+                            ""
+                        )
+                    );
+            }
 
-    // Ưu tiên tên chính xác.
-    if (names.includes(targetTitle)) {
-        return true;
-    }
+            if (
+                itemYear === MOVIE_YEAR ||
+                nameYear === MOVIE_YEAR
+            ) {
 
-    // Chỉ cho phép khớp một cụm nhiều từ hoàn chỉnh.
-    // Không cho phép từ đơn như "Monster" khớp
-    // với "Monster Musume", "Re:Monster", v.v.
-    const targetWords =
-        targetTitle.split(/\s+/).filter(Boolean);
+                console.log(
+                    "[NGUONC CLIENT] EXACT YEAR MATCH:",
+                    {
+                        name: rawName,
+                        apiYear: itemYear,
+                        nameYear: nameYear,
+                        targetYear: MOVIE_YEAR
+                    }
+                );
 
-    if (targetWords.length < 2) {
-        return false;
-    }
+                return true;
+            }
 
-    return names.some(name =>
-        name.startsWith(targetTitle + " ") ||
-        name.endsWith(" " + targetTitle) ||
-        name.includes(" " + targetTitle + " ")
+            return false;
+        });
+
+    console.log(
+        "[NGUONC CLIENT] SELECTED BY YEAR:",
+        selectedEntry?.item
+            ? {
+                name: selectedEntry.item.name,
+                origin_name:
+                    selectedEntry.item.origin_name ||
+                    selectedEntry.item.original_name,
+                year:
+                    selectedEntry.item.year ||
+                    selectedEntry.item.release_year ||
+                    selectedEntry.item.releaseYear,
+                slug: selectedEntry.item.slug
+            }
+            : null
     );
 }
 
-const eligibleEntries =
-    ranked.filter(entry => {
-        const item = entry.item || {};
-
-        if (!item.slug) return false;
-
-        if (!nguonCIsTitleMatch(item)) {
-            return false;
-        }
-
-        const itemYear =
-            nguonCGetYear(item);
-
-        if (
-            MOVIE_YEAR > 0 &&
-            itemYear > 0 &&
-            Math.abs(itemYear - MOVIE_YEAR) > 1
-        ) {
-            return false;
-        }
-
-        return true;
-    });
-
-// Ưu tiên đúng năm, sau đó mới đến năm lệch một năm
-// hoặc kết quả không có thông tin năm.
-eligibleEntries.sort((a, b) => {
-    const yearA = nguonCGetYear(a.item);
-    const yearB = nguonCGetYear(b.item);
-
-    const diffA =
-        MOVIE_YEAR > 0 && yearA > 0
-            ? Math.abs(yearA - MOVIE_YEAR)
-            : 2;
-
-    const diffB =
-        MOVIE_YEAR > 0 && yearB > 0
-            ? Math.abs(yearB - MOVIE_YEAR)
-            : 2;
-
-    return diffA - diffB;
-});
-
-console.log(
-    "[NGUONC CLIENT] STRICT MATCH CANDIDATES:",
-    eligibleEntries.map(entry => ({
-        name: entry.item?.name,
-        origin_name:
-            entry.item?.origin_name ||
-            entry.item?.original_name,
-        year: nguonCGetYear(entry.item),
-        slug: entry.item?.slug
-    }))
-);
-
-selectedEntry =
-    directSlugEntry ||
-    eligibleEntries[0] ||
-    null;
-
-selectedDetail =
-    directSlugEntry
-        ? directSlugDetail
-        : null;
+// -----------------------------------------------------
+// 2. KHÔNG CÓ BẢN ĐÚNG NĂM
+// -----------------------------------------------------
+// Không báo lỗi.
+// Dùng kết quả phù hợp nhất theo TITLE SCORE.
+// -----------------------------------------------------
 
 if (!selectedEntry) {
-    console.warn(
-        "[NGUONC CLIENT] NO SAFE MATCH:",
-        {
-            title: MOVIE_TITLE,
-            year: MOVIE_YEAR,
-            searchResults: ranked.length
-        }
+
+    selectedEntry =
+        ranked.find(function (entry) {
+
+            const item =
+                entry.item || {};
+
+            return Boolean(
+                item?.slug
+            );
+
+        }) || null;
+
+    console.log(
+        "[NGUONC CLIENT] FALLBACK BY TITLE:",
+        selectedEntry?.item
+            ? {
+                name: selectedEntry.item.name,
+                origin_name:
+                    selectedEntry.item.origin_name ||
+                    selectedEntry.item.original_name,
+                year:
+                    selectedEntry.item.year ||
+                    selectedEntry.item.release_year ||
+                    selectedEntry.item.releaseYear,
+                slug: selectedEntry.item.slug
+            }
+            : null
     );
+}
+
+// -----------------------------------------------------
+// 3. HOÀN TOÀN KHÔNG CÓ KẾT QUẢ
+// -----------------------------------------------------
+
+if (!selectedEntry) {
 
     throw new Error(
-        "NguonC có kết quả tìm kiếm nhưng không xác minh được đúng phim theo tên và năm. Đã dừng để tránh phát nhầm phim."
+        "NguonC có kết quả nhưng không tìm được phim phù hợp."
     );
 }
 
 const selected =
-    selectedEntry.item;
+    selectedEntry?.item ||
+    null;
 
 if (!selected?.slug) {
+
     throw new Error(
         "Không tìm được slug phim trên NguonC."
     );
+
 }
-
-console.log(
-    "[NGUONC CLIENT] SELECTED STRICT MATCH:",
-    {
-        name: selected.name,
-        origin_name:
-            selected.origin_name ||
-            selected.original_name,
-        year: nguonCGetYear(selected),
-        targetYear: MOVIE_YEAR,
-        slug: selected.slug
-    }
-);
-
     console.log(
         "[NGUONC CLIENT] SELECTED:",
         {
