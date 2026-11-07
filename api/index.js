@@ -19308,6 +19308,1551 @@ console.log(
     "[CS3 PROVIDER] SYSTEM READY"
 );
 
+// ============================================================
+// [PRV-XEM20.01] XEM20 CONFIG + AUTH SESSION
+// ============================================================
+
+const XEM20_BASE_URL = "https://xem20.net";
+
+// BẠN TỰ ĐIỀN THÔNG TIN TÀI KHOẢN CỦA MÌNH
+const XEM20_EMAIL = "phimhdchill.net@gmail.com";
+const XEM20_PASSWORD = "PhimHDChill.Net@123";
+
+const XEM20_UA =
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+
+const XEM20_COOKIE_JAR = new Map();
+
+let XEM20_AUTH_AT = 0;
+let XEM20_LOGIN_PROMISE = null;
+
+const XEM20_AUTH_TTL = 5 * 60 * 1000;
+
+
+// ------------------------------------------------------------
+// COOKIE HELPERS
+// ------------------------------------------------------------
+
+function xem20CookieHeader() {
+    return [...XEM20_COOKIE_JAR.entries()]
+        .map(([name, value]) => `${name}=${value}`)
+        .join("; ");
+}
+
+
+function xem20StoreCookies(headers) {
+    const setCookies =
+        headers?.["set-cookie"] || [];
+
+    for (const rawCookie of setCookies) {
+        const firstPart =
+            String(rawCookie || "").split(";")[0];
+
+        const separator =
+            firstPart.indexOf("=");
+
+        if (separator <= 0) continue;
+
+        const name =
+            firstPart.slice(0, separator).trim();
+
+        const value =
+            firstPart.slice(separator + 1).trim();
+
+        if (!name) continue;
+
+        if (/max-age=0|expires=Thu, 01 Jan 1970/i.test(rawCookie)) {
+            XEM20_COOKIE_JAR.delete(name);
+        } else {
+            XEM20_COOKIE_JAR.set(name, value);
+        }
+    }
+}
+
+
+// ------------------------------------------------------------
+// HTTP REQUEST
+// ------------------------------------------------------------
+
+async function xem20Request(
+    url,
+    options = {}
+) {
+    const headers = {
+        "User-Agent": XEM20_UA,
+        "Accept":
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.9",
+        ...(options.headers || {})
+    };
+
+    const cookie =
+        xem20CookieHeader();
+
+    if (cookie && !headers.Cookie) {
+        headers.Cookie = cookie;
+    }
+
+    const response = await axios({
+        url,
+        method: options.method || "GET",
+        data: options.data,
+        headers,
+        timeout: options.timeout || 15000,
+        maxRedirects: 0,
+        validateStatus: () => true
+    });
+
+    xem20StoreCookies(response.headers);
+
+    return response;
+}
+
+
+// ------------------------------------------------------------
+// AUTOMATIC LOGIN
+// ------------------------------------------------------------
+
+async function xem20EnsureLogin(force = false) {
+
+    if (
+        !XEM20_EMAIL.trim() ||
+        !XEM20_PASSWORD
+    ) {
+        console.log(
+            "[XEM20] LOGIN DISABLED: Chưa điền tài khoản."
+        );
+
+        return false;
+    }
+
+    if (
+        !force &&
+        XEM20_AUTH_AT &&
+        Date.now() - XEM20_AUTH_AT < XEM20_AUTH_TTL
+    ) {
+        return true;
+    }
+
+    if (XEM20_LOGIN_PROMISE) {
+        return XEM20_LOGIN_PROMISE;
+    }
+
+    XEM20_LOGIN_PROMISE = (async () => {
+
+        try {
+
+            console.log("[XEM20] LOGIN START");
+
+            const loginPage =
+                await xem20Request(
+                    `${XEM20_BASE_URL}/login`
+                );
+
+            if (
+                loginPage.status < 200 ||
+                loginPage.status >= 400
+            ) {
+                throw new Error(
+                    `GET login failed: ${loginPage.status}`
+                );
+            }
+
+            const loginHtml =
+                String(loginPage.data || "");
+
+            const tokenMatch =
+                loginHtml.match(
+                    /name="_token"\s+value="([^"]+)"/i
+                );
+
+            if (!tokenMatch) {
+                throw new Error(
+                    "Không tìm thấy CSRF token tại trang đăng nhập."
+                );
+            }
+
+            const csrf =
+                tokenMatch[1];
+
+            const xsrfCookie =
+                XEM20_COOKIE_JAR.get("XSRF-TOKEN") || "";
+
+            let xsrfToken = xsrfCookie;
+
+            try {
+                xsrfToken =
+                    decodeURIComponent(xsrfCookie);
+            } catch (_) {}
+
+            const body =
+                new URLSearchParams({
+                    _token: csrf,
+                    login: XEM20_EMAIL.trim(),
+                    password: XEM20_PASSWORD,
+                    remember: "on"
+                }).toString();
+
+            const loginResponse =
+                await xem20Request(
+                    `${XEM20_BASE_URL}/login`,
+                    {
+                        method: "POST",
+                        data: body,
+                        headers: {
+                            "Referer":
+                                `${XEM20_BASE_URL}/login`,
+                            "Origin":
+                                XEM20_BASE_URL,
+                            "Content-Type":
+                                "application/x-www-form-urlencoded",
+                            "X-XSRF-TOKEN":
+                                xsrfToken,
+                            "Accept":
+                                "text/html,application/xhtml+xml,*/*"
+                        }
+                    }
+                );
+
+            console.log(
+                "[XEM20] LOGIN RESPONSE:",
+                {
+                    status: loginResponse.status,
+                    hasSession:
+                        XEM20_COOKIE_JAR.has(
+                            "phimhdchill-session"
+                        )
+                }
+            );
+
+            // Kiểm tra lại bằng trang chủ.
+            const home =
+                await xem20Request(
+                    `${XEM20_BASE_URL}/`
+                );
+
+            const homeHtml =
+                String(home.data || "");
+
+            const stillLogin =
+                /form#cd-login-form/i.test(homeHtml) ||
+                /input\[type=password\]\[name=password\]/i.test(homeHtml);
+
+            if (
+                stillLogin ||
+                home.status >= 400
+            ) {
+                throw new Error(
+                    "Xem20 chưa xác nhận phiên đăng nhập."
+                );
+            }
+
+            XEM20_AUTH_AT = Date.now();
+
+            console.log(
+                "[XEM20] LOGIN SUCCESS"
+            );
+
+            return true;
+
+        } catch (error) {
+
+            XEM20_AUTH_AT = 0;
+
+            console.error(
+                "[XEM20] LOGIN ERROR:",
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+
+            return false;
+
+        } finally {
+            XEM20_LOGIN_PROMISE = null;
+        }
+
+    })();
+
+    return XEM20_LOGIN_PROMISE;
+}
+
+
+// ------------------------------------------------------------
+// AUTHENTICATED DOCUMENT FETCH
+// ------------------------------------------------------------
+
+async function xem20FetchDoc(
+    url,
+    retry = true
+) {
+    const authenticated =
+        await xem20EnsureLogin();
+
+    if (!authenticated) {
+        return null;
+    }
+
+    try {
+
+        const response =
+            await xem20Request(url, {
+                headers: {
+                    "Referer":
+                        `${XEM20_BASE_URL}/`
+                }
+            });
+
+        const html =
+            String(response.data || "");
+
+        const loginWall =
+            /form#cd-login-form/i.test(html) ||
+            /input\[type=password\]\[name=password\]/i.test(html);
+
+        if (
+            loginWall &&
+            retry
+        ) {
+            console.log(
+                "[XEM20] SESSION EXPIRED — RELOGIN"
+            );
+
+            XEM20_AUTH_AT = 0;
+
+            const relogin =
+                await xem20EnsureLogin(true);
+
+            if (!relogin) return null;
+
+            return xem20FetchDoc(url, false);
+        }
+
+        if (
+            response.status < 200 ||
+            response.status >= 400
+        ) {
+            console.log(
+                "[XEM20] DOCUMENT HTTP ERROR:",
+                response.status,
+                url
+            );
+
+            return null;
+        }
+
+        return {
+            html,
+            url:
+                response.request?.res?.responseUrl ||
+                url,
+            status:
+                response.status
+        };
+
+    } catch (error) {
+
+        console.log(
+            "[XEM20] FETCH ERROR:",
+            error?.message || error
+        );
+
+        return null;
+    }
+}
+
+// ============================================================
+// [PRV-XEM20.02] SEARCH + DETAIL + RELEASE PARSER
+// ============================================================
+
+function xem20NormalizeTitle(value) {
+    return String(value || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+
+function xem20TitleScore(a, b) {
+
+    const first =
+        xem20NormalizeTitle(a);
+
+    const second =
+        xem20NormalizeTitle(b);
+
+    if (!first || !second) return 0;
+
+    if (first === second) return 1;
+
+    const aWords =
+        new Set(first.split(" "));
+
+    const bWords =
+        new Set(second.split(" "));
+
+    let common = 0;
+
+    for (const word of aWords) {
+        if (bWords.has(word)) common++;
+    }
+
+    return common /
+        Math.max(aWords.size, bWords.size);
+}
+
+
+// ------------------------------------------------------------
+// SEARCH RESULT PARSER
+// ------------------------------------------------------------
+
+function xem20ParseSearch(html) {
+
+    const $ = cheerio.load(html);
+
+    const results = [];
+
+    $(".cd-card").each((_, element) => {
+
+        const card = $(element);
+
+        const anchor =
+            card.find("a[href]").first();
+
+        const href =
+            String(
+                anchor.attr("href") || ""
+            ).trim();
+
+        const title =
+            String(
+                card.find(".cd-card__title").first().text() ||
+                card.find("img").first().attr("alt") ||
+                ""
+            ).trim();
+
+        if (!href || !title) return;
+
+        if (
+            /^(tập|full)\s*\d+/i.test(title)
+        ) {
+            return;
+        }
+
+        const image =
+            String(
+                card.find("img").first().attr("src") ||
+                ""
+            ).trim();
+
+        const badges = [];
+
+        card.find(
+            ".cd-poster-badge--bottom-left"
+        ).each((__, badge) => {
+            const value =
+                String($(badge).text() || "").trim();
+
+            if (value) badges.push(value);
+        });
+
+        let pageUrl = href;
+
+        try {
+            pageUrl =
+                new URL(href, XEM20_BASE_URL).href;
+        } catch (_) {
+            return;
+        }
+
+        results.push({
+            title,
+            url: pageUrl,
+            image,
+            badges
+        });
+    });
+
+    const seen = new Set();
+
+    return results.filter(item => {
+        if (seen.has(item.url)) return false;
+        seen.add(item.url);
+        return true;
+    });
+}
+
+
+// ------------------------------------------------------------
+// RELEASE PARSER
+// ------------------------------------------------------------
+
+function xem20ParseDetail(
+    html,
+    pageUrl
+) {
+    const $ = cheerio.load(html);
+
+    const title =
+        String(
+            $('meta[property="og:title"]').attr("content") ||
+            $("title").text() ||
+            ""
+        )
+            .replace(/\s*-\s*Thuyết Minh\s*$/i, "")
+            .trim();
+
+    const summary =
+        String(
+            $(".cd-download-hero__summary").text() ||
+            $('meta[property="og:description"]').attr("content") ||
+            ""
+        ).trim();
+
+    const information =
+        String(
+            $("#movie-information").text() ||
+            $("aside").text() ||
+            ""
+        ).trim();
+
+    const yearMatch =
+        (summary + " " + information).match(
+            /Năm\s*([1-2]\d{3})/i
+        );
+
+    const year =
+        yearMatch
+            ? Number(yearMatch[1])
+            : 0;
+
+    const poster =
+        String(
+            $('meta[property="og:image"]').attr("content") ||
+            ""
+        ).trim();
+
+    const releases = [];
+
+    $("article.cd-release").each((_, element) => {
+
+        const article = $(element);
+
+        const form =
+            article.find("form[action]").first();
+
+        const action =
+            String(form.attr("action") || "").trim();
+
+        const idMatch =
+            action.match(
+                /\/download-links\/(\d+)\/access/i
+            );
+
+        if (!idMatch) return;
+
+        const releaseName =
+            String(
+                article.find(".cd-release__name").first().text() ||
+                ""
+            ).trim();
+
+        const releaseMeta =
+            String(
+                article.find(".cd-release__meta").first().text() ||
+                ""
+            ).trim();
+
+        const seasonElement =
+            article.closest("details.cd-season");
+
+        const seasonText =
+            String(
+                seasonElement.find("summary").first().text() ||
+                ""
+            ).trim();
+
+        const seasonMatch =
+            (seasonText + " " + releaseMeta).match(
+                /(?:season|mùa|phần)\s*(\d+)/i
+            );
+
+        const episodeMatch =
+            releaseMeta.match(
+                /Tập\s*(\d+)/i
+            );
+
+        const season =
+            seasonMatch
+                ? Number(seasonMatch[1])
+                : 0;
+
+        const episode =
+            episodeMatch
+                ? Number(episodeMatch[1])
+                : 0;
+
+        let absoluteAction = action;
+
+        try {
+            absoluteAction =
+                new URL(action, pageUrl).href;
+        } catch (_) {
+            return;
+        }
+
+        releases.push({
+            id: idMatch[1],
+            name: releaseName || "Server",
+            meta: releaseMeta,
+            season,
+            episode,
+            action: absoluteAction,
+            pageUrl
+        });
+    });
+
+    return {
+        title,
+        year,
+        poster,
+        releases
+    };
+}
+
+
+// ------------------------------------------------------------
+// SELECT REQUESTED EPISODE / SEASON
+// ------------------------------------------------------------
+
+function xem20SelectReleases(
+    releases,
+    streamType,
+    seasonNumber,
+    episodeNumber
+) {
+    if (!Array.isArray(releases)) return [];
+
+    const isSeries =
+        streamType === "series";
+
+    const targetSeason =
+        Number(seasonNumber || 1);
+
+    const targetEpisode =
+        Number(episodeNumber || 1);
+
+    const selected = [];
+
+    for (const release of releases) {
+
+        if (isSeries) {
+
+            if (
+                release.season &&
+                release.season !== targetSeason
+            ) {
+                continue;
+            }
+
+            if (
+                release.episode &&
+                release.episode !== targetEpisode
+            ) {
+                continue;
+            }
+
+            // Không chọn release không rõ tập
+            // cho các tập lớn hơn 1.
+            if (
+                !release.episode &&
+                targetEpisode > 1
+            ) {
+                continue;
+            }
+
+        } else {
+
+            // Phim lẻ: bỏ các release chỉ rõ là tập.
+            if (release.episode) continue;
+        }
+
+        selected.push(release);
+    }
+
+    return selected;
+}
+
+// ============================================================
+// [PRV-XEM20.03] TICKET + DOWNFSHARE + SSO RESOLVER
+// ============================================================
+
+async function xem20RequestTicket(
+    release,
+    csrf
+) {
+    try {
+
+        const body =
+            new URLSearchParams({
+                _token: csrf
+            }).toString();
+
+        const response =
+            await xem20Request(
+                `${XEM20_BASE_URL}/download-links/${release.id}/access`,
+                {
+                    method: "POST",
+                    data: body,
+                    headers: {
+                        "User-Agent": XEM20_UA,
+                        "Referer": release.pageUrl,
+                        "Accept": "*/*",
+                        "Origin": XEM20_BASE_URL,
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Content-Type":
+                            "application/x-www-form-urlencoded"
+                    }
+                }
+            );
+
+        const location =
+            String(
+                response.headers?.location || ""
+            ).trim();
+
+        if (location) {
+            return new URL(
+                location,
+                XEM20_BASE_URL
+            ).href;
+        }
+
+        // Một số phiên bản có thể trả URL trong body.
+        const bodyText =
+            typeof response.data === "string"
+                ? response.data
+                : JSON.stringify(response.data || {});
+
+        const urlMatch =
+            bodyText.match(
+                /https?:\\?\/\\?\/[^"'\\\s<>]+/i
+            );
+
+        return urlMatch
+            ? urlMatch[0].replace(/\\\//g, "/")
+            : "";
+
+    } catch (error) {
+
+        console.log(
+            "[XEM20] TICKET ERROR:",
+            release.id,
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return "";
+    }
+}
+
+
+// ------------------------------------------------------------
+// DOWNFSHARE COOKIE HELPERS
+// ------------------------------------------------------------
+
+function xem20DownCookieHeader(jar, host) {
+
+    const result = [];
+
+    for (const [domain, cookies] of jar.entries()) {
+
+        if (
+            host === domain ||
+            host.endsWith("." + domain)
+        ) {
+            for (const [name, value] of cookies.entries()) {
+                result.push(`${name}=${value}`);
+            }
+        }
+    }
+
+    return result.join("; ");
+}
+
+
+function xem20StoreDownCookies(jar, responseUrl, headers) {
+
+    const setCookies =
+        headers?.["set-cookie"] || [];
+
+    let host = "";
+
+    try {
+        host = new URL(responseUrl).hostname;
+    } catch (_) {
+        return;
+    }
+
+    for (const rawCookie of setCookies) {
+
+        const first =
+            String(rawCookie || "").split(";")[0];
+
+        const index =
+            first.indexOf("=");
+
+        if (index <= 0) continue;
+
+        const name =
+            first.slice(0, index).trim();
+
+        const value =
+            first.slice(index + 1).trim();
+
+        const domainMatch =
+            String(rawCookie).match(/domain=\.?([^;]+)/i);
+
+        const domain =
+            domainMatch
+                ? domainMatch[1].trim().toLowerCase()
+                : host.toLowerCase();
+
+        if (!jar.has(domain)) {
+            jar.set(domain, new Map());
+        }
+
+        jar.get(domain).set(name, value);
+    }
+}
+
+
+// ------------------------------------------------------------
+// FOLLOW DOWNFSHARE / SSO REDIRECTS
+// ------------------------------------------------------------
+
+async function xem20WalkSso(
+    startUrl,
+    initialReferer
+) {
+    let currentUrl =
+        String(startUrl || "").trim();
+
+    if (!/^https?:\/\//i.test(currentUrl)) {
+        return null;
+    }
+
+    const cookieJar = new Map();
+
+    let referer =
+        initialReferer || XEM20_BASE_URL + "/";
+
+    for (let hop = 0; hop < 12; hop++) {
+
+        let response;
+
+        try {
+
+            const host =
+                new URL(currentUrl).hostname;
+
+            const cookies =
+                xem20DownCookieHeader(
+                    cookieJar,
+                    host
+                );
+
+            const headers = {
+                "User-Agent": XEM20_UA,
+                "Referer": referer,
+                "Accept": "*/*"
+            };
+
+            if (cookies) {
+                headers.Cookie = cookies;
+            }
+
+            response =
+                await axios.get(
+                    currentUrl,
+                    {
+                        headers,
+                        timeout: 15000,
+                        maxRedirects: 0,
+                        validateStatus: () => true,
+                        responseType: "text"
+                    }
+                );
+
+            xem20StoreDownCookies(
+                cookieJar,
+                currentUrl,
+                response.headers
+            );
+
+        } catch (error) {
+
+            console.log(
+                "[XEM20] SSO HOP ERROR:",
+                hop,
+                error?.message || error
+            );
+
+            return null;
+        }
+
+        const status =
+            Number(response.status || 0);
+
+        const location =
+            String(
+                response.headers?.location || ""
+            ).trim();
+
+        const contentType =
+            String(
+                response.headers?.["content-type"] || ""
+            ).toLowerCase();
+
+        console.log(
+            "[XEM20] SSO HOP:",
+            {
+                hop,
+                status,
+                host: (() => {
+                    try {
+                        return new URL(currentUrl).hostname;
+                    } catch (_) {
+                        return "";
+                    }
+                })(),
+                contentType,
+                hasLocation: Boolean(location)
+            }
+        );
+
+        if (status === 429) {
+            console.log(
+                "[XEM20] DOWNFSHARE QUOTA LIMIT"
+            );
+
+            return null;
+        }
+
+        // Direct media.
+        if (
+            /\.m3u8(?:$|[?#])/i.test(currentUrl) ||
+            /\.mp4(?:$|[?#])/i.test(currentUrl) ||
+            /video\/|application\/vnd\.apple\.mpegurl|application\/x-mpegurl/i.test(contentType)
+        ) {
+            return {
+                url: currentUrl,
+                headers: {
+                    "User-Agent": XEM20_UA,
+                    "Referer": referer
+                },
+                contentType
+            };
+        }
+
+        if (
+            status >= 300 &&
+            status < 400 &&
+            location
+        ) {
+            referer = currentUrl;
+
+            try {
+                currentUrl =
+                    new URL(location, currentUrl).href;
+            } catch (_) {
+                return null;
+            }
+
+            continue;
+        }
+
+        const html =
+            typeof response.data === "string"
+                ? response.data
+                : "";
+
+        // CloudStream source dùng const playUrl = "..."
+        const playMatch =
+            html.match(
+                /const\s+playUrl\s*=\s*"([^"]+)"/i
+            );
+
+        if (playMatch?.[1]) {
+
+            const playUrl =
+                playMatch[1].replace(/\\\//g, "/");
+
+            referer = currentUrl;
+
+            try {
+                currentUrl =
+                    new URL(playUrl, currentUrl).href;
+            } catch (_) {
+                return null;
+            }
+
+            continue;
+        }
+
+        // Hỗ trợ meta refresh.
+        const metaMatch =
+            html.match(
+                /http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)/i
+            );
+
+        if (metaMatch?.[1]) {
+
+            referer = currentUrl;
+
+            try {
+                currentUrl =
+                    new URL(
+                        metaMatch[1],
+                        currentUrl
+                    ).href;
+            } catch (_) {
+                return null;
+            }
+
+            continue;
+        }
+
+        return null;
+    }
+
+    console.log(
+        "[XEM20] SSO STOP: vượt quá số hop cho phép."
+    );
+
+    return null;
+}
+
+
+// ------------------------------------------------------------
+// RESOLVE DOWNLOAD TICKET
+// ------------------------------------------------------------
+
+async function xem20ResolveTicket(
+    ticketUrl,
+    release
+) {
+    if (!ticketUrl) return null;
+
+    const candidates = [ticketUrl];
+
+    const hashMatch =
+        ticketUrl.match(
+            /\/x\/([0-9a-f]{16,})/i
+        );
+
+    if (hashMatch) {
+
+        const base =
+            `https://dl.downfshare.top/x/${hashMatch[1]}`;
+
+        candidates.push(
+            `${base}/play`,
+            `${base}/download`
+        );
+    }
+
+    for (const candidate of [...new Set(candidates)]) {
+
+        const resolved =
+            await xem20WalkSso(
+                candidate,
+                release.pageUrl
+            );
+
+        if (!resolved?.url) continue;
+
+        // Kiểm tra khả năng truy cập media.
+        try {
+
+            const probe =
+                await axios.get(
+                    resolved.url,
+                    {
+                        headers: {
+                            ...resolved.headers,
+                            Range: "bytes=0-1"
+                        },
+                        timeout: 12000,
+                        maxRedirects: 3,
+                        validateStatus: () => true
+                    }
+                );
+
+            const contentType =
+                String(
+                    probe.headers?.["content-type"] ||
+                    resolved.contentType ||
+                    ""
+                ).toLowerCase();
+
+            const isMedia =
+                probe.status === 200 ||
+                probe.status === 206;
+
+            const looksLikeMedia =
+                /video\/|mpegurl|octet-stream|matroska/i.test(contentType) ||
+                /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(resolved.url);
+
+            if (isMedia && looksLikeMedia) {
+                return {
+                    ...resolved,
+                    contentType
+                };
+            }
+
+            // Nếu URL là HLS/MP4 rõ ràng, giữ lại
+            // khi máy chủ không hỗ trợ Range.
+            if (
+                /\.(m3u8|mp4)(?:$|[?#])/i.test(resolved.url)
+            ) {
+                return resolved;
+            }
+
+        } catch (error) {
+
+            if (
+                /\.(m3u8|mp4)(?:$|[?#])/i.test(resolved.url)
+            ) {
+                return resolved;
+            }
+
+            console.log(
+                "[XEM20] MEDIA PROBE ERROR:",
+                error?.message || error
+            );
+        }
+    }
+
+    return null;
+}
+
+// ============================================================
+// [PRV-XEM20.04] XEM20 MAIN PROVIDER
+// ============================================================
+
+async function scrapeXem20(
+    movieName,
+    movieYear = 0,
+    seasonNumber = 0,
+    episodeNumber = 1,
+    streamType = "movie"
+) {
+    const streams = [];
+
+    const startedAt = Date.now();
+
+    try {
+
+        if (
+            !String(movieName || "").trim()
+        ) {
+            return streams;
+        }
+
+        if (
+            !XEM20_EMAIL.trim() ||
+            !XEM20_PASSWORD
+        ) {
+            console.log(
+                "[XEM20] SKIPPED: chưa điền tài khoản."
+            );
+
+            return streams;
+        }
+
+        console.log(
+            "[XEM20] START:",
+            {
+                title: movieName,
+                year: movieYear,
+                season: seasonNumber,
+                episode: episodeNumber,
+                type: streamType
+            }
+        );
+
+
+        // ----------------------------------------------------
+        // 1. SEARCH
+        // ----------------------------------------------------
+
+        const searchUrl =
+            XEM20_BASE_URL +
+            "/tim-kiem?keyword=" +
+            encodeURIComponent(movieName);
+
+        const searchPage =
+            await xem20FetchDoc(searchUrl);
+
+        if (!searchPage?.html) {
+            console.log(
+                "[XEM20] SEARCH PAGE FAILED"
+            );
+
+            return streams;
+        }
+
+        const candidates =
+            xem20ParseSearch(searchPage.html)
+                .map(item => ({
+                    ...item,
+                    score:
+                        xem20TitleScore(
+                            movieName,
+                            item.title
+                        )
+                }))
+                .filter(item =>
+                    item.score >= 0.35
+                )
+                .sort((a, b) =>
+                    b.score - a.score
+                )
+                .slice(0, 3);
+
+        console.log(
+            "[XEM20] SEARCH CANDIDATES:",
+            candidates.map(item => ({
+                title: item.title,
+                score: item.score,
+                url: item.url
+            }))
+        );
+
+        if (!candidates.length) {
+            console.log(
+                "[XEM20] NO SEARCH MATCH"
+            );
+
+            return streams;
+        }
+
+
+        // ----------------------------------------------------
+        // 2. DETAIL — CHỌN PHIM ĐÚNG NĂM
+        // ----------------------------------------------------
+
+        let selectedMovie = null;
+
+        for (const candidate of candidates) {
+
+            const detailPage =
+                await xem20FetchDoc(candidate.url);
+
+            if (!detailPage?.html) continue;
+
+            const detail =
+                xem20ParseDetail(
+                    detailPage.html,
+                    candidate.url
+                );
+
+            const detailScore =
+                xem20TitleScore(
+                    movieName,
+                    detail.title || candidate.title
+                );
+
+            if (
+                detailScore < 0.35
+            ) {
+                continue;
+            }
+
+            if (
+                Number(movieYear) > 0 &&
+                detail.year > 0 &&
+                Math.abs(
+                    Number(movieYear) - detail.year
+                ) > 1
+            ) {
+                console.log(
+                    "[XEM20] YEAR MISMATCH:",
+                    {
+                        requested: movieYear,
+                        found: detail.year,
+                        title: detail.title
+                    }
+                );
+
+                continue;
+            }
+
+            selectedMovie = {
+                ...candidate,
+                ...detail,
+                html: detailPage.html,
+                url: candidate.url
+            };
+
+            break;
+        }
+
+        if (!selectedMovie) {
+            console.log(
+                "[XEM20] NO VERIFIED DETAIL MATCH"
+            );
+
+            return streams;
+        }
+
+
+        // ----------------------------------------------------
+        // 3. SELECT RELEASES
+        // ----------------------------------------------------
+
+        const selectedReleases =
+            xem20SelectReleases(
+                selectedMovie.releases,
+                streamType,
+                seasonNumber,
+                episodeNumber
+            );
+
+        console.log(
+            "[XEM20] RELEASE SELECTION:",
+            {
+                title: selectedMovie.title,
+                siteYear: selectedMovie.year,
+                total: selectedMovie.releases.length,
+                selected: selectedReleases.length,
+                season: seasonNumber,
+                episode: episodeNumber
+            }
+        );
+
+        if (!selectedReleases.length) {
+            return streams;
+        }
+
+
+        // ----------------------------------------------------
+        // 4. CSRF TOKEN
+        // ----------------------------------------------------
+
+        const csrfMatch =
+            selectedMovie.html.match(
+                /name="_token"\s+value="([^"]+)"/i
+            );
+
+        if (!csrfMatch) {
+            console.log(
+                "[XEM20] DETAIL CSRF NOT FOUND"
+            );
+
+            return streams;
+        }
+
+        const csrf =
+            csrfMatch[1];
+
+
+        // ----------------------------------------------------
+        // 5. REQUEST TICKETS — PARALLEL
+        // ----------------------------------------------------
+
+        const limitedReleases =
+            selectedReleases.slice(0, 6);
+
+        const ticketResults =
+            await Promise.allSettled(
+                limitedReleases.map(release =>
+                    xem20RequestTicket(
+                        release,
+                        csrf
+                    )
+                )
+            );
+
+        const ticketEntries = [];
+
+        ticketResults.forEach((result, index) => {
+
+            if (
+                result.status !== "fulfilled" ||
+                !result.value
+            ) {
+                return;
+            }
+
+            ticketEntries.push({
+                release: limitedReleases[index],
+                ticketUrl: result.value
+            });
+        });
+
+        console.log(
+            "[XEM20] TICKETS:",
+            ticketEntries.length
+        );
+
+
+        // ----------------------------------------------------
+        // 6. RESOLVE MEDIA — PARALLEL
+        // ----------------------------------------------------
+
+        const resolveResults =
+            await Promise.allSettled(
+                ticketEntries.map(entry =>
+                    xem20ResolveTicket(
+                        entry.ticketUrl,
+                        entry.release
+                    )
+                )
+            );
+
+        for (
+            let index = 0;
+            index < resolveResults.length;
+            index++
+        ) {
+            const result =
+                resolveResults[index];
+
+            if (
+                result.status !== "fulfilled" ||
+                !result.value?.url
+            ) {
+                continue;
+            }
+
+            const entry =
+                ticketEntries[index];
+
+            const release =
+                entry.release;
+
+            const resolved =
+                result.value;
+
+            const mediaUrl =
+                String(resolved.url || "").trim();
+
+            if (
+                !/^https?:\/\//i.test(mediaUrl)
+            ) {
+                continue;
+            }
+
+            const mediaType =
+                /\.m3u8(?:$|[?#])/i.test(mediaUrl) ||
+                /mpegurl/i.test(
+                    resolved.contentType || ""
+                )
+                    ? "m3u8"
+                    : "video";
+
+            const releaseLabel =
+                [
+                    release.name,
+                    release.meta
+                ]
+                    .filter(Boolean)
+                    .join(" · ");
+
+            const episodeLabel =
+                streamType === "series"
+                    ? `S${Number(seasonNumber || 1)}E${Number(episodeNumber || 1)}`
+                    : "Phim lẻ";
+
+            streams.push({
+
+                name:
+                    "▶️ [Xem20] " +
+                    (releaseLabel || "Direct"),
+
+                title:
+                    String(movieName || selectedMovie.title) +
+                    " · " +
+                    episodeLabel,
+
+                url:
+                    mediaUrl,
+
+                type:
+                    mediaType,
+
+                provider:
+                    "xem20",
+
+                source:
+                    "xem20",
+
+                headers:
+                    resolved.headers || {},
+
+                behaviorHints: {
+                    bingeGroup: "xem20",
+
+                    proxyHeaders: {
+                        request:
+                            resolved.headers || {}
+                    }
+                }
+
+            });
+
+        }
+
+
+        // ----------------------------------------------------
+        // 7. FINAL LOG
+        // ----------------------------------------------------
+
+        console.log(
+            "[XEM20] FINAL STREAMS:",
+            JSON.stringify(
+                streams.map(stream => ({
+                    name: stream.name,
+                    title: stream.title,
+                    url: stream.url,
+                    type: stream.type
+                }))
+            )
+        );
+
+        console.log(
+            "[XEM20] COMPLETE:",
+            {
+                count: streams.length,
+                elapsedMs:
+                    Date.now() - startedAt
+            }
+        );
+
+        return streams;
+
+    } catch (error) {
+
+        console.error(
+            "[XEM20] PROVIDER ERROR:",
+            error?.response?.status ||
+            error?.stack ||
+            error?.message ||
+            error
+        );
+
+        return streams;
+    }
+}
+
+
 
 // ============================================================
 // [REG-003] [PROVIDERS: VMTTV, LIVE-OTHER] LIVE / IPTV PROVIDER SYSTEM
@@ -42848,6 +44393,59 @@ const animeProvidersEnabled =
       }
   })();
 
+// =====================================================
+// [STREMIO-XEM20.01] XEM20 — PARALLEL PROVIDER
+// =====================================================
+
+const xem20Promise = (async () => {
+
+    const timeoutMs = 15000;
+
+    let timeoutHandle;
+
+    try {
+
+        const timeoutPromise =
+            new Promise(resolve => {
+                timeoutHandle = setTimeout(
+                    () => resolve(null),
+                    timeoutMs
+                );
+            });
+
+        const result = await Promise.race([
+            scrapeXem20(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType
+            ),
+            timeoutPromise
+        ]);
+
+        return Array.isArray(result)
+            ? result
+            : [];
+
+    } catch (error) {
+
+        console.log(
+            "[XEM20] PARALLEL ERROR:",
+            error?.message || error
+        );
+
+        return [];
+
+    } finally {
+
+        if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+        }
+
+    }
+
+})();
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
@@ -43200,6 +44798,37 @@ console.log(
       onflix.length
   );
 
+// =====================================================
+// [STREMIO-XEM20.02] COLLECT XEM20 RESULT
+// =====================================================
+
+let xem20 = [];
+
+try {
+
+    const xem20Result =
+        await xem20Promise;
+
+    xem20 =
+        Array.isArray(xem20Result)
+            ? xem20Result
+            : [];
+
+} catch (error) {
+
+    console.log(
+        "[XEM20] COLLECT ERROR:",
+        error?.message || error
+    );
+
+    xem20 = [];
+
+}
+
+console.log(
+    "[XEM20] STREAM COUNT:",
+    xem20.length
+);
 
 // =====================================================
 // DEBUG — STREAM THỰC TẾ SAU FETCH
@@ -43264,7 +44893,6 @@ const directStreams = [
     ...kkphim,
 
     ...vsmov,
-
     ...longtieng,
 
     ...phimhdcs,
@@ -43272,6 +44900,8 @@ const directStreams = [
     ...animehay,
 
     ...onflix,
+
+    ...xem20,
 
     nguoncClientStream
 
