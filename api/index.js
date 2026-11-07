@@ -34320,6 +34320,130 @@ async function fetchAnimeHay(
         }
 
         // -----------------------------------------------------
+        // 4.5. VERIFIED IMDb DETAIL URL FALLBACK
+        // Một số phim có trang chi tiết nhưng không xuất hiện
+        // trong kết quả tìm kiếm AnimeHay.
+        // Chỉ dùng URL đã xác minh theo IMDb ID.
+        // -----------------------------------------------------
+
+        if (!selected?.url) {
+            const imdbKey =
+                String(imdbId || "").match(/tt\d+/)?.[0] || "";
+
+            const knownAnimeHayDetails = {
+                "tt0434706": {
+                    path: "/thong-tin-phim/monster-553.html",
+                    title: "Monster",
+                    year: 2005
+                }
+            };
+
+            const knownDetail =
+                knownAnimeHayDetails[imdbKey];
+
+            if (
+                knownDetail &&
+                titleMatches(originalTitle, knownDetail.title) &&
+                (
+                    !Number(movieYear) ||
+                    Math.abs(
+                        Number(movieYear) -
+                        knownDetail.year
+                    ) <= 1
+                )
+            ) {
+                const knownUrl =
+                    domain + knownDetail.path;
+
+                try {
+                    console.log(
+                        "[ANIMEHAY] TRY VERIFIED IMDb DETAIL:",
+                        {
+                            imdbKey,
+                            title: knownDetail.title,
+                            url: knownUrl
+                        }
+                    );
+
+                    const response = await axios.get(
+                        knownUrl,
+                        {
+                            timeout: 12000,
+                            maxRedirects: 5,
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+                                "Referer": domain + "/"
+                            }
+                        }
+                    );
+
+                    const $ = cheerio.load(response.data || "");
+
+                    const detailTitle =
+                        $("h1").first().text().trim();
+
+                    const episodeCount =
+                        $(".aim-episodes a[href]").length;
+
+                    const finalUrl =
+                        response.request?.res?.responseUrl ||
+                        knownUrl;
+
+                    if (
+                        detailTitle &&
+                        titleMatches(
+                            knownDetail.title,
+                            detailTitle
+                        ) &&
+                        episodeCount > 0 &&
+                        /\/thong-tin-phim\//i.test(
+                            new URL(finalUrl).pathname
+                        )
+                    ) {
+                        selected = {
+                            title: detailTitle,
+                            url: finalUrl,
+                            source: "verified-imdb-detail",
+                            matchedSearchTitle: originalTitle
+                        };
+
+                        console.log(
+                            "[ANIMEHAY] VERIFIED IMDb DETAIL SELECTED:",
+                            {
+                                imdbKey,
+                                title: detailTitle,
+                                episodeCount,
+                                url: finalUrl
+                            }
+                        );
+                    } else {
+                        console.log(
+                            "[ANIMEHAY] VERIFIED DETAIL REJECTED:",
+                            {
+                                imdbKey,
+                                detailTitle,
+                                episodeCount,
+                                finalUrl
+                            }
+                        );
+                    }
+                } catch (error) {
+                    console.log(
+                        "[ANIMEHAY] VERIFIED DETAIL ERROR:",
+                        {
+                            imdbKey,
+                            url: knownUrl,
+                            message:
+                                error?.message ||
+                                String(error)
+                        }
+                    );
+                }
+            }
+        }
+
+        // -----------------------------------------------------
         // 5. Không tìm được kết quả phù hợp thì dừng.
         // -----------------------------------------------------
         if (!selected?.url) {
