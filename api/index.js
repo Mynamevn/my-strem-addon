@@ -49322,17 +49322,156 @@ async function startNguonC() {
         MOVIE_TITLE;
 
     const items =
-        await searchNguonC();
+    await searchNguonC();
 
-    if (
-        !items.length
-    ) {
+let directSlugEntry = null;
+let directSlugDetail = null;
 
-        throw new Error(
-            "NguonC không trả về kết quả."
-        );
+// =====================================================
+// DIRECT SLUG FALLBACK
+// Chạy khi API search bị 403 hoặc không trả kết quả.
+// Ví dụ: Monster -> /api/film/monster
+// =====================================================
 
+if (!items.length) {
+    const directSlug = normalizeTitle(MOVIE_TITLE)
+        .replace(/\s+/g, "-")
+        .replace(/^-+|-+$/g, "");
+
+    console.warn(
+        "[NGUONC CLIENT] SEARCH EMPTY - TRY DIRECT SLUG:",
+        {
+            title: MOVIE_TITLE,
+            slug: directSlug
+        }
+    );
+
+    if (directSlug) {
+        try {
+            const detail =
+                await loadDetail(directSlug);
+
+            const movie =
+                detail?.movie ||
+                detail?.data?.movie ||
+                detail?.data?.item ||
+                detail?.data ||
+                {};
+
+            const detailNames = [
+                movie?.name,
+                movie?.origin_name,
+                movie?.original_name
+            ]
+                .map(normalizeTitle)
+                .filter(Boolean);
+
+            const exactTitleMatch =
+                detailNames.includes(
+                    normalizeTitle(MOVIE_TITLE)
+                );
+
+            const rawYear =
+                movie?.year ||
+                movie?.release_year ||
+                movie?.releaseYear ||
+                "";
+
+            const detailYear =
+                Number(
+                    String(rawYear).match(
+                        /(?:19|20)\d{2}/
+                    )?.[0] || 0
+                );
+
+            const yearMatch =
+                !MOVIE_YEAR ||
+                !detailYear ||
+                Math.abs(
+                    detailYear - MOVIE_YEAR
+                ) <= 1;
+
+            const detailEpisodes =
+                movie?.episodes ||
+                detail?.episodes ||
+                detail?.data?.episodes ||
+                [];
+
+            const hasEpisodes =
+                Array.isArray(detailEpisodes) &&
+                detailEpisodes.length > 0;
+
+            console.log(
+                "[NGUONC CLIENT] DIRECT SLUG VERIFY:",
+                {
+                    requestedTitle: MOVIE_TITLE,
+                    detailNames,
+                    requestedYear: MOVIE_YEAR,
+                    detailYear,
+                    exactTitleMatch,
+                    yearMatch,
+                    episodeGroups:
+                        Array.isArray(detailEpisodes)
+                            ? detailEpisodes.length
+                            : 0
+                }
+            );
+
+            if (
+                exactTitleMatch &&
+                yearMatch &&
+                hasEpisodes
+            ) {
+                directSlugDetail = detail;
+
+                directSlugEntry = {
+                    item: {
+                        ...movie,
+                        slug: movie?.slug || directSlug
+                    },
+                    score: 10000
+                };
+
+                console.log(
+                    "[NGUONC CLIENT] DIRECT SLUG ACCEPTED:",
+                    {
+                        title: movie.name,
+                        year: detailYear,
+                        slug: directSlugEntry.item.slug
+                    }
+                );
+            } else {
+                console.warn(
+                    "[NGUONC CLIENT] DIRECT SLUG REJECTED:",
+                    {
+                        title: MOVIE_TITLE,
+                        slug: directSlug
+                    }
+                );
+            }
+
+        } catch (error) {
+            console.warn(
+                "[NGUONC CLIENT] DIRECT SLUG ERROR:",
+                {
+                    slug: directSlug,
+                    message:
+                        error?.message ||
+                        String(error)
+                }
+            );
+        }
     }
+}
+
+if (
+    !items.length &&
+    !directSlugEntry
+) {
+    throw new Error(
+        "NguonC không tìm thấy phim qua API search hoặc direct slug. Đã dừng để tránh phát nhầm phim."
+    );
+}
 
     const ranked =
         items
@@ -49526,7 +49665,14 @@ console.log(
 );
 
 selectedEntry =
-    eligibleEntries[0] || null;
+    directSlugEntry ||
+    eligibleEntries[0] ||
+    null;
+
+selectedDetail =
+    directSlugEntry
+        ? directSlugDetail
+        : null;
 
 if (!selectedEntry) {
     console.warn(
