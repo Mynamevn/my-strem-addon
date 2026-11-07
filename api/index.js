@@ -23099,43 +23099,142 @@ console.log(
     // Lượt 1: tìm bằng tên gốc và biến thể cú pháp.
     items = await searchKKPhimTerms(uniqueSearchTerms);
 
-    /*
-     * Lượt 2: chỉ khi lượt đầu không trả kết quả,
-     * thử tên thay thế từ metadata chung.
-     */
-    if (!items.length) {
-        console.log(
-            "[KKPHIM] BASIC SEARCH EMPTY; TRY METADATA ALIASES"
-        );
+    
+/*
+ * Lượt 2:
+ * Nếu kết quả tìm kiếm ban đầu không có ứng viên
+ * phù hợp với tên và năm yêu cầu, tìm thêm alias
+ * từ metadata IMDb/Wikidata.
+ *
+ * Không được bỏ qua alias chỉ vì API trả về
+ * một số kết quả không liên quan.
+ */
 
-        const metadataTerms =
-            await kkphimGetMetadataTitleVariants(
-                movieName,
-                imdbId,
-                movieYear
+const hasYearTitleCandidate = items.some(item => {
+    const candidateYear =
+        Number(item?.year) || 0;
+
+    const requestedYear =
+        Number(movieYear) || 0;
+
+    const yearCompatible =
+        !requestedYear ||
+        !candidateYear ||
+        candidateYear === requestedYear;
+
+    if (!yearCompatible) return false;
+
+    const candidateTitles = [
+        item?.name,
+        item?.origin_name
+    ]
+        .map(kkphimNormalizeTitle)
+        .filter(Boolean);
+
+    return candidateTitles.some(candidateTitle =>
+        uniqueSearchTerms.some(term => {
+            const searchTitle =
+                kkphimNormalizeTitle(term);
+
+            if (!searchTitle) return false;
+
+            return (
+                candidateTitle === searchTitle ||
+                (
+                    candidateTitle.length >= 8 &&
+                    searchTitle.length >= 8 &&
+                    (
+                        candidateTitle.includes(searchTitle) ||
+                        searchTitle.includes(candidateTitle)
+                    )
+                )
             );
+        })
+    );
+});
 
-        uniqueSearchTerms = [
-            ...new Set([
-                ...uniqueSearchTerms,
-                ...metadataTerms
-            ])
-        ].slice(0, 12);
+if (!hasYearTitleCandidate) {
 
-        const basicKeys = new Set(
-            kkphimBuildBasicTitleVariants(movieName)
-                .map(kkphimNormalizeTitle)
+    console.log(
+        "[KKPHIM] NO YEAR + TITLE CANDIDATE; TRY METADATA ALIASES"
+    );
+
+    const metadataTerms =
+        await kkphimGetMetadataTitleVariants(
+            movieName,
+            imdbId,
+            movieYear
         );
 
-        const aliasTerms = uniqueSearchTerms.filter(
-            term => !basicKeys.has(kkphimNormalizeTitle(term))
+    const basicKeys = new Set(
+        kkphimBuildBasicTitleVariants(movieName)
+            .map(kkphimNormalizeTitle)
+    );
+
+    const aliasTerms = [
+        ...new Set(metadataTerms)
+    ].filter(term =>
+        !basicKeys.has(
+            kkphimNormalizeTitle(term)
+        )
+    );
+
+    if (aliasTerms.length) {
+
+        console.log(
+            "[KKPHIM] ALIAS SEARCH TERMS:",
+            aliasTerms
         );
 
-        if (aliasTerms.length) {
-            console.log("[KKPHIM] Alias search terms:", aliasTerms);
-            items = await searchKKPhimTerms(aliasTerms);
+        const aliasItems =
+            await searchKKPhimTerms(aliasTerms);
+
+        // Gộp kết quả hai lượt, không làm mất
+        // những ứng viên đã tìm được trước đó.
+        const mergedItems = new Map();
+
+        for (const item of [
+            ...items,
+            ...aliasItems
+        ]) {
+
+            const key = String(
+                item?.slug ||
+                item?._id ||
+                item?.id ||
+                `${item?.name || ""}|${item?.year || ""}`
+            ).trim();
+
+            if (
+                key &&
+                !mergedItems.has(key)
+            ) {
+                mergedItems.set(key, item);
+            }
         }
+
+        items = [
+            ...mergedItems.values()
+        ];
+
+        console.log(
+            "[KKPHIM] ALIAS MERGED:",
+            {
+                aliasTerms,
+                aliasCount: aliasItems.length,
+                totalCount: items.length
+            }
+        );
+
+    } else {
+
+        console.log(
+            "[KKPHIM] NO ADDITIONAL METADATA ALIASES"
+        );
+
     }
+
+}
 
     console.log("[KKPHIM] MERGED SEARCH RESULTS:", {
         terms: uniqueSearchTerms,
