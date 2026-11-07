@@ -20312,47 +20312,105 @@ function xem20ParseDetail(html, pageUrl) {
         });
     });
 
-    const releaseDebug = [];
+        const releaseCards = [];
 
-    $("body").find("*").each((_, element) => {
-        if (releaseDebug.length >= 10) return;
+    $(".cd-release").each((_, element) => {
+        const card = $(element);
 
-        const node = $(element);
-        const nodeText = String(node.text() || "")
-            .replace(/\s+/g, " ")
-            .trim();
+        const safeAttrs = node => {
+            const result = {};
 
-        if (
-            nodeText.length >= 20 &&
-            nodeText.length <= 700 &&
-            /\.mp4|\.mkv|Đăng nhập để tải/i.test(nodeText)
+            for (const [key, value] of Object.entries(
+                node?.attribs || {}
+            )) {
+                if (/token|csrf|password|cookie|secret|authorization/i.test(key)) {
+                    result[key] = "[redacted]";
+                    continue;
+                }
+
+                result[key] = String(value || "").slice(0, 500);
+            }
+
+            return result;
+        };
+
+        const children = [];
+
+        card.find(
+            "a, button, form, input, [data-release-id], [data-id], [id]"
+        ).each((__, child) => {
+            const node = $(child);
+
+            children.push({
+                tag: child.tagName,
+                attrs: safeAttrs(child),
+                text: String(node.text() || "")
+                    .replace(/\s+/g, " ")
+                    .trim()
+                    .slice(0, 200)
+            });
+        });
+
+        releaseCards.push({
+            attrs: safeAttrs(element),
+            name: card.find(".cd-release__name").first().text().trim(),
+            meta: card.find(".cd-release__meta").first().text().trim(),
+            children
+        });
+    });
+
+    const scriptMatches = [];
+
+    $("script").each((_, element) => {
+        if (scriptMatches.length >= 15) return;
+
+        const source = String($(element).html() || "");
+
+        const pattern =
+            /download-links|release[_-]?id|releaseId|ticket|downloadLink|download-link/ig;
+
+        let match;
+
+        while (
+            (match = pattern.exec(source)) &&
+            scriptMatches.length < 15
         ) {
-            const html = $.html(element)
-                .replace(
-                    /((?:value|content)=["'])[^"']*(["'])/gi,
-                    '$1[redacted]$2'
-                )
-                .slice(0, 1400);
+            const start = Math.max(0, match.index - 250);
+            const end = Math.min(source.length, match.index + 500);
 
-            releaseDebug.push({
-                tag: element.tagName,
-                className: node.attr("class") || "",
-                id: node.attr("id") || "",
-                text: nodeText.slice(0, 500),
-                html
+            let excerpt = source.slice(start, end);
+
+            excerpt = excerpt
+                .replace(
+                    /(_token|csrf|password|authorization|cookie)\s*[:=]\s*["'][^"']*["']/gi,
+                    '$1:"[redacted]"'
+                );
+
+            scriptMatches.push({
+                keyword: match[0],
+                excerpt
             });
         }
     });
 
+    const accountLinks = $("a[href]").filter((_, element) => {
+        const text = String($(element).text() || "").trim();
+
+        return /đăng xuất|logout|tài khoản|account|profile/i.test(text);
+    }).map((_, element) => ({
+        text: String($(element).text() || "").trim(),
+        href: String($(element).attr("href") || "")
+    })).get();
+
     console.log(
-        "[XEM20] RELEASE HTML DEBUG:",
+        "[XEM20] RELEASE STRUCTURE:",
         JSON.stringify({
-            formCount: $("form").length,
-            downloadForms: $("form[action*='download-links']")
-                .length,
-            downloadAnchors: $("a[href*='download-links']")
-                .length,
-            releaseDebug
+            releaseCardCount: $(".cd-release").length,
+            releaseCards,
+            scriptMatches,
+            accountLinks,
+            hasLoginButton: $("a[href='/login']").length > 0,
+            csrfFieldCount: $('input[name="_token"]').length
         })
     );
 
