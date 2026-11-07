@@ -19370,8 +19370,8 @@ console.log(
 const XEM20_BASE_URL = "https://xem20.net";
 
 // BẠN TỰ ĐIỀN THÔNG TIN TÀI KHOẢN CỦA MÌNH
-const XEM20_EMAIL = "phimhdchill.net@gmail.com";
-const XEM20_PASSWORD = "PhimHDChill.Net@123";
+const XEM20_EMAIL = process.env.XEM20_EMAIL || "";
+const XEM20_PASSWORD = process.env.XEM20_PASSWORD || "";
 
 const XEM20_UA =
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
