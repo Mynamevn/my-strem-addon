@@ -23179,6 +23179,21 @@ if (!hasYearTitleCandidate) {
         )
     );
 
+// Đưa alias vào bộ từ khóa chấm điểm.
+// Nếu không, kết quả tìm bằng tên thay thế sẽ bị
+// loại ở bước ranking vì chỉ so với tên ban đầu.
+uniqueSearchTerms = [
+    ...new Set([
+        ...uniqueSearchTerms,
+        ...aliasTerms
+    ])
+];
+
+console.log(
+    "[KKPHIM] RANKING TERMS WITH ALIASES:",
+    uniqueSearchTerms
+);
+
     if (aliasTerms.length) {
 
         console.log(
