@@ -49485,9 +49485,11 @@ if (!items.length) {
                 .filter(Boolean);
 
             const exactTitleMatch =
-                detailNames.includes(
-                    normalizeTitle(MOVIE_TITLE)
-                );
+    detailNames.length === 0
+        ? true
+        : detailNames.includes(
+            normalizeTitle(MOVIE_TITLE)
+        );
 
             const rawYear =
                 movie?.year ||
