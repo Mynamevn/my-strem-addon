@@ -19631,6 +19631,23 @@ async function xem20EnsureLogin(force = false) {
                 String(loginPage.data || "")
             );
 
+const loginForm = login$("form").first();
+
+console.log("[XEM20] LOGIN FORM STRUCTURE:", {
+    action: loginForm.attr("action") || "",
+    method: loginForm.attr("method") || "",
+    fields: loginForm.find("input").map((_, el) => ({
+        name: login$(el).attr("name") || "",
+        type: login$(el).attr("type") || "",
+        autocomplete: login$(el).attr("autocomplete") || ""
+    })).get(),
+    buttons: loginForm.find("button, input[type='submit']").map((_, el) => ({
+        name: login$(el).attr("name") || "",
+        type: login$(el).attr("type") || "",
+        text: login$(el).text().replace(/\s+/g, " ").trim().slice(0, 60)
+    })).get()
+});
+
             const csrf = String(
                 login$('input[name="_token"]').attr("value") || ""
             ).trim();
@@ -19683,6 +19700,16 @@ async function xem20EnsureLogin(force = false) {
             const loginResponseUrl = String(
                 loginResponse?.xem20FinalUrl || ""
             );
+
+console.log("[XEM20] LOGIN RESPONSE FORM:", {
+    hasLoginForm: loginResponse$("form").length > 0,
+    formAction: loginResponse$("form").first().attr("action") || "",
+    inputNames: loginResponse$("form").first().find("input").map(
+        (_, el) => loginResponse$(el).attr("name") || ""
+    ).get(),
+    pageTitle: loginResponse$("title").text().trim().slice(0, 100),
+    bodyText: loginResponse$("body").text().replace(/\s+/g, " ").trim().slice(0, 500)
+});
 
             const loginErrors = [];
 
