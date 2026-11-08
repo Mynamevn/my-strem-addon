@@ -41254,20 +41254,30 @@ for (
         );
        
 // [PHIMHDCS] CLASSIFY HDC PLAYER URL
-// /m3/ is a player page, NOT a playable media URL.
-// Keep real .m3u8 and .mp4 direct streams unchanged.
+// Nhận diện các subdomain thuộc hệ thống HDC.
+// Không phân loại nhầm M3U8 / MP4 direct thành player page.
 
 let isHdcPlayer = false;
 
 try {
     const parsedServerUrl = new URL(cleanUrl);
 
-    const serverHost = parsedServerUrl.hostname.toLowerCase();
-    const serverPath = parsedServerUrl.pathname.toLowerCase();
+    const serverHost =
+        parsedServerUrl.hostname.toLowerCase();
+
+    const serverPath =
+        parsedServerUrl.pathname.toLowerCase();
+
+    const isHdcHost =
+        serverHost === "streamxemphimhd.site" ||
+        serverHost.endsWith(".streamxemphimhd.site");
 
     isHdcPlayer =
-        serverHost === "play.streamxemphimhd.site" &&
-        serverPath.startsWith("/m3/");
+        isHdcHost &&
+        (
+            serverPath === "/m3" ||
+            serverPath.startsWith("/m3/")
+        );
 
 } catch (serverUrlError) {
     console.log(
@@ -41285,6 +41295,19 @@ decodedServers.push({
     isDirect: isDirect,
     isHdcPlayer: isHdcPlayer
 });
+
+console.log(
+    "[PHIMHDCS] SERVER CLASSIFICATION:",
+    {
+        server: data?.server,
+        url: cleanUrl,
+        type: isHdcPlayer
+            ? "HDC_PLAYER"
+            : isDirect
+                ? "DIRECT"
+                : "EMBED"
+    }
+);
 
         console.log(
             "[PHIMHDCS] DECODED SERVER:",
@@ -41342,12 +41365,12 @@ decodedServers.push({
                     number: serverNumber
                 }
             );
-
-            const hdcResult =
-                await phimhdcsResolveHdcPlayer(
-                    server.url,
-                    episodeUrl
-                );
+            
+const hdcResult =
+    await phimhdcsResolveHdcPlayer(
+        server.url,
+        data.url
+    );
 
             if (
                 hdcResult &&
