@@ -38840,123 +38840,122 @@ function isPhimHDCSUrl(value) {
         let selectedScore =
             -Infinity;
 
-        for (
-            const candidate
-            of uniqueCandidates
-        ) {
+        
+for (
+    const candidate
+    of uniqueCandidates
+) {
 
-            let score =
-                0;
+    let score = 0;
+    let titleMatched = false;
 
-            const candidateTitle =
-                normalizeTitle(
-                    candidate.title
-                );
+    const candidateTitle =
+        normalizeTitle(
+            candidate.title
+        );
 
-            // ------------------------------------------------
-            // TITLE
-            // ------------------------------------------------
+    // ------------------------------------------------
+    // TITLE MATCH — BẮT BUỘC
+    // ------------------------------------------------
 
-            if (
-                candidateTitle ===
-                target
-            ) {
+    if (
+        candidateTitle === target
+    ) {
 
-                score +=
-                    1000;
+        score += 1000;
+        titleMatched = true;
 
-            } else if (
-                candidateTitle.includes(
-                    target
-                ) &&
-                target.length >= 4
-            ) {
+    } else if (
+        candidateTitle.includes(target) &&
+        target.length >= 4
+    ) {
 
-                score +=
-                    500;
+        score += 500;
+        titleMatched = true;
 
-            } else if (
-                target.includes(
-                    candidateTitle
-                ) &&
-                candidateTitle.length >= 4
-            ) {
+    } else if (
+        target.includes(candidateTitle) &&
+        candidateTitle.length >= 4
+    ) {
 
-                score +=
-                    400;
+        score += 400;
+        titleMatched = true;
 
-            }
+    }
 
-            // ------------------------------------------------
-            // YEAR
-            // ------------------------------------------------
+    // ------------------------------------------------
+    // YEAR — CHỈ DÙNG ĐỂ XẾP HẠNG SAU KHI KHỚP TÊN
+    // ------------------------------------------------
 
-            if (
-                movieYear > 0
-            ) {
-
-                if (
-                    candidate.year ===
-                    Number(
-                        movieYear
-                    )
-                ) {
-
-                    score +=
-                        5000;
-
-                } else if (
-                    candidate.year > 0
-                ) {
-
-                    score -=
-                        300;
-
-                }
-
-            }
-
-            console.log(
-                "[PHIMHDCS] CANDIDATE:",
-                {
-                    title:
-                        candidate.title,
-                    year:
-                        candidate.year,
-                    score:
-                        score,
-                    url:
-                        candidate.url
-                }
-            );
-
-            if (
-                score >
-                selectedScore
-            ) {
-
-                selectedScore =
-                    score;
-
-                selectedMovie =
-                    candidate;
-
-            }
-
-        }
+    if (
+        titleMatched &&
+        movieYear > 0
+    ) {
 
         if (
-            !selectedMovie
+            candidate.year === Number(movieYear)
         ) {
 
-            console.log(
-                "[PHIMHDCS] NO MOVIE SELECTED"
-            );
+            score += 5000;
 
-            addFallback();
+        } else if (
+            candidate.year > 0
+        ) {
 
-            return streams;
+            score -= 300;
+
         }
+
+    }
+
+    console.log(
+        "[PHIMHDCS] CANDIDATE:",
+        {
+            title: candidate.title,
+            year: candidate.year,
+            titleMatched: titleMatched,
+            score: score,
+            url: candidate.url
+        }
+    );
+
+    if (
+        titleMatched &&
+        score > selectedScore
+    ) {
+
+        selectedScore = score;
+        selectedMovie = candidate;
+
+    }
+
+}
+        
+if (
+    !selectedMovie
+) {
+
+    console.log(
+        "[PHIMHDCS] NO VALID TITLE MATCH — SKIP PROVIDER:",
+        {
+            requestedTitle: movieName,
+            requestedYear: movieYear,
+            requestedSeason: seasonNumber,
+            requestedEpisode: episodeNumber,
+            candidateCount: uniqueCandidates.length,
+            candidates: uniqueCandidates.slice(0, 10).map(
+                candidate => ({
+                    title: candidate.title,
+                    year: candidate.year,
+                    url: candidate.url
+                })
+            )
+        }
+    );
+
+    return streams;
+}
+
 
         console.log(
             "[PHIMHDCS] SELECTED MOVIE:",
