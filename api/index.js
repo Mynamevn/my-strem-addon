@@ -39163,6 +39163,7 @@ let selectedDetailUrl = "";
 
                         try {
                         
+
 const detailAttemptStartedAt = Date.now();
 
 console.log(
@@ -39171,11 +39172,13 @@ console.log(
         title: candidate.title || "",
         url: detailUrl,
         origin: detailOrigin,
-        timeout: 3500
+        timeout: 6000
     })
 );
 
-const response = await axios.get(
+// QUAN TRỌNG: dùng response đã khai báo ở bên ngoài.
+// Không đổi thành const response hoặc let response.
+response = await axios.get(
     detailUrl,
     {
         headers: {
@@ -39185,11 +39188,10 @@ const response = await axios.get(
             "Accept":
                 "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language":
-                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Connection": "close"
+                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
         },
-        timeout: 3500,
-        maxRedirects: 3,
+        timeout: 6000,
+        maxRedirects: 5,
         validateStatus: status =>
             status >= 200 && status < 400
     }
