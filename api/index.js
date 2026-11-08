@@ -38174,8 +38174,34 @@ async function scrapePhimHDCS(
 
     const streams = [];
 
-    const BASE_URL =
-        "https://phimhdcss.com";
+    const PHIMHDCS_DOMAINS = [
+    "https://filmhdc.com",
+    "https://phimhdcss.com"
+];
+
+let BASE_URL = PHIMHDCS_DOMAINS[0];
+
+function isPhimHDCSUrl(value) {
+    try {
+        const host = new URL(value).hostname.toLowerCase();
+
+        const allowedHosts = [
+            ...PHIMHDCS_DOMAINS.map(
+                domain => new URL(domain).hostname.toLowerCase()
+            ),
+            new URL(BASE_URL).hostname.toLowerCase()
+        ];
+
+        return allowedHosts.some(
+            root =>
+                host === root ||
+                host.endsWith("." + root)
+        );
+
+    } catch (e) {
+        return false;
+    }
+}
 
     // ========================================================
     // HELPER
@@ -38352,182 +38378,417 @@ async function scrapePhimHDCS(
             streamType
         );
 
+        
         // ====================================================
-        // 1. SEARCH
+        // 1. SEARCH — FILMHDC PRIMARY / PHIMHDCSS FALLBACK
         // ====================================================
 
-        const searchUrl =
-            BASE_URL +
-            "/?search=" +
-            encodeURIComponent(
-                movieName
-            ).replace(
-                /%20/g,
-                "+"
-            );
-
-        console.log(
-            "[PHIMHDCS] SEARCH URL:",
-            searchUrl
-        );
-
-        const searchRes =
-            await axios.get(
-                searchUrl,
-                {
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                    },
-                    timeout: 10000
-                }
-            );
-
-        const searchHtml =
-            String(
-                searchRes.data ||
-                ""
-            );
-
-        const parseSearch =
-            cheerio.load(
-                searchHtml
-            );
-
-        // ====================================================
-        // 2. LẤY DANH SÁCH KẾT QUẢ
-        // ====================================================
+        const searchDomains = [
+            ...PHIMHDCS_DOMAINS
+        ];
 
         const candidates = [];
+        let fallbackCandidates = [];
 
-        parseSearch(
-            "li.item a[href]"
-        ).each(
-            function () {
+        const searchTarget =
+            normalizeTitle(movieName);
 
-                const node =
-                    parseSearch(
-                        this
+        for (
+            const searchDomain of searchDomains
+        ) {
+
+            BASE_URL = searchDomain;
+
+            const searchUrl =
+                BASE_URL +
+                "/?search=" +
+                encodeURIComponent(
+                    movieName
+                ).replace(
+                    /%20/g,
+                    "+"
+                );
+
+            console.log(
+                "[PHIMHDCS] SEARCH ATTEMPT:",
+                {
+                    domain: searchDomain,
+                    url: searchUrl
+                }
+            );
+
+            try {
+
+                const searchRes =
+                    await axios.get(
+                        searchUrl,
+                        {
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                                "Accept":
+                                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                            },
+                            timeout: 10000,
+                            maxRedirects: 5
+                        }
                     );
 
-                const href =
-                    String(
-                        node.attr(
-                            "href"
-                        ) ||
-                        ""
-                    ).trim();
+                // Nhận diện domain thực tế sau redirect.
+                const resolvedSearchUrl =
+                    searchRes.request?.res?.responseUrl ||
+                    searchUrl;
 
-                const title =
-                    String(
-                        node.attr(
-                            "title"
-                        ) ||
-                        node.text() ||
-                        ""
-                    ).trim();
+                try {
 
-                if (
-                    !href ||
-                    !title
+                    const resolvedOrigin =
+                        new URL(
+                            resolvedSearchUrl
+                        ).origin;
+
+                    if (
+                        resolvedOrigin.startsWith("https://")
+                    ) {
+                        BASE_URL =
+                            resolvedOrigin;
+                    }
+
+                } catch (e) {}
+
+                console.log(
+                    "[PHIMHDCS] SEARCH RESOLVED DOMAIN:",
+                    BASE_URL
+                );
+
+                const searchHtml =
+                    String(
+                        searchRes.data ||
+                        ""
+                    );
+
+                const parseSearch =
+                    cheerio.load(
+                        searchHtml
+                    );
+
+                const domainCandidates = [];
+
+                function addSearchCandidate(
+                    href,
+                    title
                 ) {
-                    return;
+
+                    const cleanTitle =
+                        String(
+                            title || ""
+                        ).trim();
+
+                    if (
+                        !href ||
+                        !cleanTitle
+                    ) {
+                        return;
+                    }
+
+                    const url =
+                        makeAbsoluteUrl(
+                            href
+                        );
+
+                    if (
+                        !url ||
+                        !isPhimHDCSUrl(url)
+                    ) {
+                        return;
+                    }
+
+                    domainCandidates.push({
+
+                        url: url,
+
+                        title: cleanTitle,
+
+                        year:
+                            extractYear(
+                                cleanTitle
+                            )
+
+                    });
+
                 }
 
-                const url =
-                    makeAbsoluteUrl(
-                        href
+                // --------------------------------------------
+                // PARSER CHÍNH
+                // --------------------------------------------
+
+                parseSearch(
+                    "li.item a[href]"
+                ).each(
+                    function () {
+
+                        const node =
+                            parseSearch(this);
+
+                        addSearchCandidate(
+                            node.attr("href"),
+                            node.attr("title") ||
+                            node.text()
+                        );
+
+                    }
+                );
+
+                // --------------------------------------------
+                // FALLBACK PARSER
+                // --------------------------------------------
+
+                if (
+                    domainCandidates.length === 0
+                ) {
+
+                    const itemPattern =
+                        /<li\s+class="item[^"]*">[\s\S]*?<a\s+href="([^"]+)"\s+title="([^"]+)"/gi;
+
+                    let match;
+
+                    while (
+                        (
+                            match =
+                                itemPattern.exec(
+                                    searchHtml
+                                )
+                        ) !== null
+                    ) {
+
+                        addSearchCandidate(
+                            match[1],
+                            match[2]
+                        );
+
+                    }
+
+                }
+
+                console.log(
+                    "[PHIMHDCS] DOMAIN SEARCH RESULTS:",
+                    {
+                        domain: BASE_URL,
+                        count: domainCandidates.length
+                    }
+                );
+
+                // Ưu tiên domain có kết quả gần với tên phim.
+                const hasTitleMatch =
+                    domainCandidates.some(
+                        candidate => {
+
+                            const candidateTitle =
+                                normalizeTitle(
+                                    candidate.title
+                                );
+
+                            return (
+                                candidateTitle === searchTarget ||
+                                (
+                                    searchTarget.length >= 4 &&
+                                    candidateTitle.includes(searchTarget)
+                                ) ||
+                                (
+                                    candidateTitle.length >= 4 &&
+                                    searchTarget.includes(candidateTitle)
+                                )
+                            );
+
+                        }
                     );
 
                 if (
-                    !url.includes(
-                        "phimhdcss.com"
-                    )
+                    hasTitleMatch
                 ) {
-                    return;
+
+                    candidates.push(
+                        ...domainCandidates
+                    );
+
+                    console.log(
+                        "[PHIMHDCS] DOMAIN MATCH:",
+                        BASE_URL
+                    );
+
+                    break;
+
                 }
 
-                candidates.push({
+                // Giữ kết quả đầu tiên làm phương án dự phòng,
+                // nhưng vẫn thử domain tiếp theo.
+                if (
+                    domainCandidates.length > 0 &&
+                    fallbackCandidates.length === 0
+                ) {
 
-                    url:
-                        url,
+                    fallbackCandidates =
+                        domainCandidates;
 
-                    title:
-                        title,
+                }
 
-                    year:
-                        extractYear(
-                            title
-                        )
+            } catch (searchError) {
 
-                });
+                console.log(
+                    "[PHIMHDCS] DOMAIN SEARCH FAILED:",
+                    {
+                        domain: searchDomain,
+                        status:
+                            searchError?.response?.status || 0,
+                        error:
+                            searchError?.message || String(searchError)
+                    }
+                );
 
             }
-        );
+
+        }
+
+        // Nếu không domain nào có kết quả khớp tên phim,
+        // dùng kết quả đầu tiên để giữ hành vi cũ.
+        if (
+            candidates.length === 0 &&
+            fallbackCandidates.length > 0
+        ) {
+
+            candidates.push(
+                ...fallbackCandidates
+            );
+
+        }
 
         // ====================================================
-        // FALLBACK PARSER
+        // 2. NẾU CẢ HAI DOMAIN KHÔNG CÓ KẾT QUẢ
+        //    THỬ TRUY CẬP FILMHDC ĐỂ NHẬN DIỆN URL HIỆN TẠI
         // ====================================================
 
         if (
             candidates.length === 0
         ) {
 
-            const itemPattern =
-                /<li\s+class="item[^"]*">[\s\S]*?<a\s+href="([^"]+)"\s+title="([^"]+)"/gi;
+            BASE_URL =
+                PHIMHDCS_DOMAINS[0];
 
-            let match;
+            console.log(
+                "[PHIMHDCS] BOTH SEARCH DOMAINS FAILED — PROBE FILMHDC"
+            );
 
-            while (
-                (
-                    match =
-                    itemPattern.exec(
-                        searchHtml
-                    )
-                ) !== null
-            ) {
+            try {
 
-                candidates.push({
+                const homeRes =
+                    await axios.get(
+                        BASE_URL + "/",
+                        {
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                                "Accept":
+                                    "text/html,application/xhtml+xml,*/*"
+                            },
+                            timeout: 8000,
+                            maxRedirects: 5
+                        }
+                    );
 
-                    url:
-                        makeAbsoluteUrl(
-                            match[1]
-                        ),
+                const resolvedHomeUrl =
+                    homeRes.request?.res?.responseUrl ||
+                    BASE_URL + "/";
 
-                    title:
+                try {
+
+                    const resolvedOrigin =
+                        new URL(
+                            resolvedHomeUrl
+                        ).origin;
+
+                    if (
+                        resolvedOrigin.startsWith("https://")
+                    ) {
+
+                        BASE_URL =
+                            resolvedOrigin;
+
+                    }
+
+                } catch (e) {}
+
+                // Nếu trang cung cấp canonical URL,
+                // ưu tiên origin của canonical URL.
+                const homePage =
+                    cheerio.load(
                         String(
-                            match[2] ||
-                            ""
-                        ).trim(),
-
-                    year:
-                        extractYear(
-                            match[2]
+                            homeRes.data || ""
                         )
+                    );
 
-                });
+                const canonicalUrl =
+                    homePage(
+                        'link[rel="canonical"]'
+                    ).attr("href");
+
+                if (
+                    canonicalUrl
+                ) {
+
+                    try {
+
+                        const canonicalOrigin =
+                            new URL(
+                                canonicalUrl,
+                                BASE_URL + "/"
+                            );
+
+                        if (
+                            canonicalOrigin.protocol === "https:"
+                        ) {
+
+                            BASE_URL =
+                                canonicalOrigin.origin;
+
+                        }
+
+                    } catch (e) {}
+
+                }
+
+                console.log(
+                    "[PHIMHDCS] FILMHDC ACCESS URL:",
+                    {
+                        resolved: resolvedHomeUrl,
+                        activeBase: BASE_URL
+                    }
+                );
+
+            } catch (homeError) {
+
+                console.log(
+                    "[PHIMHDCS] FILMHDC HOMEPAGE PROBE FAILED:",
+                    homeError?.response?.status ||
+                    homeError?.message ||
+                    homeError
+                );
 
             }
 
         }
 
-        const uniqueCandidates =
-            [];
+        // ====================================================
+        // LOẠI BỎ URL TRÙNG
+        // ====================================================
 
-        const seenUrls =
-            new Set();
+        const uniqueCandidates = [];
+        const seenUrls = new Set();
 
         for (
-            const candidate
-            of candidates
+            const candidate of candidates
         ) {
 
             if (
-                seenUrls.has(
-                    candidate.url
-                )
+                seenUrls.has(candidate.url)
             ) {
                 continue;
             }
@@ -38544,7 +38805,10 @@ async function scrapePhimHDCS(
 
         console.log(
             "[PHIMHDCS] SEARCH RESULTS:",
-            uniqueCandidates.length
+            {
+                domain: BASE_URL,
+                count: uniqueCandidates.length
+            }
         );
 
         if (
@@ -38558,6 +38822,7 @@ async function scrapePhimHDCS(
             addFallback();
 
             return streams;
+
         }
 
         // ====================================================
@@ -40194,9 +40459,16 @@ for (
                     serverNumber,
 
                 externalUrl:
-                    server.url,
+    server.url,
 
-                behaviorHints: {
+widgetPlayer:
+    server.url,
+
+widgetPlayerStates: [
+    "replaceplayer"
+],
+
+behaviorHints: {
 
                     bingeGroup:
                         "phimhdcs-" +
@@ -40270,29 +40542,35 @@ for (
                     episodeUrl
                 ) {
 
-                    streams.push({
+                   streams.push({
 
-                        name:
-                            "▶️ [PhimHDCS] Player",
+    name:
+        "▶️ [PhimHDCS] Player",
 
-                        title:
-                            streamType ===
-                            "series"
-                                ? "Tập " +
-                                  String(
-                                      targetEpisode
-                                  ).padStart(
-                                      2,
-                                      "0"
-                                  ) +
-                                  " - PhimHDCS"
-                                : "PhimHDCS",
+    title:
+        streamType ===
+        "series"
+            ? "Tập " +
+              String(
+                  targetEpisode
+              ).padStart(
+                  2,
+                  "0"
+              ) +
+              " - PhimHDCS"
+            : "PhimHDCS",
 
-                        externalUrl:
-                            embedUrl
+    externalUrl:
+        embedUrl,
 
-                    });
+    widgetPlayer:
+        embedUrl,
 
+    widgetPlayerStates: [
+        "replaceplayer"
+    ]
+
+});
                 }
 
             }
