@@ -39096,55 +39096,119 @@ function isPhimHDCSUrl(value) {
                         })
                     );
 
-                    const candidateOrigin =
-                        new URL(candidate.url).origin;
+                    const candidateStartedAt = Date.now();
+                    const candidateParsedUrl =
+                        new URL(candidate.url);
 
-                    let response;
+                    const detailOrigins = [
+                        BASE_URL,
+                        ...PHIMHDCS_DOMAINS
+                    ].filter(
+                        (origin, index, list) =>
+                            list.indexOf(origin) === index
+                    );
 
-                    try {
-                        response = await axios.get(
-                            candidate.url,
-                            {
-                                headers: {
-                                    "User-Agent":
-                                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-                                    "Referer":
-                                        candidateOrigin + "/"
-                                },
-                                timeout: 10000,
-                                maxRedirects: 5
-                            }
-                        );
-                    } catch (detailError) {
-                        console.error(
-                            "[PHIMHDCS] DETAIL REQUEST ERROR:",
+                    let response = null;
+                    let html = "";
+                    let lastDetailError = null;
+                    let successfulDetailUrl = "";
+
+                    for (const detailOrigin of detailOrigins) {
+                        const detailUrl =
+                            detailOrigin +
+                            candidateParsedUrl.pathname +
+                            candidateParsedUrl.search +
+                            candidateParsedUrl.hash;
+
+                        console.log(
+                            "[PHIMHDCS] DETAIL ATTEMPT START:",
                             JSON.stringify({
                                 title: candidate.title || "",
-                                url: candidate.url,
-                                status: detailError?.response?.status || 0,
-                                code: detailError?.code || "",
-                                message:
-                                    detailError?.message ||
-                                    String(detailError),
-                                elapsedMs:
-                                    Date.now() - candidateStartedAt
+                                url: detailUrl
                             })
                         );
 
-                        throw detailError;
+                        try {
+                            response = await axios.get(
+                                detailUrl,
+                                {
+                                    headers: {
+                                        "User-Agent":
+                                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                                        "Referer": detailOrigin + "/",
+                                        "Accept":
+                                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                                    },
+                                    timeout: 6000,
+                                    maxRedirects: 5
+                                }
+                            );
+
+                            html = String(response.data || "");
+                            successfulDetailUrl =
+                                response.request?.res?.responseUrl ||
+                                detailUrl;
+
+                            if (html.length > 500) {
+                                console.log(
+                                    "[PHIMHDCS] DETAIL ATTEMPT COMPLETE:",
+                                    JSON.stringify({
+                                        title: candidate.title || "",
+                                        requestedUrl: detailUrl,
+                                        resolvedUrl: successfulDetailUrl,
+                                        status: response.status,
+                                        htmlLength: html.length,
+                                        elapsedMs:
+                                            Date.now() - candidateStartedAt
+                                    })
+                                );
+
+                                break;
+                            }
+
+                            lastDetailError = new Error(
+                                "Detail response quá ngắn: " +
+                                html.length +
+                                " bytes"
+                            );
+
+                        } catch (detailError) {
+                            lastDetailError = detailError;
+
+                            console.error(
+                                "[PHIMHDCS] DETAIL ATTEMPT FAILED:",
+                                JSON.stringify({
+                                    title: candidate.title || "",
+                                    url: detailUrl,
+                                    status:
+                                        detailError?.response?.status || 0,
+                                    code: detailError?.code || "",
+                                    message:
+                                        detailError?.message ||
+                                        String(detailError),
+                                    elapsedMs:
+                                        Date.now() - candidateStartedAt
+                                })
+                            );
+                        }
                     }
 
-                    const html =
-                        String(response.data || "");
+                    if (!response || html.length <= 500) {
+                        throw lastDetailError ||
+                            new Error(
+                                "Không tải được trang Detail từ cả hai domain"
+                            );
+                    }
 
                     console.log(
                         "[PHIMHDCS] DETAIL REQUEST COMPLETE:",
                         JSON.stringify({
                             title: candidate.title || "",
-                            url: candidate.url,
+                            url: successfulDetailUrl,
                             status: response.status,
                             htmlLength: html.length,
-                            elapsedMs: Date.now() - candidateStartedAt
+                            elapsedMs:
+                                Date.now() - candidateStartedAt
                         })
                     );
 
