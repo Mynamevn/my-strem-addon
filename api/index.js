@@ -41333,7 +41333,119 @@ decodedServers.push({
                 "PhimHDCS"
             ).trim();
 
-        if (
+        if (server.isHdcPlayer) {
+
+            console.log(
+                "[PHIMHDCS][HDC-PLAYER] RESOLVE START:",
+                {
+                    server: languageName,
+                    number: serverNumber
+                }
+            );
+
+            const hdcResult =
+                await phimhdcsResolveHdcPlayer(
+                    server.url,
+                    episodeUrl
+                );
+
+            if (
+                hdcResult &&
+                hdcResult.success &&
+                hdcResult.url
+            ) {
+
+                console.log(
+                    "[PHIMHDCS][HDC-PLAYER] RESOLVE SUCCESS:",
+                    {
+                        server: languageName,
+                        number: serverNumber,
+                        url: hdcResult.url
+                    }
+                );
+
+                streams.push({
+
+                    name:
+                        "📺 [PhimHDCS] " +
+                        languageName +
+                        " - HDC Direct " +
+                        serverNumber,
+
+                    title:
+                        movieName +
+                        " - " +
+                        languageName +
+                        " - HDC Direct",
+
+                    url:
+                        hdcResult.url,
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "phimhdcs-hdc-" +
+                            serverNumber,
+
+                        proxyHeaders: {
+                            request: {
+                                "Referer":
+                                    hdcResult.referer ||
+                                    server.url,
+
+                                "User-Agent":
+                                    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                            }
+                        }
+
+                    }
+
+                });
+
+            } else {
+
+                console.log(
+                    "[PHIMHDCS][HDC-PLAYER] RESOLVE FAILED - KEEP PLAYER FALLBACK:",
+                    hdcResult?.error || "Unknown error"
+                );
+
+                streams.push({
+
+                    name:
+                        "▶️ [PhimHDCS] " +
+                        languageName +
+                        " - Player Fallback " +
+                        serverNumber,
+
+                    title:
+                        movieName +
+                        " - " +
+                        languageName +
+                        " - Player",
+
+                    externalUrl:
+                        server.url,
+
+                    widgetPlayer:
+                        server.url,
+
+                    widgetPlayerStates: [
+                        "replaceplayer"
+                    ],
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "phimhdcs-hdc-" +
+                            serverNumber
+
+                    }
+
+                });
+
+            }
+
+        } else if (
             server.isDirect
         ) {
 
