@@ -40426,6 +40426,47 @@ for (
 
         } else {
 
+            let embedPlayerUrl =
+                server.url;
+
+            // Chỉ chuyển StreamC sang player riêng.
+            // Các embed host khác giữ nguyên hành vi cũ.
+            try {
+
+                const parsedEmbedUrl =
+                    new URL(
+                        server.url
+                    );
+
+                const embedHost =
+                    parsedEmbedUrl.hostname.toLowerCase();
+
+                const isStreamC =
+                    parsedEmbedUrl.protocol === "https:" &&
+                    (
+                        embedHost === "streamc.xyz" ||
+                        embedHost.endsWith(".streamc.xyz")
+                    );
+
+                if (isStreamC) {
+
+                    embedPlayerUrl =
+                        "https://my-strem-addon.vercel.app/phimhdcs-player?url=" +
+                        encodeURIComponent(
+                            parsedEmbedUrl.href
+                        );
+
+                }
+
+            } catch (embedUrlError) {
+
+                console.log(
+                    "[PHIMHDCS] EMBED URL INVALID:",
+                    embedUrlError.message
+                );
+
+            }
+
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
                 {
@@ -40438,8 +40479,11 @@ for (
                     type:
                         "EMBED",
 
-                    url:
-                        server.url
+                    originalUrl:
+                        server.url,
+
+                    playerUrl:
+                        embedPlayerUrl
                 }
             );
 
@@ -40459,16 +40503,16 @@ for (
                     serverNumber,
 
                 externalUrl:
-    server.url,
+                    embedPlayerUrl,
 
-widgetPlayer:
-    server.url,
+                widgetPlayer:
+                    embedPlayerUrl,
 
-widgetPlayerStates: [
-    "replaceplayer"
-],
+                widgetPlayerStates: [
+                    "replaceplayer"
+                ],
 
-behaviorHints: {
+                behaviorHints: {
 
                     bingeGroup:
                         "phimhdcs-" +
@@ -46275,6 +46319,159 @@ startNguonC()
 </script>
 
 </body>
+</html>
+        `);
+
+    }
+);
+
+/* ============================================================
+   [ROUTE-010] [PROVIDERS: PHIMHDCS] STREAMC EMBED PLAYER
+   ============================================================ */
+// Nhận URL StreamC đã được PhimHDCS giải mã.
+// Không gọi lại PhimHDCS.
+// Không tìm phim lại.
+// Không giải mã lại server.
+// Chỉ nhúng player StreamC bằng iframe.
+// ============================================================
+
+app.get(
+    "/phimhdcs-player",
+    function (req, res) {
+
+        res.setHeader(
+            "Content-Type",
+            "text/html; charset=utf-8"
+        );
+
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
+
+        const rawEmbedUrl =
+            String(
+                req.query.url || ""
+            ).trim();
+
+        let embedUrl = "";
+
+        try {
+
+            const parsed =
+                new URL(
+                    rawEmbedUrl
+                );
+
+            const hostname =
+                parsed.hostname.toLowerCase();
+
+            const isStreamCHost =
+                hostname === "streamc.xyz" ||
+                hostname.endsWith(".streamc.xyz");
+
+            if (
+                parsed.protocol !== "https:" ||
+                !isStreamCHost
+            ) {
+
+                return res
+                    .status(400)
+                    .send(
+                        "Invalid StreamC embed URL."
+                    );
+
+            }
+
+            embedUrl =
+                parsed.href;
+
+        } catch (e) {
+
+            return res
+                .status(400)
+                .send(
+                    "Invalid or missing StreamC URL."
+                );
+
+        }
+
+        // Escape URL trước khi đưa vào HTML attribute.
+        const safeEmbedUrl =
+            embedUrl
+                .replace(/&/g, "&amp;")
+                .replace(/"/g, "&quot;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+
+        console.log(
+            "[PHIMHDCS PLAYER] OPEN STREAMC:",
+            embedUrl
+        );
+
+        res.send(`
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>PhimHDCS Player</title>
+
+<style>
+
+html,
+body {
+
+    margin: 0;
+    padding: 0;
+
+    width: 100%;
+    height: 100%;
+
+    overflow: hidden;
+
+    background: #000;
+
+}
+
+#player {
+
+    position: fixed;
+
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+
+    border: 0;
+
+    background: #000;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<iframe
+    id="player"
+    src="${safeEmbedUrl}"
+    title="PhimHDCS StreamC Player"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+></iframe>
+
+</body>
+
 </html>
         `);
 
