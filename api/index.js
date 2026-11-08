@@ -40086,18 +40086,17 @@ console.log(
     selectedEpisodes.length
 );
 
+
 // ====================================================
-// 7. LOAD TẤT CẢ EPISODE PAGE — PARALLEL
-//
-// - Tải đồng thời các server của tập đã chọn.
-// - Giữ thứ tự kết quả theo selectedEpisodes.
-// - Một server lỗi không làm mất server khác.
-// - Giữ nguyên cấu trúc episodePages cho bước giải mã.
+// [PHIMHDCS-EPISODE-LOAD-V2]
+// LOAD EPISODE PAGES WITH DETAILED DIAGNOSTICS
 // ====================================================
 
 const episodePageResults = await Promise.allSettled(
-    selectedEpisodes.map(async (selected) => {
-        const episodeUrl = selected?.episode?.url;
+    selectedEpisodes.map(async (selected, index) => {
+
+        const episodeUrl =
+            String(selected?.episode?.url || "").trim();
 
         if (!episodeUrl) {
             throw new Error("Missing episode URL");
@@ -40105,50 +40104,122 @@ const episodePageResults = await Promise.allSettled(
 
         const startedAt = Date.now();
 
-        const episodeRes = await axios.get(
-            episodeUrl,
-            {
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        let episodeOrigin = "";
 
-                    "Referer":
-    selectedDetailUrl ||
-    selectedMovie.url
-                },
-
-                // Giới hạn riêng cho từng server.
-                timeout: 7000
-            }
-        );
-
-        const episodeHtml = String(
-            episodeRes.data || ""
-        );
+        try {
+            episodeOrigin = new URL(episodeUrl).origin;
+        } catch (urlError) {
+            throw new Error(
+                "Invalid episode URL: " + episodeUrl
+            );
+        }
 
         console.log(
-            "[PHIMHDCS] EPISODE PAGE COMPLETE:",
+            "[PHIMHDCS] EPISODE PAGE START:",
             {
+                index,
                 server: selected.server,
-                status: episodeRes.status,
-                elapsedMs: Date.now() - startedAt,
-                htmlLength: episodeHtml.length
+                url: episodeUrl,
+                referer: selectedDetailUrl || selectedMovie.url,
+                origin: episodeOrigin
             }
         );
 
-        return {
-            server: selected.server,
-            episode: selected.episode,
-            url: episodeUrl,
-            html: episodeHtml
-        };
+        try {
+
+            const episodeRes = await axios.get(
+                episodeUrl,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                        "Accept-Language":
+                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                        "Referer":
+                            selectedDetailUrl || selectedMovie.url,
+
+                        "Origin":
+                            episodeOrigin
+                    },
+
+                    timeout: 12000,
+                    maxRedirects: 5,
+
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            const episodeHtml =
+                typeof episodeRes.data === "string"
+                    ? episodeRes.data
+                    : JSON.stringify(episodeRes.data || "");
+
+            const resolvedEpisodeUrl =
+                episodeRes.request?.res?.responseUrl ||
+                episodeUrl;
+
+            console.log(
+                "[PHIMHDCS] EPISODE PAGE COMPLETE:",
+                {
+                    index,
+                    server: selected.server,
+                    status: episodeRes.status,
+                    requestedUrl: episodeUrl,
+                    resolvedUrl: resolvedEpisodeUrl,
+                    elapsedMs: Date.now() - startedAt,
+                    htmlLength: episodeHtml.length,
+                    contentType:
+                        episodeRes.headers?.["content-type"] || ""
+                }
+            );
+
+            return {
+                server: selected.server,
+                episode: selected.episode,
+                url: resolvedEpisodeUrl,
+                html: episodeHtml
+            };
+
+        } catch (episodeError) {
+
+            console.error(
+                "[PHIMHDCS] EPISODE PAGE REQUEST ERROR:",
+                {
+                    index,
+                    server: selected.server,
+                    url: episodeUrl,
+                    status:
+                        episodeError?.response?.status || 0,
+                    code:
+                        episodeError?.code || "",
+                    elapsedMs:
+                        Date.now() - startedAt,
+                    message:
+                        episodeError?.message ||
+                        String(episodeError)
+                }
+            );
+
+            throw episodeError;
+        }
+
     })
 );
 
-// Promise.allSettled giữ thứ tự các phần tử giống selectedEpisodes.
+// ====================================================
+// COLLECT RESULTS
+// ====================================================
+
 const episodePages = [];
 
 episodePageResults.forEach((result, index) => {
+
     if (result.status === "fulfilled") {
         episodePages.push(result.value);
         return;
@@ -40157,32 +40228,32 @@ episodePageResults.forEach((result, index) => {
     const selected = selectedEpisodes[index];
 
     console.warn(
-        "[PHIMHDCS] EPISODE LOAD ERROR:",
+        "[PHIMHDCS] EPISODE LOAD FAILED:",
         {
             server: selected?.server || "Unknown",
             url: selected?.episode?.url || "",
-            error:
+            message:
                 result.reason?.message ||
                 String(result.reason || "Unknown error")
         }
     );
+
 });
 
 console.log(
     "[PHIMHDCS] LOADED EPISODE PAGES:",
-    episodePages.length,
-    "/",
-    selectedEpisodes.length
+    {
+        loaded: episodePages.length,
+        selected: selectedEpisodes.length,
+        servers: episodePages.map(page => ({
+            server: page.server,
+            url: page.url,
+            htmlLength: page.html.length
+        }))
+    }
 );
 
-console.log(
-    "[PHIMHDCS] LOADED EPISODE PAGES:",
-    episodePages.length
-);
-
-if (
-    episodePages.length === 0
-) {
+if (episodePages.length === 0) {
 
     console.log(
         "[PHIMHDCS] NO EPISODE PAGE LOADED"
@@ -40193,7 +40264,7 @@ if (
     return streams;
 }
 
-        // ====================================================
+// ====================================================
 // 8. DIRECT M3U8 / MP4 TRONG HTML
 // ====================================================
 
