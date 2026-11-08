@@ -39082,9 +39082,42 @@ function isPhimHDCSUrl(value) {
         // Tải trang chi tiết của các ứng viên để lấy tên thay thế.
         // Không dùng tên hiển thị trên kết quả tìm kiếm làm căn cứ duy nhất.
 
+        // ====================================================
+        // [PHIMHDCS-DETAIL-LIMITER]
+        // Giới hạn tối đa 2 request Detail đồng thời.
+        // Tránh bắn hàng loạt request sang hai domain.
+        // ====================================================
+
+        let phimhdcsDetailActive = 0;
+        const phimhdcsDetailWaiters = [];
+
+        async function withPhimhdcsDetailLimit(task) {
+            if (phimhdcsDetailActive >= 2) {
+                await new Promise(resolve => {
+                    phimhdcsDetailWaiters.push(resolve);
+                });
+            }
+
+            phimhdcsDetailActive++;
+
+            try {
+                return await task();
+            } finally {
+                phimhdcsDetailActive--;
+
+                const next =
+                    phimhdcsDetailWaiters.shift();
+
+                if (next) {
+                    next();
+                }
+            }
+        }
+
         const candidateDetailResults =
             await Promise.allSettled(
-                uniqueCandidates.map(async candidate => {
+                uniqueCandidates.map(candidate =>
+    withPhimhdcsDetailLimit(async () => {
 
                     const candidateStartedAt = Date.now();
 
@@ -39277,7 +39310,7 @@ function isPhimHDCSUrl(value) {
                             0
                     };
 
-                })
+                }))
             );
 
         for (
