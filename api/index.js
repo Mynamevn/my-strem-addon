@@ -40882,50 +40882,39 @@ for (
         seenServerUrls.add(
             cleanUrl
         );
+       
+// [PHIMHDCS] CLASSIFY HDC PLAYER URL
+// /m3/ is a player page, NOT a playable media URL.
+// Keep real .m3u8 and .mp4 direct streams unchanged.
 
-        
-let isHdcDirect = false;
+let isHdcPlayer = false;
 
 try {
+    const parsedServerUrl = new URL(cleanUrl);
 
-    const parsedServerUrl =
-        new URL(cleanUrl);
+    const serverHost = parsedServerUrl.hostname.toLowerCase();
+    const serverPath = parsedServerUrl.pathname.toLowerCase();
 
-    const serverHost =
-        parsedServerUrl.hostname.toLowerCase();
-
-    isHdcDirect =
+    isHdcPlayer =
         serverHost === "play.streamxemphimhd.site" &&
-        parsedServerUrl.pathname.startsWith("/m3/");
+        serverPath.startsWith("/m3/");
 
 } catch (serverUrlError) {
-
     console.log(
         "[PHIMHDCS] SERVER URL PARSE ERROR:",
         serverUrlError.message
     );
-
 }
 
 const isDirect =
-    /\.m3u8(?:[?#]|$)/i.test(
-        cleanUrl
-    ) ||
-    /\.mp4(?:[?#]|$)/i.test(
-        cleanUrl
-    ) ||
-    isHdcDirect;
+    /\.m3u8(?:[?#]|$)/i.test(cleanUrl) ||
+    /\.mp4(?:[?#]|$)/i.test(cleanUrl);
 
-
-        decodedServers.push({
-
-            url:
-                cleanUrl,
-
-            isDirect:
-                isDirect
-
-        });
+decodedServers.push({
+    url: cleanUrl,
+    isDirect: isDirect,
+    isHdcPlayer: isHdcPlayer
+});
 
         console.log(
             "[PHIMHDCS] DECODED SERVER:",
