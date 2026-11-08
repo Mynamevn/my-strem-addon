@@ -39096,7 +39096,6 @@ function isPhimHDCSUrl(value) {
                         })
                     );
 
-                    const candidateStartedAt = Date.now();
                     const candidateParsedUrl =
                         new URL(candidate.url);
 
