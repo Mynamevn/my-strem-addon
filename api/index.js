@@ -39162,21 +39162,51 @@ let selectedDetailUrl = "";
                         );
 
                         try {
-                            response = await axios.get(
-                                detailUrl,
-                                {
-                                    headers: {
-                                        "User-Agent":
-                                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-                                        "Referer": detailOrigin + "/",
-                                        "Accept":
-                                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                                    },
-                                    timeout: 6000,
-                                    maxRedirects: 5
-                                }
-                            );
+const detailAttemptStartedAt = Date.now();
 
+console.log(
+    "[PHIMHDCS] DETAIL HTTP DISPATCH:",
+    JSON.stringify({
+        title: candidate.title || "",
+        url: detailUrl,
+        origin: detailOrigin,
+        timeout: 3500
+    })
+);
+
+const response = await axios.get(
+    detailUrl,
+    {
+        headers: {
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+            "Referer": detailOrigin + "/",
+            "Accept":
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language":
+                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Connection": "close"
+        },
+        timeout: 3500,
+        maxRedirects: 3,
+        validateStatus: status =>
+            status >= 200 && status < 400
+    }
+);
+
+console.log(
+    "[PHIMHDCS] DETAIL HTTP RESPONSE:",
+    JSON.stringify({
+        title: candidate.title || "",
+        url: detailUrl,
+        status: response.status,
+        elapsedMs: Date.now() - detailAttemptStartedAt,
+        contentType:
+            response.headers?.["content-type"] || "",
+        contentLength:
+            String(response.data || "").length
+    })
+);
                             html = String(response.data || "");
                             successfulDetailUrl =
                                 response.request?.res?.responseUrl ||
