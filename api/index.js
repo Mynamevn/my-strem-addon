@@ -38825,177 +38825,314 @@ function isPhimHDCSUrl(value) {
 
         }
 
+
         // ====================================================
-        // 3. CHỌN PHIM
+        // 3. CHỌN PHIM — TITLE + ORIGINAL TITLE + KEYWORDS
         // ====================================================
 
         const target =
-            normalizeTitle(
-                movieName
+            normalizeTitle(movieName);
+
+        function normalizeAliasTitle(value) {
+            return normalizeTitle(value)
+                .replace(/\b(19|20)\d{2}\b/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
+
+        function getAliasMatchScore(alias, requested) {
+            const normalizedAlias =
+                normalizeAliasTitle(alias);
+
+            const normalizedRequested =
+                normalizeAliasTitle(requested);
+
+            if (
+                !normalizedAlias ||
+                !normalizedRequested ||
+                normalizedAlias.length < 4
+            ) {
+                return 0;
+            }
+
+            if (normalizedAlias === normalizedRequested) {
+                return 1200;
+            }
+
+            if (
+                normalizedAlias.length >= 7 &&
+                normalizedRequested.length >= 7 &&
+                (
+                    normalizedAlias.includes(normalizedRequested) ||
+                    normalizedRequested.includes(normalizedAlias)
+                )
+            ) {
+                return 600;
+            }
+
+            return 0;
+        }
+
+        let selectedMovie = null;
+        let selectedScore = -Infinity;
+        let selectedDetailHtml = "";
+
+        // Tải trang chi tiết của các ứng viên để lấy tên thay thế.
+        // Không dùng tên hiển thị trên kết quả tìm kiếm làm căn cứ duy nhất.
+
+        const candidateDetailResults =
+            await Promise.allSettled(
+                uniqueCandidates.map(async candidate => {
+
+                    const candidateOrigin =
+                        new URL(candidate.url).origin;
+
+                    const response =
+                        await axios.get(
+                            candidate.url,
+                            {
+                                headers: {
+                                    "User-Agent":
+                                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                                    "Referer":
+                                        candidateOrigin + "/"
+                                },
+                                timeout: 10000,
+                                maxRedirects: 5
+                            }
+                        );
+
+                    const html =
+                        String(response.data || "");
+
+                    const page =
+                        cheerio.load(html);
+
+                    const aliases = [];
+
+                    function addAlias(value) {
+                        const clean =
+                            String(value || "")
+                                .replace(/\s+/g, " ")
+                                .trim();
+
+                        if (
+                            clean &&
+                            clean.length >= 3 &&
+                            !aliases.includes(clean)
+                        ) {
+                            aliases.push(clean);
+                        }
+                    }
+
+                    // Tiêu đề chính và tiêu đề gốc.
+                    page("h1, h2").each(function () {
+                        addAlias(page(this).text());
+                    });
+
+                    // Metadata tiêu đề.
+                    addAlias(
+                        page('meta[property="og:title"]')
+                            .attr("content")
+                    );
+
+                    addAlias(
+                        page("title").text()
+                    );
+
+                    // Từ khóa phim: tên tiếng Việt, tiếng Anh,
+                    // tên gốc và các tên phát hành khác.
+                    page('a[href*="/tu-khoa/"]').each(
+                        function () {
+                            addAlias(page(this).text());
+                        }
+                    );
+
+                    let detailYear = 0;
+
+                    // Ưu tiên năm xuất hiện trong tiêu đề gốc.
+                    page("h1, h2").each(function () {
+                        if (detailYear > 0) return;
+
+                        detailYear =
+                            extractYear(
+                                page(this).text()
+                            );
+                    });
+
+                    return {
+                        candidate,
+                        html,
+                        aliases,
+                        year:
+                            detailYear ||
+                            candidate.year ||
+                            0
+                    };
+
+                })
             );
 
-        let selectedMovie =
-            null;
-
-        let selectedScore =
-            -Infinity;
-
-        
-for (
-    const candidate
-    of uniqueCandidates
-) {
-
-    let score = 0;
-    let titleMatched = false;
-
-    const candidateTitle =
-        normalizeTitle(
-            candidate.title
-        );
-
-    // ------------------------------------------------
-    // TITLE MATCH — BẮT BUỘC
-    // ------------------------------------------------
-
-    if (
-        candidateTitle === target
-    ) {
-
-        score += 1000;
-        titleMatched = true;
-
-    } else if (
-        candidateTitle.includes(target) &&
-        target.length >= 4
-    ) {
-
-        score += 500;
-        titleMatched = true;
-
-    } else if (
-        target.includes(candidateTitle) &&
-        candidateTitle.length >= 4
-    ) {
-
-        score += 400;
-        titleMatched = true;
-
-    }
-
-    // ------------------------------------------------
-    // YEAR — CHỈ DÙNG ĐỂ XẾP HẠNG SAU KHI KHỚP TÊN
-    // ------------------------------------------------
-
-    if (
-        titleMatched &&
-        movieYear > 0
-    ) {
-
-        if (
-            candidate.year === Number(movieYear)
+        for (
+            const result of candidateDetailResults
         ) {
 
-            score += 5000;
+            if (result.status !== "fulfilled") {
 
-        } else if (
-            candidate.year > 0
-        ) {
+                console.log(
+                    "[PHIMHDCS] CANDIDATE DETAIL FAILED:",
+                    result.reason?.response?.status ||
+                    result.reason?.message ||
+                    String(result.reason)
+                );
 
-            score -= 300;
+                continue;
+            }
 
-        }
+            const detail =
+                result.value;
 
-    }
+            const candidate =
+                detail.candidate;
 
-    console.log(
-        "[PHIMHDCS] CANDIDATE:",
-        {
-            title: candidate.title,
-            year: candidate.year,
-            titleMatched: titleMatched,
-            score: score,
-            url: candidate.url
-        }
-    );
+            let titleScore = 0;
+            let matchedAlias = "";
 
-    if (
-        titleMatched &&
-        score > selectedScore
-    ) {
+            for (
+                const alias of detail.aliases
+            ) {
 
-        selectedScore = score;
-        selectedMovie = candidate;
+                const aliasScore =
+                    getAliasMatchScore(
+                        alias,
+                        movieName
+                    );
 
-    }
+                if (
+                    aliasScore > titleScore
+                ) {
 
-}
-        
-if (
-    !selectedMovie
-) {
+                    titleScore = aliasScore;
+                    matchedAlias = alias;
 
-    console.log(
-        "[PHIMHDCS] NO VALID TITLE MATCH — SKIP PROVIDER:",
-        {
-            requestedTitle: movieName,
-            requestedYear: movieYear,
-            requestedSeason: seasonNumber,
-            requestedEpisode: episodeNumber,
-            candidateCount: uniqueCandidates.length,
-            candidates: uniqueCandidates.slice(0, 10).map(
-                candidate => ({
+                }
+
+            }
+
+            // Chỉ chấp nhận ứng viên có tên phim hoặc bí danh
+            // thực sự khớp với tên được yêu cầu.
+            if (titleScore <= 0) {
+
+                console.log(
+                    "[PHIMHDCS] CANDIDATE REJECTED — NO TITLE/ALIAS MATCH:",
+                    {
+                        title: candidate.title,
+                        aliases: detail.aliases.slice(0, 8),
+                        url: candidate.url
+                    }
+                );
+
+                continue;
+            }
+
+            let score =
+                titleScore;
+
+            // Năm chỉ dùng để phân biệt các phim cùng tên.
+            if (movieYear > 0 && detail.year > 0) {
+
+                if (
+                    Number(detail.year) ===
+                    Number(movieYear)
+                ) {
+
+                    score += 5000;
+
+                } else {
+
+                    score -= 1000;
+
+                }
+
+            }
+
+            console.log(
+                "[PHIMHDCS] CANDIDATE VERIFIED:",
+                {
                     title: candidate.title,
-                    year: candidate.year,
+                    matchedAlias,
+                    year: detail.year,
+                    score,
                     url: candidate.url
-                })
-            )
+                }
+            );
+
+            if (
+                score > selectedScore
+            ) {
+
+                selectedScore =
+                    score;
+
+                selectedMovie =
+                    candidate;
+
+                selectedDetailHtml =
+                    detail.html;
+
+            }
+
         }
-    );
 
-    return streams;
-}
+        if (!selectedMovie) {
 
+            console.log(
+                "[PHIMHDCS] NO VERIFIED TITLE/ALIAS MATCH:",
+                {
+                    requestedTitle: movieName,
+                    requestedYear: movieYear,
+                    candidateCount: uniqueCandidates.length
+                }
+            );
+
+            addFallback();
+
+            return streams;
+
+        }
 
         console.log(
             "[PHIMHDCS] SELECTED MOVIE:",
             selectedMovie.title,
             "|",
-            selectedMovie.year,
+            selectedScore,
             "|",
             selectedMovie.url
         );
 
         // ====================================================
-        // 4. LOAD DETAIL PAGE
+        // 4. REUSE VERIFIED DETAIL PAGE
         // ====================================================
 
-        const detailRes =
-            await axios.get(
-                selectedMovie.url,
-                {
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-                        "Referer":
-                            BASE_URL + "/"
-                    },
-                    timeout: 10000
-                }
+        if (!selectedDetailHtml) {
+
+            console.log(
+                "[PHIMHDCS] VERIFIED DETAIL HTML MISSING"
             );
+
+            addFallback();
+
+            return streams;
+
+        }
 
         const detailHtml =
-            String(
-                detailRes.data ||
-                ""
-            );
+            selectedDetailHtml;
 
         const parseDetail =
-            cheerio.load(
-                detailHtml
-            );
+            cheerio.load(detailHtml);
 
-        // ====================================================
+// ====================================================
 // 5. LẤY SERVER + EPISODE
 // ====================================================
 
