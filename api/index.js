@@ -40310,13 +40310,39 @@ for (
             cleanUrl
         );
 
-        const isDirect =
-            /\.m3u8(?:[?#]|$)/i.test(
-                cleanUrl
-            ) ||
-            /\.mp4(?:[?#]|$)/i.test(
-                cleanUrl
-            );
+        
+let isHdcDirect = false;
+
+try {
+
+    const parsedServerUrl =
+        new URL(cleanUrl);
+
+    const serverHost =
+        parsedServerUrl.hostname.toLowerCase();
+
+    isHdcDirect =
+        serverHost === "play.streamxemphimhd.site" &&
+        parsedServerUrl.pathname.startsWith("/m3/");
+
+} catch (serverUrlError) {
+
+    console.log(
+        "[PHIMHDCS] SERVER URL PARSE ERROR:",
+        serverUrlError.message
+    );
+
+}
+
+const isDirect =
+    /\.m3u8(?:[?#]|$)/i.test(
+        cleanUrl
+    ) ||
+    /\.mp4(?:[?#]|$)/i.test(
+        cleanUrl
+    ) ||
+    isHdcDirect;
+
 
         decodedServers.push({
 
