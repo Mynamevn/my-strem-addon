@@ -39076,8 +39076,9 @@ function isPhimHDCSUrl(value) {
         }
 
         let selectedMovie = null;
-        let selectedScore = -Infinity;
-        let selectedDetailHtml = "";
+let selectedScore = -Infinity;
+let selectedDetailHtml = "";
+let selectedDetailUrl = "";
 
         // Tải trang chi tiết của các ứng viên để lấy tên thay thế.
         // Không dùng tên hiển thị trên kết quả tìm kiếm làm căn cứ duy nhất.
@@ -39301,14 +39302,15 @@ function isPhimHDCSUrl(value) {
                     });
 
                     return {
-                        candidate,
-                        html,
-                        aliases,
-                        year:
-                            detailYear ||
-                            candidate.year ||
-                            0
-                    };
+    candidate,
+    html,
+    aliases,
+    detailUrl: successfulDetailUrl,
+    year:
+        detailYear ||
+        candidate.year ||
+        0
+};
 
                 }))
             );
@@ -39412,10 +39414,14 @@ function isPhimHDCSUrl(value) {
                     score;
 
                 selectedMovie =
-                    candidate;
+    candidate;
 
-                selectedDetailHtml =
-                    detail.html;
+selectedDetailHtml =
+    detail.html;
+
+selectedDetailUrl =
+    detail.detailUrl ||
+    candidate.url;
 
             }
 
@@ -40106,7 +40112,9 @@ const episodePageResults = await Promise.allSettled(
                     "User-Agent":
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
 
-                    "Referer": selectedMovie.url
+                    "Referer":
+    selectedDetailUrl ||
+    selectedMovie.url
                 },
 
                 // Giới hạn riêng cho từng server.
