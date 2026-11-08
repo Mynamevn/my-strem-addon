@@ -38169,10 +38169,24 @@ async function scrapePhimHDCS(
     movieYear = 0,
     seasonNumber = 0,
     episodeNumber = 0,
-    streamType = "movie"
+    streamType = "movie",
+    titleVariants = []
 ) {
 
     const streams = [];
+
+    const requestedTitleVariants = [
+        movieName,
+        ...(Array.isArray(titleVariants) ? titleVariants : [])
+    ]
+        .map(value => String(value || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .filter((value, index, list) => list.indexOf(value) === index);
+
+    console.log(
+        "[PHIMHDCS] REQUESTED TITLE VARIANTS:",
+        JSON.stringify(requestedTitleVariants)
+    );
 
     const PHIMHDCS_DOMAINS = [
     "https://filmhdc.com",
@@ -38840,37 +38854,49 @@ function isPhimHDCSUrl(value) {
                 .trim();
         }
 
-        function getAliasMatchScore(alias, requested) {
+
+        function getAliasMatchScore(alias) {
             const normalizedAlias =
                 normalizeAliasTitle(alias);
 
-            const normalizedRequested =
-                normalizeAliasTitle(requested);
-
             if (
                 !normalizedAlias ||
-                !normalizedRequested ||
                 normalizedAlias.length < 4
             ) {
                 return 0;
             }
 
-            if (normalizedAlias === normalizedRequested) {
-                return 1200;
+            let bestScore = 0;
+
+            for (const requested of requestedTitleVariants) {
+                const normalizedRequested =
+                    normalizeAliasTitle(requested);
+
+                if (
+                    !normalizedRequested ||
+                    normalizedRequested.length < 4
+                ) {
+                    continue;
+                }
+
+                if (normalizedAlias === normalizedRequested) {
+                    bestScore = Math.max(bestScore, 1200);
+                    continue;
+                }
+
+                if (
+                    normalizedAlias.length >= 7 &&
+                    normalizedRequested.length >= 7 &&
+                    (
+                        normalizedAlias.includes(normalizedRequested) ||
+                        normalizedRequested.includes(normalizedAlias)
+                    )
+                ) {
+                    bestScore = Math.max(bestScore, 600);
+                }
             }
 
-            if (
-                normalizedAlias.length >= 7 &&
-                normalizedRequested.length >= 7 &&
-                (
-                    normalizedAlias.includes(normalizedRequested) ||
-                    normalizedRequested.includes(normalizedAlias)
-                )
-            ) {
-                return 600;
-            }
-
-            return 0;
+            return bestScore;
         }
 
         let selectedMovie = null;
@@ -38883,6 +38909,16 @@ function isPhimHDCSUrl(value) {
         const candidateDetailResults =
             await Promise.allSettled(
                 uniqueCandidates.map(async candidate => {
+
+                    const candidateStartedAt = Date.now();
+
+                    console.log(
+                        "[PHIMHDCS] DETAIL REQUEST START:",
+                        JSON.stringify({
+                            title: candidate.title || "",
+                            url: candidate.url
+                        })
+                    );
 
                     const candidateOrigin =
                         new URL(candidate.url).origin;
@@ -38905,10 +38941,22 @@ function isPhimHDCSUrl(value) {
                     const html =
                         String(response.data || "");
 
+                    console.log(
+                        "[PHIMHDCS] DETAIL REQUEST COMPLETE:",
+                        JSON.stringify({
+                            title: candidate.title || "",
+                            url: candidate.url,
+                            status: response.status,
+                            htmlLength: html.length,
+                            elapsedMs: Date.now() - candidateStartedAt
+                        })
+                    );
+
                     const page =
                         cheerio.load(html);
 
                     const aliases = [];
+                    addAlias(candidate.title);
 
                     function addAlias(value) {
                         const clean =
@@ -38978,12 +39026,13 @@ function isPhimHDCSUrl(value) {
         ) {
 
             if (result.status !== "fulfilled") {
-
                 console.log(
                     "[PHIMHDCS] CANDIDATE DETAIL FAILED:",
-                    result.reason?.response?.status ||
-                    result.reason?.message ||
-                    String(result.reason)
+                    JSON.stringify({
+                        status: result.reason?.response?.status || 0,
+                        code: result.reason?.code || "",
+                        message: result.reason?.message || String(result.reason)
+                    })
                 );
 
                 continue;
@@ -39001,12 +39050,8 @@ function isPhimHDCSUrl(value) {
             for (
                 const alias of detail.aliases
             ) {
-
                 const aliasScore =
-                    getAliasMatchScore(
-                        alias,
-                        movieName
-                    );
+                    getAliasMatchScore(alias);
 
                 if (
                     aliasScore > titleScore
@@ -43510,6 +43555,60 @@ const animeProvidersEnabled =
       }
   })();
 
+  // =====================================================
+  // PHIMHDCS — TẬP HỢP TÊN ĐÃ XÁC MINH THEO IMDb
+  // =====================================================
+
+  const phimhdcsImdbIdForTitles =
+      rawId.startsWith("tt")
+          ? String(rawId.split(":")[0] || "").trim().toLowerCase()
+          : "";
+
+  const phimhdcsCacheKey =
+      phimhdcsImdbIdForTitles
+          ? String(streamType || "movie") +
+            ":" +
+            phimhdcsImdbIdForTitles
+          : "";
+
+  const phimhdcsCachedEntry =
+      phimhdcsCacheKey
+          ? MOVINA_PHIMAPI_MATCH_BY_IMDB.get(phimhdcsCacheKey)
+          : null;
+
+  const phimhdcsCachedItem =
+      phimhdcsCachedEntry &&
+      phimhdcsCachedEntry.expiresAt > Date.now()
+          ? phimhdcsCachedEntry.item
+          : null;
+
+  const phimhdcsTitleVariants = [
+      movieName,
+
+      resolvedMetadata?.name,
+      resolvedMetadata?.origin_name,
+      resolvedMetadata?.original_name,
+      resolvedMetadata?.title,
+
+      phimhdcsCachedItem?.name,
+      phimhdcsCachedItem?.origin_name,
+      phimhdcsCachedItem?.original_name,
+      phimhdcsCachedItem?.title
+  ]
+      .map(value => String(value || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .filter((value, index, list) => list.indexOf(value) === index);
+
+  console.log(
+      "[PHIMHDCS] IMDb TITLE CONTEXT:",
+      JSON.stringify({
+          imdbId: phimhdcsImdbIdForTitles || null,
+          cacheHit: Boolean(phimhdcsCachedItem),
+          primaryTitle: movieName,
+          variants: phimhdcsTitleVariants
+      })
+  );
+
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
       fetchNguonC(nguonCFallbackName),
@@ -43527,8 +43626,10 @@ const animeProvidersEnabled =
           movieYear,
           seasonNumber,
           episodeNumber,
-          streamType
+          streamType,
+          phimhdcsTitleVariants
       )
+
   ]);
 
   // PhimLongTieng bắt đầu sớm, chỉ chờ KKPhim để lấy
