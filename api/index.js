@@ -39828,20 +39828,10 @@ parseDetail(
         });
 
         console.log(
-            "[PHIMHDCS] EPISODE LINK:",
-            {
-                server:
-                    serverName,
-
-                name:
-                    name,
-
-                number:
-                    episodeNumber,
-
-                url:
-                    absoluteUrl
-            }
+            "[PHIMHDCS] EPISODE LINK ADDED:",
+            serverName,
+            "Episode:",
+            episodeNumber
         );
 
     }
