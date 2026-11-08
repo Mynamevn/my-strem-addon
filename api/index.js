@@ -38170,7 +38170,8 @@ async function scrapePhimHDCS(
     seasonNumber = 0,
     episodeNumber = 0,
     streamType = "movie",
-    titleVariants = []
+    titleVariants = [],
+    imdbId = ""
 ) {
 
     const streams = [];
@@ -38183,9 +38184,184 @@ async function scrapePhimHDCS(
         .filter(Boolean)
         .filter((value, index, list) => list.indexOf(value) === index);
 
+    // =====================================================
+    // PHIMAPI IMDb LOOKUP
+    // Không phụ thuộc Map cache giữa các Vercel instance.
+    // =====================================================
+
+    const normalizedPhimhdcsImdbId =
+        String(imdbId || "").trim().toLowerCase();
+
+    if (/^tt\d+$/i.test(normalizedPhimhdcsImdbId)) {
+        const imdbLookupStartedAt = Date.now();
+
+        console.log(
+            "[PHIMHDCS] PHIMAPI IMDb LOOKUP START:",
+            normalizedPhimhdcsImdbId
+        );
+
+        try {
+            const imdbResponse = await axios.get(
+                "https://phimapi.com/imdb/title/" +
+                    encodeURIComponent(normalizedPhimhdcsImdbId),
+                {
+                    timeout: 4000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+            const imdbData = imdbResponse.data || {};
+
+            const phimApiItem =
+                imdbData?.movie ||
+                imdbData?.data?.movie ||
+                imdbData?.data?.item ||
+                imdbData?.item ||
+                null;
+
+            if (
+                phimApiItem &&
+                typeof phimApiItem === "object" &&
+                phimApiItem.name
+            ) {
+                const candidateImdbId = String(
+                    phimApiItem?.imdb?.id ||
+                    phimApiItem?.imdb_id ||
+                    phimApiItem?.imdbId ||
+                    ""
+                ).trim().toLowerCase();
+
+                const candidateType = String(
+                    phimApiItem?.type ||
+                    phimApiItem?.tmdb?.type ||
+                    ""
+                ).trim().toLowerCase();
+
+                const candidateYear =
+                    Number(
+                        phimApiItem?.year ||
+                        phimApiItem?.release_year ||
+                        0
+                    ) || 0;
+
+                const expectedSeries =
+                    streamType === "series";
+
+                const explicitSeriesTypes = [
+                    "series",
+                    "tv",
+                    "tvshow",
+                    "tvshows"
+                ];
+
+                const explicitMovieTypes = [
+                    "movie",
+                    "single",
+                    "phim-le"
+                ];
+
+                const typeMatches =
+                    !candidateType ||
+                    (
+                        expectedSeries
+                            ? !explicitMovieTypes.includes(candidateType)
+                            : !explicitSeriesTypes.includes(candidateType)
+                    );
+
+                const imdbMatches =
+                    !candidateImdbId ||
+                    candidateImdbId === normalizedPhimhdcsImdbId;
+
+                const yearMatches =
+                    !movieYear ||
+                    !candidateYear ||
+                    Math.abs(candidateYear - Number(movieYear)) <= 1;
+
+                if (
+                    phimApiItem.slug &&
+                    imdbMatches &&
+                    typeMatches &&
+                    yearMatches
+                ) {
+                    requestedTitleVariants.push(
+                        phimApiItem.name,
+                        phimApiItem.origin_name,
+                        phimApiItem.original_name,
+                        phimApiItem.title
+                    );
+
+                    console.log(
+                        "[PHIMHDCS] PHIMAPI IMDb LOOKUP MATCH:",
+                        JSON.stringify({
+                            imdbId: normalizedPhimhdcsImdbId,
+                            name: phimApiItem.name,
+                            originName: phimApiItem.origin_name || "",
+                            year: candidateYear,
+                            type: candidateType,
+                            slug: phimApiItem.slug
+                        })
+                    );
+                } else {
+                    console.warn(
+                        "[PHIMHDCS] PHIMAPI IMDb LOOKUP REJECTED:",
+                        JSON.stringify({
+                            imdbId: normalizedPhimhdcsImdbId,
+                            candidateImdbId,
+                            name: phimApiItem.name || "",
+                            year: candidateYear,
+                            requestedYear: movieYear,
+                            type: candidateType,
+                            imdbMatches,
+                            typeMatches,
+                            yearMatches
+                        })
+                    );
+                }
+            } else {
+                console.log(
+                    "[PHIMHDCS] PHIMAPI IMDb LOOKUP EMPTY"
+                );
+            }
+
+            console.log(
+                "[PHIMHDCS] PHIMAPI IMDb LOOKUP COMPLETE:",
+                Date.now() - imdbLookupStartedAt,
+                "ms"
+            );
+
+        } catch (imdbLookupError) {
+            console.error(
+                "[PHIMHDCS] PHIMAPI IMDb LOOKUP ERROR:",
+                JSON.stringify({
+                    imdbId: normalizedPhimhdcsImdbId,
+                    status: imdbLookupError?.response?.status || 0,
+                    code: imdbLookupError?.code || "",
+                    message:
+                        imdbLookupError?.message ||
+                        String(imdbLookupError)
+                })
+            );
+        }
+    }
+
+    const finalRequestedTitleVariants = [
+        ...new Set(
+            requestedTitleVariants
+                .map(value =>
+                    String(value || "")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                )
+                .filter(Boolean)
+        )
+    ];
+
     console.log(
         "[PHIMHDCS] REQUESTED TITLE VARIANTS:",
-        JSON.stringify(requestedTitleVariants)
+        JSON.stringify(finalRequestedTitleVariants)
     );
 
     const PHIMHDCS_DOMAINS = [
@@ -38868,7 +39044,7 @@ function isPhimHDCSUrl(value) {
 
             let bestScore = 0;
 
-            for (const requested of requestedTitleVariants) {
+            for (const requested of finalRequestedTitleVariants) {
                 const normalizedRequested =
                     normalizeAliasTitle(requested);
 
@@ -38923,8 +39099,10 @@ function isPhimHDCSUrl(value) {
                     const candidateOrigin =
                         new URL(candidate.url).origin;
 
-                    const response =
-                        await axios.get(
+                    let response;
+
+                    try {
+                        response = await axios.get(
                             candidate.url,
                             {
                                 headers: {
@@ -38937,6 +39115,24 @@ function isPhimHDCSUrl(value) {
                                 maxRedirects: 5
                             }
                         );
+                    } catch (detailError) {
+                        console.error(
+                            "[PHIMHDCS] DETAIL REQUEST ERROR:",
+                            JSON.stringify({
+                                title: candidate.title || "",
+                                url: candidate.url,
+                                status: detailError?.response?.status || 0,
+                                code: detailError?.code || "",
+                                message:
+                                    detailError?.message ||
+                                    String(detailError),
+                                elapsedMs:
+                                    Date.now() - candidateStartedAt
+                            })
+                        );
+
+                        throw detailError;
+                    }
 
                     const html =
                         String(response.data || "");
@@ -43627,7 +43823,8 @@ const animeProvidersEnabled =
           seasonNumber,
           episodeNumber,
           streamType,
-          phimhdcsTitleVariants
+          phimhdcsTitleVariants,
+          phimhdcsImdbIdForTitles
       )
 
   ]);
