@@ -27818,10 +27818,8 @@ async function animeHayFindEpisode(
             detailUrl
         );
 
-
-        const response =
-            await axios.get(
-                detailUrl,
+        response = await axios.get(
+    detailUrl,
                 {
                     timeout: 15000,
                     maxRedirects: 5,
@@ -39161,8 +39159,7 @@ let selectedDetailUrl = "";
                             })
                         );
 
-                        try {
-                        
+                        try {                       
 
 const detailAttemptStartedAt = Date.now();
 
