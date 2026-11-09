@@ -40696,8 +40696,6 @@ const episodePageResults = await Promise.allSettled(
 
                 break;
 
-            }
-
             } catch (episodeError) {
 
                 lastEpisodeError =
