@@ -40642,7 +40642,7 @@ const episodePageResults = await Promise.allSettled(
                                         candidateOrigin
                                 },
 
-                                timeout: 4500,
+                                timeout: 1600,
                                 maxRedirects: 5,
 
                                 signal:
@@ -40658,15 +40658,25 @@ const episodePageResults = await Promise.allSettled(
 
                             requestTimer = setTimeout(() => {
 
+                                console.warn(
+                                    "[PHIMHDCS] EPISODE PAGE HARD TIMEOUT:",
+                                    {
+                                        index,
+                                        server: selected.server,
+                                        host: candidateHost,
+                                        elapsedMs: Date.now() - startedAt
+                                    }
+                                );
+
                                 requestController.abort();
 
                                 reject(
                                     new Error(
-                                        "Episode HTTP hard timeout after 5000ms"
+                                        "Episode HTTP hard timeout after 2000ms"
                                     )
                                 );
 
-                            }, 5000);
+                            }, 2000);
 
                         })
 
