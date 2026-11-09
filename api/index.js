@@ -41253,8 +41253,10 @@ for (
             cleanUrl
         );
        
+
+
 // [PHIMHDCS] CLASSIFY HDC PLAYER URL
-// Nhận diện các subdomain thuộc hệ thống HDC.
+// Nhận diện đầy đủ các đường dẫn player của hệ thống HDC.
 // Không phân loại nhầm M3U8 / MP4 direct thành player page.
 
 let isHdcPlayer = false;
@@ -41272,12 +41274,20 @@ try {
         serverHost === "streamxemphimhd.site" ||
         serverHost.endsWith(".streamxemphimhd.site");
 
+    const isHdcPlayerPath =
+        /^\/(?:m3|video|embed|hls)(?:\/|$)/i.test(
+            serverPath
+        );
+
+    const isDirectFile =
+        /\.(?:m3u8|mp4)(?:$|\/)/i.test(
+            serverPath
+        );
+
     isHdcPlayer =
         isHdcHost &&
-        (
-            serverPath === "/m3" ||
-            serverPath.startsWith("/m3/")
-        );
+        isHdcPlayerPath &&
+        !isDirectFile;
 
 } catch (serverUrlError) {
     console.log(
@@ -41287,14 +41297,14 @@ try {
 }
 
 const isDirect =
-    /\.m3u8(?:[?#]|$)/i.test(cleanUrl) ||
-    /\.mp4(?:[?#]|$)/i.test(cleanUrl);
+    /\.(?:m3u8|mp4)(?:[?#]|$)/i.test(cleanUrl);
 
 decodedServers.push({
     url: cleanUrl,
     isDirect: isDirect,
     isHdcPlayer: isHdcPlayer
 });
+
 
 console.log(
     "[PHIMHDCS] SERVER CLASSIFICATION:",
