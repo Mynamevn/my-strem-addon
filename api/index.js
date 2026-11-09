@@ -41202,20 +41202,73 @@ for (
         )
     ) {
 
-        const decoded =
+        let decoded =
             decodeKey(
                 serverKey
             );
 
         if (
-            !decoded ||
-            !decoded.startsWith(
-                "http"
-            )
+            typeof decoded === "string"
         ) {
+            decoded = decoded
+                .replace(/\\u0026/gi, "&")
+                .replace(/\\u003d/gi, "=")
+                .replace(/\\\//g, "/")
+                .replace(/&amp;/gi, "&")
+                .trim();
+        }
+
+        // Một số payload có thể chứa cấu hình hoặc
+        // JSON bao quanh URL thay vì bắt đầu bằng http.
+        if (
+            decoded &&
+            !/^https?:\/\//i.test(decoded)
+        ) {
+            const embeddedUrlMatch =
+                decoded.match(
+                    /https?:\/\/[^\s"'<>\\]+/i
+                );
+
+            if (embeddedUrlMatch) {
+                decoded = embeddedUrlMatch[0];
+            }
+        }
+
+        // Thử giải mã URL nếu payload chứa URL dạng percent-encoded.
+        if (
+            decoded &&
+            !/^https?:\/\//i.test(decoded) &&
+            /https?%3a%2f%2f/i.test(decoded)
+        ) {
+            try {
+                const decodedPayload =
+                    decodeURIComponent(decoded);
+
+                const encodedUrlMatch =
+                    decodedPayload.match(
+                        /https?:\/\/[^\s"'<>\\]+/i
+                    );
+
+                if (encodedUrlMatch) {
+                    decoded = encodedUrlMatch[0];
+                }
+            } catch (urlDecodeError) {}
+        }
+
+        if (
+            !decoded ||
+            !/^https?:\/\//i.test(decoded)
+        ) {
+            console.log(
+                "[PHIMHDCS] SKIP NON-URL PAYLOAD:",
+                {
+                    server: data?.server,
+                    key: serverKey,
+                    preview: String(decoded || "").slice(0, 180)
+                }
+            );
 
             continue;
-
         }
 
         const cleanUrl =
