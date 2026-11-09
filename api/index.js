@@ -40725,15 +40725,58 @@ for (
                     }
                 );
 
+               
+                const hasSalt =
+                    /(?:const|let|var)\s+_0xS\s*=\s*["']([^"']+)["']/i
+                        .test(html);
+
+                const hasRealObj =
+                    /(?:const|let|var)\s+realObj\s*=\s*JSON\.parse\(\s*atob\(/i
+                        .test(html);
+
+                const hasOxData =
+                    /(?:const|let|var)\s+_0xData\s*=\s*\{/i
+                        .test(html);
+
+                const hasDirectMedia =
+                    /https?:\/\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/i
+                        .test(html);
+
+                const hasReadablePlayerData =
+                    hasSalt &&
+                    (hasRealObj || hasOxData);
+
+                const hasUsablePlayer =
+                    hasDirectMedia ||
+                    hasReadablePlayerData;
+
+                console.log(
+                    "[PHIMHDCS V8] PAGE QUALITY:",
+                    {
+                        requestId,
+                        host: candidateHost,
+                        htmlLength: html.length,
+                        hasSalt,
+                        hasRealObj,
+                        hasOxData,
+                        hasDirectMedia,
+                        hasUsablePlayer
+                    }
+                );
+
                 if (
                     !response.ok ||
-                    html.length < 5000
+                    html.length < 5000 ||
+                    !hasUsablePlayer
                 ) {
                     throw new Error(
-                        "Invalid response HTTP " +
-                        response.status +
-                        ", HTML " +
-                        html.length
+                        "Unusable episode page: " +
+                        "HTTP " + response.status +
+                        ", HTML " + html.length +
+                        ", salt " + hasSalt +
+                        ", realObj " + hasRealObj +
+                        ", oxData " + hasOxData +
+                        ", direct " + hasDirectMedia
                     );
                 }
 
