@@ -40503,10 +40503,11 @@ console.log(
 
 
 
+
 // ====================================================
-// [PHIMHDCS-EPISODE-LOAD-V5]
-// SEQUENTIAL EPISODE FETCH + PARALLEL DOMAIN RACE
-// Fetch Vietsub first, then Thuyết Minh.
+// [PHIMHDCS-EPISODE-LOAD-V6]
+// SEQUENTIAL EPISODE FETCH + PARALLEL AXIOS DOMAIN RACE
+// Axios native timeout; no manual AbortController.
 // ====================================================
 
 const episodePageResults = [];
@@ -40525,25 +40526,33 @@ for (
     const startedAt = Date.now();
 
     const requestId =
-        "PHIMHDCS-V5-" + startedAt + "-" + index;
+        "PHIMHDCS-V6-" + startedAt + "-" + index;
 
     if (!episodeUrl) {
+
         episodePageResults.push({
             status: "rejected",
             reason: new Error("Missing episode URL")
         });
+
         continue;
     }
 
     let originalUrl;
 
     try {
+
         originalUrl = new URL(episodeUrl);
+
     } catch (error) {
+
         episodePageResults.push({
             status: "rejected",
-            reason: new Error("Invalid episode URL: " + episodeUrl)
+            reason: new Error(
+                "Invalid episode URL: " + episodeUrl
+            )
         });
+
         continue;
     }
 
@@ -40561,10 +40570,8 @@ for (
         selectedDetailUrl ||
         selectedMovie.url;
 
-    const controllers = [];
-
     console.log(
-        "[PHIMHDCS V5] EPISODE START:",
+        "[PHIMHDCS V6] EPISODE START:",
         {
             requestId,
             index,
@@ -40593,6 +40600,7 @@ for (
             let referer = episodeReferer;
 
             try {
+
                 const refererUrl =
                     new URL(referer);
 
@@ -40600,89 +40608,85 @@ for (
                     refererUrl.hostname === "filmhdc.com" ||
                     refererUrl.hostname === "phimhdcss.com"
                 ) {
+
                     refererUrl.hostname =
                         candidateHost;
 
                     referer = refererUrl.href;
                 }
+
             } catch (error) {}
-
-            const controller =
-                new AbortController();
-
-            controllers.push(controller);
-
-            let timeoutTimer = null;
 
             const hostStartedAt =
                 Date.now();
 
             console.log(
-                "[PHIMHDCS V5] HOST DISPATCH:",
+                "[PHIMHDCS V6] HOST DISPATCH:",
                 {
                     requestId,
                     server: selected.server,
                     host: candidateHost,
-                    timeout: 4500
+                    timeout: 6000,
+                    url: requestUrl
                 }
             );
 
             try {
 
-                timeoutTimer = setTimeout(() => {
-
-                    console.warn(
-                        "[PHIMHDCS V5] HOST TIMEOUT:",
+                const response =
+                    await axios.get(
+                        requestUrl,
                         {
-                            requestId,
-                            server: selected.server,
-                            host: candidateHost,
-                            elapsedMs:
-                                Date.now() - hostStartedAt
+                            method: "GET",
+
+                            timeout: 6000,
+
+                            maxRedirects: 5,
+
+                            maxContentLength:
+                                15 * 1024 * 1024,
+
+                            maxBodyLength:
+                                15 * 1024 * 1024,
+
+                            responseType: "text",
+
+                            transformResponse: [
+                                data => data
+                            ],
+
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+
+                                "Accept":
+                                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                                "Accept-Language":
+                                    "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                                "Referer":
+                                    referer,
+
+                                "Origin":
+                                    candidateOrigin
+                            },
+
+                            validateStatus:
+                                () => true
                         }
                     );
 
-                    controller.abort();
-
-                }, 4500);
-
-                const response = await fetch(
-                    requestUrl,
-                    {
-                        method: "GET",
-
-                        headers: {
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-
-                            "Accept":
-                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-                            "Accept-Language":
-                                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-                            "Referer":
-                                referer,
-
-                            "Origin":
-                                candidateOrigin
-                        },
-
-                        redirect: "follow",
-
-                        signal:
-                            controller.signal
-                    }
-                );
-
                 const html =
-                    await response.text();
+                    Buffer.isBuffer(response.data)
+                        ? response.data.toString("utf8")
+                        : String(response.data || "");
 
                 const contentType =
-                    response.headers.get("content-type") || "";
+                    response.headers?.["content-type"] || "";
 
                 console.log(
-                    "[PHIMHDCS V5] HOST RESPONSE:",
+                    "[PHIMHDCS V6] HOST RESPONSE:",
                     {
                         requestId,
                         server: selected.server,
@@ -40696,9 +40700,11 @@ for (
                 );
 
                 if (
-                    !response.ok ||
+                    response.status < 200 ||
+                    response.status >= 300 ||
                     html.length < 5000
                 ) {
+
                     throw new Error(
                         "Invalid episode response: HTTP " +
                         response.status +
@@ -40710,7 +40716,11 @@ for (
                 return {
                     server: selected.server,
                     episode: selected.episode,
-                    url: response.url || requestUrl,
+
+                    url:
+                        response.request?.res?.responseUrl ||
+                        requestUrl,
+
                     html,
                     status: response.status,
                     host: candidateHost,
@@ -40720,14 +40730,14 @@ for (
             } catch (error) {
 
                 console.warn(
-                    "[PHIMHDCS V5] HOST FAILED:",
+                    "[PHIMHDCS V6] HOST FAILED:",
                     {
                         requestId,
                         server: selected.server,
                         host: candidateHost,
                         code:
-                            error?.cause?.code ||
                             error?.code ||
+                            error?.cause?.code ||
                             "",
                         message:
                             error?.message ||
@@ -40738,26 +40748,17 @@ for (
                 );
 
                 throw error;
-
-            } finally {
-
-                if (timeoutTimer) {
-                    clearTimeout(timeoutTimer);
-                }
-
             }
         }
     );
 
-    let winningPage = null;
-
     try {
 
-        winningPage =
+        const winningPage =
             await Promise.any(hostRequests);
 
         console.log(
-            "[PHIMHDCS V5] EPISODE SUCCESS:",
+            "[PHIMHDCS V6] EPISODE SUCCESS:",
             {
                 requestId,
                 server: selected.server,
@@ -40778,17 +40779,19 @@ for (
     } catch (aggregateError) {
 
         console.error(
-            "[PHIMHDCS V5] EPISODE ALL HOSTS FAILED:",
+            "[PHIMHDCS V6] EPISODE ALL HOSTS FAILED:",
             {
                 requestId,
                 server: selected.server,
                 episodeUrl,
+
                 errors:
                     (aggregateError?.errors || []).map(
                         error =>
                             error?.message ||
                             String(error)
                     ),
+
                 elapsedMs:
                     Date.now() - startedAt
             }
@@ -40801,30 +40804,20 @@ for (
                 selected.server
             )
         });
-
-    } finally {
-
-        for (const controller of controllers) {
-            try {
-                controller.abort();
-            } catch (error) {}
-        }
-
     }
 
     console.log(
-        "[PHIMHDCS V5] EPISODE QUEUE PROGRESS:",
+        "[PHIMHDCS V6] EPISODE QUEUE PROGRESS:",
         {
             completed: episodePageResults.length,
             total: selectedEpisodes.length,
             server: selected.server
         }
     );
-
 }
 
 console.log(
-    "[PHIMHDCS V5] ALL EPISODE REQUESTS COMPLETE:",
+    "[PHIMHDCS V6] ALL EPISODE REQUESTS COMPLETE:",
     {
         fulfilled:
             episodePageResults.filter(
