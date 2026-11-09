@@ -40608,13 +40608,15 @@ const episodePageResults = await Promise.allSettled(
 
                 let requestTimer = null;
 
-                console.log(
+                                console.log(
                     "[PHIMHDCS] EPISODE PAGE HTTP DISPATCH:",
                     {
                         index,
                         server: selected.server,
                         host: candidateHost,
-                        timeout: 5000
+                        axiosTimeout: 1600,
+                        hardTimeout: 2000,
+                        startedAt
                     }
                 );
 
