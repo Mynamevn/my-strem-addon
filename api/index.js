@@ -39136,29 +39136,53 @@ function isPhimHDCSUrl(value) {
                 );
 
                 // Ưu tiên domain có kết quả gần với tên phim.
+
+
+                const searchTitleVariants = [
+                    movieName,
+                    ...finalRequestedTitleVariants
+                ]
+                    .map(value =>
+                        normalizeTitle(value)
+                    )
+                    .filter(value =>
+                        value.length >= 4
+                    );
+
                 const hasTitleMatch =
-                    domainCandidates.some(
-                        candidate => {
+                    domainCandidates.some(candidate => {
 
-                            const candidateTitle =
-                                normalizeTitle(
-                                    candidate.title
-                                );
-
-                            return (
-                                candidateTitle === searchTarget ||
-                                (
-                                    searchTarget.length >= 4 &&
-                                    candidateTitle.includes(searchTarget)
-                                ) ||
-                                (
-                                    candidateTitle.length >= 4 &&
-                                    searchTarget.includes(candidateTitle)
-                                )
+                        const candidateTitle =
+                            normalizeTitle(
+                                candidate.title
                             );
 
+                        if (
+                            !candidateTitle ||
+                            candidateTitle.length < 4
+                        ) {
+                            return false;
                         }
-                    );
+
+                        return searchTitleVariants.some(
+                            requestedTitle => {
+
+                                return (
+                                    candidateTitle === requestedTitle ||
+                                    (
+                                        requestedTitle.length >= 7 &&
+                                        candidateTitle.includes(requestedTitle)
+                                    ) ||
+                                    (
+                                        candidateTitle.length >= 7 &&
+                                        requestedTitle.includes(candidateTitle)
+                                    )
+                                );
+
+                            }
+                        );
+
+                    });
 
                 if (
                     hasTitleMatch
