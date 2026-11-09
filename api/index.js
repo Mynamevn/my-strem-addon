@@ -40502,14 +40502,14 @@ console.log(
 );
 
 // ====================================================
-// [PHIMHDCS-EPISODE-LOAD-V7]
-// FETCH RESTORE + HARD TIMEOUT + PARALLEL HOST RACE
-// Sequential episode processing.
+// [PHIMHDCS-EPISODE-LOAD-V8]
+// FULL REQUEST TIMEOUT + FULL BODY READ
+// Sequential episodes, parallel hosts.
 // ====================================================
 
 const episodePageResults = [];
 
-const PHIMHDCS_V7_TIMEOUT = 6500;
+const PHIMHDCS_V8_TIMEOUT = 9000;
 
 for (
     let index = 0;
@@ -40524,7 +40524,7 @@ for (
     const startedAt = Date.now();
 
     const requestId =
-        "PHIMHDCS-V7-" + startedAt + "-" + index;
+        "PHIMHDCS-V8-" + startedAt + "-" + index;
 
     if (!episodeUrl) {
         episodePageResults.push({
@@ -40562,7 +40562,7 @@ for (
         originalUrl.origin + "/";
 
     console.log(
-        "[PHIMHDCS V7] EPISODE START:",
+        "[PHIMHDCS V8] EPISODE START:",
         {
             requestId,
             index,
@@ -40572,6 +40572,8 @@ for (
             candidateHosts
         }
     );
+
+    const hostControllers = [];
 
     const hostRequests = candidateHosts.map(
         async candidateHost => {
@@ -40606,85 +40608,111 @@ for (
                 }
             } catch (error) {}
 
-            const hostStartedAt =
-                Date.now();
-
             const controller =
                 new AbortController();
+
+            hostControllers.push({
+                host: candidateHost,
+                controller
+            });
+
+            const hostStartedAt =
+                Date.now();
 
             let timeoutTimer = null;
 
             console.log(
-                "[PHIMHDCS V7] HOST DISPATCH:",
+                "[PHIMHDCS V8] HOST DISPATCH:",
                 {
                     requestId,
                     server: selected.server,
                     host: candidateHost,
-                    timeout: PHIMHDCS_V7_TIMEOUT,
+                    timeout: PHIMHDCS_V8_TIMEOUT,
                     url: requestUrl
                 }
             );
 
             try {
-                const fetchPromise = fetch(
-                    requestUrl,
-                    {
-                        method: "GET",
-                        signal: controller.signal,
 
-                        headers: {
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                // Bao trọn cả fetch và response.text()
+                // trong cùng một timeout.
+                const fullRequestPromise =
+                    (async () => {
 
-                            "Accept":
-                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        const response =
+                            await fetch(
+                                requestUrl,
+                                {
+                                    method: "GET",
+                                    signal: controller.signal,
 
-                            "Accept-Language":
-                                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+                                    headers: {
+                                        "User-Agent":
+                                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
 
-                            "Referer": referer,
-                            "Origin": candidateOrigin
-                        },
+                                        "Accept":
+                                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 
-                        redirect: "follow"
-                    }
-                );
+                                        "Accept-Language":
+                                            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+
+                                        "Referer": referer,
+                                        "Origin": candidateOrigin
+                                    },
+
+                                    redirect: "follow"
+                                }
+                            );
+
+                        const html =
+                            await response.text();
+
+                        return {
+                            response,
+                            html
+                        };
+
+                    })();
 
                 const timeoutPromise =
                     new Promise((resolve, reject) => {
 
-                        timeoutTimer = setTimeout(() => {
+                        timeoutTimer =
+                            setTimeout(() => {
 
-                            controller.abort();
+                                controller.abort();
 
-                            reject(
-                                new Error(
-                                    "Hard timeout after " +
-                                    PHIMHDCS_V7_TIMEOUT +
-                                    "ms"
-                                )
-                            );
+                                reject(
+                                    new Error(
+                                        "Full request timeout after " +
+                                        PHIMHDCS_V8_TIMEOUT +
+                                        "ms"
+                                    )
+                                );
 
-                        }, PHIMHDCS_V7_TIMEOUT);
+                            }, PHIMHDCS_V8_TIMEOUT);
 
                     });
 
-                const response =
+                const result =
                     await Promise.race([
-                        fetchPromise,
+                        fullRequestPromise,
                         timeoutPromise
                     ]);
-
-                const html =
-                    await response.text();
 
                 if (timeoutTimer) {
                     clearTimeout(timeoutTimer);
                     timeoutTimer = null;
                 }
 
+                const response =
+                    result.response;
+
+                const html =
+                    result.html;
+
                 console.log(
-                    "[PHIMHDCS V7] HOST RESPONSE:",
+                    "[PHIMHDCS V8] HOST RESPONSE:",
                     {
                         requestId,
                         server: selected.server,
@@ -40721,7 +40749,7 @@ for (
             } catch (error) {
 
                 console.warn(
-                    "[PHIMHDCS V7] HOST FAILED:",
+                    "[PHIMHDCS V8] HOST FAILED:",
                     {
                         requestId,
                         server: selected.server,
@@ -40743,9 +40771,6 @@ for (
                     clearTimeout(timeoutTimer);
                 }
 
-                if (!controller.signal.aborted) {
-                    controller.abort();
-                }
             }
         }
     );
@@ -40755,8 +40780,17 @@ for (
         const winningPage =
             await Promise.any(hostRequests);
 
+        // Dừng các host còn lại sau khi đã có HTML hợp lệ.
+        for (const entry of hostControllers) {
+            if (
+                !entry.controller.signal.aborted
+            ) {
+                entry.controller.abort();
+            }
+        }
+
         console.log(
-            "[PHIMHDCS V7] EPISODE SUCCESS:",
+            "[PHIMHDCS V8] EPISODE SUCCESS:",
             {
                 requestId,
                 server: selected.server,
@@ -40777,7 +40811,7 @@ for (
     } catch (aggregateError) {
 
         console.error(
-            "[PHIMHDCS V7] ALL HOSTS FAILED:",
+            "[PHIMHDCS V8] ALL HOSTS FAILED:",
             {
                 requestId,
                 server: selected.server,
@@ -40803,7 +40837,7 @@ for (
     }
 
     console.log(
-        "[PHIMHDCS V7] QUEUE PROGRESS:",
+        "[PHIMHDCS V8] QUEUE PROGRESS:",
         {
             completed: episodePageResults.length,
             total: selectedEpisodes.length,
@@ -40813,7 +40847,7 @@ for (
 }
 
 console.log(
-    "[PHIMHDCS V7] ALL EPISODES COMPLETE:",
+    "[PHIMHDCS V8] ALL EPISODES COMPLETE:",
     {
         fulfilled:
             episodePageResults.filter(
