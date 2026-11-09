@@ -41818,6 +41818,60 @@ const hdcResult =
         }
 
         console.log(
+            "[PHIMHDCS] FINAL DIAGNOSTIC SUMMARY:",
+            JSON.stringify({
+                movie: movieName,
+                year: movieYear,
+                episode: targetEpisode,
+
+                selectedEpisodes:
+                    selectedEpisodes.map(item => ({
+                        language: item.server,
+                        episode: item.episode?.number,
+                        url: item.episode?.url
+                    })),
+
+                loadedPages:
+                    episodePages.map(page => ({
+                        language: page.server,
+                        htmlLength: page.html?.length || 0,
+                        url: page.url
+                    })),
+
+                decodedPayloads:
+                    episodeData.map(data => ({
+                        language: data.server,
+                        saltFound: Boolean(data.saltString),
+                        saltLength: data.saltString?.length || 0,
+                        oxDataFound: Boolean(data.oxData),
+                        oxDataKeys:
+                            data.oxData &&
+                            typeof data.oxData === "object"
+                                ? Object.keys(data.oxData)
+                                : [],
+                        oxDataKeyCount:
+                            data.oxData &&
+                            typeof data.oxData === "object"
+                                ? Object.keys(data.oxData).length
+                                : 0
+                    })),
+
+                finalStreams:
+                    streams.map((stream, index) => ({
+                        index: index + 1,
+                        name: stream.name,
+                        title: stream.title,
+                        direct: Boolean(stream.url),
+                        external: Boolean(stream.externalUrl),
+                        widget: Boolean(stream.widgetPlayer),
+                        url: stream.url || stream.externalUrl || ""
+                    })),
+
+                totalStreams: streams.length
+            }, null, 2)
+        );
+
+        console.log(
             "[PHIMHDCS] FINAL STREAMS:",
             streams.length
         );
