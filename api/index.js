@@ -38857,9 +38857,13 @@ async function phimhdcsResolveFhdcManifest(
             currentUrl;
 
         currentHtml =
-            String(firstResponse.data || "");
+    String(firstResponse.data || "");
 
-        if (!currentHtml) {
+// Lưu HTML của trang đầu tiên để tìm jobId
+// kể cả khi jobId nằm ở trang cha.
+const pageHtmlCandidates = [currentHtml];
+
+if (!currentHtml) {
             throw new Error("FHDC player page is empty");
         }
 
@@ -38911,9 +38915,12 @@ async function phimhdcsResolveFhdcManifest(
                 nextUrl.href;
 
             currentHtml =
-                String(iframeResponse.data || "");
+    String(iframeResponse.data || "");
 
-            if (!currentHtml) {
+// Giữ lại HTML của từng tầng iframe.
+pageHtmlCandidates.push(currentHtml);
+
+if (!currentHtml) {
                 throw new Error("FHDC iframe page is empty");
             }
         }
@@ -38950,13 +38957,53 @@ async function phimhdcsResolveFhdcManifest(
             )[1] ||
             "direct";
 
-        const jobMatch =
-            currentHtml.match(
-                /"jobId"\s*:\s*"([a-f0-9-]{36})"/i
-            );
+        // Tìm jobId ở tất cả các tầng HTML:
+// trang embed ban đầu và những iframe đã mở.
+let jobId = "";
 
-        const jobId =
-            jobMatch?.[1] || "";
+for (
+    let htmlIndex = pageHtmlCandidates.length - 1;
+    htmlIndex >= 0;
+    htmlIndex--
+) {
+    const normalizedHtml =
+        String(pageHtmlCandidates[htmlIndex] || "")
+            .replace(/\\"/g, '"')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#34;/gi, '"')
+            .replace(/\\u0022/gi, '"');
+
+    const jobMatch =
+        normalizedHtml.match(
+            /\bjobId\b\s*[:=]\s*["']([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["']/i
+        );
+
+    if (jobMatch?.[1]) {
+        jobId = jobMatch[1];
+        break;
+    }
+}
+
+if (!jobId) {
+    console.log(
+        logPrefix,
+        "JOBID SEARCH DIAGNOSTICS:",
+        {
+            htmlLayers: pageHtmlCandidates.length,
+            htmlLengths: pageHtmlCandidates.map(
+                html => String(html || "").length
+            ),
+            containsJobIdText: pageHtmlCandidates.map(
+                html => /\bjobId\b/i.test(String(html || ""))
+            ),
+            containsUuid: pageHtmlCandidates.map(
+                html => /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(
+                    String(html || "")
+                )
+            )
+        }
+    );
+}
 
         if (!key) {
             throw new Error("FHDC key not found");
