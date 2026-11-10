@@ -33,6 +33,60 @@ const crypto = require('crypto');
 const http2 = require('http2');
 const express = require('express');
 
+// =========================================================================
+// [MỚI CHÈN] - CÁC HÀM TIỆN ÍCH BYPASS ANIMESUB (MIỄN PHÍ)
+// =========================================================================
+const { HttpsProxyAgent } = require("https-proxy-agent");
+
+let cachedFreeProxy = null;
+
+async function getFreeVietnameseProxy() {
+    if (cachedFreeProxy) return cachedFreeProxy;
+    try {
+        const proxyApiUrl = "https://proxyscrape.com";
+        const response = await axios.get(proxyApiUrl, { timeout: 4000 });
+        const proxyList = response.data.split("\r\n").filter(p => p.trim() !== "");
+        for (let i = 0; i < Math.min(proxyList.length, 5); i++) {
+            const [host, port] = proxyList[i].split(":");
+            try {
+                const agent = new HttpsProxyAgent(`http://${host}:${port}`);
+                await axios.get("https://httpbin.org", { httpsAgent: agent, proxy: false, timeout: 2000 });
+                cachedFreeProxy = `http://${host}:${port}`;
+                return cachedFreeProxy;
+            } catch (err) {}
+        }
+    } catch (e) {}
+    return null;
+}
+
+function unpackPacker(p, a, c, k) {
+    const baseConvert = (n) => {
+        return (n < a ? '' : baseConvert(Math.floor(n / a))) + 
+               ((n % a) > 35 ? String.fromCharCode((n % a) + 29) : (n % a).toString(36));
+    };
+    const dict = {};
+    while (c--) { if (k[c]) dict[baseConvert(c)] = k[c]; }
+    return p.replace(/\b\w+\b/g, (match) => dict[match] || match);
+}
+
+function generateHydraxToken(index, size, md5Id, resId, frag) {
+    try {
+        const sizeStr = String(size);
+        const digitBytes = Buffer.alloc(sizeStr.length);
+        for (let i = 0; i < sizeStr.length; i++) { digitBytes[i] = sizeStr.charCodeAt(i) - 0x30; }
+        const keyHexStr = crypto.createHash('md5').update(digitBytes).digest('hex');
+        const keyHex = Buffer.from(keyHexStr, 'ascii');
+        const iv = Buffer.alloc(16); keyHex.copy(iv, 0, 0, 16);
+        const pathStr = `/mp4/${md5Id}/${resId}/${size}/${frag}/${index}`;
+        const path = Buffer.from(pathStr, 'utf-8');
+        const cipher = crypto.createCipheriv('aes-128-ctr', keyHex.slice(0, 16), iv);
+        let enc = Buffer.concat([cipher.update(path), cipher.final()]);
+        let firstBase64 = enc.toString('base64').replace(/=+$/, '');
+        const firstBytes = Buffer.from(firstBase64, 'binary');
+        return firstBytes.toString('base64').replace(/=+$/, '');
+    } catch (e) { return null; }
+}
+
 const manifest = {
 
     id:
@@ -61,6 +115,7 @@ const manifest = {
 
         idPrefixes: [
         "tt",
+        "animet:",
         "vnwpsw:",
         "movina-classic:",
         "vmttv:",
@@ -452,28 +507,267 @@ return (
 }
 
 // [CORE-003.03] [PROVIDERS: ALL] CATALOG DEDUPLICATION
-function catalogDedupe(items) {
+// CROSS-LANGUAGE TITLE IDENTITY
 
-const seen = new Set();
-const result = [];
+function catalogIdentityKeys(item) {
 
-for (const item of items || []) {
+    const keys = new Set();
 
-    const key = catalogKey(item);
-
-    if (!key || seen.has(key)) {
-        continue;
+    if (!item) {
+        return [];
     }
 
-    seen.add(key);
-    result.push(item);
+    const series =
+        isSeriesItem(item);
+
+    const type =
+        series ? "series" : "movie";
+
+    // -----------------------------------------------------
+    // 1. IMDb ID
+    // -----------------------------------------------------
+
+    const imdbCandidates = [
+        item?.imdb_id,
+        item?.imdbId,
+        item?.imdb,
+        item?.imdb?.id
+    ];
+
+    for (const value of imdbCandidates) {
+
+        const raw =
+            typeof value === "string" ||
+            typeof value === "number"
+                ? String(value).trim()
+                : "";
+
+        const match =
+            raw.match(/^tt\d+$/i);
+
+        if (match) {
+
+            keys.add(
+                "imdb:" +
+                match[0].toLowerCase() +
+                ":" +
+                type
+            );
+        }
+    }
+
+    // -----------------------------------------------------
+    // 2. TMDB ID
+    // -----------------------------------------------------
+
+    const tmdbCandidates = [
+        item?.tmdb_id,
+        item?.tmdbId,
+        item?.tmdb?.id
+    ];
+
+    for (const value of tmdbCandidates) {
+
+        const id =
+            String(value || "").trim();
+
+        if (/^\d+$/.test(id)) {
+
+            keys.add(
+                "tmdb:" +
+                id +
+                ":" +
+                type
+            );
+        }
+    }
+
+    // -----------------------------------------------------
+    // 3. RELEASE YEAR
+    // -----------------------------------------------------
+
+    const year =
+        itemYear(item);
+
+    if (
+        !Number.isInteger(year) ||
+        year < 1900 ||
+        year > 2100
+    ) {
+        return Array.from(keys);
+    }
+
+    // -----------------------------------------------------
+    // 4. COLLECT ALL AVAILABLE TITLE ALIASES
+    // -----------------------------------------------------
+
+    const aliases = new Set();
+
+    const titleFields = [
+        "name",
+        "origin_name",
+        "original_name",
+        "title",
+        "english_name",
+        "englishName",
+        "japanese_name",
+        "japaneseName",
+        "romaji_name",
+        "romajiName"
+    ];
+
+    for (const field of titleFields) {
+
+        const value =
+            item?.[field];
+
+        if (typeof value !== "string") {
+            continue;
+        }
+
+        const normalized =
+            catalogNormalize(value);
+
+        if (normalized.length >= 3) {
+            aliases.add(normalized);
+        }
+    }
+
+    // -----------------------------------------------------
+    // 5. ALTERNATIVE TITLES
+    // -----------------------------------------------------
+
+    const aliasFields = [
+        "aliases",
+        "alternative_titles",
+        "alternativeTitles",
+        "titles"
+    ];
+
+    for (const field of aliasFields) {
+
+        const values =
+            item?.[field];
+
+        if (!Array.isArray(values)) {
+            continue;
+        }
+
+        for (const value of values) {
+
+            const title =
+                typeof value === "string"
+                    ? value
+                    : (
+                        value?.name ||
+                        value?.title ||
+                        value?.english_name ||
+                        ""
+                    );
+
+            const normalized =
+                catalogNormalize(title);
+
+            if (normalized.length >= 3) {
+                aliases.add(normalized);
+            }
+        }
+    }
+
+    // -----------------------------------------------------
+    // 6. TITLE + YEAR + TYPE IDENTITY
+    //
+    // Không gộp nếu khác năm hoặc khác loại phim.
+    // -----------------------------------------------------
+
+    for (const alias of aliases) {
+
+        keys.add(
+            "title:" +
+            type +
+            ":" +
+            year +
+            ":" +
+            alias
+        );
+    }
+
+    return Array.from(keys);
 }
 
-return result;
 
+// ---------------------------------------------------------
+// GLOBAL CATALOG DEDUPLICATION
+// ---------------------------------------------------------
+
+function catalogDedupe(items) {
+
+    const seenExact = new Set();
+
+    const seenIdentity = new Set();
+
+    const result = [];
+
+    let removed = 0;
+
+    for (const item of items || []) {
+
+        if (!item) {
+            continue;
+        }
+
+        // Giữ nguyên cơ chế nhận diện trùng cũ.
+        const exactKey =
+            catalogKey(item);
+
+        const identityKeys =
+            catalogIdentityKeys(item);
+
+        // Trùng ID / slug cũ.
+        if (
+            exactKey &&
+            seenExact.has(exactKey)
+        ) {
+            removed++;
+            continue;
+        }
+
+        // Trùng định danh tác phẩm.
+        const duplicateIdentity =
+            identityKeys.some(
+                key => seenIdentity.has(key)
+            );
+
+        if (duplicateIdentity) {
+            removed++;
+            continue;
+        }
+
+        if (exactKey) {
+            seenExact.add(exactKey);
+        }
+
+        for (const key of identityKeys) {
+            seenIdentity.add(key);
+        }
+
+        result.push(item);
+    }
+
+    if (removed > 0) {
+
+        console.log(
+            "[CATALOG DEDUPE]",
+            JSON.stringify({
+                before: (items || []).length,
+                after: result.length,
+                removed
+            })
+        );
+    }
+
+    return result;
 }
-
-
 
 /* ============================================================
    [CORE-003.04] [PROVIDERS: ALL] PHIMAPI REQUEST COORDINATOR
@@ -6023,6 +6317,332 @@ console.log(
  10. ANIMATION NEW
    ============================================================ */
 
+/* ============================================================
+   [ANIMATION-DEDUP.01] CROSS-LANGUAGE ANIMATION IDENTITY
+   Chống trùng phim hoạt hình giữa tên Việt / Nhật / Anh.
+   Chỉ áp dụng cho catalog Hoạt hình.
+   ============================================================ */
+
+function movinaAnimationDedupe(items) {
+
+    const list =
+        Array.isArray(items)
+            ? items
+            : [];
+
+    if (list.length <= 1) {
+        return list;
+    }
+
+    const parent =
+        list.map((_, index) => index);
+
+    function find(index) {
+
+        if (parent[index] !== index) {
+            parent[index] =
+                find(parent[index]);
+        }
+
+        return parent[index];
+    }
+
+    function union(a, b) {
+
+        const rootA = find(a);
+        const rootB = find(b);
+
+        if (rootA !== rootB) {
+            parent[rootB] = rootA;
+        }
+    }
+
+    const identityOwners = new Map();
+
+    const identityKeys =
+        list.map(item => {
+
+            const keys = new Set();
+
+            // ---------------------------------------------
+            // 1. IMDb ID: định danh mạnh nhất.
+            // ---------------------------------------------
+
+            const imdbCandidates = [
+                item?.__movinaCinemetaImdbId,
+                item?.imdb,
+                item?.imdb?.id,
+                item?.imdb?.imdb_id,
+                item?.imdb_id,
+                item?.imdbId,
+                item?.tmdb?.imdb_id
+            ];
+
+            for (const value of imdbCandidates) {
+
+                const match =
+                    String(
+                        typeof value === "object"
+                            ? ""
+                            : value || ""
+                    )
+                    .trim()
+                    .match(/^tt\d+$/i);
+
+                if (match) {
+                    keys.add(
+                        "imdb:" +
+                        match[0].toLowerCase()
+                    );
+                }
+            }
+
+            // ---------------------------------------------
+            // 2. TMDB ID.
+            // ---------------------------------------------
+
+            const tmdbCandidates = [
+                item?.tmdb_id,
+                item?.tmdbId,
+                item?.tmdb?.id
+            ];
+
+            for (const value of tmdbCandidates) {
+
+                const id =
+                    String(value || "").trim();
+
+                if (/^\d+$/.test(id)) {
+                    keys.add(
+                        "tmdb:" + id
+                    );
+                }
+            }
+
+            // ---------------------------------------------
+            // 3. Tập hợp các tên và tên thay thế.
+            // ---------------------------------------------
+
+            const titleFields = [
+                "name",
+                "origin_name",
+                "original_name",
+                "title",
+                "english_name",
+                "japanese_name",
+                "romaji_name"
+            ];
+
+            const aliases = new Set();
+
+            for (const field of titleFields) {
+
+                const value =
+                    item?.[field];
+
+                if (typeof value === "string") {
+
+                    const normalized =
+                        catalogNormalize(value);
+
+                    if (normalized.length >= 4) {
+                        aliases.add(normalized);
+                    }
+                }
+            }
+
+            const aliasFields = [
+                "aliases",
+                "alternative_titles",
+                "alternativeTitles",
+                "titles"
+            ];
+
+            for (const field of aliasFields) {
+
+                const values =
+                    item?.[field];
+
+                if (!Array.isArray(values)) {
+                    continue;
+                }
+
+                for (const value of values) {
+
+                    const title =
+                        typeof value === "string"
+                            ? value
+                            : (
+                                value?.name ||
+                                value?.title ||
+                                ""
+                            );
+
+                    const normalized =
+                        catalogNormalize(title);
+
+                    if (normalized.length >= 4) {
+                        aliases.add(normalized);
+                    }
+                }
+            }
+
+            // ---------------------------------------------
+            // 4. Chỉ ghép tên khi cùng năm và cùng loại.
+            //
+            // Tránh ghép nhầm phim remake hoặc movie/series.
+            // ---------------------------------------------
+
+            const year =
+                Number(itemYear(item)) || 0;
+
+            const type =
+                item?.__catalogType ||
+                (
+                    isSeriesItem(item)
+                        ? "series"
+                        : "movie"
+                );
+
+            if (year >= 1900 && year <= 2100) {
+
+                for (const alias of aliases) {
+
+                    keys.add(
+                        "title:" +
+                        type +
+                        ":" +
+                        year +
+                        ":" +
+                        alias
+                    );
+                }
+            }
+
+            return Array.from(keys);
+        });
+
+    // ---------------------------------------------
+    // 5. Ghép các bản ghi có chung định danh.
+    // ---------------------------------------------
+
+    for (
+        let index = 0;
+        index < identityKeys.length;
+        index++
+    ) {
+
+        for (const key of identityKeys[index]) {
+
+            if (identityOwners.has(key)) {
+
+                union(
+                    index,
+                    identityOwners.get(key)
+                );
+
+            } else {
+
+                identityOwners.set(
+                    key,
+                    index
+                );
+            }
+        }
+    }
+
+    // ---------------------------------------------
+    // 6. Gộp bản ghi, giữ thông tin đầy đủ.
+    // ---------------------------------------------
+
+    const groups = new Map();
+
+    for (
+        let index = 0;
+        index < list.length;
+        index++
+    ) {
+
+        const root = find(index);
+
+        if (!groups.has(root)) {
+            groups.set(root, []);
+        }
+
+        groups.get(root).push(index);
+    }
+
+    const result = [];
+
+    const duplicateSamples = [];
+
+    for (const indexes of groups.values()) {
+
+        let merged = {
+            ...list[indexes[0]]
+        };
+
+        for (const index of indexes.slice(1)) {
+
+            const next = list[index];
+
+            merged = {
+                ...next,
+                ...merged,
+
+                __isAnimation:
+                    merged.__isAnimation === true ||
+                    next.__isAnimation === true
+            };
+
+            if (!merged.__catalogType) {
+                merged.__catalogType =
+                    next.__catalogType;
+            }
+        }
+
+        result.push(merged);
+
+        if (indexes.length > 1) {
+
+            duplicateSamples.push({
+                kept:
+                    merged.name ||
+                    merged.origin_name ||
+                    "",
+
+                mergedCount:
+                    indexes.length,
+
+                aliases:
+                    indexes.map(index => ({
+                        name:
+                            list[index]?.name || "",
+
+                        origin_name:
+                            list[index]?.origin_name || "",
+
+                        year:
+                            itemYear(list[index])
+                    }))
+            });
+        }
+    }
+
+    console.log(
+        "[ANIMATION CROSS-LANGUAGE DEDUPE]",
+        JSON.stringify({
+            before: list.length,
+            after: result.length,
+            removed: list.length - result.length,
+            duplicateGroups: duplicateSamples.length,
+            samples: duplicateSamples.slice(0, 10)
+        })
+    );
+
+    return result;
+}
+
 async function fetchAnimationNew() {
 
     const sources = [];
@@ -6061,10 +6681,11 @@ async function fetchAnimationNew() {
         );
 
     const all =
-        catalogDedupe(
+        movinaAnimationDedupe(
             groups.flat()
         )
             .map(
+
                 item => {
 
                     const series =
@@ -7288,7 +7909,10 @@ const requests = [];
         }
     }
 
-    let items = Array.from(merged.values());
+    let items =
+        movinaAnimationDedupe(
+            Array.from(merged.values())
+        );
 
     /*
      * Chỉ giữ hoạt hình đúng loại.
@@ -13869,6 +14493,11 @@ if (
 // IMDb ID thực tế mà MOVINA sẽ dùng làm meta ID.
 let imdbId = "";
 
+// Cinemeta gốc, dùng làm nguồn dự phòng khi PhimAPI
+// không tìm được kết quả phù hợp.
+let cinemetaFallbackMeta = null;
+let cinemetaFallbackType = "";
+
 // Trạng thái riêng cho từng Meta request.
 // Không để các request đồng thời dùng chung biến.
 let requestedSlug = "";
@@ -14060,6 +14689,8 @@ let metaId = rawId;
                     cinemetaRes.data?.meta || {};
 
                 if (cinemetaMeta.name) {
+cinemetaFallbackMeta = cinemetaMeta;
+cinemetaFallbackType = lookupType;
                     movieName =
                         cinemetaMeta.name;
 
@@ -14300,14 +14931,86 @@ console.log(
             };
 
         const normalizedName =
-            normalizeTitle(
-                movieName
-            );
+    normalizeTitle(
+        movieName
+    );
 
-        let item =
+// -------------------------------------------------
+// KIỂM TRA NĂM THEO CINEMETA GỐC
+// Không cho phim cùng tên nhưng khác năm được chọn.
+// -------------------------------------------------
+
+
+const cinemetaYearRaw =
+    cinemetaFallbackMeta?.year ||
+    cinemetaFallbackMeta?.releaseInfo ||
+    cinemetaFallbackMeta?.released ||
+    "";
+
+const cinemetaYearMatches = [
+    ...String(cinemetaYearRaw).matchAll(
+        /\b(?:19|20)\d{2}\b/g
+    )
+].map(match => Number(match[0]));
+
+const authoritativeCinemetaYear =
+    cinemetaYearMatches[0] || 0;
+
+const authoritativeCinemetaYearEnd =
+    cinemetaYearMatches.length > 1
+        ? cinemetaYearMatches[cinemetaYearMatches.length - 1]
+        : authoritativeCinemetaYear;
+
+const isCompatiblePhimApiCandidate = candidate => {
+
+    if (!authoritativeCinemetaYear) {
+        return true;
+    }
+
+    const candidateYear =
+        Number(
+            candidate?.year ||
+            candidate?.release_year ||
+            candidate?.releaseYear ||
+            0
+        );
+
+    if (!candidateYear) {
+        return false;
+    }
+
+    return (
+        candidateYear >= authoritativeCinemetaYear &&
+        candidateYear <= authoritativeCinemetaYearEnd
+    );
+};
+
+const identitySafeItems =
+    Array.isArray(items)
+        ? items.filter(isCompatiblePhimApiCandidate)
+        : [];
+
+console.log(
+    "[META PHIMAPI YEAR FILTER]",
+    JSON.stringify({
+        title: movieName,
+        imdbId,    
+sourceYear: cinemetaYearRaw || null,
+sourceYearStart: authoritativeCinemetaYear || null,
+sourceYearEnd: authoritativeCinemetaYearEnd || null,
+        before: Array.isArray(items) ? items.length : 0,
+        after: identitySafeItems.length
+    })
+);
+
+let item =
     requestedSlugItem ||
-    cachedPhimApiMatch ||
-    null;
+    (
+        cachedPhimApiMatch &&
+        isCompatiblePhimApiCandidate(cachedPhimApiMatch)
+            ? cachedPhimApiMatch
+            : null
+    );
 
 if (
     !item &&
@@ -14319,7 +15022,7 @@ if (
             // -------------------------------------------------
 
             item =
-                items.find(x => {
+                identitySafeItems.find(x => {
 
                     const name =
                         normalizeTitle(
@@ -14340,7 +15043,7 @@ if (
             if (!item) {
 
                 item =
-                    items.find(x => {
+                    identitySafeItems.find(x => {
 
                         const origin =
                             normalizeTitle(
@@ -14364,7 +15067,7 @@ if (
             if (!item) {
 
                 item =
-                    items.find(x => {
+                    identitySafeItems.find(x => {
 
                         const alternatives =
                             Array.isArray(
@@ -14392,29 +15095,111 @@ if (
 
            }
 
-        if (!item) {
+if (!item) {
 
-            console.log(
-                "[META] Không tìm thấy:",
-                movieName
-            );
+    const fallbackMeta =
+        cinemetaFallbackMeta || {};
 
-            return {
-                meta: {
-                    id:
-                        metaId,
+    const fallbackVideos =
+        args.type === "series" &&
+        cinemetaFallbackType === "series" &&
+        Array.isArray(fallbackMeta.videos)
+            ? fallbackMeta.videos
+                .map(video => {
 
-                    type:
-                        args.type === "series"
-                            ? "series"
-                            : "movie",
+                    const rawVideoId =
+                        String(video?.id || "");
 
-                    name:
-                        movieName
-                }
-            };
+                    const episodeMatch =
+                        rawVideoId.match(
+                            /^tt\d+:(\d+):(\d+)$/i
+                        );
 
+                    const seasonNumber =
+                        Number(
+                            video?.season ??
+                            episodeMatch?.[1]
+                        );
+
+                    const episodeNumber =
+                        Number(
+                            video?.episode ??
+                            episodeMatch?.[2]
+                        );
+
+                    if (
+                        !Number.isInteger(seasonNumber) ||
+                        seasonNumber < 0 ||
+                        !Number.isInteger(episodeNumber) ||
+                        episodeNumber < 1
+                    ) {
+                        return null;
+                    }
+
+                    return {
+                        ...video,
+
+                        id:
+                            metaId +
+                            ":" +
+                            seasonNumber +
+                            ":" +
+                            episodeNumber,
+
+                        season: seasonNumber,
+                        episode: episodeNumber
+                    };
+
+                })
+                .filter(Boolean)
+            : [];
+
+    console.log(
+        "[META PHIMAPI MISS; CINEMETA FALLBACK]",
+        JSON.stringify({
+            imdbId: metaId,
+            title:
+                fallbackMeta.name ||
+                movieName,
+            type: args.type,
+            sourceYear:
+                fallbackMeta.year ||
+                fallbackMeta.releaseInfo ||
+                null,
+            videoCount: fallbackVideos.length,
+            seasons: [
+                ...new Set(
+                    fallbackVideos.map(
+                        video => video.season
+                    )
+                )
+            ]
+        })
+    );
+
+    return {
+        meta: {
+            ...fallbackMeta,
+
+            id: metaId,
+
+            type:
+                args.type === "series"
+                    ? "series"
+                    : "movie",
+
+            name:
+                fallbackMeta.name ||
+                movieName,
+
+            videos:
+                args.type === "series"
+                    ? fallbackVideos
+                    : undefined
         }
+    };
+
+}
 
         console.log(
             "[META] Selected:",
@@ -15870,244 +16655,420 @@ console.log(
                         : undefined
                 );
 
+        
         // =====================================================
         // [STREMIO-013.17] [PROVIDERS: ALL] SERIES VIDEO METADATA
         //
-        // Stremio:
-        //   video.id = metaId:season:episode
+        // IMDb ID gốc:
+        //   meta.id = tt1234567
         //
-        // Nếu Cinemeta resolve được IMDb:
-        //   tt26258200:1:1
+        // Episode ID:
+        //   tt1234567:1:1
+        //   tt1234567:2:1
         //
-        // Nếu không:
-        //   vnwpsw:...:1:1
+        // Ưu tiên danh sách mùa/tập từ Cinemeta.
+        // PhimAPI chỉ là fallback nếu Cinemeta không có videos.
         // =====================================================
 
-        let videos =
-            undefined;
+        let videos = undefined;
 
-        if (
-            isSeries
-        ) {
+        if (isSeries) {
 
-            const episodeMap =
-                new Map();
+            let cinemetaSeriesMeta = null;
 
-            const episodeGroups =
-                Array.isArray(
-                    detail?.episodes
-                )
-                    ? detail.episodes
-                    : [];
+            // -------------------------------------------------
+            // A. LẤY CINEMETA SERIES META TỪ CACHE
+            // -------------------------------------------------
 
-            for (
-                const group
-                of episodeGroups
+            if (
+                /^tt\d+$/i.test(String(imdbId || "")) &&
+                metaType === "series"
             ) {
 
-                const serverData =
-                    Array.isArray(
-                        group?.server_data
-                    )
-                        ? group.server_data
-                        : [];
+                const identityCacheKey =
+                    metaType + ":" + imdbId;
 
-                for (
-                    const ep
-                    of serverData
+                const cachedIdentity =
+                    MOVINA_IMDB_IDENTITY_CACHE.get(
+                        identityCacheKey
+                    );
+
+                if (
+                    cachedIdentity &&
+                    cachedIdentity.expiresAt > Date.now()
                 ) {
 
-                    const rawEpisodeName =
-                        String(
-                            ep?.name ||
-                            ep?.slug ||
-                            ""
-                        ).trim();
-
-                    if (
-                        !rawEpisodeName
-                    ) {
-
-                        continue;
-
-                    }
-
-                    const match =
-                        rawEpisodeName.match(
-                            /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
-                        );
-
-                    if (
-                        !match
-                    ) {
-
-                        continue;
-
-                    }
-
-                    const episodeNumber =
-                        Number(
-                            match[1]
-                        );
-
-                    if (
-                        !Number.isFinite(
-                            episodeNumber
-                        ) ||
-                        episodeNumber <= 0
-                    ) {
-
-                        continue;
-
-                    }
-
-                    if (
-                        !episodeMap.has(
-                            episodeNumber
-                        )
-                    ) {
-
-                        episodeMap.set(
-                            episodeNumber,
-                            {
-                                number:
-                                    episodeNumber,
-
-                                name:
-                                    rawEpisodeName,
-
-                                released:
-                                    ep?.released ||
-                                    ep?.air_date ||
-                                    ep?.release_date ||
-                                    ep?.created_at ||
-                                    null
-                            }
-                        );
-
+                    try {
+                        cinemetaSeriesMeta =
+                            await cachedIdentity.promise;
+                    } catch (error) {
+                        cinemetaSeriesMeta = null;
                     }
 
                 }
 
+                // -------------------------------------------------
+                // B. CACHE MISS → FETCH CINEMETA
+                // -------------------------------------------------
+
+                if (!cinemetaSeriesMeta) {
+
+                    const identityPromise = (async () => {
+
+                        try {
+
+                            const response =
+                                await axios.get(
+                                    "https://v3-cinemeta.strem.io/meta/series/" +
+                                    encodeURIComponent(imdbId) +
+                                    ".json",
+                                    {
+                                        timeout: 4500,
+
+                                        headers: {
+                                            "User-Agent": "Mozilla/5.0",
+                                            "Accept": "application/json"
+                                        }
+                                    }
+                                );
+
+                            return response.data?.meta || null;
+
+                        } catch (error) {
+
+                            console.log(
+                                "[META CINEMETA SERIES VIDEOS ERROR]:",
+                                JSON.stringify({
+                                    imdbId,
+                                    status:
+                                        error?.response?.status || 0,
+                                    message:
+                                        error?.message || String(error)
+                                })
+                            );
+
+                            return null;
+                        }
+
+                    })();
+
+                    MOVINA_IMDB_IDENTITY_CACHE.set(
+                        identityCacheKey,
+                        {
+                            expiresAt:
+                                Date.now() +
+                                MOVINA_IMDB_IDENTITY_CACHE_TTL,
+
+                            promise: identityPromise
+                        }
+                    );
+
+                    cinemetaSeriesMeta =
+                        await identityPromise;
+
+                    MOVINA_IMDB_IDENTITY_CACHE.set(
+                        identityCacheKey,
+                        {
+                            expiresAt:
+                                Date.now() +
+                                (
+                                    cinemetaSeriesMeta
+                                        ? MOVINA_IMDB_IDENTITY_CACHE_TTL
+                                        : MOVINA_IMDB_IDENTITY_FAIL_TTL
+                                ),
+
+                            promise:
+                                Promise.resolve(cinemetaSeriesMeta)
+                        }
+                    );
+                }
             }
 
             // -------------------------------------------------
-            // Năm fallback cho released
+            // C. ƯU TIÊN CINEMETA VIDEOS
             // -------------------------------------------------
 
-            const fallbackYear =
-                Number(
-                    detail?.year ||
-                    item?.year ||
-                    new Date().getFullYear()
+            const cinemetaSourceVideos =
+                Array.isArray(cinemetaSeriesMeta?.videos)
+                    ? cinemetaSeriesMeta.videos
+                    : [];
+
+            if (cinemetaSourceVideos.length > 0) {
+
+                videos = cinemetaSourceVideos
+                    .map(video => {
+
+                        const sourceId =
+                            String(video?.id || "").trim();
+
+                        const idMatch =
+                            sourceId.match(
+                                /^tt\d+:(\d+):(\d+)$/i
+                            );
+
+                        const seasonNumber =
+                            Number(video?.season) >= 0 &&
+                            Number.isInteger(Number(video?.season))
+                                ? Number(video.season)
+                                : (
+                                    idMatch
+                                        ? Number(idMatch[1])
+                                        : 1
+                                );
+
+                        const episodeNumber =
+                            Number(video?.episode) > 0 &&
+                            Number.isInteger(Number(video?.episode))
+                                ? Number(video.episode)
+                                : (
+                                    idMatch
+                                        ? Number(idMatch[2])
+                                        : 0
+                                );
+
+                        if (
+                            !Number.isInteger(seasonNumber) ||
+                            seasonNumber < 0 ||
+                            !Number.isInteger(episodeNumber) ||
+                            episodeNumber <= 0
+                        ) {
+                            return null;
+                        }
+
+                        // IMDb ID gốc không bị thay đổi.
+                        // Chỉ episode ID có thêm season và episode.
+                        const videoId =
+                            metaId +
+                            ":" +
+                            seasonNumber +
+                            ":" +
+                            episodeNumber;
+
+                        return {
+                            id: videoId,
+
+                            title:
+                                video?.title ||
+                                "Tập " + episodeNumber,
+
+                            released:
+                                video?.released ||
+                                undefined,
+
+                            season:
+                                seasonNumber,
+
+                            episode:
+                                episodeNumber
+                        };
+
+                    })
+                    .filter(Boolean);
+
+                // Loại ID tập trùng nhưng giữ các mùa khác nhau.
+                const uniqueVideos = new Map();
+
+                for (const video of videos) {
+
+                    if (!uniqueVideos.has(video.id)) {
+                        uniqueVideos.set(
+                            video.id,
+                            video
+                        );
+                    }
+                }
+
+                videos =
+                    Array.from(uniqueVideos.values())
+                        .sort(
+                            (a, b) =>
+                                a.season - b.season ||
+                                a.episode - b.episode
+                        );
+
+                console.log(
+                    "[META] CINEMETA SEASONS LOADED:",
+                    JSON.stringify({
+                        imdbId,
+                        count: videos.length,
+                        seasons: [
+                            ...new Set(
+                                videos.map(video => video.season)
+                            )
+                        ],
+                        sample: videos.slice(0, 12).map(video => ({
+                            id: video.id,
+                            season: video.season,
+                            episode: video.episode
+                        }))
+                    })
                 );
+            }
 
-            const fallbackReleased =
-                Number.isFinite(
-                    fallbackYear
-                )
-                    ? new Date(
-                        Date.UTC(
-                            fallbackYear,
-                            0,
-                            1
+            // -------------------------------------------------
+            // D. PHIMAPI FALLBACK
+            // Chỉ dùng khi Cinemeta không có videos.
+            // PhimAPI hiện tại chỉ cung cấp danh sách tập
+            // thông thường, không mặc định rằng có nhiều mùa.
+            // -------------------------------------------------
+
+            if (!videos || videos.length === 0) {
+
+                const episodeMap = new Map();
+
+                const episodeGroups =
+                    Array.isArray(detail?.episodes)
+                        ? detail.episodes
+                        : [];
+
+                for (const group of episodeGroups) {
+
+                    const serverData =
+                        Array.isArray(group?.server_data)
+                            ? group.server_data
+                            : [];
+
+                    for (const ep of serverData) {
+
+                        const rawEpisodeName =
+                            String(
+                                ep?.name ||
+                                ep?.slug ||
+                                ""
+                            ).trim();
+
+                        if (!rawEpisodeName) {
+                            continue;
+                        }
+
+                        const match =
+                            rawEpisodeName.match(
+                                /(?:tập|tap|episode|ep)?\s*0*(\d+)\b/i
+                            );
+
+                        if (!match) {
+                            continue;
+                        }
+
+                        const episodeNumber =
+                            Number(match[1]);
+
+                        if (
+                            !Number.isInteger(episodeNumber) ||
+                            episodeNumber <= 0
+                        ) {
+                            continue;
+                        }
+
+                        if (!episodeMap.has(episodeNumber)) {
+
+                            episodeMap.set(
+                                episodeNumber,
+                                {
+                                    number: episodeNumber,
+
+                                    name: rawEpisodeName,
+
+                                    released:
+                                        ep?.released ||
+                                        ep?.air_date ||
+                                        ep?.release_date ||
+                                        ep?.created_at ||
+                                        null
+                                }
+                            );
+                        }
+                    }
+                }
+
+                const fallbackYear =
+                    Number(
+                        detail?.year ||
+                        item?.year ||
+                        new Date().getFullYear()
+                    );
+
+                const fallbackReleased =
+                    Number.isFinite(fallbackYear)
+                        ? new Date(
+                            Date.UTC(fallbackYear, 0, 1)
+                        ).toISOString()
+                        : new Date().toISOString();
+
+                videos =
+                    Array.from(episodeMap.values())
+                        .sort(
+                            (a, b) =>
+                                a.number - b.number
                         )
-                    ).toISOString()
-                    : new Date().toISOString();
-
-            videos =
-                Array.from(
-                    episodeMap.values()
-                )
-                    .sort(
-                        (a, b) =>
-                            a.number -
-                            b.number
-                    )
-                    .map(
-                        ep => {
-
-                            const videoId =
-                                metaId +
-                                ":1:" +
-                                ep.number;
+                        .map(ep => {
 
                             let released =
                                 ep.released;
 
-                            if (
-                                released
-                            ) {
+                            if (released) {
 
                                 const parsedDate =
-                                    new Date(
-                                        released
-                                    );
+                                    new Date(released);
 
-                                if (
+                                released =
                                     !Number.isNaN(
                                         parsedDate.getTime()
                                     )
-                                ) {
-
-                                    released =
-                                        parsedDate.toISOString();
-
-                                } else {
-
-                                    released =
-                                        fallbackReleased;
-
-                                }
+                                        ? parsedDate.toISOString()
+                                        : fallbackReleased;
 
                             } else {
-
-                                released =
-                                    fallbackReleased;
-
+                                released = fallbackReleased;
                             }
 
                             return {
-
                                 id:
-                                    videoId,
+                                    metaId +
+                                    ":1:" +
+                                    ep.number,
 
                                 title:
-                                    "Tập " +
-                                    ep.number,
+                                    "Tập " + ep.number,
 
-                                released:
-                                    released,
+                                released,
 
-                                season:
-                                    1,
+                                season: 1,
 
-                                episode:
-                                    ep.number,
-
-                                number:
-                                    ep.number,
-
-                                name:
-                                    "Tập " +
-                                    ep.number
-
+                                episode: ep.number
                             };
+                        });
 
-                        }
-                    );
+                console.log(
+                    "[META] PHIMAPI SEASON 1 FALLBACK:",
+                    JSON.stringify({
+                        imdbId: imdbId || null,
+                        count: videos.length,
+                        season: 1
+                    })
+                );
+            }
 
             console.log(
-                "[META] Series episodes:",
-                videos.length
+                "[META] SERIES EPISODES FINAL:",
+                JSON.stringify({
+                    metaId,
+                    imdbId: imdbId || null,
+                    total: videos.length,
+                    seasons: [
+                        ...new Set(
+                            videos.map(video => video.season)
+                        )
+                    ],
+                    sample: videos.slice(0, 12).map(video => ({
+                        id: video.id,
+                        season: video.season,
+                        episode: video.episode
+                    }))
+                })
             );
-
-            console.log(
-                "[META] Video ID base:",
-                metaId
-            );
-
         }
+
 
         // =====================================================
         // [STREMIO-013.18] [PROVIDERS: ALL] SERIES META AND VIDEOS OUTPUT
@@ -22193,43 +23154,157 @@ console.log(
     // Lượt 1: tìm bằng tên gốc và biến thể cú pháp.
     items = await searchKKPhimTerms(uniqueSearchTerms);
 
-    /*
-     * Lượt 2: chỉ khi lượt đầu không trả kết quả,
-     * thử tên thay thế từ metadata chung.
-     */
-    if (!items.length) {
-        console.log(
-            "[KKPHIM] BASIC SEARCH EMPTY; TRY METADATA ALIASES"
-        );
+    
+/*
+ * Lượt 2:
+ * Nếu kết quả tìm kiếm ban đầu không có ứng viên
+ * phù hợp với tên và năm yêu cầu, tìm thêm alias
+ * từ metadata IMDb/Wikidata.
+ *
+ * Không được bỏ qua alias chỉ vì API trả về
+ * một số kết quả không liên quan.
+ */
 
-        const metadataTerms =
-            await kkphimGetMetadataTitleVariants(
-                movieName,
-                imdbId,
-                movieYear
+const hasYearTitleCandidate = items.some(item => {
+    const candidateYear =
+        Number(item?.year) || 0;
+
+    const requestedYear =
+        Number(movieYear) || 0;
+
+    const yearCompatible =
+        !requestedYear ||
+        !candidateYear ||
+        candidateYear === requestedYear;
+
+    if (!yearCompatible) return false;
+
+    const candidateTitles = [
+        item?.name,
+        item?.origin_name
+    ]
+        .map(kkphimNormalizeTitle)
+        .filter(Boolean);
+
+    return candidateTitles.some(candidateTitle =>
+        uniqueSearchTerms.some(term => {
+            const searchTitle =
+                kkphimNormalizeTitle(term);
+
+            if (!searchTitle) return false;
+
+            return (
+                candidateTitle === searchTitle ||
+                (
+                    candidateTitle.length >= 8 &&
+                    searchTitle.length >= 8 &&
+                    (
+                        candidateTitle.includes(searchTitle) ||
+                        searchTitle.includes(candidateTitle)
+                    )
+                )
             );
+        })
+    );
+});
 
-        uniqueSearchTerms = [
-            ...new Set([
-                ...uniqueSearchTerms,
-                ...metadataTerms
-            ])
-        ].slice(0, 12);
+if (!hasYearTitleCandidate) {
 
-        const basicKeys = new Set(
-            kkphimBuildBasicTitleVariants(movieName)
-                .map(kkphimNormalizeTitle)
+    console.log(
+        "[KKPHIM] NO YEAR + TITLE CANDIDATE; TRY METADATA ALIASES"
+    );
+
+    const metadataTerms =
+        await kkphimGetMetadataTitleVariants(
+            movieName,
+            imdbId,
+            movieYear
         );
 
-        const aliasTerms = uniqueSearchTerms.filter(
-            term => !basicKeys.has(kkphimNormalizeTitle(term))
+    const basicKeys = new Set(
+        kkphimBuildBasicTitleVariants(movieName)
+            .map(kkphimNormalizeTitle)
+    );
+
+    const aliasTerms = [
+        ...new Set(metadataTerms)
+    ].filter(term =>
+        !basicKeys.has(
+            kkphimNormalizeTitle(term)
+        )
+    );
+
+// Đưa alias vào bộ từ khóa chấm điểm.
+// Nếu không, kết quả tìm bằng tên thay thế sẽ bị
+// loại ở bước ranking vì chỉ so với tên ban đầu.
+uniqueSearchTerms = [
+    ...new Set([
+        ...uniqueSearchTerms,
+        ...aliasTerms
+    ])
+];
+
+console.log(
+    "[KKPHIM] RANKING TERMS WITH ALIASES:",
+    uniqueSearchTerms
+);
+
+    if (aliasTerms.length) {
+
+        console.log(
+            "[KKPHIM] ALIAS SEARCH TERMS:",
+            aliasTerms
         );
 
-        if (aliasTerms.length) {
-            console.log("[KKPHIM] Alias search terms:", aliasTerms);
-            items = await searchKKPhimTerms(aliasTerms);
+        const aliasItems =
+            await searchKKPhimTerms(aliasTerms);
+
+        // Gộp kết quả hai lượt, không làm mất
+        // những ứng viên đã tìm được trước đó.
+        const mergedItems = new Map();
+
+        for (const item of [
+            ...items,
+            ...aliasItems
+        ]) {
+
+            const key = String(
+                item?.slug ||
+                item?._id ||
+                item?.id ||
+                `${item?.name || ""}|${item?.year || ""}`
+            ).trim();
+
+            if (
+                key &&
+                !mergedItems.has(key)
+            ) {
+                mergedItems.set(key, item);
+            }
         }
+
+        items = [
+            ...mergedItems.values()
+        ];
+
+        console.log(
+            "[KKPHIM] ALIAS MERGED:",
+            {
+                aliasTerms,
+                aliasCount: aliasItems.length,
+                totalCount: items.length
+            }
+        );
+
+    } else {
+
+        console.log(
+            "[KKPHIM] NO ADDITIONAL METADATA ALIASES"
+        );
+
     }
+
+}
 
     console.log("[KKPHIM] MERGED SEARCH RESULTS:", {
         terms: uniqueSearchTerms,
@@ -25782,6 +26857,7 @@ return streams;
 }
 }
 
+
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
 // ============================================================
@@ -26662,12 +27738,13 @@ function animeHayFindBestSearchResult(
             wordOverlap * 5;
 
         const rawYear =
-            item?.year ??
-            item?.releaseYear ??
-            item?.release_year ??
-            item?.releaseDate ??
-            item?.release_date ??
-            0;
+    item?.year ??
+    item?.releaseYear ??
+    item?.release_year ??
+    item?.releaseDate ??
+    item?.release_date ??
+    candidateTitle ??
+    "";
 
         const yearMatch = String(rawYear).match(
             /\b(19\d{2}|20\d{2})\b/
@@ -26677,9 +27754,18 @@ function animeHayFindBestSearchResult(
             ? Number(yearMatch[1])
             : 0;
 
-        if (targetYear && candidateYear) {
-            score += candidateYear === targetYear ? 150 : -120;
-        }
+    if (targetYear && candidateYear) {
+    const yearDifference =
+        Math.abs(candidateYear - targetYear);
+
+    if (yearDifference === 0) {
+        score += 150;
+    } else if (yearDifference === 1) {
+        score += 100;
+    } else {
+        score -= 120;
+    }
+}
 
         console.log("[ANIMEHAY] MATCH SCORE:", {
             title: candidateTitle,
@@ -26732,10 +27818,8 @@ async function animeHayFindEpisode(
             detailUrl
         );
 
-
-        const response =
-            await axios.get(
-                detailUrl,
+        response = await axios.get(
+    detailUrl,
                 {
                     timeout: 15000,
                     maxRedirects: 5,
@@ -29477,26 +30561,44 @@ async function fetchAnimeHay(
                 .trim();
 
     const titleMatches = (wanted, candidate) => {
-        const a = normalize(wanted);
-        const b = normalize(candidate);
+    const normalizeTitle = value =>
+        normalize(value)
+            .replace(/\b(?:19|20)\d{2}\b/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
 
-        if (!a || !b) return false;
-        if (a === b) return true;
+    const a = normalizeTitle(wanted);
+    const b = normalizeTitle(candidate);
 
-        if (
-            Math.min(a.length, b.length) >= 12 &&
-            (a.includes(b) || b.includes(a))
-        ) {
-            return true;
-        }
+    if (!a || !b) return false;
 
-        const aWords = new Set(a.split(/\s+/).filter(Boolean));
-        const bWords = new Set(b.split(/\s+/).filter(Boolean));
-        const common = [...aWords].filter(word => bWords.has(word)).length;
+    // Khớp chính xác sau khi bỏ năm phát hành.
+    // Ví dụ: Monster (2004) và Monster (2005).
+    if (a === b) return true;
 
-        return common >= 2 &&
-            common / Math.max(aWords.size, bWords.size) >= 0.6;
-    };
+    // Giữ cơ chế khớp tên dài đã có.
+    if (
+        Math.min(a.length, b.length) >= 12 &&
+        (a.includes(b) || b.includes(a))
+    ) {
+        return true;
+    }
+
+    const aWords = new Set(
+        a.split(/\s+/).filter(Boolean)
+    );
+
+    const bWords = new Set(
+        b.split(/\s+/).filter(Boolean)
+    );
+
+    const common = [...aWords].filter(
+        word => bWords.has(word)
+    ).length;
+
+    return common >= 2 &&
+        common / Math.max(aWords.size, bWords.size) >= 0.6;
+};
 
     try {
         console.log("[ANIMEHAY] START:", {
@@ -29743,6 +30845,130 @@ async function fetchAnimeHay(
         }
 
         // -----------------------------------------------------
+        // 4.5. VERIFIED IMDb DETAIL URL FALLBACK
+        // Một số phim có trang chi tiết nhưng không xuất hiện
+        // trong kết quả tìm kiếm AnimeHay.
+        // Chỉ dùng URL đã xác minh theo IMDb ID.
+        // -----------------------------------------------------
+
+        if (!selected?.url) {
+            const imdbKey =
+                String(imdbId || "").match(/tt\d+/)?.[0] || "";
+
+            const knownAnimeHayDetails = {
+                "tt0434706": {
+                    path: "/thong-tin-phim/monster-553.html",
+                    title: "Monster",
+                    year: 2005
+                }
+            };
+
+            const knownDetail =
+                knownAnimeHayDetails[imdbKey];
+
+            if (
+                knownDetail &&
+                titleMatches(originalTitle, knownDetail.title) &&
+                (
+                    !Number(movieYear) ||
+                    Math.abs(
+                        Number(movieYear) -
+                        knownDetail.year
+                    ) <= 1
+                )
+            ) {
+                const knownUrl =
+                    domain + knownDetail.path;
+
+                try {
+                    console.log(
+                        "[ANIMEHAY] TRY VERIFIED IMDb DETAIL:",
+                        {
+                            imdbKey,
+                            title: knownDetail.title,
+                            url: knownUrl
+                        }
+                    );
+
+                    const response = await axios.get(
+                        knownUrl,
+                        {
+                            timeout: 12000,
+                            maxRedirects: 5,
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+                                "Referer": domain + "/"
+                            }
+                        }
+                    );
+
+                    const $ = cheerio.load(response.data || "");
+
+                    const detailTitle =
+                        $("h1").first().text().trim();
+
+                    const episodeCount =
+                        $(".aim-episodes a[href]").length;
+
+                    const finalUrl =
+                        response.request?.res?.responseUrl ||
+                        knownUrl;
+
+                    if (
+                        detailTitle &&
+                        titleMatches(
+                            knownDetail.title,
+                            detailTitle
+                        ) &&
+                        episodeCount > 0 &&
+                        /\/thong-tin-phim\//i.test(
+                            new URL(finalUrl).pathname
+                        )
+                    ) {
+                        selected = {
+                            title: detailTitle,
+                            url: finalUrl,
+                            source: "verified-imdb-detail",
+                            matchedSearchTitle: originalTitle
+                        };
+
+                        console.log(
+                            "[ANIMEHAY] VERIFIED IMDb DETAIL SELECTED:",
+                            {
+                                imdbKey,
+                                title: detailTitle,
+                                episodeCount,
+                                url: finalUrl
+                            }
+                        );
+                    } else {
+                        console.log(
+                            "[ANIMEHAY] VERIFIED DETAIL REJECTED:",
+                            {
+                                imdbKey,
+                                detailTitle,
+                                episodeCount,
+                                finalUrl
+                            }
+                        );
+                    }
+                } catch (error) {
+                    console.log(
+                        "[ANIMEHAY] VERIFIED DETAIL ERROR:",
+                        {
+                            imdbKey,
+                            url: knownUrl,
+                            message:
+                                error?.message ||
+                                String(error)
+                        }
+                    );
+                }
+            }
+        }
+
+        // -----------------------------------------------------
         // 5. Không tìm được kết quả phù hợp thì dừng.
         // -----------------------------------------------------
         if (!selected?.url) {
@@ -29877,7 +31103,7 @@ const ONFLIX_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
 
 const ONFLIX_SORA_KEY = "onflix_secure_stream_v2_2026";
-const ONFLIX_SRC_PRIORITY = ["pa", "sn", "nc", "op"];
+const ONFLIX_SRC_PRIORITY = ["pa", "sn", "nc"];
 
 // [PRV-ONFLIX.02] [PROVIDERS: ONFLIX] ENCRYPTED URL DECODING
 
@@ -32317,10 +33543,12 @@ function responseBody(response) {
     const record = records[i];
     const src = String(record.src || "").trim();
 
-    // Theo yêu cầu hiện tại: chỉ xử lý SN và PA.
-    if (!["sn", "pa"].includes(src.toLowerCase())) {
+    // Chỉ xử lý SN, PA và NC.
+    // OP (Ophim) đã ngừng hoạt động, không tiếp tục xử lý.
+    if (!["sn", "pa", "nc"].includes(src.toLowerCase())) {
         continue;
     }
+
         const server = record.server_name || "Onflix";
         const before = streams.length;
 
@@ -32347,10 +33575,10 @@ const embedUrl = rawEmbedUrl
             playlistUrl: playlistUrl || "",
             embedUrl: embedUrl || ""
         }));
-
         // A. Ưu tiên endpoint playlist mà Onflix cung cấp.
-        // Không yêu cầu URL phải có đuôi .m3u8.
         if (playlistUrl) {
+
+        } else if (playlistUrl) {
             try {
                 const response = await onflixRequest(playlistUrl, {
                     timeout: 7000,
@@ -32369,6 +33597,7 @@ const embedUrl = rawEmbedUrl
                 );
 
                 let isHls = /^#EXTM3U(?:\s|$)/i.test(body);
+
                 let actualUrl = onflixAbsoluteUrl(
                     response?.url || playlistUrl
                 ) || playlistUrl;
@@ -32402,16 +33631,22 @@ const embedUrl = rawEmbedUrl
 
                             if (/^#EXTM3U(?:\s|$)/i.test(mediaBody)) {
                                 isHls = true;
+
                                 actualUrl = onflixAbsoluteUrl(
                                     mediaResponse?.url || mediaUrl
                                 ) || mediaUrl;
                             }
                         } catch (error) {
-                            console.warn(TAG, "MEDIA URL CHECK FAILED", {
-                                src,
-                                status: error?.response?.status || 0,
-                                message: error?.message || String(error)
-                            });
+                            console.warn(
+                                TAG,
+                                "MEDIA URL CHECK FAILED",
+                                {
+                                    src,
+                                    status: error?.response?.status || 0,
+                                    message:
+                                        error?.message || String(error)
+                                }
+                            );
                         }
                     }
                 }
@@ -32435,6 +33670,7 @@ const embedUrl = rawEmbedUrl
                         status: response?.status || 0,
                         contentType
                     });
+
                 } else {
                     console.warn(TAG, "PLAYLIST NOT HLS", {
                         index: i + 1,
@@ -32445,6 +33681,7 @@ const embedUrl = rawEmbedUrl
                         preview: body.slice(0, 120)
                     });
                 }
+
             } catch (error) {
                 console.warn(TAG, "PLAYLIST FAILED", {
                     index: i + 1,
@@ -36925,18 +38162,604 @@ return finalStreams;
 //
 // ============================================================
 
+// [PHIMHDCS] HDC M3 PLAYER HTTP RESOLVER
+// Resolve play.streamxemphimhd.site/m3/ through the original HDC guard flow.
+// This helper does not modify existing direct M3U8/MP4 or other providers.
+
+async function phimhdcsResolveHdcPlayer(
+    playerUrl,
+    parentPageUrl
+) {
+    const logPrefix = "[PHIMHDCS][HDC-PLAYER]";
+
+    const userAgent =
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+
+    const baseHeaders = {
+        "User-Agent": userAgent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": parentPageUrl || playerUrl
+    };
+
+    try {
+        if (
+            typeof playerUrl !== "string" ||
+            !playerUrl.trim()
+        ) {
+            throw new Error("Missing HDC player URL");
+        }
+
+        const parsedPlayerUrl = new URL(playerUrl);
+        const playerOrigin = parsedPlayerUrl.origin;
+
+        // 1. Load the actual /m3/ player page.
+        const pageResponse = await axios.get(playerUrl, {
+            headers: baseHeaders,
+            timeout: 15000,
+            maxRedirects: 8,
+            responseType: "text",
+            validateStatus: status => status >= 200 && status < 400
+        });
+
+        const html = String(pageResponse.data || "");
+
+        if (!html) {
+            throw new Error("Empty HDC player page");
+        }
+
+        // 2. Extract the 32-character video hash.
+        let videoHash = "";
+
+        const hashPatterns = [
+            /\/(?:video|embed|hls)\/([a-f0-9]{32})/i,
+            /(?:hash|data)\s*[:=]\s*["']([a-f0-9]{32})["']/i,
+            /(?:hash|video_id|videoId)\s*[:=]\s*["']([a-f0-9]{32})["']/i
+        ];
+
+        for (const pattern of hashPatterns) {
+            const match = html.match(pattern);
+
+            if (match && match[1]) {
+                videoHash = match[1];
+                break;
+            }
+        }
+
+        if (!videoHash) {
+            const urlHashMatch = playerUrl.match(
+                /\/(?:video|embed|hls)\/([a-f0-9]{32})/i
+            );
+
+            if (urlHashMatch) {
+                videoHash = urlHashMatch[1];
+            }
+        }
+
+        if (!videoHash) {
+            throw new Error("Cannot extract 32-character HDC video hash");
+        }
+
+        // 3. Discover the API host from the player HTML.
+        let apiDomain = playerOrigin;
+
+        const apiMatch = html.match(
+            /(https?:\/\/[^/"'\s]+)\/player\/index\.php/i
+        );
+
+        if (apiMatch && apiMatch[1]) {
+            apiDomain = apiMatch[1].replace(/\/+$/, "");
+        }
+
+        const apiHost = new URL(apiDomain).host;
+
+        console.log(
+            logPrefix,
+            "PLAYER IDENTIFIED:",
+            JSON.stringify({
+                hashFound: true,
+                apiHost: apiHost
+            })
+        );
+
+        // 4. Build X-FP-Runtime using the six fields used by the original app.
+        const monotonicMs = Number(
+            process.hrtime.bigint() / 1000000n
+        ) % 100000;
+
+        const fpRuntimeRaw = [
+            String(Date.now()),
+            apiHost,
+            "/video/" + videoHash,
+            "412x915",
+            "vi-VN",
+            String(monotonicMs)
+        ].join("|");
+
+        const fpRuntime = Buffer
+            .from(fpRuntimeRaw, "utf8")
+            .toString("base64");
+
+        const xhrHeaders = {
+            ...baseHeaders,
+            "Origin": apiDomain,
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+        };
+
+        // 5. Acquire the HDC guard token.
+        let guardToken = "";
+
+        try {
+            const guardBody = new URLSearchParams({
+                t: String(Date.now()),
+                fp_runtime: fpRuntime,
+                id: videoHash
+            }).toString();
+
+            const guardResponse = await axios.post(
+                apiDomain + "/player/guard_issue.php",
+                guardBody,
+                {
+                    headers: {
+                        ...xhrHeaders,
+                        "X-FP-Runtime": fpRuntime
+                    },
+                    timeout: 12000,
+                    maxRedirects: 5
+                }
+            );
+
+            let guardData = guardResponse.data;
+
+            if (typeof guardData === "string") {
+                try {
+                    guardData = JSON.parse(guardData);
+                } catch (_) {
+                    guardData = {};
+                }
+            }
+
+            guardToken =
+                guardData?.token ||
+                guardData?.fp_guard ||
+                guardData?.data?.token ||
+                "";
+
+            console.log(
+                logPrefix,
+                "GUARD RESULT:",
+                guardToken ? "TOKEN RECEIVED" : "NO TOKEN"
+            );
+
+        } catch (guardError) {
+            console.log(
+                logPrefix,
+                "GUARD REQUEST FAILED:",
+                guardError.response?.status || guardError.message
+            );
+        }
+
+        // 6. Call the original getVideo endpoint.
+        const videoBody = new URLSearchParams({
+            hash: videoHash,
+            r: parentPageUrl || playerUrl,
+            fp_guard: guardToken
+        }).toString();
+
+        const videoResponse = await axios.post(
+            apiDomain +
+                "/player/index.php?data=" +
+                encodeURIComponent(videoHash) +
+                "&do=getVideo",
+            videoBody,
+            {
+                headers: {
+                    ...xhrHeaders,
+                    ...(guardToken
+                        ? { "X-FP-Guard": guardToken }
+                        : {})
+                },
+                timeout: 18000,
+                maxRedirects: 5
+            }
+        );
+
+        let videoData = videoResponse.data;
+
+        if (typeof videoData === "string") {
+            try {
+                videoData = JSON.parse(videoData);
+            } catch (_) {
+                // Some versions may return a plain URL or HTML.
+            }
+        }
+
+        function findHdcVideoUrl(value, depth = 0) {
+            if (depth > 5 || value == null) {
+                return "";
+            }
+
+            if (typeof value === "string") {
+                const trimmed = value.trim();
+
+                if (/^https?:\/\//i.test(trimmed)) {
+                    return trimmed;
+                }
+
+                if (
+                    trimmed.startsWith("{") ||
+                    trimmed.startsWith("[")
+                ) {
+                    try {
+                        return findHdcVideoUrl(
+                            JSON.parse(trimmed),
+                            depth + 1
+                        );
+                    } catch (_) {}
+                }
+
+                return "";
+            }
+
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    const found = findHdcVideoUrl(item, depth + 1);
+
+                    if (found) return found;
+                }
+
+                return "";
+            }
+
+            if (typeof value === "object") {
+                const preferredKeys = [
+                    "videoSource",
+                    "securedLink",
+                    "video_source",
+                    "secured_link",
+                    "source",
+                    "url",
+                    "link"
+                ];
+
+                for (const key of preferredKeys) {
+                    if (value[key]) {
+                        const found = findHdcVideoUrl(
+                            value[key],
+                            depth + 1
+                        );
+
+                        if (found) return found;
+                    }
+                }
+
+                for (const key of Object.keys(value)) {
+                    const found = findHdcVideoUrl(
+                        value[key],
+                        depth + 1
+                    );
+
+                    if (found) return found;
+                }
+            }
+
+            return "";
+        }
+
+        let videoUrl = findHdcVideoUrl(videoData);
+
+        if (!videoUrl) {
+            throw new Error(
+                "getVideo response contains no videoSource/securedLink"
+            );
+        }
+
+        // 7. Sign secured master URLs when the player returns one.
+        if (
+            /master/i.test(videoUrl) ||
+            /secured/i.test(videoUrl)
+        ) {
+            try {
+                const signBody = new URLSearchParams({
+                    id: videoHash,
+                    url: videoUrl
+                }).toString();
+
+                const signResponse = await axios.post(
+                    apiDomain + "/player/master_sign.php",
+                    signBody,
+                    {
+                        headers: {
+                            ...xhrHeaders,
+                            "User-Agent": userAgent
+                        },
+                        timeout: 15000,
+                        maxRedirects: 5
+                    }
+                );
+
+                const signedUrl = findHdcVideoUrl(
+                    signResponse.data
+                );
+
+                if (signedUrl) {
+                    videoUrl = signedUrl;
+                }
+
+            } catch (signError) {
+                console.log(
+                    logPrefix,
+                    "MASTER SIGN FAILED:",
+                    signError.response?.status || signError.message
+                );
+            }
+        }
+
+        // Validate the returned URL before handing it to the next resolver stage.
+        const resolvedUrl = new URL(videoUrl);
+
+        if (!/^https?:$/.test(resolvedUrl.protocol)) {
+            throw new Error("HDC returned an unsupported URL protocol");
+        }
+
+        console.log(
+            logPrefix,
+            "VIDEO URL RECEIVED:",
+            resolvedUrl.pathname
+        );
+
+        return {
+            success: true,
+            url: resolvedUrl.href,
+            hash: videoHash,
+            apiDomain: apiDomain,
+            referer: playerUrl
+        };
+
+    } catch (error) {
+        console.log(
+            logPrefix,
+            "RESOLVE FAILED:",
+            error.response?.status || error.message
+        );
+
+        return {
+            success: false,
+            error: error.message || "HDC player resolution failed"
+        };
+    }
+}
+
 async function scrapePhimHDCS(
     movieName,
     movieYear = 0,
     seasonNumber = 0,
     episodeNumber = 0,
-    streamType = "movie"
+    streamType = "movie",
+    titleVariants = [],
+    imdbId = ""
 ) {
 
     const streams = [];
 
-    const BASE_URL =
-        "https://phimhdcss.com";
+    const requestedTitleVariants = [
+        movieName,
+        ...(Array.isArray(titleVariants) ? titleVariants : [])
+    ]
+        .map(value => String(value || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .filter((value, index, list) => list.indexOf(value) === index);
+
+    // =====================================================
+    // PHIMAPI IMDb LOOKUP
+    // Không phụ thuộc Map cache giữa các Vercel instance.
+    // =====================================================
+
+    const normalizedPhimhdcsImdbId =
+        String(imdbId || "").trim().toLowerCase();
+
+    if (/^tt\d+$/i.test(normalizedPhimhdcsImdbId)) {
+        const imdbLookupStartedAt = Date.now();
+
+        console.log(
+            "[PHIMHDCS] PHIMAPI IMDb LOOKUP START:",
+            normalizedPhimhdcsImdbId
+        );
+
+        try {
+            const imdbResponse = await axios.get(
+                "https://phimapi.com/imdb/title/" +
+                    encodeURIComponent(normalizedPhimhdcsImdbId),
+                {
+                    timeout: 4000,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+            const imdbData = imdbResponse.data || {};
+
+            const phimApiItem =
+                imdbData?.movie ||
+                imdbData?.data?.movie ||
+                imdbData?.data?.item ||
+                imdbData?.item ||
+                null;
+
+            if (
+                phimApiItem &&
+                typeof phimApiItem === "object" &&
+                phimApiItem.name
+            ) {
+                const candidateImdbId = String(
+                    phimApiItem?.imdb?.id ||
+                    phimApiItem?.imdb_id ||
+                    phimApiItem?.imdbId ||
+                    ""
+                ).trim().toLowerCase();
+
+                const candidateType = String(
+                    phimApiItem?.type ||
+                    phimApiItem?.tmdb?.type ||
+                    ""
+                ).trim().toLowerCase();
+
+                const candidateYear =
+                    Number(
+                        phimApiItem?.year ||
+                        phimApiItem?.release_year ||
+                        0
+                    ) || 0;
+
+                const expectedSeries =
+                    streamType === "series";
+
+                const explicitSeriesTypes = [
+                    "series",
+                    "tv",
+                    "tvshow",
+                    "tvshows"
+                ];
+
+                const explicitMovieTypes = [
+                    "movie",
+                    "single",
+                    "phim-le"
+                ];
+
+                const typeMatches =
+                    !candidateType ||
+                    (
+                        expectedSeries
+                            ? !explicitMovieTypes.includes(candidateType)
+                            : !explicitSeriesTypes.includes(candidateType)
+                    );
+
+                const imdbMatches =
+                    !candidateImdbId ||
+                    candidateImdbId === normalizedPhimhdcsImdbId;
+
+                const yearMatches =
+                    !movieYear ||
+                    !candidateYear ||
+                    Math.abs(candidateYear - Number(movieYear)) <= 1;
+
+                if (
+                    phimApiItem.slug &&
+                    imdbMatches &&
+                    typeMatches &&
+                    yearMatches
+                ) {
+                    requestedTitleVariants.push(
+                        phimApiItem.name,
+                        phimApiItem.origin_name,
+                        phimApiItem.original_name,
+                        phimApiItem.title
+                    );
+
+                    console.log(
+                        "[PHIMHDCS] PHIMAPI IMDb LOOKUP MATCH:",
+                        JSON.stringify({
+                            imdbId: normalizedPhimhdcsImdbId,
+                            name: phimApiItem.name,
+                            originName: phimApiItem.origin_name || "",
+                            year: candidateYear,
+                            type: candidateType,
+                            slug: phimApiItem.slug
+                        })
+                    );
+                } else {
+                    console.warn(
+                        "[PHIMHDCS] PHIMAPI IMDb LOOKUP REJECTED:",
+                        JSON.stringify({
+                            imdbId: normalizedPhimhdcsImdbId,
+                            candidateImdbId,
+                            name: phimApiItem.name || "",
+                            year: candidateYear,
+                            requestedYear: movieYear,
+                            type: candidateType,
+                            imdbMatches,
+                            typeMatches,
+                            yearMatches
+                        })
+                    );
+                }
+            } else {
+                console.log(
+                    "[PHIMHDCS] PHIMAPI IMDb LOOKUP EMPTY"
+                );
+            }
+
+            console.log(
+                "[PHIMHDCS] PHIMAPI IMDb LOOKUP COMPLETE:",
+                Date.now() - imdbLookupStartedAt,
+                "ms"
+            );
+
+        } catch (imdbLookupError) {
+            console.error(
+                "[PHIMHDCS] PHIMAPI IMDb LOOKUP ERROR:",
+                JSON.stringify({
+                    imdbId: normalizedPhimhdcsImdbId,
+                    status: imdbLookupError?.response?.status || 0,
+                    code: imdbLookupError?.code || "",
+                    message:
+                        imdbLookupError?.message ||
+                        String(imdbLookupError)
+                })
+            );
+        }
+    }
+
+    const finalRequestedTitleVariants = [
+        ...new Set(
+            requestedTitleVariants
+                .map(value =>
+                    String(value || "")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                )
+                .filter(Boolean)
+        )
+    ];
+
+    console.log(
+        "[PHIMHDCS] REQUESTED TITLE VARIANTS:",
+        JSON.stringify(finalRequestedTitleVariants)
+    );
+
+    const PHIMHDCS_DOMAINS = [
+    "https://filmhdc.com",
+    "https://phimhdcss.com"
+];
+
+let BASE_URL = PHIMHDCS_DOMAINS[0];
+
+function isPhimHDCSUrl(value) {
+    try {
+        const host = new URL(value).hostname.toLowerCase();
+
+        const allowedHosts = [
+            ...PHIMHDCS_DOMAINS.map(
+                domain => new URL(domain).hostname.toLowerCase()
+            ),
+            new URL(BASE_URL).hostname.toLowerCase()
+        ];
+
+        return allowedHosts.some(
+            root =>
+                host === root ||
+                host.endsWith("." + root)
+        );
+
+    } catch (e) {
+        return false;
+    }
+}
 
     // ========================================================
     // HELPER
@@ -37113,182 +38936,441 @@ async function scrapePhimHDCS(
             streamType
         );
 
+        
         // ====================================================
-        // 1. SEARCH
+        // 1. SEARCH — FILMHDC PRIMARY / PHIMHDCSS FALLBACK
         // ====================================================
 
-        const searchUrl =
-            BASE_URL +
-            "/?search=" +
-            encodeURIComponent(
-                movieName
-            ).replace(
-                /%20/g,
-                "+"
-            );
-
-        console.log(
-            "[PHIMHDCS] SEARCH URL:",
-            searchUrl
-        );
-
-        const searchRes =
-            await axios.get(
-                searchUrl,
-                {
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                    },
-                    timeout: 10000
-                }
-            );
-
-        const searchHtml =
-            String(
-                searchRes.data ||
-                ""
-            );
-
-        const parseSearch =
-            cheerio.load(
-                searchHtml
-            );
-
-        // ====================================================
-        // 2. LẤY DANH SÁCH KẾT QUẢ
-        // ====================================================
+        const searchDomains = [
+            ...PHIMHDCS_DOMAINS
+        ];
 
         const candidates = [];
+        let fallbackCandidates = [];
 
-        parseSearch(
-            "li.item a[href]"
-        ).each(
-            function () {
+        const searchTarget =
+            normalizeTitle(movieName);
 
-                const node =
-                    parseSearch(
-                        this
+        for (
+            const searchDomain of searchDomains
+        ) {
+
+            BASE_URL = searchDomain;
+
+            const searchUrl =
+                BASE_URL +
+                "/?search=" +
+                encodeURIComponent(
+                    movieName
+                ).replace(
+                    /%20/g,
+                    "+"
+                );
+
+            console.log(
+                "[PHIMHDCS] SEARCH ATTEMPT:",
+                {
+                    domain: searchDomain,
+                    url: searchUrl
+                }
+            );
+
+            try {
+
+                const searchRes =
+                    await axios.get(
+                        searchUrl,
+                        {
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                                "Accept":
+                                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                            },
+                            timeout: 10000,
+                            maxRedirects: 5
+                        }
                     );
 
-                const href =
-                    String(
-                        node.attr(
-                            "href"
-                        ) ||
-                        ""
-                    ).trim();
+                // Nhận diện domain thực tế sau redirect.
+                const resolvedSearchUrl =
+                    searchRes.request?.res?.responseUrl ||
+                    searchUrl;
 
-                const title =
-                    String(
-                        node.attr(
-                            "title"
-                        ) ||
-                        node.text() ||
-                        ""
-                    ).trim();
+                try {
 
-                if (
-                    !href ||
-                    !title
+                    const resolvedOrigin =
+                        new URL(
+                            resolvedSearchUrl
+                        ).origin;
+
+                    if (
+                        resolvedOrigin.startsWith("https://")
+                    ) {
+                        BASE_URL =
+                            resolvedOrigin;
+                    }
+
+                } catch (e) {}
+
+                console.log(
+                    "[PHIMHDCS] SEARCH RESOLVED DOMAIN:",
+                    BASE_URL
+                );
+
+                const searchHtml =
+                    String(
+                        searchRes.data ||
+                        ""
+                    );
+
+                const parseSearch =
+                    cheerio.load(
+                        searchHtml
+                    );
+
+                const domainCandidates = [];
+
+                function addSearchCandidate(
+                    href,
+                    title
                 ) {
-                    return;
+
+                    const cleanTitle =
+                        String(
+                            title || ""
+                        ).trim();
+
+                    if (
+                        !href ||
+                        !cleanTitle
+                    ) {
+                        return;
+                    }
+
+                    const url =
+                        makeAbsoluteUrl(
+                            href
+                        );
+
+                    if (
+                        !url ||
+                        !isPhimHDCSUrl(url)
+                    ) {
+                        return;
+                    }
+
+                    domainCandidates.push({
+
+                        url: url,
+
+                        title: cleanTitle,
+
+                        year:
+                            extractYear(
+                                cleanTitle
+                            )
+
+                    });
+
                 }
 
-                const url =
-                    makeAbsoluteUrl(
-                        href
-                    );
+                // --------------------------------------------
+                // PARSER CHÍNH
+                // --------------------------------------------
+
+                parseSearch(
+                    "li.item a[href]"
+                ).each(
+                    function () {
+
+                        const node =
+                            parseSearch(this);
+
+                        addSearchCandidate(
+                            node.attr("href"),
+                            node.attr("title") ||
+                            node.text()
+                        );
+
+                    }
+                );
+
+                // --------------------------------------------
+                // FALLBACK PARSER
+                // --------------------------------------------
 
                 if (
-                    !url.includes(
-                        "phimhdcss.com"
+                    domainCandidates.length === 0
+                ) {
+
+                    const itemPattern =
+                        /<li\s+class="item[^"]*">[\s\S]*?<a\s+href="([^"]+)"\s+title="([^"]+)"/gi;
+
+                    let match;
+
+                    while (
+                        (
+                            match =
+                                itemPattern.exec(
+                                    searchHtml
+                                )
+                        ) !== null
+                    ) {
+
+                        addSearchCandidate(
+                            match[1],
+                            match[2]
+                        );
+
+                    }
+
+                }
+
+                console.log(
+                    "[PHIMHDCS] DOMAIN SEARCH RESULTS:",
+                    {
+                        domain: BASE_URL,
+                        count: domainCandidates.length
+                    }
+                );
+
+                // Ưu tiên domain có kết quả gần với tên phim.
+
+
+                const searchTitleVariants = [
+                    movieName,
+                    ...finalRequestedTitleVariants
+                ]
+                    .map(value =>
+                        normalizeTitle(value)
                     )
+                    .filter(value =>
+                        value.length >= 4
+                    );
+
+                const hasTitleMatch =
+                    domainCandidates.some(candidate => {
+
+                        const candidateTitle =
+                            normalizeTitle(
+                                candidate.title
+                            );
+
+                        if (
+                            !candidateTitle ||
+                            candidateTitle.length < 4
+                        ) {
+                            return false;
+                        }
+
+                        return searchTitleVariants.some(
+                            requestedTitle => {
+
+                                return (
+                                    candidateTitle === requestedTitle ||
+                                    (
+                                        requestedTitle.length >= 7 &&
+                                        candidateTitle.includes(requestedTitle)
+                                    ) ||
+                                    (
+                                        candidateTitle.length >= 7 &&
+                                        requestedTitle.includes(candidateTitle)
+                                    )
+                                );
+
+                            }
+                        );
+
+                    });
+
+                if (
+                    hasTitleMatch
                 ) {
-                    return;
+
+                    candidates.push(
+                        ...domainCandidates
+                    );
+
+                    console.log(
+                        "[PHIMHDCS] DOMAIN MATCH:",
+                        BASE_URL
+                    );
+
+                    break;
+
                 }
 
-                candidates.push({
+                // Giữ kết quả đầu tiên làm phương án dự phòng,
+                // nhưng vẫn thử domain tiếp theo.
+                if (
+                    domainCandidates.length > 0 &&
+                    fallbackCandidates.length === 0
+                ) {
 
-                    url:
-                        url,
+                    fallbackCandidates =
+                        domainCandidates;
 
-                    title:
-                        title,
+                }
 
-                    year:
-                        extractYear(
-                            title
-                        )
+            } catch (searchError) {
 
-                });
+                console.log(
+                    "[PHIMHDCS] DOMAIN SEARCH FAILED:",
+                    {
+                        domain: searchDomain,
+                        status:
+                            searchError?.response?.status || 0,
+                        error:
+                            searchError?.message || String(searchError)
+                    }
+                );
 
             }
-        );
+
+        }
+
+        // Nếu không domain nào có kết quả khớp tên phim,
+        // dùng kết quả đầu tiên để giữ hành vi cũ.
+        if (
+            candidates.length === 0 &&
+            fallbackCandidates.length > 0
+        ) {
+
+            candidates.push(
+                ...fallbackCandidates
+            );
+
+        }
 
         // ====================================================
-        // FALLBACK PARSER
+        // 2. NẾU CẢ HAI DOMAIN KHÔNG CÓ KẾT QUẢ
+        //    THỬ TRUY CẬP FILMHDC ĐỂ NHẬN DIỆN URL HIỆN TẠI
         // ====================================================
 
         if (
             candidates.length === 0
         ) {
 
-            const itemPattern =
-                /<li\s+class="item[^"]*">[\s\S]*?<a\s+href="([^"]+)"\s+title="([^"]+)"/gi;
+            BASE_URL =
+                PHIMHDCS_DOMAINS[0];
 
-            let match;
+            console.log(
+                "[PHIMHDCS] BOTH SEARCH DOMAINS FAILED — PROBE FILMHDC"
+            );
 
-            while (
-                (
-                    match =
-                    itemPattern.exec(
-                        searchHtml
-                    )
-                ) !== null
-            ) {
+            try {
 
-                candidates.push({
+                const homeRes =
+                    await axios.get(
+                        BASE_URL + "/",
+                        {
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                                "Accept":
+                                    "text/html,application/xhtml+xml,*/*"
+                            },
+                            timeout: 8000,
+                            maxRedirects: 5
+                        }
+                    );
 
-                    url:
-                        makeAbsoluteUrl(
-                            match[1]
-                        ),
+                const resolvedHomeUrl =
+                    homeRes.request?.res?.responseUrl ||
+                    BASE_URL + "/";
 
-                    title:
+                try {
+
+                    const resolvedOrigin =
+                        new URL(
+                            resolvedHomeUrl
+                        ).origin;
+
+                    if (
+                        resolvedOrigin.startsWith("https://")
+                    ) {
+
+                        BASE_URL =
+                            resolvedOrigin;
+
+                    }
+
+                } catch (e) {}
+
+                // Nếu trang cung cấp canonical URL,
+                // ưu tiên origin của canonical URL.
+                const homePage =
+                    cheerio.load(
                         String(
-                            match[2] ||
-                            ""
-                        ).trim(),
-
-                    year:
-                        extractYear(
-                            match[2]
+                            homeRes.data || ""
                         )
+                    );
 
-                });
+                const canonicalUrl =
+                    homePage(
+                        'link[rel="canonical"]'
+                    ).attr("href");
+
+                if (
+                    canonicalUrl
+                ) {
+
+                    try {
+
+                        const canonicalOrigin =
+                            new URL(
+                                canonicalUrl,
+                                BASE_URL + "/"
+                            );
+
+                        if (
+                            canonicalOrigin.protocol === "https:"
+                        ) {
+
+                            BASE_URL =
+                                canonicalOrigin.origin;
+
+                        }
+
+                    } catch (e) {}
+
+                }
+
+                console.log(
+                    "[PHIMHDCS] FILMHDC ACCESS URL:",
+                    {
+                        resolved: resolvedHomeUrl,
+                        activeBase: BASE_URL
+                    }
+                );
+
+            } catch (homeError) {
+
+                console.log(
+                    "[PHIMHDCS] FILMHDC HOMEPAGE PROBE FAILED:",
+                    homeError?.response?.status ||
+                    homeError?.message ||
+                    homeError
+                );
 
             }
 
         }
 
-        const uniqueCandidates =
-            [];
+        // ====================================================
+        // LOẠI BỎ URL TRÙNG
+        // ====================================================
 
-        const seenUrls =
-            new Set();
+        const uniqueCandidates = [];
+        const seenUrls = new Set();
 
         for (
-            const candidate
-            of candidates
+            const candidate of candidates
         ) {
 
             if (
-                seenUrls.has(
-                    candidate.url
-                )
+                seenUrls.has(candidate.url)
             ) {
                 continue;
             }
@@ -37305,7 +39387,10 @@ async function scrapePhimHDCS(
 
         console.log(
             "[PHIMHDCS] SEARCH RESULTS:",
-            uniqueCandidates.length
+            {
+                domain: BASE_URL,
+                count: uniqueCandidates.length
+            }
         );
 
         if (
@@ -37319,180 +39404,503 @@ async function scrapePhimHDCS(
             addFallback();
 
             return streams;
+
         }
 
+
         // ====================================================
-        // 3. CHỌN PHIM
+        // 3. CHỌN PHIM — TITLE + ORIGINAL TITLE + KEYWORDS
         // ====================================================
 
         const target =
-            normalizeTitle(
-                movieName
-            );
+            normalizeTitle(movieName);
 
-        let selectedMovie =
-            null;
+        function normalizeAliasTitle(value) {
+            return normalizeTitle(value)
+                .replace(/\b(19|20)\d{2}\b/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
 
-        let selectedScore =
-            -Infinity;
 
-        for (
-            const candidate
-            of uniqueCandidates
-        ) {
-
-            let score =
-                0;
-
-            const candidateTitle =
-                normalizeTitle(
-                    candidate.title
-                );
-
-            // ------------------------------------------------
-            // TITLE
-            // ------------------------------------------------
+        function getAliasMatchScore(alias) {
+            const normalizedAlias =
+                normalizeAliasTitle(alias);
 
             if (
-                candidateTitle ===
-                target
+                !normalizedAlias ||
+                normalizedAlias.length < 4
             ) {
+                return 0;
+            }
 
-                score +=
-                    1000;
+            let bestScore = 0;
 
-            } else if (
-                candidateTitle.includes(
-                    target
-                ) &&
-                target.length >= 4
+            for (const requested of finalRequestedTitleVariants) {
+                const normalizedRequested =
+                    normalizeAliasTitle(requested);
+
+                if (
+                    !normalizedRequested ||
+                    normalizedRequested.length < 4
+                ) {
+                    continue;
+                }
+
+                if (normalizedAlias === normalizedRequested) {
+                    bestScore = Math.max(bestScore, 1200);
+                    continue;
+                }
+
+                if (
+                    normalizedAlias.length >= 7 &&
+                    normalizedRequested.length >= 7 &&
+                    (
+                        normalizedAlias.includes(normalizedRequested) ||
+                        normalizedRequested.includes(normalizedAlias)
+                    )
+                ) {
+                    bestScore = Math.max(bestScore, 600);
+                }
+            }
+
+            return bestScore;
+        }
+
+        let selectedMovie = null;
+let selectedScore = -Infinity;
+let selectedDetailHtml = "";
+let selectedDetailUrl = "";
+
+        // Tải trang chi tiết của các ứng viên để lấy tên thay thế.
+        // Không dùng tên hiển thị trên kết quả tìm kiếm làm căn cứ duy nhất.
+
+        // ====================================================
+        // [PHIMHDCS-DETAIL-LIMITER]
+        // Giới hạn tối đa 2 request Detail đồng thời.
+        // Tránh bắn hàng loạt request sang hai domain.
+        // ====================================================
+
+        let phimhdcsDetailActive = 0;
+        const phimhdcsDetailWaiters = [];
+
+        async function withPhimhdcsDetailLimit(task) {
+            if (phimhdcsDetailActive >= 2) {
+                await new Promise(resolve => {
+                    phimhdcsDetailWaiters.push(resolve);
+                });
+            }
+
+            phimhdcsDetailActive++;
+
+            try {
+                return await task();
+            } finally {
+                phimhdcsDetailActive--;
+
+                const next =
+                    phimhdcsDetailWaiters.shift();
+
+                if (next) {
+                    next();
+                }
+            }
+        }
+
+        const candidateDetailResults =
+            await Promise.allSettled(
+                uniqueCandidates.map(candidate =>
+    withPhimhdcsDetailLimit(async () => {
+
+                    const candidateStartedAt = Date.now();
+
+                    console.log(
+                        "[PHIMHDCS] DETAIL REQUEST START:",
+                        JSON.stringify({
+                            title: candidate.title || "",
+                            url: candidate.url
+                        })
+                    );
+
+                    const candidateParsedUrl =
+                        new URL(candidate.url);
+
+                    const detailOrigins = [
+                        BASE_URL,
+                        ...PHIMHDCS_DOMAINS
+                    ].filter(
+                        (origin, index, list) =>
+                            list.indexOf(origin) === index
+                    );
+
+                    let response = null;
+                    let html = "";
+                    let lastDetailError = null;
+                    let successfulDetailUrl = "";
+
+                    for (const detailOrigin of detailOrigins) {
+                        const detailUrl =
+                            detailOrigin +
+                            candidateParsedUrl.pathname +
+                            candidateParsedUrl.search +
+                            candidateParsedUrl.hash;
+
+                        console.log(
+                            "[PHIMHDCS] DETAIL ATTEMPT START:",
+                            JSON.stringify({
+                                title: candidate.title || "",
+                                url: detailUrl
+                            })
+                        );
+
+                        try {                       
+
+const detailAttemptStartedAt = Date.now();
+
+console.log(
+    "[PHIMHDCS] DETAIL HTTP DISPATCH:",
+    JSON.stringify({
+        title: candidate.title || "",
+        url: detailUrl,
+        origin: detailOrigin,
+        timeout: 6000
+    })
+);
+
+// QUAN TRỌNG: dùng response đã khai báo ở bên ngoài.
+// Không đổi thành const response hoặc let response.
+response = await axios.get(
+    detailUrl,
+    {
+        headers: {
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+            "Referer": detailOrigin + "/",
+            "Accept":
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language":
+                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+        },
+        timeout: 6000,
+        maxRedirects: 5,
+        validateStatus: status =>
+            status >= 200 && status < 400
+    }
+);
+
+console.log(
+    "[PHIMHDCS] DETAIL HTTP RESPONSE:",
+    JSON.stringify({
+        title: candidate.title || "",
+        url: detailUrl,
+        status: response.status,
+        elapsedMs: Date.now() - detailAttemptStartedAt,
+        contentType:
+            response.headers?.["content-type"] || "",
+        contentLength:
+            String(response.data || "").length
+    })
+);
+
+                            html = String(response.data || "");
+                            successfulDetailUrl =
+                                response.request?.res?.responseUrl ||
+                                detailUrl;
+
+                            if (html.length > 500) {
+                                console.log(
+                                    "[PHIMHDCS] DETAIL ATTEMPT COMPLETE:",
+                                    JSON.stringify({
+                                        title: candidate.title || "",
+                                        requestedUrl: detailUrl,
+                                        resolvedUrl: successfulDetailUrl,
+                                        status: response.status,
+                                        htmlLength: html.length,
+                                        elapsedMs:
+                                            Date.now() - candidateStartedAt
+                                    })
+                                );
+
+                                break;
+                            }
+
+                            lastDetailError = new Error(
+                                "Detail response quá ngắn: " +
+                                html.length +
+                                " bytes"
+                            );
+
+                        } catch (detailError) {
+                            lastDetailError = detailError;
+
+                            console.error(
+                                "[PHIMHDCS] DETAIL ATTEMPT FAILED:",
+                                JSON.stringify({
+                                    title: candidate.title || "",
+                                    url: detailUrl,
+                                    status:
+                                        detailError?.response?.status || 0,
+                                    code: detailError?.code || "",
+                                    message:
+                                        detailError?.message ||
+                                        String(detailError),
+                                    elapsedMs:
+                                        Date.now() - candidateStartedAt
+                                })
+                            );
+                        }
+                    }
+
+                    if (!response || html.length <= 500) {
+                        throw lastDetailError ||
+                            new Error(
+                                "Không tải được trang Detail từ cả hai domain"
+                            );
+                    }
+
+                    console.log(
+                        "[PHIMHDCS] DETAIL REQUEST COMPLETE:",
+                        JSON.stringify({
+                            title: candidate.title || "",
+                            url: successfulDetailUrl,
+                            status: response.status,
+                            htmlLength: html.length,
+                            elapsedMs:
+                                Date.now() - candidateStartedAt
+                        })
+                    );
+
+                    const page =
+                        cheerio.load(html);
+
+                    const aliases = [];
+                    addAlias(candidate.title);
+
+                    function addAlias(value) {
+                        const clean =
+                            String(value || "")
+                                .replace(/\s+/g, " ")
+                                .trim();
+
+                        if (
+                            clean &&
+                            clean.length >= 3 &&
+                            !aliases.includes(clean)
+                        ) {
+                            aliases.push(clean);
+                        }
+                    }
+
+                    // Tiêu đề chính và tiêu đề gốc.
+                    page("h1, h2").each(function () {
+                        addAlias(page(this).text());
+                    });
+
+                    // Metadata tiêu đề.
+                    addAlias(
+                        page('meta[property="og:title"]')
+                            .attr("content")
+                    );
+
+                    addAlias(
+                        page("title").text()
+                    );
+
+                    // Từ khóa phim: tên tiếng Việt, tiếng Anh,
+                    // tên gốc và các tên phát hành khác.
+                    page('a[href*="/tu-khoa/"]').each(
+                        function () {
+                            addAlias(page(this).text());
+                        }
+                    );
+
+                    let detailYear = 0;
+
+                    // Ưu tiên năm xuất hiện trong tiêu đề gốc.
+                    page("h1, h2").each(function () {
+                        if (detailYear > 0) return;
+
+                        detailYear =
+                            extractYear(
+                                page(this).text()
+                            );
+                    });
+
+                    return {
+    candidate,
+    html,
+    aliases,
+    detailUrl: successfulDetailUrl,
+    year:
+        detailYear ||
+        candidate.year ||
+        0
+};
+
+                }))
+            );
+
+        for (
+            const result of candidateDetailResults
+        ) {
+
+            if (result.status !== "fulfilled") {
+                console.log(
+                    "[PHIMHDCS] CANDIDATE DETAIL FAILED:",
+                    JSON.stringify({
+                        status: result.reason?.response?.status || 0,
+                        code: result.reason?.code || "",
+                        message: result.reason?.message || String(result.reason)
+                    })
+                );
+
+                continue;
+            }
+
+            const detail =
+                result.value;
+
+            const candidate =
+                detail.candidate;
+
+            let titleScore = 0;
+            let matchedAlias = "";
+
+            for (
+                const alias of detail.aliases
             ) {
+                const aliasScore =
+                    getAliasMatchScore(alias);
 
-                score +=
-                    500;
+                if (
+                    aliasScore > titleScore
+                ) {
 
-            } else if (
-                target.includes(
-                    candidateTitle
-                ) &&
-                candidateTitle.length >= 4
-            ) {
+                    titleScore = aliasScore;
+                    matchedAlias = alias;
 
-                score +=
-                    400;
+                }
 
             }
 
-            // ------------------------------------------------
-            // YEAR
-            // ------------------------------------------------
+            // Chỉ chấp nhận ứng viên có tên phim hoặc bí danh
+            // thực sự khớp với tên được yêu cầu.
+            if (titleScore <= 0) {
 
-            if (
-                movieYear > 0
-            ) {
+                console.log(
+                    "[PHIMHDCS] CANDIDATE REJECTED — NO TITLE/ALIAS MATCH:",
+                    {
+                        title: candidate.title,
+                        aliases: detail.aliases.slice(0, 8),
+                        url: candidate.url
+                    }
+                );
+
+                continue;
+            }
+
+            let score =
+                titleScore;
+
+            // Năm chỉ dùng để phân biệt các phim cùng tên.
+            if (movieYear > 0 && detail.year > 0) {
 
                 if (
-                    candidate.year ===
-                    Number(
-                        movieYear
-                    )
+                    Number(detail.year) ===
+                    Number(movieYear)
                 ) {
 
-                    score +=
-                        5000;
+                    score += 5000;
 
-                } else if (
-                    candidate.year > 0
-                ) {
+                } else {
 
-                    score -=
-                        300;
+                    score -= 1000;
 
                 }
 
             }
 
             console.log(
-                "[PHIMHDCS] CANDIDATE:",
+                "[PHIMHDCS] CANDIDATE VERIFIED:",
                 {
-                    title:
-                        candidate.title,
-                    year:
-                        candidate.year,
-                    score:
-                        score,
-                    url:
-                        candidate.url
+                    title: candidate.title,
+                    matchedAlias,
+                    year: detail.year,
+                    score,
+                    url: candidate.url
                 }
             );
 
             if (
-                score >
-                selectedScore
+                score > selectedScore
             ) {
 
                 selectedScore =
                     score;
 
                 selectedMovie =
-                    candidate;
+    candidate;
+
+selectedDetailHtml =
+    detail.html;
+
+selectedDetailUrl =
+    detail.detailUrl ||
+    candidate.url;
 
             }
 
         }
 
-        if (
-            !selectedMovie
-        ) {
+        if (!selectedMovie) {
 
             console.log(
-                "[PHIMHDCS] NO MOVIE SELECTED"
+                "[PHIMHDCS] NO VERIFIED TITLE/ALIAS MATCH:",
+                {
+                    requestedTitle: movieName,
+                    requestedYear: movieYear,
+                    candidateCount: uniqueCandidates.length
+                }
             );
 
             addFallback();
 
             return streams;
+
         }
 
         console.log(
             "[PHIMHDCS] SELECTED MOVIE:",
             selectedMovie.title,
             "|",
-            selectedMovie.year,
+            selectedScore,
             "|",
             selectedMovie.url
         );
 
         // ====================================================
-        // 4. LOAD DETAIL PAGE
+        // 4. REUSE VERIFIED DETAIL PAGE
         // ====================================================
 
-        const detailRes =
-            await axios.get(
-                selectedMovie.url,
-                {
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-                        "Referer":
-                            BASE_URL + "/"
-                    },
-                    timeout: 10000
-                }
+        if (!selectedDetailHtml) {
+
+            console.log(
+                "[PHIMHDCS] VERIFIED DETAIL HTML MISSING"
             );
+
+            addFallback();
+
+            return streams;
+
+        }
 
         const detailHtml =
-            String(
-                detailRes.data ||
-                ""
-            );
+            selectedDetailHtml;
 
         const parseDetail =
-            cheerio.load(
-                detailHtml
-            );
+            cheerio.load(detailHtml);
 
-        // ====================================================
+// ====================================================
 // 5. LẤY SERVER + EPISODE
 // ====================================================
 
@@ -37746,9 +40154,8 @@ parseDetail(
         }
 
         const episodeNumber =
-            extractEpisodeNumber(
-                name
-            );
+    extractEpisodeNumber(name) ||
+    extractEpisodeNumber(absoluteUrl);
 
         const serverName =
             detectServerName(
@@ -37815,20 +40222,10 @@ parseDetail(
         });
 
         console.log(
-            "[PHIMHDCS] EPISODE LINK:",
-            {
-                server:
-                    serverName,
-
-                name:
-                    name,
-
-                number:
-                    episodeNumber,
-
-                url:
-                    absoluteUrl
-            }
+            "[PHIMHDCS] EPISODE LINK ADDED:",
+            serverName,
+            "Episode:",
+            episodeNumber
         );
 
     }
@@ -38104,101 +40501,349 @@ console.log(
     selectedEpisodes.length
 );
 
-// ====================================================
-// 7. LOAD TẤT CẢ EPISODE PAGE — PARALLEL
-//
-// - Tải đồng thời các server của tập đã chọn.
-// - Giữ thứ tự kết quả theo selectedEpisodes.
-// - Một server lỗi không làm mất server khác.
-// - Giữ nguyên cấu trúc episodePages cho bước giải mã.
-// ====================================================
 
-const episodePageResults = await Promise.allSettled(
-    selectedEpisodes.map(async (selected) => {
-        const episodeUrl = selected?.episode?.url;
+ // ====================================================
+ // [PHIMHDCS-EPISODE-LOAD-V11]
+ // DETAIL-ORIGIN FIRST
+ // SAME AXIOS HEADERS AS VERIFIED DETAIL REQUEST
+ // ====================================================
 
-        if (!episodeUrl) {
-            throw new Error("Missing episode URL");
-        }
+const PHIMHDCS_V11_TIMEOUT = 6000;
+
+const episodePageResults = await Promise.all(
+    selectedEpisodes.map(async (selected, index) => {
+
+        const episodeUrl =
+            String(
+                selected?.episode?.url || ""
+            ).trim();
 
         const startedAt = Date.now();
 
-        const episodeRes = await axios.get(
-            episodeUrl,
-            {
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        const requestId =
+            "PHIMHDCS-V11-" +
+            startedAt +
+            "-" +
+            index;
 
-                    "Referer": selectedMovie.url
-                },
+        if (!episodeUrl) {
+            return {
+                status: "rejected",
+                reason: new Error("Missing episode URL")
+            };
+        }
 
-                // Giới hạn riêng cho từng server.
-                timeout: 7000
-            }
-        );
+        let originalUrl;
 
-        const episodeHtml = String(
-            episodeRes.data || ""
+        try {
+            originalUrl = new URL(episodeUrl);
+        } catch (error) {
+            return {
+                status: "rejected",
+                reason: new Error("Invalid episode URL")
+            };
+        }
+
+        // Ưu tiên domain đã tải Detail thành công.
+        let preferredOrigin = "";
+
+        const preferredCandidates = [
+            selectedDetailUrl,
+            selectedMovie?.url,
+            episodeUrl
+        ];
+
+        for (const value of preferredCandidates) {
+            try {
+                const parsed = new URL(value);
+
+                if (isPhimHDCSUrl(parsed.origin)) {
+                    preferredOrigin = parsed.origin;
+                    break;
+                }
+            } catch (error) {}
+        }
+
+        // Domain Detail trước, domain episode tiếp theo,
+        // cuối cùng mới thử các domain dự phòng.
+        const candidateOrigins = [
+            preferredOrigin,
+            originalUrl.origin,
+            ...PHIMHDCS_DOMAINS
+        ].filter(
+            (origin, index, list) =>
+                origin &&
+                list.indexOf(origin) === index
         );
 
         console.log(
-            "[PHIMHDCS] EPISODE PAGE COMPLETE:",
+            "[PHIMHDCS V11] EPISODE START:",
             {
+                requestId,
                 server: selected.server,
-                status: episodeRes.status,
-                elapsedMs: Date.now() - startedAt,
-                htmlLength: episodeHtml.length
+                episodeUrl,
+                preferredOrigin,
+                candidateOrigins
+            }
+        );
+
+        let winningPage = null;
+        let lastError = null;
+
+        for (const candidateOrigin of candidateOrigins) {
+
+            const requestUrl =
+                new URL(
+                    originalUrl.pathname +
+                    originalUrl.search +
+                    originalUrl.hash,
+                    candidateOrigin
+                ).href;
+
+            // Giống chính xác cấu hình Referer của Detail.
+            const referer =
+                candidateOrigin + "/";
+
+            const hostStartedAt =
+                Date.now();
+
+            console.log(
+                "[PHIMHDCS V11] REQUEST:",
+                {
+                    requestId,
+                    server: selected.server,
+                    origin: candidateOrigin,
+                    url: requestUrl,
+                    referer,
+                    timeout: PHIMHDCS_V11_TIMEOUT
+                }
+            );
+
+            try {
+
+                const response =
+                    await axios.get(
+                        requestUrl,
+                        {
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+
+                                "Referer":
+                                    referer,
+
+                                "Accept":
+                                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                                "Accept-Language":
+                                    "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+                            },
+
+                            timeout:
+                                PHIMHDCS_V11_TIMEOUT,
+
+                            maxRedirects: 5,
+
+                            validateStatus: status =>
+                                status >= 200 &&
+                                status < 400
+                        }
+                    );
+
+                const html =
+                    Buffer.isBuffer(response.data)
+                        ? response.data.toString("utf8")
+                        : String(response.data || "");
+
+                const finalUrl =
+                    response.request?.res?.responseUrl ||
+                    requestUrl;
+
+                console.log(
+                    "[PHIMHDCS V11] RESPONSE:",
+                    {
+                        requestId,
+                        server: selected.server,
+                        origin: candidateOrigin,
+                        status: response.status,
+                        htmlLength: html.length,
+                        finalUrl,
+                        elapsedMs:
+                            Date.now() - hostStartedAt
+                    }
+                );
+
+                if (html.length < 5000) {
+                    throw new Error(
+                        "Episode HTML too short: " +
+                        html.length
+                    );
+                }
+
+                winningPage = {
+                    server:
+                        selected.server,
+
+                    episode:
+                        selected.episode,
+
+                    url:
+                        finalUrl,
+
+                    html,
+
+                    status:
+                        response.status,
+
+                    host:
+                        candidateOrigin
+                };
+
+                console.log(
+                    "[PHIMHDCS V11] HOST SUCCESS:",
+                    {
+                        requestId,
+                        server: selected.server,
+                        host: candidateOrigin,
+                        htmlLength: html.length,
+                        elapsedMs:
+                            Date.now() - hostStartedAt
+                    }
+                );
+
+                break;
+
+            } catch (error) {
+
+                lastError = error;
+
+                console.warn(
+                    "[PHIMHDCS V11] HOST FAILED:",
+                    {
+                        requestId,
+                        server: selected.server,
+                        host: candidateOrigin,
+                        status:
+                            error?.response?.status || 0,
+                        code:
+                            error?.code || "",
+                        message:
+                            error?.message ||
+                            String(error),
+                        elapsedMs:
+                            Date.now() - hostStartedAt
+                    }
+                );
+            }
+        }
+
+        if (winningPage) {
+
+            console.log(
+                "[PHIMHDCS V11] EPISODE SUCCESS:",
+                {
+                    requestId,
+                    server: selected.server,
+                    host: winningPage.host,
+                    htmlLength: winningPage.html.length,
+                    elapsedMs:
+                        Date.now() - startedAt
+                }
+            );
+
+            return {
+                status: "fulfilled",
+                value: winningPage
+            };
+        }
+
+        console.error(
+            "[PHIMHDCS V11] EPISODE FAILED:",
+            {
+                requestId,
+                server: selected.server,
+                episodeUrl,
+                message:
+                    lastError?.message ||
+                    "All episode origins failed",
+                elapsedMs:
+                    Date.now() - startedAt
             }
         );
 
         return {
-            server: selected.server,
-            episode: selected.episode,
-            url: episodeUrl,
-            html: episodeHtml
+            status: "rejected",
+            reason:
+                lastError ||
+                new Error("All episode origins failed")
         };
     })
 );
 
-// Promise.allSettled giữ thứ tự các phần tử giống selectedEpisodes.
+console.log(
+    "[PHIMHDCS V11] ALL EPISODES COMPLETE:",
+    {
+        fulfilled:
+            episodePageResults.filter(
+                result =>
+                    result.status === "fulfilled"
+            ).length,
+
+        rejected:
+            episodePageResults.filter(
+                result =>
+                    result.status === "rejected"
+            ).length,
+
+        total:
+            episodePageResults.length
+    }
+);
+
+
+// ====================================================
+// COLLECT RESULTS
+// ====================================================
+
 const episodePages = [];
 
 episodePageResults.forEach((result, index) => {
+
     if (result.status === "fulfilled") {
         episodePages.push(result.value);
         return;
     }
 
-    const selected = selectedEpisodes[index];
+    const selected =
+        selectedEpisodes[index];
 
     console.warn(
-        "[PHIMHDCS] EPISODE LOAD ERROR:",
+        "[PHIMHDCS] EPISODE LOAD FAILED:",
         {
             server: selected?.server || "Unknown",
             url: selected?.episode?.url || "",
-            error:
+            message:
                 result.reason?.message ||
                 String(result.reason || "Unknown error")
         }
     );
+
 });
 
 console.log(
     "[PHIMHDCS] LOADED EPISODE PAGES:",
-    episodePages.length,
-    "/",
-    selectedEpisodes.length
+    {
+        loaded: episodePages.length,
+        selected: selectedEpisodes.length,
+        servers: episodePages.map(page => ({
+            server: page.server,
+            url: page.url,
+            htmlLength: page.html.length
+        }))
+    }
 );
 
-console.log(
-    "[PHIMHDCS] LOADED EPISODE PAGES:",
-    episodePages.length
-);
-
-if (
-    episodePages.length === 0
-) {
+if (episodePages.length === 0) {
 
     console.log(
         "[PHIMHDCS] NO EPISODE PAGE LOADED"
@@ -38209,7 +40854,7 @@ if (
     return streams;
 }
 
-        // ====================================================
+// ====================================================
 // 8. DIRECT M3U8 / MP4 TRONG HTML
 // ====================================================
 
@@ -38756,20 +41401,73 @@ for (
         )
     ) {
 
-        const decoded =
+        let decoded =
             decodeKey(
                 serverKey
             );
 
         if (
-            !decoded ||
-            !decoded.startsWith(
-                "http"
-            )
+            typeof decoded === "string"
         ) {
+            decoded = decoded
+                .replace(/\\u0026/gi, "&")
+                .replace(/\\u003d/gi, "=")
+                .replace(/\\\//g, "/")
+                .replace(/&amp;/gi, "&")
+                .trim();
+        }
+
+        // Một số payload có thể chứa cấu hình hoặc
+        // JSON bao quanh URL thay vì bắt đầu bằng http.
+        if (
+            decoded &&
+            !/^https?:\/\//i.test(decoded)
+        ) {
+            const embeddedUrlMatch =
+                decoded.match(
+                    /https?:\/\/[^\s"'<>\\]+/i
+                );
+
+            if (embeddedUrlMatch) {
+                decoded = embeddedUrlMatch[0];
+            }
+        }
+
+        // Thử giải mã URL nếu payload chứa URL dạng percent-encoded.
+        if (
+            decoded &&
+            !/^https?:\/\//i.test(decoded) &&
+            /https?%3a%2f%2f/i.test(decoded)
+        ) {
+            try {
+                const decodedPayload =
+                    decodeURIComponent(decoded);
+
+                const encodedUrlMatch =
+                    decodedPayload.match(
+                        /https?:\/\/[^\s"'<>\\]+/i
+                    );
+
+                if (encodedUrlMatch) {
+                    decoded = encodedUrlMatch[0];
+                }
+            } catch (urlDecodeError) {}
+        }
+
+        if (
+            !decoded ||
+            !/^https?:\/\//i.test(decoded)
+        ) {
+            console.log(
+                "[PHIMHDCS] SKIP NON-URL PAYLOAD:",
+                {
+                    server: data?.server,
+                    key: serverKey,
+                    preview: String(decoded || "").slice(0, 180)
+                }
+            );
 
             continue;
-
         }
 
         const cleanUrl =
@@ -38806,24 +41504,72 @@ for (
         seenServerUrls.add(
             cleanUrl
         );
+       
 
-        const isDirect =
-            /\.m3u8(?:[?#]|$)/i.test(
-                cleanUrl
-            ) ||
-            /\.mp4(?:[?#]|$)/i.test(
-                cleanUrl
-            );
 
-        decodedServers.push({
+// [PHIMHDCS] CLASSIFY HDC PLAYER URL
+// Nhận diện đầy đủ các đường dẫn player của hệ thống HDC.
+// Không phân loại nhầm M3U8 / MP4 direct thành player page.
 
-            url:
-                cleanUrl,
+let isHdcPlayer = false;
 
-            isDirect:
-                isDirect
+try {
+    const parsedServerUrl = new URL(cleanUrl);
 
-        });
+    const serverHost =
+        parsedServerUrl.hostname.toLowerCase();
+
+    const serverPath =
+        parsedServerUrl.pathname.toLowerCase();
+
+    const isHdcHost =
+        serverHost === "streamxemphimhd.site" ||
+        serverHost.endsWith(".streamxemphimhd.site");
+
+    const isHdcPlayerPath =
+        /^\/(?:m3|video|embed|hls)(?:\/|$)/i.test(
+            serverPath
+        );
+
+    const isDirectFile =
+        /\.(?:m3u8|mp4)(?:$|\/)/i.test(
+            serverPath
+        );
+
+    isHdcPlayer =
+        isHdcHost &&
+        isHdcPlayerPath &&
+        !isDirectFile;
+
+} catch (serverUrlError) {
+    console.log(
+        "[PHIMHDCS] SERVER URL PARSE ERROR:",
+        serverUrlError.message
+    );
+}
+
+const isDirect =
+    /\.(?:m3u8|mp4)(?:[?#]|$)/i.test(cleanUrl);
+
+decodedServers.push({
+    url: cleanUrl,
+    isDirect: isDirect,
+    isHdcPlayer: isHdcPlayer
+});
+
+
+console.log(
+    "[PHIMHDCS] SERVER CLASSIFICATION:",
+    {
+        server: data?.server,
+        url: cleanUrl,
+        type: isHdcPlayer
+            ? "HDC_PLAYER"
+            : isDirect
+                ? "DIRECT"
+                : "EMBED"
+    }
+);
 
         console.log(
             "[PHIMHDCS] DECODED SERVER:",
@@ -38872,7 +41618,119 @@ for (
                 "PhimHDCS"
             ).trim();
 
-        if (
+        if (server.isHdcPlayer) {
+
+            console.log(
+                "[PHIMHDCS][HDC-PLAYER] RESOLVE START:",
+                {
+                    server: languageName,
+                    number: serverNumber
+                }
+            );
+            
+const hdcResult =
+    await phimhdcsResolveHdcPlayer(
+        server.url,
+        data.url
+    );
+
+            if (
+                hdcResult &&
+                hdcResult.success &&
+                hdcResult.url
+            ) {
+
+                console.log(
+                    "[PHIMHDCS][HDC-PLAYER] RESOLVE SUCCESS:",
+                    {
+                        server: languageName,
+                        number: serverNumber,
+                        url: hdcResult.url
+                    }
+                );
+
+                streams.push({
+
+                    name:
+                        "📺 [PhimHDCS] " +
+                        languageName +
+                        " - HDC Direct " +
+                        serverNumber,
+
+                    title:
+                        movieName +
+                        " - " +
+                        languageName +
+                        " - HDC Direct",
+
+                    url:
+                        hdcResult.url,
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "phimhdcs-hdc-" +
+                            serverNumber,
+
+                        proxyHeaders: {
+                            request: {
+                                "Referer":
+                                    hdcResult.referer ||
+                                    server.url,
+
+                                "User-Agent":
+                                    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                            }
+                        }
+
+                    }
+
+                });
+
+            } else {
+
+                console.log(
+                    "[PHIMHDCS][HDC-PLAYER] RESOLVE FAILED - KEEP PLAYER FALLBACK:",
+                    hdcResult?.error || "Unknown error"
+                );
+
+                streams.push({
+
+                    name:
+                        "▶️ [PhimHDCS] " +
+                        languageName +
+                        " - Player Fallback " +
+                        serverNumber,
+
+                    title:
+                        movieName +
+                        " - " +
+                        languageName +
+                        " - Player",
+
+                    externalUrl:
+                        server.url,
+
+                    widgetPlayer:
+                        server.url,
+
+                    widgetPlayerStates: [
+                        "replaceplayer"
+                    ],
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "phimhdcs-hdc-" +
+                            serverNumber
+
+                    }
+
+                });
+
+            }
+
+        } else if (
             server.isDirect
         ) {
 
@@ -38923,6 +41781,47 @@ for (
 
         } else {
 
+            let embedPlayerUrl =
+                server.url;
+
+            // Chỉ chuyển StreamC sang player riêng.
+            // Các embed host khác giữ nguyên hành vi cũ.
+            try {
+
+                const parsedEmbedUrl =
+                    new URL(
+                        server.url
+                    );
+
+                const embedHost =
+                    parsedEmbedUrl.hostname.toLowerCase();
+
+                const isStreamC =
+                    parsedEmbedUrl.protocol === "https:" &&
+                    (
+                        embedHost === "streamc.xyz" ||
+                        embedHost.endsWith(".streamc.xyz")
+                    );
+
+                if (isStreamC) {
+
+                    embedPlayerUrl =
+                        "https://my-strem-addon.vercel.app/phimhdcs-player?url=" +
+                        encodeURIComponent(
+                            parsedEmbedUrl.href
+                        );
+
+                }
+
+            } catch (embedUrlError) {
+
+                console.log(
+                    "[PHIMHDCS] EMBED URL INVALID:",
+                    embedUrlError.message
+                );
+
+            }
+
             console.log(
                 "[PHIMHDCS] ADD SERVER:",
                 {
@@ -38935,8 +41834,11 @@ for (
                     type:
                         "EMBED",
 
-                    url:
-                        server.url
+                    originalUrl:
+                        server.url,
+
+                    playerUrl:
+                        embedPlayerUrl
                 }
             );
 
@@ -38956,7 +41858,14 @@ for (
                     serverNumber,
 
                 externalUrl:
-                    server.url,
+                    embedPlayerUrl,
+
+                widgetPlayer:
+                    embedPlayerUrl,
+
+                widgetPlayerStates: [
+                    "replaceplayer"
+                ],
 
                 behaviorHints: {
 
@@ -39032,29 +41941,35 @@ for (
                     episodeUrl
                 ) {
 
-                    streams.push({
+                   streams.push({
 
-                        name:
-                            "▶️ [PhimHDCS] Player",
+    name:
+        "▶️ [PhimHDCS] Player",
 
-                        title:
-                            streamType ===
-                            "series"
-                                ? "Tập " +
-                                  String(
-                                      targetEpisode
-                                  ).padStart(
-                                      2,
-                                      "0"
-                                  ) +
-                                  " - PhimHDCS"
-                                : "PhimHDCS",
+    title:
+        streamType ===
+        "series"
+            ? "Tập " +
+              String(
+                  targetEpisode
+              ).padStart(
+                  2,
+                  "0"
+              ) +
+              " - PhimHDCS"
+            : "PhimHDCS",
 
-                        externalUrl:
-                            embedUrl
+    externalUrl:
+        embedUrl,
 
-                    });
+    widgetPlayer:
+        embedUrl,
 
+    widgetPlayerStates: [
+        "replaceplayer"
+    ]
+
+});
                 }
 
             }
@@ -39076,6 +41991,60 @@ for (
             addFallback();
 
         }
+
+        console.log(
+            "[PHIMHDCS] FINAL DIAGNOSTIC SUMMARY:",
+            JSON.stringify({
+                movie: movieName,
+                year: movieYear,
+                episode: targetEpisode,
+
+                selectedEpisodes:
+                    selectedEpisodes.map(item => ({
+                        language: item.server,
+                        episode: item.episode?.number,
+                        url: item.episode?.url
+                    })),
+
+                loadedPages:
+                    episodePages.map(page => ({
+                        language: page.server,
+                        htmlLength: page.html?.length || 0,
+                        url: page.url
+                    })),
+
+                decodedPayloads:
+                    episodeData.map(data => ({
+                        language: data.server,
+                        saltFound: Boolean(data.saltString),
+                        saltLength: data.saltString?.length || 0,
+                        oxDataFound: Boolean(data.oxData),
+                        oxDataKeys:
+                            data.oxData &&
+                            typeof data.oxData === "object"
+                                ? Object.keys(data.oxData)
+                                : [],
+                        oxDataKeyCount:
+                            data.oxData &&
+                            typeof data.oxData === "object"
+                                ? Object.keys(data.oxData).length
+                                : 0
+                    })),
+
+                finalStreams:
+                    streams.map((stream, index) => ({
+                        index: index + 1,
+                        name: stream.name,
+                        title: stream.title,
+                        direct: Boolean(stream.url),
+                        external: Boolean(stream.externalUrl),
+                        widget: Boolean(stream.widgetPlayer),
+                        url: stream.url || stream.externalUrl || ""
+                    })),
+
+                totalStreams: streams.length
+            }, null, 2)
+        );
 
         console.log(
             "[PHIMHDCS] FINAL STREAMS:",
@@ -40361,6 +43330,129 @@ function rewriteNguonCPlaylist(
    ============================================================ */
 
 builder.defineStreamHandler(async (args) => {
+
+    // -----------------------------------------------------------------
+    // [CẬP NHẬT GOOGLE DORKING] - NHÁNH TỰ ĐỘNG TÌM KIẾM BẰNG GOOGLE (CHÍNH XÁC 100%)
+    // -----------------------------------------------------------------
+    if (args.type === "movie" || args.type === "series") {
+        const MAIN_URL = "https://animesub.site";
+        const fakeVietnameseIP = "115.79.139.142"; 
+        const commonHeaders = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Origin": MAIN_URL, 
+            "Referer": MAIN_URL + "/",
+            "X-Forwarded-For": fakeVietnameseIP, "X-Real-IP": fakeVietnameseIP, "Client-IP": fakeVietnameseIP
+        };
+
+        let requestOptions = { headers: commonHeaders, timeout: 8000 };
+        const freeProxyUrl = await getFreeVietnameseProxy();
+        if (freeProxyUrl) {
+            requestOptions.httpsAgent = new HttpsProxyAgent(freeProxyUrl);
+            requestOptions.proxy = false;
+        }
+
+        try {
+            // 1. LẤY TÊN PHIM CHUẨN TỪ CINEMETA
+            const idParts = args.id.split(":");
+            const imdbId = idParts[0];
+            const episode = idParts[2] ? parseInt(idParts[2], 10) : 1;
+
+            const metaRes = await axios.get(`https://stremio.com{args.type}/${imdbId}.json`, { timeout: 4000 });
+            if (!metaRes.data || !metaRes.data.meta) return { streams: [] };
+            
+            // Lấy tên phim và cắt bỏ các ký tự đặc biệt gây nhiễu Google
+            let movieTitle = metaRes.data.meta.name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
+
+            // 2. SỬ DỤNG GOOGLE ĐỂ TÌM LINK PHIM TRÊN TRANG ANIMESUB
+            // Cú pháp tìm kiếm: site:animesub.site + Tên Phim
+            const googleSearchUrl = `https://google.com{encodeURIComponent(movieTitle)}`;
+            
+            // Gọi request lên Google (Không dùng proxy Việt Nam đoạn này để đạt tốc độ cao nhất từ server Vercel)
+            const googleResponse = await axios.get(googleSearchUrl, {
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+                timeout: 5000
+            });
+            const googleHtml = googleResponse.data;
+
+            let movieSlug = null;
+
+            // Dùng Regex quét kết quả trả về của Google để bóc tách đường dẫn /phim/ chuẩn xác
+            const googleSlugMatch = googleHtml.match(/animesub\.site\/phim\/([^"&/]+)/i);
+            if (googleSlugMatch && googleSlugMatch[1]) {
+                movieSlug = googleSlugMatch[1];
+            }
+
+            if (!movieSlug) {
+                throw new Error("Google không tìm thấy link bộ phim này trên hệ thống Animesub.");
+            }
+
+            // 3. ĐỊNH HƯỚNG URL XEM PHIM THEO TẬP VÀ CHÈN PROXY VIỆT NAM MIỄN PHÍ
+            let watchUrl = args.type === "movie"
+                ? `${MAIN_URL}/xem-phim/${movieSlug}/full.html`
+                : `${MAIN_URL}/xem-phim/${movieSlug}/tap-${episode}.html`;
+
+            // Từ bước này bắt đầu gọi vào trang phim lậu, kích hoạt hệ thống mạng đi qua Proxy Việt Nam
+            const watchPageResponse = await axios.get(watchUrl, requestOptions);
+            const watchHtml = watchPageResponse.data;
+
+            const iframeMatch = watchHtml.match(/<iframe[^>]+src="([^"]+)"/i) || watchHtml.match(/data-embed="([^"]+)"/i);
+            if (!iframeMatch) throw new Error("Không tìm thấy iframe phát video của tập phim.");
+
+            let embedUrl = iframeMatch[1];
+            if (embedUrl.startsWith("//")) embedUrl = `https:${embedUrl}`;
+
+            const playerResponse = await axios.get(embedUrl, requestOptions);
+            const playerHtml = playerResponse.data;
+            const streams = [];
+
+            // 4. GIẢI MÃ BẺ KHÓA TRÌNH PHÁT VIDEO (HYDRAX & SSPLAY)
+            if (embedUrl.includes("hydrax") || playerHtml.includes("atoken") || playerHtml.includes("slug")) {
+                const sizeMatch = playerHtml.match(/size\s*=\s*"([^"]+)"|size\s*=\s*(\d+)/);
+                const md5IdMatch = playerHtml.match(/md5Id\s*=\s*"([^"]+)"|id\s*=\s*(\d+)/); 
+                if (sizeMatch && md5IdMatch) {
+                    const size = parseInt(sizeMatch[1] || sizeMatch[2], 10);
+                    const md5Id = md5IdMatch[1] || md5IdMatch[2];
+                    const generatedToken = generateHydraxToken(0, size, md5Id, 0, 2097152);
+                    if (generatedToken) {
+                        streams.push({
+                            title: `MOVINA (Animesub) - Hydrax [Tập ${episode}]`,
+                            url: `https://abysscdn.com{size}/${generatedToken}`,
+                            behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": "https://abysscdn.com" } }
+                        });
+                    }
+                }
+            }
+
+            const packerRegex = /eval\(function\(p,a,c,k,e,d\)\{.*?\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)\)\)/s;
+            const ssplayMatch = playerHtml.match(packerRegex);
+            if (ssplayMatch) {
+                const p = ssplayMatch[1];
+                const a = parseInt(ssplayMatch[2], 10);
+                const c = parseInt(ssplayMatch[3], 10);
+                const k = ssplayMatch[4].split("|");
+
+                const decodedJs = unpackPacker(p, a, c, k);
+                const fileMatch = decodedJs.match(/"file"\s*:\s*"([^"]+\.m3u8)"/);
+                if (fileMatch && fileMatch[1]) {
+                    let directLink = fileMatch[1];
+                    if (directLink.startsWith("/")) directLink = `${new URL(embedUrl).origin}${directLink}`;
+                    streams.push({
+                        title: `MOVINA (Animesub) - SSPlay [Tập ${episode}] (HLS)`,
+                        url: directLink,
+                        behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": embedUrl } }
+                    });
+                }
+            }
+
+            if (streams.length > 0) {
+                return { streams: streams };
+            }
+
+        } catch (error) {
+            console.error("Bỏ qua nguồn Animesub do lỗi:", error.message);
+        }
+    }
+    // -----------------------------------------------------------------
 
     console.log(
         "========== STREAM REQUEST =========="
@@ -41665,6 +44757,59 @@ const animeProvidersEnabled =
       }
   })();
 
+  // =====================================================
+  // PHIMHDCS — TẬP HỢP TÊN ĐÃ XÁC MINH THEO IMDb
+  // =====================================================
+
+  const phimhdcsImdbIdForTitles =
+      rawId.startsWith("tt")
+          ? String(rawId.split(":")[0] || "").trim().toLowerCase()
+          : "";
+
+  const phimhdcsCacheKey =
+      phimhdcsImdbIdForTitles
+          ? String(streamType || "movie") +
+            ":" +
+            phimhdcsImdbIdForTitles
+          : "";
+
+  const phimhdcsCachedEntry =
+      phimhdcsCacheKey
+          ? MOVINA_PHIMAPI_MATCH_BY_IMDB.get(phimhdcsCacheKey)
+          : null;
+
+  const phimhdcsCachedItem =
+      phimhdcsCachedEntry &&
+      phimhdcsCachedEntry.expiresAt > Date.now()
+          ? phimhdcsCachedEntry.item
+          : null;
+
+  const phimhdcsTitleVariants = [
+      movieName,
+
+      resolvedMetadata?.name,
+      resolvedMetadata?.origin_name,
+      resolvedMetadata?.original_name,
+      resolvedMetadata?.title,
+
+      phimhdcsCachedItem?.name,
+      phimhdcsCachedItem?.origin_name,
+      phimhdcsCachedItem?.original_name,
+      phimhdcsCachedItem?.title
+  ]
+      .map(value => String(value || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .filter((value, index, list) => list.indexOf(value) === index);
+
+  console.log(
+      "[PHIMHDCS] IMDb TITLE CONTEXT:",
+      JSON.stringify({
+          imdbId: phimhdcsImdbIdForTitles || null,
+          cacheHit: Boolean(phimhdcsCachedItem),
+          primaryTitle: movieName,
+          variants: phimhdcsTitleVariants
+      })
+  );
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
@@ -41683,8 +44828,11 @@ const animeProvidersEnabled =
           movieYear,
           seasonNumber,
           episodeNumber,
-          streamType
+          streamType,
+          phimhdcsTitleVariants,
+          phimhdcsImdbIdForTitles
       )
+
   ]);
 
   // PhimLongTieng bắt đầu sớm, chỉ chờ KKPhim để lấy
@@ -41938,11 +45086,48 @@ console.log(
 // =====================================================
 
 
+
 let animehay = [];
+let animeHayTimeoutHandle;
+
 try {
-    animehay = await animehayPromise;
+    const animeHayTimeoutPromise = new Promise(resolve => {
+        animeHayTimeoutHandle = setTimeout(
+            () => resolve(null),
+            8000
+        );
+    });
+
+    const animeHayResult = await Promise.race([
+        animehayPromise,
+        animeHayTimeoutPromise
+    ]);
+
+    if (animeHayResult === null) {
+        animehay = [];
+
+        console.log(
+            "[ANIMEHAY] SOFT TIMEOUT:",
+            "Quá 8 giây, bỏ chờ AnimeHay để trả kết quả các nguồn khác."
+        );
+    } else {
+        animehay = Array.isArray(animeHayResult)
+            ? animeHayResult
+            : [];
+    }
+
 } catch (e) {
-    console.error("[ANIMEHAY] FETCH ERROR:", e.message);
+    console.error(
+        "[ANIMEHAY] FETCH ERROR:",
+        e?.message || e
+    );
+
+    animehay = [];
+
+} finally {
+    if (animeHayTimeoutHandle) {
+        clearTimeout(animeHayTimeoutHandle);
+    }
 }
 
 console.log(
@@ -41951,6 +45136,7 @@ console.log(
         ? animehay.length
         : 0
 );
+
 
 
   // =====================================================
@@ -41978,7 +45164,6 @@ console.log(
       "[MOVINA-ONFLIX] STREAM COUNT:",
       onflix.length
   );
-
 
 // =====================================================
 // DEBUG — STREAM THỰC TẾ SAU FETCH
@@ -42036,7 +45221,6 @@ console.log(
     )
 );
 
-
 const directStreams = [
 
     ...nguonc,
@@ -42044,7 +45228,6 @@ const directStreams = [
     ...kkphim,
 
     ...vsmov,
-
     ...longtieng,
 
     ...phimhdcs,
@@ -42057,28 +45240,28 @@ const directStreams = [
 
 ];
 
+
 console.log(
     "[DEBUG] DIRECT STREAM DETAILS:",
     JSON.stringify(
         directStreams.map(
             (stream, index) => ({
                 index,
-                name:
-                    stream?.name,
-                title:
-                    stream?.title,
-                url:
-                    stream?.url,
-                externalUrl:
-                    stream?.externalUrl,
-                behaviorHints:
-                    stream?.behaviorHints
+                name: stream?.name,
+                title: stream?.title,
+                url: stream?.url,
+                ytId: stream?.ytId,
+                provider: stream?.provider,
+                source: stream?.source,
+                externalUrl: stream?.externalUrl,
+                behaviorHints: stream?.behaviorHints
             })
         ),
         null,
         2
     )
 );
+
 
 // =====================================================
 // 12. FALLBACK CHUNG
@@ -42330,23 +45513,34 @@ if (animetFallbackTitle && animeProvidersEnabled) {
     // =====================================================
 
     const validDirectStreams =
-        directStreams.filter(
-            stream => {
+        directStreams.filter(stream => {
 
-                if (
-                    !stream ||
-                    typeof stream !== "object"
-                ) {
-                    return false;
-                }
+            if (
+                !stream ||
+                typeof stream !== "object"
+            ) {
+                return false;
+            }
 
-                return Boolean(
-                    stream.url ||
-                    stream.externalUrl
+            const hasHttpUrl =
+                /^https?:\/\//i.test(
+                    String(
+                        stream.url ||
+                        stream.externalUrl ||
+                        ""
+                    ).trim()
                 );
 
-            }
-        );
+            const hasValidYoutubeId =
+                /^[A-Za-z0-9_-]{11}$/.test(
+                    String(stream.ytId || "").trim()
+                );
+
+            return (
+                hasHttpUrl ||
+                hasValidYoutubeId
+            );
+        });
 
     // =====================================================
     // 14. LỌC FALLBACK
@@ -42389,25 +45583,40 @@ if (animetFallbackTitle && animeProvidersEnabled) {
     const seen = new Set();
     const uniqueStreams = [];
 
-    // 16A. Gộp và loại URL trùng như trước.
+    // 16A. Gộp và loại URL trùng.
+    // Hỗ trợ cả URL media và YouTube ytId.
+
     for (const stream of allStreams) {
         if (!stream || typeof stream !== "object") {
             continue;
         }
 
         const url = String(
-            stream.url || stream.externalUrl || ""
+            stream.url ||
+            stream.externalUrl ||
+            ""
         ).trim();
 
-        if (!/^https?:\/\//i.test(url)) {
+        const youtubeId =
+            String(stream.ytId || "").trim();
+
+        let dedupeKey = "";
+
+        if (/^https?:\/\//i.test(url)) {
+            dedupeKey = "url:" + url;
+        } else if (
+            /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
+        ) {
+            dedupeKey = "youtube:" + youtubeId;
+        } else {
             continue;
         }
 
-        if (seen.has(url)) {
+        if (seen.has(dedupeKey)) {
             continue;
         }
 
-        seen.add(url);
+        seen.add(dedupeKey);
         uniqueStreams.push(stream);
     }
 
@@ -42622,13 +45831,13 @@ console.log(
         "========== STREAM END =========="
     );
 
+    
     // =====================================================
     // 18. TRẢ VỀ STREMIO
     // =====================================================
 
-    return {
-        streams:
-            uniqueStreams
+       return {
+        streams: uniqueStreams
     };
 
 });
@@ -42668,8 +45877,6 @@ app.use(
 
     }
 );
-
-
 
 /* ============================================================
    [ROUTE-006] [PROVIDERS: NGUONC] NGUONC PLAYLIST PROXY ENDPOINT
@@ -44578,6 +47785,159 @@ startNguonC()
 </script>
 
 </body>
+</html>
+        `);
+
+    }
+);
+
+/* ============================================================
+   [ROUTE-010] [PROVIDERS: PHIMHDCS] STREAMC EMBED PLAYER
+   ============================================================ */
+// Nhận URL StreamC đã được PhimHDCS giải mã.
+// Không gọi lại PhimHDCS.
+// Không tìm phim lại.
+// Không giải mã lại server.
+// Chỉ nhúng player StreamC bằng iframe.
+// ============================================================
+
+app.get(
+    "/phimhdcs-player",
+    function (req, res) {
+
+        res.setHeader(
+            "Content-Type",
+            "text/html; charset=utf-8"
+        );
+
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
+
+        const rawEmbedUrl =
+            String(
+                req.query.url || ""
+            ).trim();
+
+        let embedUrl = "";
+
+        try {
+
+            const parsed =
+                new URL(
+                    rawEmbedUrl
+                );
+
+            const hostname =
+                parsed.hostname.toLowerCase();
+
+            const isStreamCHost =
+                hostname === "streamc.xyz" ||
+                hostname.endsWith(".streamc.xyz");
+
+            if (
+                parsed.protocol !== "https:" ||
+                !isStreamCHost
+            ) {
+
+                return res
+                    .status(400)
+                    .send(
+                        "Invalid StreamC embed URL."
+                    );
+
+            }
+
+            embedUrl =
+                parsed.href;
+
+        } catch (e) {
+
+            return res
+                .status(400)
+                .send(
+                    "Invalid or missing StreamC URL."
+                );
+
+        }
+
+        // Escape URL trước khi đưa vào HTML attribute.
+        const safeEmbedUrl =
+            embedUrl
+                .replace(/&/g, "&amp;")
+                .replace(/"/g, "&quot;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+
+        console.log(
+            "[PHIMHDCS PLAYER] OPEN STREAMC:",
+            embedUrl
+        );
+
+        res.send(`
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>PhimHDCS Player</title>
+
+<style>
+
+html,
+body {
+
+    margin: 0;
+    padding: 0;
+
+    width: 100%;
+    height: 100%;
+
+    overflow: hidden;
+
+    background: #000;
+
+}
+
+#player {
+
+    position: fixed;
+
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+
+    border: 0;
+
+    background: #000;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<iframe
+    id="player"
+    src="${safeEmbedUrl}"
+    title="PhimHDCS StreamC Player"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+></iframe>
+
+</body>
+
 </html>
         `);
 
