@@ -38984,10 +38984,66 @@ for (
     }
 }
 
+
 if (!jobId) {
+    const firstHtml =
+        String(pageHtmlCandidates[0] || "")
+            .replace(/\\"/g, '"')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#34;/gi, '"')
+            .replace(/\\u0022/gi, '"');
+
+    const jobIdContexts = [];
+    const jobIdPattern = /jobId/gi;
+    let contextMatch;
+
+    while (
+        (contextMatch = jobIdPattern.exec(firstHtml)) &&
+        jobIdContexts.length < 5
+    ) {
+        const start = Math.max(
+            0,
+            contextMatch.index - 180
+        );
+
+        const end = Math.min(
+            firstHtml.length,
+            contextMatch.index + 420
+        );
+
+        let snippet =
+            firstHtml.slice(start, end);
+
+        // Che các token nhạy cảm trước khi ghi log.
+        snippet = snippet
+            .replace(
+                /v1\.\d+\.[a-f0-9]{24}\.[a-f0-9]{32}\.[a-f0-9]{64}/gi,
+                "[REDACTED_TOKEN]"
+            )
+            .replace(
+                /((?:token|playGuard|play_guard)\s*["']?\s*[:=]\s*["'])[^"']+/gi,
+                "$1[REDACTED]"
+            );
+
+        jobIdContexts.push(snippet);
+    }
+
+    const uuidMatches =
+        firstHtml.match(
+            /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi
+        ) || [];
+
     console.log(
         logPrefix,
-        "JOBID SEARCH DIAGNOSTICS:",
+        "JOBID HTML CONTEXT:",
+        JSON.stringify({
+            htmlLength: firstHtml.length,
+            jobIdOccurrences: jobIdContexts.length,
+            jobIdContexts,
+            uuidMatches: [...new Set(uuidMatches)].slice(0, 10)
+        })
+    );
+}
         {
             htmlLayers: pageHtmlCandidates.length,
             htmlLengths: pageHtmlCandidates.map(
