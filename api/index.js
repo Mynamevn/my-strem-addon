@@ -40502,364 +40502,297 @@ console.log(
 );
 
 // ====================================================
-// [PHIMHDCS-EPISODE-LOAD-V9]
-// KNOWN-GOOD MIRROR FIRST
-// Sequential host fallback, native fetch.
+// [PHIMHDCS-EPISODE-LOAD-V10]
+// AXIOS TRANSPORT — SAME REQUEST PROFILE AS WORKING DETAIL
+// Parallel episode loading + sequential mirror fallback.
 // ====================================================
 
-const episodePageResults = [];
+const PHIMHDCS_V10_TIMEOUT = 9000;
 
-const PHIMHDCS_V9_TIMEOUT = 4500;
+const episodePageResults = await Promise.all(
+    selectedEpisodes.map(async (selected, index) => {
 
-for (
-    let index = 0;
-    index < selectedEpisodes.length;
-    index++
-) {
+        const episodeUrl =
+            String(
+                selected?.episode?.url || ""
+            ).trim();
 
-    const selected =
-        selectedEpisodes[index];
+        const startedAt = Date.now();
 
-    const episodeUrl =
-        String(
-            selected?.episode?.url || ""
-        ).trim();
+        const requestId =
+            "PHIMHDCS-V10-" +
+            startedAt +
+            "-" +
+            index;
 
-    const startedAt =
-        Date.now();
-
-    const requestId =
-        "PHIMHDCS-V9-" +
-        startedAt +
-        "-" +
-        index;
-
-    if (!episodeUrl) {
-
-        episodePageResults.push({
-            status: "rejected",
-            reason: new Error(
-                "Missing episode URL"
-            )
-        });
-
-        continue;
-    }
-
-    let originalUrl;
-
-    try {
-
-        originalUrl =
-            new URL(episodeUrl);
-
-    } catch (error) {
-
-        episodePageResults.push({
-            status: "rejected",
-            reason: new Error(
-                "Invalid episode URL"
-            )
-        });
-
-        continue;
-    }
-
-    const originalHost =
-        originalUrl.hostname.toLowerCase();
-
-    // Mirror đã từng tải thành công ở V4
-    // được ưu tiên trước.
-    const candidateHosts =
-        (
-            originalHost === "filmhdc.com" ||
-            originalHost === "phimhdcss.com"
-        )
-            ? [
-                "phimhdcss.com",
-                "filmhdc.com"
-            ]
-            : [
-                originalHost
-            ];
-
-    const episodeReferer =
-        selectedDetailUrl ||
-        selectedMovie.url ||
-        originalUrl.origin + "/";
-
-    console.log(
-        "[PHIMHDCS V9] EPISODE START:",
-        {
-            requestId,
-            server: selected.server,
-            episodeUrl,
-            candidateHosts
-        }
-    );
-
-    let winningPage = null;
-
-    let lastError = null;
-
-    // ------------------------------------------------
-    // THỬ TỪNG HOST
-    // ------------------------------------------------
-
-    for (
-        const candidateHost
-        of candidateHosts
-    ) {
-
-        const candidateUrl =
-            new URL(episodeUrl);
-
-        candidateUrl.hostname =
-            candidateHost;
-
-        const requestUrl =
-            candidateUrl.href;
-
-        let referer =
-            episodeReferer;
-
-        try {
-
-            const refererUrl =
-                new URL(referer);
-
-            if (
-                refererUrl.hostname === "filmhdc.com" ||
-                refererUrl.hostname === "phimhdcss.com"
-            ) {
-
-                refererUrl.hostname =
-                    candidateHost;
-
-                referer =
-                    refererUrl.href;
-            }
-
-        } catch (error) {}
-
-        console.log(
-            "[PHIMHDCS V9] HOST TRY:",
-            {
-                requestId,
-                server: selected.server,
-                host: candidateHost,
-                timeout: PHIMHDCS_V9_TIMEOUT,
-                url: requestUrl
-            }
-        );
-
-        try {
-
-            // Timeout áp dụng cho cả fetch
-            // và response.text().
-            const signal =
-                AbortSignal.timeout(
-                    PHIMHDCS_V9_TIMEOUT
-                );
-
-            const response =
-                await fetch(
-                    requestUrl,
-                    {
-                        method: "GET",
-
-                        signal,
-
-                        headers: {
-
-                            "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-
-                            "Accept":
-                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-                            "Accept-Language":
-                                "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-
-                            "Referer":
-                                referer
-
-                        },
-
-                        redirect: "follow"
-                    }
-                );
-
-            console.log(
-                "[PHIMHDCS V9] FETCH HEADERS:",
-                {
-                    requestId,
-                    host: candidateHost,
-                    status: response.status,
-                    ok: response.ok,
-                    finalUrl: response.url,
-                    elapsedMs:
-                        Date.now() - startedAt
-                }
-            );
-
-            const html =
-                await response.text();
-
-            console.log(
-                "[PHIMHDCS V9] BODY COMPLETE:",
-                {
-                    requestId,
-                    host: candidateHost,
-                    htmlLength: html.length,
-                    elapsedMs:
-                        Date.now() - startedAt
-                }
-            );
-
-            if (
-                !response.ok ||
-                html.length < 5000
-            ) {
-
-                throw new Error(
-                    "Invalid episode response: HTTP " +
-                    response.status +
-                    ", HTML " +
-                    html.length
-                );
-            }
-
-            winningPage = {
-
-                server:
-                    selected.server,
-
-                episode:
-                    selected.episode,
-
-                url:
-                    response.url ||
-                    requestUrl,
-
-                html,
-
-                status:
-                    response.status,
-
-                host:
-                    candidateHost
-
+        if (!episodeUrl) {
+            return {
+                status: "rejected",
+                reason: new Error("Missing episode URL")
             };
-
-            console.log(
-                "[PHIMHDCS V9] HOST SUCCESS:",
-                {
-                    requestId,
-                    server: selected.server,
-                    host: candidateHost,
-                    status: response.status,
-                    htmlLength: html.length,
-                    elapsedMs:
-                        Date.now() - startedAt
-                }
-            );
-
-            // Đã tải được trang, không cần
-            // tiếp tục thử mirror khác.
-            break;
-
-        } catch (error) {
-
-            lastError =
-                error;
-
-            console.warn(
-                "[PHIMHDCS V9] HOST FAILED:",
-                {
-                    requestId,
-                    server: selected.server,
-                    host: candidateHost,
-                    name:
-                        error?.name || "",
-                    message:
-                        error?.message ||
-                        String(error),
-                    elapsedMs:
-                        Date.now() - startedAt
-                }
-            );
-
         }
 
-    }
+        let originalUrl;
 
-    // ------------------------------------------------
-    // LƯU KẾT QUẢ EPISODE
-    // ------------------------------------------------
+        try {
+            originalUrl = new URL(episodeUrl);
+        } catch (error) {
+            return {
+                status: "rejected",
+                reason: new Error("Invalid episode URL")
+            };
+        }
 
-    if (winningPage) {
+        const originalHost =
+            originalUrl.hostname.toLowerCase();
 
-        episodePageResults.push({
-            status: "fulfilled",
-            value: winningPage
-        });
+        const candidateHosts =
+            (
+                originalHost === "filmhdc.com" ||
+                originalHost === "phimhdcss.com"
+            )
+                ? [
+                    "phimhdcss.com",
+                    "filmhdc.com"
+                ]
+                : [
+                    originalHost
+                ];
+
+        const episodeReferer =
+            selectedDetailUrl ||
+            selectedMovie.url ||
+            originalUrl.origin + "/";
 
         console.log(
-            "[PHIMHDCS V9] EPISODE SUCCESS:",
-            {
-                requestId,
-                server: selected.server,
-                host: winningPage.host,
-                htmlLength:
-                    winningPage.html.length,
-                elapsedMs:
-                    Date.now() - startedAt
-            }
-        );
-
-    } else {
-
-        episodePageResults.push({
-            status: "rejected",
-            reason:
-                lastError ||
-                new Error(
-                    "All episode hosts failed"
-                )
-        });
-
-        console.error(
-            "[PHIMHDCS V9] EPISODE FAILED:",
+            "[PHIMHDCS V10] EPISODE START:",
             {
                 requestId,
                 server: selected.server,
                 episodeUrl,
+                candidateHosts
+            }
+        );
+
+        let winningPage = null;
+        let lastError = null;
+
+        for (const candidateHost of candidateHosts) {
+
+            const candidateUrl =
+                new URL(episodeUrl);
+
+            candidateUrl.hostname =
+                candidateHost;
+
+            const requestUrl =
+                candidateUrl.href;
+
+            let referer =
+                episodeReferer;
+
+            try {
+                const refererUrl =
+                    new URL(referer);
+
+                if (
+                    refererUrl.hostname === "filmhdc.com" ||
+                    refererUrl.hostname === "phimhdcss.com"
+                ) {
+                    refererUrl.hostname =
+                        candidateHost;
+
+                    referer =
+                        refererUrl.href;
+                }
+            } catch (error) {}
+
+            const hostStartedAt =
+                Date.now();
+
+            console.log(
+                "[PHIMHDCS V10] AXIOS REQUEST:",
+                {
+                    requestId,
+                    server: selected.server,
+                    host: candidateHost,
+                    timeout: PHIMHDCS_V10_TIMEOUT,
+                    url: requestUrl,
+                    referer
+                }
+            );
+
+            try {
+
+                // Dùng cùng cơ chế Axios và headers
+                // đã hoạt động ở bước tải trang Detail.
+                const response =
+                    await axios.get(
+                        requestUrl,
+                        {
+                            headers: {
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+
+                                "Referer":
+                                    referer,
+
+                                "Accept":
+                                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                                "Accept-Language":
+                                    "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+                            },
+
+                            timeout:
+                                PHIMHDCS_V10_TIMEOUT,
+
+                            maxRedirects: 5,
+
+                            responseType: "text",
+
+                            validateStatus: status =>
+                                status >= 200 &&
+                                status < 400
+                        }
+                    );
+
+                const html =
+                    Buffer.isBuffer(response.data)
+                        ? response.data.toString("utf8")
+                        : String(response.data || "");
+
+                const finalUrl =
+                    response.request?.res?.responseUrl ||
+                    requestUrl;
+
+                console.log(
+                    "[PHIMHDCS V10] RESPONSE:",
+                    {
+                        requestId,
+                        server: selected.server,
+                        host: candidateHost,
+                        status: response.status,
+                        htmlLength: html.length,
+                        finalUrl,
+                        elapsedMs:
+                            Date.now() - hostStartedAt
+                    }
+                );
+
+                if (html.length < 5000) {
+                    throw new Error(
+                        "Episode HTML too short: " +
+                        html.length
+                    );
+                }
+
+                winningPage = {
+                    server:
+                        selected.server,
+
+                    episode:
+                        selected.episode,
+
+                    url:
+                        finalUrl,
+
+                    html,
+
+                    status:
+                        response.status,
+
+                    host:
+                        candidateHost
+                };
+
+                console.log(
+                    "[PHIMHDCS V10] HOST SUCCESS:",
+                    {
+                        requestId,
+                        server: selected.server,
+                        host: candidateHost,
+                        htmlLength: html.length,
+                        elapsedMs:
+                            Date.now() - hostStartedAt
+                    }
+                );
+
+                break;
+
+            } catch (error) {
+
+                lastError = error;
+
+                console.warn(
+                    "[PHIMHDCS V10] HOST FAILED:",
+                    {
+                        requestId,
+                        server: selected.server,
+                        host: candidateHost,
+                        status:
+                            error?.response?.status || 0,
+                        code:
+                            error?.code || "",
+                        name:
+                            error?.name || "",
+                        message:
+                            error?.message ||
+                            String(error),
+                        elapsedMs:
+                            Date.now() - hostStartedAt
+                    }
+                );
+
+            }
+        }
+
+        if (winningPage) {
+
+            console.log(
+                "[PHIMHDCS V10] EPISODE SUCCESS:",
+                {
+                    requestId,
+                    server: selected.server,
+                    host: winningPage.host,
+                    htmlLength: winningPage.html.length,
+                    elapsedMs:
+                        Date.now() - startedAt
+                }
+            );
+
+            return {
+                status: "fulfilled",
+                value: winningPage
+            };
+        }
+
+        console.error(
+            "[PHIMHDCS V10] EPISODE FAILED:",
+            {
+                requestId,
+                server: selected.server,
+                episodeUrl,
+                message:
+                    lastError?.message ||
+                    "All episode hosts failed",
                 elapsedMs:
                     Date.now() - startedAt
             }
         );
 
-    }
+        return {
+            status: "rejected",
+            reason:
+                lastError ||
+                new Error("All episode hosts failed")
+        };
 
-    console.log(
-        "[PHIMHDCS V9] QUEUE PROGRESS:",
-        {
-            completed:
-                episodePageResults.length,
-
-            total:
-                selectedEpisodes.length,
-
-            server:
-                selected.server
-        }
-    );
-
-}
+    })
+);
 
 console.log(
-    "[PHIMHDCS V9] ALL EPISODES COMPLETE:",
+    "[PHIMHDCS V10] ALL EPISODES COMPLETE:",
     {
         fulfilled:
             episodePageResults.filter(
@@ -40877,7 +40810,6 @@ console.log(
             episodePageResults.length
     }
 );
-
 
 // ====================================================
 // COLLECT RESULTS
