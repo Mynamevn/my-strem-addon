@@ -39044,22 +39044,6 @@ if (!jobId) {
         })
     );
 }
-        {
-            htmlLayers: pageHtmlCandidates.length,
-            htmlLengths: pageHtmlCandidates.map(
-                html => String(html || "").length
-            ),
-            containsJobIdText: pageHtmlCandidates.map(
-                html => /\bjobId\b/i.test(String(html || ""))
-            ),
-            containsUuid: pageHtmlCandidates.map(
-                html => /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(
-                    String(html || "")
-                )
-            )
-        }
-    );
-}
 
         if (!key) {
             throw new Error("FHDC key not found");
