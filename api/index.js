@@ -41794,19 +41794,21 @@ for (
 
         }
 
-        if (
-            cleanUrl.includes(
-                "tiktok"
-            )
-        ) {
+        // [PHIMHDCS-FHDC-001]
+        // Không loại URL TikTok của FHDC.
+        // Giữ URL để chuyển sang bước nhận diện FHDC.
 
+        const isFhdcTikTok =
+            /(?:^|[./])tiktok\.phimhdc\./i.test(
+                new URL(cleanUrl).hostname
+            ) ||
+            cleanUrl.includes("tiktok.phimhdc");
+
+        if (isFhdcTikTok) {
             console.log(
-                "[PHIMHDCS] SKIP TIKTOK:",
+                "[PHIMHDCS][FHDC] TIKTOK URL PRESERVED:",
                 cleanUrl
             );
-
-            continue;
-
         }
 
         seenServerUrls.add(
