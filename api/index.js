@@ -54074,74 +54074,87 @@ app.get(
             }
 
 
-// Tạo URL master ảo giống cơ chế phát trong Smali.
-// Các segment tương đối sẽ được phân giải từ:
-// /video/{key}/master.m3u8?delivery=...
-const syntheticMasterUrl = new URL(
-    "/video/" +
-        encodeURIComponent(result.key) +
-        "/master.m3u8?delivery=" +
-        encodeURIComponent(result.delivery) +
-        "&_=" +
-        Date.now(),
-    result.baseUrl
-).href;
 
-console.log(
-    "[PHIMHDCS][FHDC] SYNTHETIC MASTER:",
-    syntheticMasterUrl
-);
+            // Tạo URL master ảo giống cơ chế phát trong Smali.
+            const syntheticMasterUrl = new URL(
+                "/video/" +
+                    encodeURIComponent(result.key) +
+                    "/master.m3u8?delivery=" +
+                    encodeURIComponent(result.delivery) +
+                    "&_=" +
+                    Date.now(),
+                result.baseUrl
+            ).href;
 
-
-// [FHDC-DIAG-01] Kiểm tra URL segment trước và sau rewrite.
-const fhdcSafeUrl = value => {
-    try {
-        const parsed = new URL(value, syntheticMasterUrl);
-        return parsed.origin + parsed.pathname;
-    } catch (_) {
-        return String(value || "").slice(0, 100);
-    }
-};
-
-const fhdcOriginalUris = result.manifest
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => line && !line.startsWith("#"))
-    .slice(0, 5)
-    .map(fhdcSafeUrl);
-
-const fhdcRewrittenUris = rewritten
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line =>
-        line.startsWith("/phimhdcs/fhdc/resource?")
-    )
-    .slice(0, 5)
-    .map(line => {
-        try {
-            const parsed = new URL(
-                line,
-                "https://movina.local"
+            console.log(
+                "[PHIMHDCS][FHDC] SYNTHETIC MASTER:",
+                syntheticMasterUrl
             );
-            return fhdcSafeUrl(
-                parsed.searchParams.get("url") || ""
-            );
-        } catch (_) {
-            return "INVALID_REWRITTEN_URL";
-        }
-    });
 
-console.log("[FHDC-DIAG-01] PLAYLIST:", {
-    originalUriCount: result.manifest
-        .split(/\r?\n/)
-        .filter(line => line.trim() && !line.trim().startsWith("#"))
-        .length,
-    originalUris: fhdcOriginalUris,
-    rewrittenUris: fhdcRewrittenUris,
-    hasExtinf: result.manifest.includes("#EXTINF"),
-    hasKey: /#EXT-X-KEY/i.test(result.manifest),
-    hasMap: /#EXT-X-MAP/i.test(result.manifest)
-});
+            // Rewrite manifest trước khi chẩn đoán.
+            const rewritten =
+                phimhdcsFhdcRewritePlaylist(
+                    result.manifest,
+                    syntheticMasterUrl,
+                    result.baseUrl,
+                    result.referer
+                );
+
+            // [FHDC-DIAG-01] Kiểm tra URL segment.
+            const fhdcSafeUrl = value => {
+                try {
+                    const parsed = new URL(
+                        value,
+                        syntheticMasterUrl
+                    );
+                    return parsed.origin + parsed.pathname;
+                } catch (_) {
+                    return String(value || "").slice(0, 100);
+                }
+            };
+
+            const fhdcOriginalUris = result.manifest
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line => line && !line.startsWith("#"))
+                .slice(0, 5)
+                .map(fhdcSafeUrl);
+
+            const fhdcRewrittenUris = rewritten
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line =>
+                    line.startsWith("/phimhdcs/fhdc/resource?")
+                )
+                .slice(0, 5)
+                .map(line => {
+                    try {
+                        const parsed = new URL(
+                            line,
+                            "https://movina.local"
+                        );
+                        return fhdcSafeUrl(
+                            parsed.searchParams.get("url") || ""
+                        );
+                    } catch (_) {
+                        return "INVALID_REWRITTEN_URL";
+                    }
+                });
+
+            console.log("[FHDC-DIAG-01] PLAYLIST:", {
+                originalUriCount: result.manifest
+                    .split(/\r?\n/)
+                    .filter(line =>
+                        line.trim() &&
+                        !line.trim().startsWith("#")
+                    ).length,
+                originalUris: fhdcOriginalUris,
+                rewrittenUris: fhdcRewrittenUris,
+                hasExtinf: result.manifest.includes("#EXTINF"),
+                hasKey: /#EXT-X-KEY/i.test(result.manifest),
+                hasMap: /#EXT-X-MAP/i.test(result.manifest)
+            });
+
 
             res.setHeader(
                 "Content-Type",
