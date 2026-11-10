@@ -40743,9 +40743,13 @@ console.log(
 const PHIMHDCS_V11_TIMEOUT = 6000;
 const PHIMHDCS_V11_TOTAL_BUDGET = 8000;
 
-const episodePageResults = await Promise.all(
+const episodePageSettled =
+    new Array(selectedEpisodes.length);
 
-    selectedEpisodes.map(async (selected, index) => {
+const episodePageTasks =
+    selectedEpisodes.map(
+        (selected, index) =>
+            (async () => {
 
         const episodeUrl =
             String(
@@ -41028,15 +41032,84 @@ for (const candidateOrigin of candidateOrigins) {
                 elapsedMs:
                     Date.now() - startedAt
             }
-        );
-
-        return {
+        );        return {
             status: "rejected",
             reason:
                 lastError ||
                 new Error("All episode origins failed")
         };
-    })
+    })().then(
+        result => {
+            episodePageSettled[index] = result;
+            return result;
+        },
+        error => {
+            const result = {
+                status: "rejected",
+                reason: error
+            };
+
+            episodePageSettled[index] = result;
+            return result;
+        }
+    )
+);
+
+const episodePageWaitStartedAt = Date.now();
+
+let episodePageWaitTimer = null;
+
+const episodePageWaitDeadline =
+    new Promise(resolve => {
+        episodePageWaitTimer = setTimeout(
+            () => resolve(false),
+            4500
+        );
+    });
+
+const episodePageAllFinished =
+    await Promise.race([
+        Promise.all(episodePageTasks).then(
+            () => true
+        ),
+        episodePageWaitDeadline
+    ]);
+
+if (episodePageWaitTimer) {
+    clearTimeout(episodePageWaitTimer);
+}
+
+const episodePageResults =
+    episodePageSettled.map(
+        (result, index) =>
+            result || {
+                status: "rejected",
+                reason: new Error(
+                    "Episode page exceeded partial wait window: " +
+                    selectedEpisodes[index]?.server
+                )
+            }
+    );
+
+console.log(
+    "[PHIMHDCS V11] EPISODE PAGE WAIT FINISHED:",
+    {
+        total: selectedEpisodes.length,
+
+        completed:
+            episodePageSettled.filter(Boolean).length,
+
+        pending:
+            episodePageSettled.filter(
+                result => !result
+            ).length,
+
+        allFinished:
+            episodePageAllFinished,
+
+        elapsedMs:
+            Date.now() - episodePageWaitStartedAt
+    }
 );
 
 console.log(
