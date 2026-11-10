@@ -38575,10 +38575,6 @@ async function phimhdcsResolveHdcPlayer(
         );
 
         // -------------------------------------------------
-        // 9. SIGN SECURED MASTER URL
-        // -------------------------------------------------
-
-        // -------------------------------------------------
 // 9. SIGN + VERIFY HDC MASTER PLAYLIST
 // Chỉ chấp nhận URL thực sự trả về nội dung HLS.
 // -------------------------------------------------
@@ -38732,79 +38728,6 @@ if (!resolvedUrl) {
         "HDC returned no valid #EXTM3U master playlist"
     );
 }
-            let targetUrl = candidate;
-
-            const needsSigning =
-                candidate === securedLink ||
-                /master|secured/i.test(candidate);
-
-            if (needsSigning) {
-                try {
-                    const signBody = new URLSearchParams({
-                        id: videoHash,
-                        url: candidate
-                    }).toString();
-
-                    const signResponse = await axios.post(
-                        apiDomain + "/player/master_sign.php",
-                        signBody,
-                        {
-                            headers: {
-                                ...xhrHeaders,
-                                "User-Agent": userAgent,
-                                "Content-Type":
-                                    "application/x-www-form-urlencoded; charset=UTF-8"
-                            },
-                            timeout,
-                            maxRedirects: 5
-                        }
-                    );
-
-                    const signData =
-                        parseJson(signResponse.data);
-
-                    const signedUrl = cleanUrl(
-                        typeof signData === "string"
-                            ? signData
-                            : (
-                                signData?.url ||
-                                signData?.data?.url ||
-                                ""
-                            )
-                    );
-
-                    if (/^https?:\/\//i.test(signedUrl)) {
-                        targetUrl = signedUrl;
-                    }
-
-                } catch (signError) {
-                    console.log(
-                        logPrefix,
-                        "MASTER SIGN FAILED:",
-                        signError.response?.status ||
-                        signError.message
-                    );
-                }
-            }
-
-            try {
-                const parsedTarget = new URL(targetUrl);
-
-                if (
-                    parsedTarget.protocol === "https:" ||
-                    parsedTarget.protocol === "http:"
-                ) {
-                    resolvedUrl = parsedTarget.href;
-                    break;
-                }
-            } catch (_) {}
-        }
-
-        if (!resolvedUrl) {
-            throw new Error(
-                "HDC returned no valid playable URL"
-            );
-        }
 
         console.log(
             logPrefix,
