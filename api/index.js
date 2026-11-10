@@ -38166,6 +38166,11 @@ return finalStreams;
 // Resolve play.streamxemphimhd.site/m3/ through the original HDC guard flow.
 // This helper does not modify existing direct M3U8/MP4 or other providers.
 
+// [PHIMHDCS] HDC M3 PLAYER HTTP RESOLVER
+// Port luồng resolveInnerIframe -> processHdcApi từ CloudStream.
+// Chỉ xử lý HDC player URL; không can thiệp direct M3U8/MP4,
+// FHDC, NC, StreamC hoặc các provider khác.
+
 async function phimhdcsResolveHdcPlayer(
     playerUrl,
     parentPageUrl
@@ -38174,13 +38179,36 @@ async function phimhdcsResolveHdcPlayer(
 
     const userAgent =
         "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+        "(KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36";
 
-    const baseHeaders = {
-        "User-Agent": userAgent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": parentPageUrl || playerUrl
+    const timeout = 15000;
+
+    const parseJson = value => {
+        if (typeof value !== "string") return value;
+
+        try {
+            return JSON.parse(value);
+        } catch (_) {
+            return value;
+        }
+    };
+
+    const cleanUrl = value => {
+        let result = String(value || "")
+            .replace(/\\u0026/gi, "&")
+            .replace(/\\u003d/gi, "=")
+            .replace(/\\\//g, "/")
+            .replace(/&amp;/gi, "&")
+            .trim();
+
+        if (
+            result.startsWith("'") ||
+            result.startsWith('"')
+        ) {
+            result = result.slice(1, -1);
+        }
+
+        return result;
     };
 
     try {
@@ -38191,79 +38219,188 @@ async function phimhdcsResolveHdcPlayer(
             throw new Error("Missing HDC player URL");
         }
 
-        const parsedPlayerUrl = new URL(playerUrl);
-        const playerOrigin = parsedPlayerUrl.origin;
+        const initialUrl = new URL(playerUrl).href;
+        const parentUrl = parentPageUrl || initialUrl;
 
-        // 1. Load the actual /m3/ player page.
-        const pageResponse = await axios.get(playerUrl, {
-            headers: baseHeaders,
-            timeout: 15000,
+        // -------------------------------------------------
+        // 1. TẢI PLAYER /m3/
+        // -------------------------------------------------
+
+        const initialResponse = await axios.get(initialUrl, {
+            headers: {
+                "User-Agent": userAgent,
+                "Accept":
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "vi-VN,vi;q=0.9",
+                "Referer": parentUrl
+            },
+            timeout,
             maxRedirects: 8,
             responseType: "text",
-            validateStatus: status => status >= 200 && status < 400
+            validateStatus: status =>
+                status >= 200 && status < 400
         });
 
-        const html = String(pageResponse.data || "");
+        let currentUrl =
+            initialResponse.request?.res?.responseUrl ||
+            initialResponse.config?.url ||
+            initialUrl;
 
-        if (!html) {
-            throw new Error("Empty HDC player page");
+        let currentHtml =
+            String(initialResponse.data || "");
+
+        if (!currentHtml) {
+            throw new Error("Empty initial HDC player page");
         }
 
-        // 2. Extract the 32-character video hash.
-        let videoHash = "";
-
-        const hashPatterns = [
-            /\/(?:video|embed|hls)\/([a-f0-9]{32})/i,
-            /(?:hash|data)\s*[:=]\s*["']([a-f0-9]{32})["']/i,
-            /(?:hash|video_id|videoId)\s*[:=]\s*["']([a-f0-9]{32})["']/i
-        ];
-
-        for (const pattern of hashPatterns) {
-            const match = html.match(pattern);
-
-            if (match && match[1]) {
-                videoHash = match[1];
-                break;
+        console.log(
+            logPrefix,
+            "INITIAL PAGE:",
+            {
+                status: initialResponse.status,
+                length: currentHtml.length,
+                url: currentUrl
             }
+        );
+
+        // -------------------------------------------------
+        // 2. RESOLVE INNER IFRAME
+        // Tương ứng resolveInnerIframe() trong Smali.
+        // -------------------------------------------------
+
+        let innerFrameUrl = "";
+
+        try {
+            const $ = cheerio.load(currentHtml);
+
+            const iframeSrc =
+                $("iframe[src]").first().attr("src") || "";
+
+            if (iframeSrc) {
+                innerFrameUrl = new URL(
+                    iframeSrc,
+                    currentUrl
+                ).href;
+            }
+        } catch (iframeParseError) {
+            console.log(
+                logPrefix,
+                "IFRAME PARSE ERROR:",
+                iframeParseError.message
+            );
         }
 
-        if (!videoHash) {
-            const urlHashMatch = playerUrl.match(
-                /\/(?:video|embed|hls)\/([a-f0-9]{32})/i
+        if (innerFrameUrl) {
+            console.log(
+                logPrefix,
+                "INNER IFRAME FOUND:",
+                innerFrameUrl
             );
 
-            if (urlHashMatch) {
-                videoHash = urlHashMatch[1];
+            const iframeResponse = await axios.get(
+                innerFrameUrl,
+                {
+                    headers: {
+                        "User-Agent": userAgent,
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "vi-VN,vi;q=0.9",
+                        "Referer": currentUrl
+                    },
+                    timeout,
+                    maxRedirects: 8,
+                    responseType: "text",
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            currentUrl =
+                iframeResponse.request?.res?.responseUrl ||
+                iframeResponse.config?.url ||
+                innerFrameUrl;
+
+            currentHtml =
+                String(iframeResponse.data || "");
+
+            if (!currentHtml) {
+                throw new Error("Empty inner iframe page");
             }
+
+            console.log(
+                logPrefix,
+                "INNER IFRAME LOADED:",
+                {
+                    status: iframeResponse.status,
+                    length: currentHtml.length,
+                    url: currentUrl
+                }
+            );
+        } else {
+            console.log(
+                logPrefix,
+                "NO INNER IFRAME - USE INITIAL PLAYER PAGE"
+            );
         }
+
+        // -------------------------------------------------
+        // 3. EXTRACT VIDEO HASH
+        // Ưu tiên URL iframe cuối, sau đó mới đến HTML.
+        // -------------------------------------------------
+
+        const hashUrlMatch = currentUrl.match(
+            /\/(?:video|embed|hls)\/([a-f0-9]{32})(?:[/?#]|$)/i
+        );
+
+        const hashHtmlMatch = currentHtml.match(
+            /(?:hash|data)\s*[:=]\s*['"]([a-f0-9]{32})['"]/i
+        );
+
+        const videoHash =
+            hashUrlMatch?.[1] ||
+            hashHtmlMatch?.[1] ||
+            "";
 
         if (!videoHash) {
-            throw new Error("Cannot extract 32-character HDC video hash");
+            throw new Error(
+                "Cannot find HDC hash after resolving inner iframe"
+            );
         }
 
-        // 3. Discover the API host from the player HTML.
-        let apiDomain = playerOrigin;
+        // -------------------------------------------------
+        // 4. DISCOVER API DOMAIN
+        // -------------------------------------------------
 
-        const apiMatch = html.match(
+        const apiMatch = currentHtml.match(
             /(https?:\/\/[^/"'\s]+)\/player\/index\.php/i
         );
 
-        if (apiMatch && apiMatch[1]) {
-            apiDomain = apiMatch[1].replace(/\/+$/, "");
-        }
+        const currentOrigin =
+            new URL(currentUrl).origin;
 
-        const apiHost = new URL(apiDomain).host;
+        const apiDomain = (
+            apiMatch?.[1] ||
+            currentOrigin
+        ).replace(/\/+$/, "");
+
+        const apiHost =
+            new URL(apiDomain).host;
 
         console.log(
             logPrefix,
             "PLAYER IDENTIFIED:",
-            JSON.stringify({
-                hashFound: true,
-                apiHost: apiHost
-            })
+            {
+                hash: videoHash,
+                apiDomain,
+                iframeUrl: currentUrl
+            }
         );
 
-        // 4. Build X-FP-Runtime using the six fields used by the original app.
+        // -------------------------------------------------
+        // 5. BUILD X-FP-RUNTIME
+        // Theo sáu trường trong hdcFpRuntime() của Smali.
+        // -------------------------------------------------
+
         const monotonicMs = Number(
             process.hrtime.bigint() / 1000000n
         ) % 100000;
@@ -38281,14 +38418,27 @@ async function phimhdcsResolveHdcPlayer(
             .from(fpRuntimeRaw, "utf8")
             .toString("base64");
 
+        // -------------------------------------------------
+        // 6. EXACT XHR HEADERS
+        // -------------------------------------------------
+
         const xhrHeaders = {
-            ...baseHeaders,
-            "Origin": apiDomain,
+            "User-Agent": userAgent,
+            "Accept":
+                "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "vi-VN,vi;q=0.9",
             "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+            "Origin": apiDomain,
+            "Referer": currentUrl,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin"
         };
 
-        // 5. Acquire the HDC guard token.
+        // -------------------------------------------------
+        // 7. ACQUIRE GUARD TOKEN
+        // -------------------------------------------------
+
         let guardToken = "";
 
         try {
@@ -38304,22 +38454,17 @@ async function phimhdcsResolveHdcPlayer(
                 {
                     headers: {
                         ...xhrHeaders,
+                        "Content-Type":
+                            "application/x-www-form-urlencoded; charset=UTF-8",
                         "X-FP-Runtime": fpRuntime
                     },
-                    timeout: 12000,
+                    timeout,
                     maxRedirects: 5
                 }
             );
 
-            let guardData = guardResponse.data;
-
-            if (typeof guardData === "string") {
-                try {
-                    guardData = JSON.parse(guardData);
-                } catch (_) {
-                    guardData = {};
-                }
-            }
+            const guardData =
+                parseJson(guardResponse.data);
 
             guardToken =
                 guardData?.token ||
@@ -38330,21 +38475,27 @@ async function phimhdcsResolveHdcPlayer(
             console.log(
                 logPrefix,
                 "GUARD RESULT:",
-                guardToken ? "TOKEN RECEIVED" : "NO TOKEN"
+                guardToken
+                    ? "TOKEN RECEIVED"
+                    : "NO TOKEN"
             );
 
         } catch (guardError) {
             console.log(
                 logPrefix,
                 "GUARD REQUEST FAILED:",
-                guardError.response?.status || guardError.message
+                guardError.response?.status ||
+                guardError.message
             );
         }
 
-        // 6. Call the original getVideo endpoint.
+        // -------------------------------------------------
+        // 8. CALL getVideo
+        // -------------------------------------------------
+
         const videoBody = new URLSearchParams({
             hash: videoHash,
-            r: parentPageUrl || playerUrl,
+            r: parentUrl,
             fp_guard: guardToken
         }).toString();
 
@@ -38357,6 +38508,8 @@ async function phimhdcsResolveHdcPlayer(
             {
                 headers: {
                     ...xhrHeaders,
+                    "Content-Type":
+                        "application/x-www-form-urlencoded; charset=UTF-8",
                     ...(guardToken
                         ? { "X-FP-Guard": guardToken }
                         : {})
@@ -38366,168 +38519,173 @@ async function phimhdcsResolveHdcPlayer(
             }
         );
 
-        let videoData = videoResponse.data;
+        const videoData =
+            parseJson(videoResponse.data);
 
-        if (typeof videoData === "string") {
-            try {
-                videoData = JSON.parse(videoData);
-            } catch (_) {
-                // Some versions may return a plain URL or HTML.
-            }
-        }
-
-        function findHdcVideoUrl(value, depth = 0) {
-            if (depth > 5 || value == null) {
-                return "";
-            }
-
-            if (typeof value === "string") {
-                const trimmed = value.trim();
-
-                if (/^https?:\/\//i.test(trimmed)) {
-                    return trimmed;
-                }
-
-                if (
-                    trimmed.startsWith("{") ||
-                    trimmed.startsWith("[")
-                ) {
-                    try {
-                        return findHdcVideoUrl(
-                            JSON.parse(trimmed),
-                            depth + 1
-                        );
-                    } catch (_) {}
-                }
-
-                return "";
-            }
-
-            if (Array.isArray(value)) {
-                for (const item of value) {
-                    const found = findHdcVideoUrl(item, depth + 1);
-
-                    if (found) return found;
-                }
-
-                return "";
-            }
-
-            if (typeof value === "object") {
-                const preferredKeys = [
-                    "videoSource",
-                    "securedLink",
-                    "video_source",
-                    "secured_link",
-                    "source",
-                    "url",
-                    "link"
-                ];
-
-                for (const key of preferredKeys) {
-                    if (value[key]) {
-                        const found = findHdcVideoUrl(
-                            value[key],
-                            depth + 1
-                        );
-
-                        if (found) return found;
-                    }
-                }
-
-                for (const key of Object.keys(value)) {
-                    const found = findHdcVideoUrl(
-                        value[key],
-                        depth + 1
-                    );
-
-                    if (found) return found;
-                }
-            }
-
-            return "";
-        }
-
-        let videoUrl = findHdcVideoUrl(videoData);
-
-        if (!videoUrl) {
+        if (
+            !videoData ||
+            typeof videoData !== "object"
+        ) {
             throw new Error(
-                "getVideo response contains no videoSource/securedLink"
+                "getVideo returned an invalid response"
             );
         }
 
-        // 7. Sign secured master URLs when the player returns one.
-        if (
-            /master/i.test(videoUrl) ||
-            /secured/i.test(videoUrl)
-        ) {
-            try {
-                const signBody = new URLSearchParams({
-                    id: videoHash,
-                    url: videoUrl
-                }).toString();
+        // Smali VideoResponse sử dụng hai trường này.
+        const videoSource = cleanUrl(
+            videoData.videoSource ||
+            videoData.video_source ||
+            ""
+        );
 
-                const signResponse = await axios.post(
-                    apiDomain + "/player/master_sign.php",
-                    signBody,
-                    {
-                        headers: {
-                            ...xhrHeaders,
-                            "User-Agent": userAgent
-                        },
-                        timeout: 15000,
-                        maxRedirects: 5
-                    }
-                );
+        const securedLink = cleanUrl(
+            videoData.securedLink ||
+            videoData.secured_link ||
+            ""
+        );
 
-                const signedUrl = findHdcVideoUrl(
-                    signResponse.data
-                );
+        const candidates = [
+            videoSource,
+            securedLink
+        ].filter((url, index, list) =>
+            /^https?:\/\//i.test(url) &&
+            list.indexOf(url) === index
+        );
 
-                if (signedUrl) {
-                    videoUrl = signedUrl;
-                }
+        if (!candidates.length) {
+            console.log(
+                logPrefix,
+                "GETVIDEO RESPONSE:",
+                JSON.stringify(videoData).slice(0, 1500)
+            );
 
-            } catch (signError) {
-                console.log(
-                    logPrefix,
-                    "MASTER SIGN FAILED:",
-                    signError.response?.status || signError.message
-                );
-            }
-        }
-
-        // Validate the returned URL before handing it to the next resolver stage.
-        const resolvedUrl = new URL(videoUrl);
-
-        if (!/^https?:$/.test(resolvedUrl.protocol)) {
-            throw new Error("HDC returned an unsupported URL protocol");
+            throw new Error(
+                "getVideo has no videoSource or securedLink"
+            );
         }
 
         console.log(
             logPrefix,
-            "VIDEO URL RECEIVED:",
-            resolvedUrl.pathname
+            "VIDEO SOURCES:",
+            {
+                videoSource: Boolean(videoSource),
+                securedLink: Boolean(securedLink),
+                count: candidates.length
+            }
+        );
+
+        // -------------------------------------------------
+        // 9. SIGN SECURED MASTER URL
+        // -------------------------------------------------
+
+        let resolvedUrl = "";
+
+        for (const candidate of candidates) {
+            let targetUrl = candidate;
+
+            const needsSigning =
+                candidate === securedLink ||
+                /master|secured/i.test(candidate);
+
+            if (needsSigning) {
+                try {
+                    const signBody = new URLSearchParams({
+                        id: videoHash,
+                        url: candidate
+                    }).toString();
+
+                    const signResponse = await axios.post(
+                        apiDomain + "/player/master_sign.php",
+                        signBody,
+                        {
+                            headers: {
+                                ...xhrHeaders,
+                                "User-Agent": userAgent,
+                                "Content-Type":
+                                    "application/x-www-form-urlencoded; charset=UTF-8"
+                            },
+                            timeout,
+                            maxRedirects: 5
+                        }
+                    );
+
+                    const signData =
+                        parseJson(signResponse.data);
+
+                    const signedUrl = cleanUrl(
+                        typeof signData === "string"
+                            ? signData
+                            : (
+                                signData?.url ||
+                                signData?.data?.url ||
+                                ""
+                            )
+                    );
+
+                    if (/^https?:\/\//i.test(signedUrl)) {
+                        targetUrl = signedUrl;
+                    }
+
+                } catch (signError) {
+                    console.log(
+                        logPrefix,
+                        "MASTER SIGN FAILED:",
+                        signError.response?.status ||
+                        signError.message
+                    );
+                }
+            }
+
+            try {
+                const parsedTarget = new URL(targetUrl);
+
+                if (
+                    parsedTarget.protocol === "https:" ||
+                    parsedTarget.protocol === "http:"
+                ) {
+                    resolvedUrl = parsedTarget.href;
+                    break;
+                }
+            } catch (_) {}
+        }
+
+        if (!resolvedUrl) {
+            throw new Error(
+                "HDC returned no valid playable URL"
+            );
+        }
+
+        console.log(
+            logPrefix,
+            "RESOLVE SUCCESS:",
+            {
+                hash: videoHash,
+                host: new URL(resolvedUrl).host,
+                path: new URL(resolvedUrl).pathname
+            }
         );
 
         return {
             success: true,
-            url: resolvedUrl.href,
+            url: resolvedUrl,
             hash: videoHash,
-            apiDomain: apiDomain,
-            referer: playerUrl
+            apiDomain,
+            referer: currentUrl
         };
 
     } catch (error) {
         console.log(
             logPrefix,
             "RESOLVE FAILED:",
-            error.response?.status || error.message
+            error.response?.status ||
+            error.message
         );
 
         return {
             success: false,
-            error: error.message || "HDC player resolution failed"
+            error:
+                error.message ||
+                "HDC player resolution failed"
         };
     }
 }
