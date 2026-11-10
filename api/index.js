@@ -53894,12 +53894,47 @@ function phimhdcsFhdcProxyUrl(
     const parsedTarget = new URL(targetUrl);
     const parsedOrigin = new URL(origin);
 
+    // Chỉ nhận HTTPS.
     if (
         parsedTarget.protocol !== "https:" ||
-        parsedTarget.origin !== parsedOrigin.origin
+        parsedOrigin.protocol !== "https:"
     ) {
         throw new Error(
-            "FHDC proxy blocked cross-origin resource"
+            "FHDC proxy requires HTTPS"
+        );
+    }
+
+    // Origin gốc phải thuộc hệ thống FHDC.
+    if (
+        !/(^|\.)phimhdc\.com$/i.test(
+            parsedOrigin.hostname
+        )
+    ) {
+        throw new Error(
+            "FHDC origin rejected"
+        );
+    }
+
+    // Cho phép CDN khác domain, nhưng không cho
+    // localhost hoặc địa chỉ IP trực tiếp.
+    const targetHost =
+        parsedTarget.hostname.toLowerCase();
+
+    const isIpAddress =
+        require("net").isIP(targetHost) !== 0;
+
+    if (
+        isIpAddress ||
+        !targetHost ||
+        targetHost === "localhost" ||
+        /\.(?:local|internal|localhost|test)$/i.test(
+            targetHost
+        ) ||
+        parsedTarget.username ||
+        parsedTarget.password
+    ) {
+        throw new Error(
+            "FHDC CDN host rejected"
         );
     }
 
@@ -54118,17 +54153,43 @@ app.get(
             }
 
             const targetUrl = new URL(rawUrl);
-            const allowedOrigin = new URL(rawOrigin);
+const allowedOrigin = new URL(rawOrigin);
 
-            if (
-                targetUrl.protocol !== "https:" ||
-                targetUrl.origin !== allowedOrigin.origin ||
-                !/phimhdc\./i.test(targetUrl.hostname)
-            ) {
-                return res.status(403).send(
-                    "FHDC resource host rejected"
-                );
-            }
+const targetHost =
+    targetUrl.hostname.toLowerCase();
+
+const isIpAddress =
+    require("net").isIP(targetHost) !== 0;
+
+const validOrigin =
+    allowedOrigin.protocol === "https:" &&
+    /(^|\.)phimhdc\.com$/i.test(
+        allowedOrigin.hostname
+    );
+
+const validTarget =
+    targetUrl.protocol === "https:" &&
+    !isIpAddress &&
+    targetHost !== "localhost" &&
+    !/\.(?:local|internal|localhost|test)$/i.test(
+        targetHost
+    ) &&
+    !targetUrl.username &&
+    !targetUrl.password;
+
+if (!validOrigin || !validTarget) {
+    console.log(
+        "[PHIMHDCS][FHDC] RESOURCE HOST REJECTED:",
+        {
+            targetHost,
+            originHost: allowedOrigin.hostname
+        }
+    );
+
+    return res.status(403).send(
+        "FHDC resource host rejected"
+    );
+}
 
             const requestHeaders = {
                 "User-Agent":
@@ -54148,17 +54209,45 @@ app.get(
                     req.headers.range;
             }
 
-            const upstream = await axios.get(
-                targetUrl.href,
-                {
-                    headers: requestHeaders,
-                    timeout: 25000,
-                    maxRedirects: 5,
-                    responseType: "arraybuffer",
-                    validateStatus: status =>
-                        status >= 200 && status < 400
-                }
-            );
+            
+const upstream = await axios.get(
+    targetUrl.href,
+    {
+        headers: requestHeaders,
+        timeout: 25000,
+        maxRedirects: 5,
+
+        beforeRedirect: (options) => {
+            const redirectProtocol =
+                String(options.protocol || "");
+
+            const redirectHost =
+                String(options.hostname || "")
+                    .toLowerCase();
+
+            const redirectIsIp =
+                require("net").isIP(redirectHost) !== 0;
+
+            if (
+                redirectProtocol !== "https:" ||
+                redirectIsIp ||
+                redirectHost === "localhost" ||
+                /\.(?:local|internal|localhost|test)$/i.test(
+                    redirectHost
+                )
+            ) {
+                throw new Error(
+                    "FHDC CDN redirect rejected"
+                );
+            }
+        },
+
+        responseType: "arraybuffer",
+
+        validateStatus: status =>
+            status >= 200 && status < 400
+    }
+);
 
             const contentType =
                 String(
