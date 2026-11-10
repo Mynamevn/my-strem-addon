@@ -42196,7 +42196,7 @@ for (
 // Nhận diện riêng HDC và FHDC TikTok.
 
 let isHdcPlayer = false;
-let isFhdcTikTok = false;
+let isFhdcTikTokServer = false;
 
 try {
     const parsedServerUrl = new URL(cleanUrl);
@@ -42224,7 +42224,7 @@ try {
         isHdcPlayerPath &&
         !isDirectFile;
 
-    isFhdcTikTok =
+    isFhdcTikTokServer =
         /(?:^|\.)tiktok\.phimhdc\./i.test(serverHost);
 
 } catch (serverUrlError) {
@@ -42241,7 +42241,7 @@ decodedServers.push({
     url: cleanUrl,
     isDirect,
     isHdcPlayer,
-    isFhdcTikTok
+    isFhdcTikTok: isFhdcTikTokServer
 });
 
 console.log(
@@ -42249,7 +42249,7 @@ console.log(
     {
         server: data?.server,
         url: cleanUrl,
-        type: isFhdcTikTok
+        type: isFhdcTikTokServer
             ? "FHDC_TIKTOK"
             : isHdcPlayer
                 ? "HDC_PLAYER"
