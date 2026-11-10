@@ -38578,9 +38578,160 @@ async function phimhdcsResolveHdcPlayer(
         // 9. SIGN SECURED MASTER URL
         // -------------------------------------------------
 
-        let resolvedUrl = "";
+        // -------------------------------------------------
+// 9. SIGN + VERIFY HDC MASTER PLAYLIST
+// Chỉ chấp nhận URL thực sự trả về nội dung HLS.
+// -------------------------------------------------
 
-        for (const candidate of candidates) {
+let resolvedUrl = "";
+
+for (const candidate of candidates) {
+    let targetUrl = candidate;
+
+    const needsSigning =
+        candidate === securedLink ||
+        /master|secured/i.test(candidate);
+
+    if (needsSigning) {
+        try {
+            const signBody = new URLSearchParams({
+                id: videoHash,
+                url: candidate
+            }).toString();
+
+            const signResponse = await axios.post(
+                apiDomain + "/player/master_sign.php",
+                signBody,
+                {
+                    headers: {
+                        ...xhrHeaders,
+                        "User-Agent": userAgent,
+                        "Content-Type":
+                            "application/x-www-form-urlencoded; charset=UTF-8"
+                    },
+                    timeout,
+                    maxRedirects: 5
+                }
+            );
+
+            const signData =
+                parseJson(signResponse.data);
+
+            const signedUrl = cleanUrl(
+                typeof signData === "string"
+                    ? signData
+                    : (
+                        signData?.url ||
+                        signData?.data?.url ||
+                        ""
+                    )
+            );
+
+            if (/^https?:\/\//i.test(signedUrl)) {
+                targetUrl = signedUrl;
+            }
+
+        } catch (signError) {
+            console.log(
+                logPrefix,
+                "MASTER SIGN FAILED:",
+                signError.response?.status ||
+                signError.message
+            );
+        }
+    }
+
+    try {
+        const parsedTarget = new URL(targetUrl);
+
+        if (
+            parsedTarget.protocol !== "https:" &&
+            parsedTarget.protocol !== "http:"
+        ) {
+            continue;
+        }
+
+        const playlistResponse = await axios.get(
+            parsedTarget.href,
+            {
+                headers: {
+                    "User-Agent": userAgent,
+                    "Accept": "*/*",
+                    "Referer": currentUrl,
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-origin"
+                },
+                timeout,
+                maxRedirects: 5,
+                responseType: "text",
+                transformResponse: [
+                    data => data
+                ],
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        const playlistText =
+            String(playlistResponse.data || "")
+                .replace(/^\uFEFF/, "")
+                .trim();
+
+        const finalPlaylistUrl =
+            playlistResponse.request?.res?.responseUrl ||
+            parsedTarget.href;
+
+        if (!playlistText.startsWith("#EXTM3U")) {
+            console.warn(
+                logPrefix,
+                "INVALID MASTER PLAYLIST:",
+                {
+                    host: parsedTarget.host,
+                    status: playlistResponse.status,
+                    length: playlistText.length,
+                    preview: playlistText.slice(0, 120)
+                }
+            );
+
+            continue;
+        }
+
+        resolvedUrl = finalPlaylistUrl;
+
+        console.log(
+            logPrefix,
+            "MASTER PLAYLIST VERIFIED:",
+            {
+                host: new URL(resolvedUrl).host,
+                length: playlistText.length,
+                hasVariants:
+                    /#EXT-X-STREAM-INF/i.test(playlistText),
+                hasSegments:
+                    /#EXTINF/i.test(playlistText)
+            }
+        );
+
+        break;
+
+    } catch (verifyError) {
+        console.warn(
+            logPrefix,
+            "MASTER PLAYLIST VERIFY FAILED:",
+            {
+                candidate: targetUrl,
+                status: verifyError.response?.status || 0,
+                error: verifyError.message
+            }
+        );
+    }
+}
+
+if (!resolvedUrl) {
+    throw new Error(
+        "HDC returned no valid #EXTM3U master playlist"
+    );
+}
             let targetUrl = candidate;
 
             const needsSigning =
