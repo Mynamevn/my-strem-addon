@@ -40667,8 +40667,10 @@ console.log(
  // ====================================================
 
 const PHIMHDCS_V11_TIMEOUT = 6000;
+const PHIMHDCS_V11_TOTAL_BUDGET = 8000;
 
 const episodePageResults = await Promise.all(
+
     selectedEpisodes.map(async (selected, index) => {
 
         const episodeUrl =
@@ -40677,12 +40679,14 @@ const episodePageResults = await Promise.all(
             ).trim();
 
         const startedAt = Date.now();
+const deadlineAt =
+    startedAt + PHIMHDCS_V11_TOTAL_BUDGET;
 
-        const requestId =
-            "PHIMHDCS-V11-" +
-            startedAt +
-            "-" +
-            index;
+const requestId =
+    "PHIMHDCS-V11-" +
+    startedAt +
+    "-" +
+    index;
 
         if (!episodeUrl) {
             return {
@@ -40748,9 +40752,26 @@ const episodePageResults = await Promise.all(
         let winningPage = null;
         let lastError = null;
 
-        for (const candidateOrigin of candidateOrigins) {
+        
+for (const candidateOrigin of candidateOrigins) {
 
-            const requestUrl =
+    const remainingBudget =
+        deadlineAt - Date.now();
+
+    if (remainingBudget <= 0) {
+        console.warn(
+            "[PHIMHDCS V11] TOTAL TIME BUDGET EXHAUSTED:",
+            {
+                requestId,
+                server: selected.server,
+                elapsedMs: Date.now() - startedAt
+            }
+        );
+        break;
+    }
+
+    const requestUrl =
+
                 new URL(
                     originalUrl.pathname +
                     originalUrl.search +
@@ -40798,7 +40819,13 @@ const episodePageResults = await Promise.all(
                             },
 
                             timeout:
-                                PHIMHDCS_V11_TIMEOUT,
+    Math.max(
+        1,
+        Math.min(
+            PHIMHDCS_V11_TIMEOUT,
+            deadlineAt - Date.now()
+        )
+    ),
 
                             maxRedirects: 5,
 
