@@ -54073,13 +54073,32 @@ app.get(
                     );
             }
 
-            const rewritten =
-                phimhdcsFhdcRewritePlaylist(
-                    result.manifest,
-                    result.baseUrl + "/",
-                    result.baseUrl,
-                    result.referer
-                );
+
+// Tạo URL master ảo giống cơ chế phát trong Smali.
+// Các segment tương đối sẽ được phân giải từ:
+// /video/{key}/master.m3u8?delivery=...
+const syntheticMasterUrl = new URL(
+    "/video/" +
+        encodeURIComponent(result.key) +
+        "/master.m3u8?delivery=" +
+        encodeURIComponent(result.delivery) +
+        "&_=" +
+        Date.now(),
+    result.baseUrl
+).href;
+
+console.log(
+    "[PHIMHDCS][FHDC] SYNTHETIC MASTER:",
+    syntheticMasterUrl
+);
+
+const rewritten =
+    phimhdcsFhdcRewritePlaylist(
+        result.manifest,
+        syntheticMasterUrl,
+        result.baseUrl,
+        result.referer
+    );
 
             res.setHeader(
                 "Content-Type",
