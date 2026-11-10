@@ -41055,41 +41055,13 @@ for (const candidateOrigin of candidateOrigins) {
     )
 );
 
+
 const episodePageWaitStartedAt = Date.now();
 
-let episodePageWaitTimer = null;
-
-const episodePageWaitDeadline =
-    new Promise(resolve => {
-        episodePageWaitTimer = setTimeout(
-            () => resolve(false),
-            4500
-        );
-    });
-
-const episodePageAllFinished =
-    await Promise.race([
-        Promise.all(episodePageTasks).then(
-            () => true
-        ),
-        episodePageWaitDeadline
-    ]);
-
-if (episodePageWaitTimer) {
-    clearTimeout(episodePageWaitTimer);
-}
-
+// Mỗi request đã có deadline riêng tối đa 8 giây.
+// Chờ các request kết thúc để không bỏ mất trang tải chậm.
 const episodePageResults =
-    episodePageSettled.map(
-        (result, index) =>
-            result || {
-                status: "rejected",
-                reason: new Error(
-                    "Episode page exceeded partial wait window: " +
-                    selectedEpisodes[index]?.server
-                )
-            }
-    );
+    await Promise.all(episodePageTasks);
 
 console.log(
     "[PHIMHDCS V11] EPISODE PAGE WAIT FINISHED:",
@@ -41097,15 +41069,19 @@ console.log(
         total: selectedEpisodes.length,
 
         completed:
-            episodePageSettled.filter(Boolean).length,
+            episodePageResults.length,
 
-        pending:
-            episodePageSettled.filter(
-                result => !result
+        fulfilled:
+            episodePageResults.filter(
+                result =>
+                    result.status === "fulfilled"
             ).length,
 
-        allFinished:
-            episodePageAllFinished,
+        rejected:
+            episodePageResults.filter(
+                result =>
+                    result.status === "rejected"
+            ).length,
 
         elapsedMs:
             Date.now() - episodePageWaitStartedAt
