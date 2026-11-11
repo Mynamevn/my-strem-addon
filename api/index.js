@@ -38794,19 +38794,6 @@ async function phimhdcsResolveFhdcManifest(
 
     const timeout = 15000;
 
-const fhdcResolverStartedAt = Date.now();
-
-const fhdcLogTiming = (stage, startedAt) => {
-    console.log(
-        "[FHDC-TIMING]",
-        JSON.stringify({
-            stage,
-            elapsedMs: Date.now() - startedAt,
-            totalMs: Date.now() - fhdcResolverStartedAt
-        })
-    );
-};
-
     const headers = referer => ({
         "User-Agent": userAgent,
         "Accept": "*/*",
@@ -38860,8 +38847,6 @@ const fhdcLogTiming = (stage, startedAt) => {
         const parentReferer =
             parentPageUrl || initialUrl.origin + "/";
 
-const fhdcPlayerStartedAt = Date.now();
-
         const firstResponse = await axios.get(
             currentUrl,
             {
@@ -38878,11 +38863,6 @@ const fhdcPlayerStartedAt = Date.now();
                     status >= 200 && status < 400
             }
         );
-
-    fhdcLogTiming(
-        "PLAYER PAGE",
-        fhdcPlayerStartedAt
-    );
 
         currentUrl =
             firstResponse.request?.res?.responseUrl ||
@@ -38906,7 +38886,6 @@ if (!currentHtml) {
 
 let earlyTokenPromise = null;
 let earlyTokenOrigin = "";
-let earlyTokenStartedAt = 0;
 
         for (let depth = 0; depth < 3; depth++) {
             const $ = cheerio.load(currentHtml);
@@ -38956,12 +38935,6 @@ if (!earlyTokenPromise) {
         const earlyJobId = earlyJobMatch[1];
 
         earlyTokenOrigin = nextUrl.origin;
-        earlyTokenStartedAt = Date.now();
-
-        console.log(
-            logPrefix,
-            "EARLY JS TOKEN PREFETCH START"
-        );
 
         earlyTokenPromise = axios.get(
             earlyTokenOrigin +
@@ -38998,8 +38971,6 @@ httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
     }
 }
 
-const fhdcIframeStartedAt = Date.now();
-
             const iframeResponse = await axios.get(
                 nextUrl.href,
                 {
@@ -39016,11 +38987,6 @@ httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                         status >= 200 && status < 400
                 }
             );
-
-fhdcLogTiming(
-    "IFRAME DEPTH " + (depth + 1),
-    fhdcIframeStartedAt
-);
 
             currentUrl =
                 iframeResponse.request?.res?.responseUrl ||
@@ -39097,67 +39063,6 @@ for (
     }
 }
 
-
-if (!jobId) {
-    const firstHtml =
-        String(pageHtmlCandidates[0] || "")
-            .replace(/\\"/g, '"')
-            .replace(/&quot;/gi, '"')
-            .replace(/&#34;/gi, '"')
-            .replace(/\\u0022/gi, '"');
-
-    const jobIdContexts = [];
-    const jobIdPattern = /jobId/gi;
-    let contextMatch;
-
-    while (
-        (contextMatch = jobIdPattern.exec(firstHtml)) &&
-        jobIdContexts.length < 5
-    ) {
-        const start = Math.max(
-            0,
-            contextMatch.index - 180
-        );
-
-        const end = Math.min(
-            firstHtml.length,
-            contextMatch.index + 420
-        );
-
-        let snippet =
-            firstHtml.slice(start, end);
-
-        // Che các token nhạy cảm trước khi ghi log.
-        snippet = snippet
-            .replace(
-                /v1\.\d+\.[a-f0-9]{24}\.[a-f0-9]{32}\.[a-f0-9]{64}/gi,
-                "[REDACTED_TOKEN]"
-            )
-            .replace(
-                /((?:token|playGuard|play_guard)\s*["']?\s*[:=]\s*["'])[^"']+/gi,
-                "$1[REDACTED]"
-            );
-
-        jobIdContexts.push(snippet);
-    }
-
-    const uuidMatches =
-        firstHtml.match(
-            /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi
-        ) || [];
-
-    console.log(
-        logPrefix,
-        "JOBID HTML CONTEXT:",
-        JSON.stringify({
-            htmlLength: firstHtml.length,
-            jobIdOccurrences: jobIdContexts.length,
-            jobIdContexts,
-            uuidMatches: [...new Set(uuidMatches)].slice(0, 10)
-        })
-    );
-}
-
         if (!key) {
             throw new Error("FHDC key not found");
         }
@@ -39178,18 +39083,6 @@ if (!jobId) {
         const baseUrl =
             currentParsedUrl.origin;
 
-        console.log(
-            logPrefix,
-            "PLAYER CONTEXT:",
-            {
-                host: currentParsedUrl.host,
-                key,
-                delivery,
-                jobId,
-                hasBootstrapToken: Boolean(bootstrapToken)
-            }
-        );
-
         // ----------------------------------------------------
         // 4. GET PLAY GUARD TOKEN
         // Smali: /api/js-token?name=play_guard&jobId=...
@@ -39204,17 +39097,12 @@ if (
 ) {
     playGuard = await earlyTokenPromise;
 
-    fhdcLogTiming(
-        "JS TOKEN PREFETCH",
-        earlyTokenStartedAt
-    );
 }
 
 // Nếu không có token sớm hoặc token sớm không hợp lệ,
 // giữ nguyên request dự phòng như cơ chế cũ.
 if (!playGuard) {
     try {
-        const fhdcTokenStartedAt = Date.now();
 
         const tokenResponse = await axios.get(
             baseUrl +
@@ -39226,11 +39114,6 @@ httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                 timeout,
                 maxRedirects: 5
             }
-        );
-
-        fhdcLogTiming(
-            "JS TOKEN",
-            fhdcTokenStartedAt
         );
 
         const tokenData =
@@ -39271,8 +39154,6 @@ httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
         // Smali: fetchFhdcManifest()
         // ----------------------------------------------------
 
-const fhdcMasterStartedAt = Date.now();
-
         const masterResponse = await axios.post(
             baseUrl + "/api/master-inline",
             {
@@ -39294,11 +39175,6 @@ httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                 maxRedirects: 5
             }
         );
-
-fhdcLogTiming(
-    "MASTER INLINE",
-    fhdcMasterStartedAt
-);
 
         const masterData =
             parseJson(masterResponse.data);
@@ -39345,11 +39221,6 @@ fhdcLogTiming(
             }
         );
 
-fhdcLogTiming(
-    "RESOLVER TOTAL",
-    fhdcResolverStartedAt
-);
-
         return {
             success: true,
             manifest: manifestText,
@@ -39358,11 +39229,6 @@ fhdcLogTiming(
             key,
             delivery
         };
-
-fhdcLogTiming(
-    "RESOLVER FAILED",
-    fhdcResolverStartedAt
-);
 
     } catch (error) {
         console.error(
