@@ -53293,16 +53293,12 @@ const isCloudbetaHost =
 const isCbPlayHost =
     /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(hostname);
 
-const isTikTokCarrierHost =
-    /(?:^|\.)tiktokcdn\.com$/i.test(hostname);
-
 const allowedHost =
     is1PhimHost ||
     is8PhimHost ||
     isRophimHost ||
     isCloudbetaHost ||
-    isCbPlayHost ||
-    isTikTokCarrierHost;
+    isCbPlayHost;
 
             if (!allowedHost) {
 
@@ -53577,8 +53573,7 @@ if (isM3U8) {
     /^www\.8phim1\.com$/i.test(childHost) ||
     /^player\.rophim12\.com$/i.test(childHost) ||
     /^api\.cloudbeta\.win$/i.test(childHost) ||
-    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost) ||
-    /(?:^|\.)tiktokcdn\.com$/i.test(childHost);
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost);
 
                         if (
                             !childAllowed
@@ -53694,22 +53689,88 @@ res.status(
                 );
             }
 
-
-            
             // =================================================
             // VIDEO / TS / BINARY
-            // PLT TIKTOK PNG CARRIER -> MPEG-TS
-            // Các host khác giữ nguyên streaming.
+            //
+            // Ví dụ:
+            //
+            // .ts
+            // .aac
+            // .mp4
+            // key.bin
+            //
+            // Không rewrite.
+            // Chỉ relay binary về Stremio.
+            // =================================================
+
+            const buffer =
+                Buffer.from(
+                    await upstream.arrayBuffer()
+                );
+
+            // =================================================
+            // COPY MỘT SỐ RESPONSE HEADERS
             // =================================================
 
             const responseContentType =
-                upstream.headers.get("content-type");
+                upstream.headers.get(
+                    "content-type"
+                );
+
+            if (
+                responseContentType
+            ) {
+
+                res.setHeader(
+                    "Content-Type",
+                    responseContentType
+                );
+            }
+
+            const contentLength =
+                upstream.headers.get(
+                    "content-length"
+                );
+
+            if (
+                contentLength
+            ) {
+
+                res.setHeader(
+                    "Content-Length",
+                    contentLength
+                );
+            }
 
             const contentRange =
-                upstream.headers.get("content-range");
+                upstream.headers.get(
+                    "content-range"
+                );
+
+            if (
+                contentRange
+            ) {
+
+                res.setHeader(
+                    "Content-Range",
+                    contentRange
+                );
+            }
 
             const acceptRanges =
-                upstream.headers.get("accept-ranges");
+                upstream.headers.get(
+                    "accept-ranges"
+                );
+
+            if (
+                acceptRanges
+            ) {
+
+                res.setHeader(
+                    "Accept-Ranges",
+                    acceptRanges
+                );
+            }
 
             res.setHeader(
                 "Cache-Control",
@@ -53726,197 +53787,11 @@ res.status(
                 "*"
             );
 
-            // -------------------------------------------------
-            // TIKTOK PNG CARRIER
-            // -------------------------------------------------
-
-            const isPltTikTokCarrierHost =
-                /(?:^|\.)tiktokcdn\.com$/i.test(hostname);
-
-            if (isPltTikTokCarrierHost) {
-
-                const carrierBuffer =
-                    Buffer.from(
-                        await upstream.arrayBuffer()
-                    );
-
-                const pngSignature = Buffer.from([
-                    0x89, 0x50, 0x4e, 0x47,
-                    0x0d, 0x0a, 0x1a, 0x0a
-                ]);
-
-                const isPngCarrier =
-                    carrierBuffer.length >= 8 &&
-                    carrierBuffer.subarray(0, 8)
-                        .equals(pngSignature);
-
-                if (isPngCarrier) {
-
-                    const ts =
-                        phimhdcsFhdcUnwrapPngPayloadToTs(
-                            carrierBuffer
-                        );
-
-                    if (!ts) {
-
-                        console.error(
-                            "[PLT PROXY] TIKTOK PNG DECODE FAILED:",
-                            {
-                                host: hostname,
-                                inputBytes: carrierBuffer.length
-                            }
-                        );
-
-                        return res
-                            .status(502)
-                            .type("text/plain")
-                            .send(
-                                "PLT TikTok PNG-to-TS decoding failed"
-                            );
-                    }
-
-                    console.log(
-                        "[PLT PROXY] TIKTOK PNG DECODE SUCCESS:",
-                        {
-                            inputBytes: carrierBuffer.length,
-                            outputBytes: ts.length
-                        }
-                    );
-
-                    res.status(200);
-
-                    res.setHeader(
-                        "Content-Type",
-                        "video/mp2t"
-                    );
-
-                    res.setHeader(
-                        "Content-Length",
-                        String(ts.length)
-                    );
-
-                    res.setHeader(
-                        "Accept-Ranges",
-                        "none"
-                    );
-
-                    return res.send(ts);
-                }
-
-                // TikTok response không phải PNG:
-                // giữ nguyên dữ liệu, không giải mã nhầm.
-                console.log(
-                    "[PLT PROXY] TIKTOK NON-PNG RESPONSE:",
-                    {
-                        contentType: responseContentType,
-                        bytes: carrierBuffer.length
-                    }
-                );
-
-                res.status(upstream.status);
-
-                if (responseContentType) {
-                    res.setHeader(
-                        "Content-Type",
-                        responseContentType
-                    );
-                }
-
-                return res.send(carrierBuffer);
-            }
-
-            // -------------------------------------------------
-            // NORMAL VIDEO / TS / BINARY
-            // Giữ nguyên streaming cho các host khác.
-            // -------------------------------------------------
-
-            const { Readable } =
-                require("node:stream");
-
-            if (responseContentType) {
-                res.setHeader(
-                    "Content-Type",
-                    responseContentType
-                );
-            } else {
-                res.setHeader(
-                    "Content-Type",
-                    "application/octet-stream"
-                );
-            }
-
-            if (contentRange) {
-                res.setHeader(
-                    "Content-Range",
-                    contentRange
-                );
-            }
-
-            if (acceptRanges) {
-                res.setHeader(
-                    "Accept-Ranges",
-                    acceptRanges
-                );
-            }
-
-            res.status(upstream.status);
-
-            if (!upstream.body) {
-                return res.end();
-            }
-
-            const sourceStream =
-                Readable.fromWeb(upstream.body);
-
-            let streamedBytes = 0;
-
-            sourceStream.on("data", chunk => {
-                streamedBytes += chunk.length;
-            });
-
-            sourceStream.on("error", error => {
-                console.log(
-                    "[PLT PROXY] STREAM ERROR:",
-                    error?.message || error
-                );
-
-                if (!res.headersSent) {
-                    res.status(502).end();
-                } else if (!res.destroyed) {
-                    res.destroy(error);
-                }
-            });
-
-            res.once("close", () => {
-                if (
-                    !res.writableFinished &&
-                    !sourceStream.destroyed
-                ) {
-                    sourceStream.destroy();
-                }
-            });
-
-            res.once("finish", () => {
-                console.log(
-                    "[PLT PROXY] STREAM FINISH:",
-                    {
-                        status: res.statusCode,
-                        bytes: streamedBytes,
-                        range: contentRange || null
-                    }
-                );
-            });
-
-            console.log(
-                "[PLT PROXY] STREAM START:",
-                {
-                    status: upstream.status,
-                    contentType: responseContentType || null,
-                    range: contentRange || null
-                }
-            );
-
-            return sourceStream.pipe(res);
+            return res
+                .status(
+                    upstream.status
+                )
+                .send(buffer);
 
         } catch (e) {
 
