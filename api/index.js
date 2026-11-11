@@ -54158,6 +54158,7 @@ app.get(
                     }
                 });
 
+
             console.log("[FHDC-DIAG-01] PLAYLIST:", {
                 originalUriCount: result.manifest
                     .split(/\r?\n/)
@@ -54165,11 +54166,40 @@ app.get(
                         line.trim() &&
                         !line.trim().startsWith("#")
                     ).length,
+
                 originalUris: fhdcOriginalUris,
                 rewrittenUris: fhdcRewrittenUris,
+
                 hasExtinf: result.manifest.includes("#EXTINF"),
                 hasKey: /#EXT-X-KEY/i.test(result.manifest),
-                hasMap: /#EXT-X-MAP/i.test(result.manifest)
+                hasMap: /#EXT-X-MAP/i.test(result.manifest),
+
+                // Tổng số URL đã chuyển qua proxy.
+                proxyRouteCount: (
+                    rewritten.match(
+                        /\/phimhdcs\/fhdc\/resource\?/g
+                    ) || []
+                ).length,
+
+                // 12 dòng đầu tiên sau khi rewrite.
+                rewrittenPrefix: rewritten
+                    .split(/\r?\n/)
+                    .slice(0, 12)
+                    .map(line =>
+                        line.startsWith(
+                            "/phimhdcs/fhdc/resource?"
+                        )
+                            ? "/phimhdcs/fhdc/resource?[URL]"
+                            : line.slice(0, 180)
+                    ),
+
+                // Các thẻ HLS đầu tiên trong manifest gốc.
+                playlistTags: result.manifest
+                    .split(/\r?\n/)
+                    .filter(line =>
+                        line.trim().startsWith("#")
+                    )
+                    .slice(0, 15)
             });
 
 
