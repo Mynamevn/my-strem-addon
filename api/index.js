@@ -42595,19 +42595,21 @@ const hdcResult =
 
             });
 
+
+
         } else {
 
-            let embedPlayerUrl =
+            const embedUrl =
                 server.url;
 
-            // Chỉ chuyển StreamC sang player riêng.
-            // Các embed host khác giữ nguyên hành vi cũ.
+            let legacyStreamCPlayerUrl = null;
+
+            // Nhận diện StreamC nhưng không thay đổi URL gốc.
+            // Giữ Player StreamC cũ làm lựa chọn dự phòng.
             try {
 
                 const parsedEmbedUrl =
-                    new URL(
-                        server.url
-                    );
+                    new URL(embedUrl);
 
                 const embedHost =
                     parsedEmbedUrl.hostname.toLowerCase();
@@ -42621,11 +42623,9 @@ const hdcResult =
 
                 if (isStreamC) {
 
-                    embedPlayerUrl =
+                    legacyStreamCPlayerUrl =
                         "https://my-strem-addon.vercel.app/phimhdcs-player?url=" +
-                        encodeURIComponent(
-                            parsedEmbedUrl.href
-                        );
+                        encodeURIComponent(parsedEmbedUrl.href);
 
                 }
 
@@ -42638,26 +42638,7 @@ const hdcResult =
 
             }
 
-            console.log(
-                "[PHIMHDCS] ADD SERVER:",
-                {
-                    language:
-                        languageName,
-
-                    number:
-                        serverNumber,
-
-                    type:
-                        "EMBED",
-
-                    originalUrl:
-                        server.url,
-
-                    playerUrl:
-                        embedPlayerUrl
-                }
-            );
-
+            // LUỒNG CHÍNH: mở trực tiếp embedUrl gốc.
             streams.push({
 
                 name:
@@ -42674,10 +42655,10 @@ const hdcResult =
                     serverNumber,
 
                 externalUrl:
-                    embedPlayerUrl,
+                    embedUrl,
 
                 widgetPlayer:
-                    embedPlayerUrl,
+                    embedUrl,
 
                 widgetPlayerStates: [
                     "replaceplayer"
@@ -42693,7 +42674,43 @@ const hdcResult =
 
             });
 
+            // LUỒNG DỰ PHÒNG: giữ nguyên Player StreamC cũ.
+            if (legacyStreamCPlayerUrl) {
+
+                streams.push({
+
+                    name:
+                        "🛟 [PhimHDCS] StreamC Player dự phòng " +
+                        serverNumber,
+
+                    title:
+                        movieName +
+                        " - StreamC Player dự phòng",
+
+                    externalUrl:
+                        legacyStreamCPlayerUrl,
+
+                    widgetPlayer:
+                        legacyStreamCPlayerUrl,
+
+                    widgetPlayerStates: [
+                        "replaceplayer"
+                    ],
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "phimhdcs-streamc-legacy-" +
+                            serverNumber
+
+                    }
+
+                });
+
+            }
+
         }
+
 
     }
 
