@@ -53444,26 +53444,11 @@ const allowedHost =
 
             };
 
-// =================================================
-// RANGE
-//
-// Playlist M3U8 phải tải đầy đủ.
-// Chỉ chuyển tiếp Range cho video / segment.
-// =================================================
+            if (req.headers.range) {
 
-const isPlaylistRequest =
-    /\.m3u8(?:$|[?#])/i.test(
-        targetUrl.href
-    );
-
-if (
-    req.headers.range &&
-    !isPlaylistRequest
-) {
-
-    requestHeaders.Range =
-        req.headers.range;
-}
+                requestHeaders.Range =
+                    req.headers.range;
+            }
 
             console.log(
                 "[PLT PROXY] REQUEST:"
@@ -53739,11 +53724,9 @@ if (isM3U8) {
                 // RESPONSE
                 // =================================================
 
-res.status(
-    isM3U8
-        ? 200
-        : upstream.status
-);
+                res.status(
+                    upstream.status
+                );
 
                 res.setHeader(
                     "Content-Type",
