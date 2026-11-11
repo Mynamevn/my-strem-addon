@@ -54482,88 +54482,58 @@ if (
                                 dataEnd
                             );
 
-                            if (keyword === "payload-0001") {
-                                let decoded = null;
-                                let decodeError = null;
 
-                                try {
-                                    if (
-                                        compressionFlag === 1 &&
-                                        compressionMethod === 0
-                                    ) {
-                                        decoded = require("zlib")
-                                            .inflateSync(payload);
-                                    } else {
-                                        decoded = payload;
-                                    }
-                                } catch (err) {
-                                    decodeError = err.message;
-                                }
+if (keyword === "payload-0001") {
+    let decoded = null;
+    let decodeError = null;
 
-                                const signature = decoded
-                                    ? decoded.subarray(0, 32)
-                                        .toString("hex")
-                                    : null;
+    try {
+        decoded = require("zlib").inflateSync(payload);
+    } catch (err) {
+        decodeError = err.message;
+    }
 
-                                const asciiPreview = decoded
-                                    ? decoded.subarray(0, 100)
-                                        .toString("latin1")
-                                    : null;
+    let base64Decoded = null;
+    let base64Error = null;
+    let base64Candidate = false;
 
-                                let format = "UNKNOWN";
+    if (decoded) {
+        const textData = decoded.toString("ascii").trim();
 
-                                if (decoded) {
-                                    if (
-                                        decoded.subarray(4, 8)
-                                            .toString() === "ftyp"
-                                    ) {
-                                        format = "MP4";
-                                    } else if (decoded[0] === 0x47) {
-                                        format = "MPEG-TS-POSSIBLE";
-                                    } else if (
-                                        decoded.subarray(0, 4)
-                                            .toString() === "OggS"
-                                    ) {
-                                        format = "OGG";
-                                    } else if (
-                                        decoded.subarray(0, 4)
-                                            .toString() === "RIFF"
-                                    ) {
-                                        format = "RIFF";
-                                    } else if (
-                                        decoded.subarray(0, 4)
-                                            .toString() === "fLaC"
-                                    ) {
-                                        format = "FLAC";
-                                    } else if (
-                                        decoded.subarray(0, 4)
-                                            .toString("hex") === "1a45dfa3"
-                                    ) {
-                                        format = "WEBM-MKV";
-                                    } else if (
-                                        decoded.subarray(0, 3)
-                                            .toString() === "ID3"
-                                    ) {
-                                        format = "MP3";
-                                    }
-                                }
+        base64Candidate =
+            /^[A-Za-z0-9+/]+={0,2}$/.test(textData) &&
+            textData.length >= 16;
 
-                                console.log(
-                                    "[FHDC-DIAG-06] DECOMPRESSED PAYLOAD:",
-                                    {
-                                        keyword,
-                                        compressionFlag,
-                                        compressionMethod,
-                                        compressedBytes: payload.length,
-                                        decompressedBytes:
-                                            decoded?.length || 0,
-                                        signature,
-                                        format,
-                                        asciiPreview,
-                                        decodeError
-                                    }
-                                );
-                            }
+        if (base64Candidate) {
+            try {
+                base64Decoded = Buffer.from(textData, "base64");
+            } catch (err) {
+                base64Error = err.message;
+            }
+        }
+    }
+
+    console.log("[FHDC-DIAG-07] PAYLOAD ANALYSIS:", {
+        compressedBytes: payload.length,
+        decompressedBytes: decoded?.length || 0,
+        decompressedPreview: decoded
+            ? decoded.subarray(0, 100).toString("ascii")
+            : null,
+
+        base64Candidate,
+        base64Bytes: base64Decoded?.length || 0,
+        base64Signature: base64Decoded
+            ? base64Decoded.subarray(0, 64).toString("hex")
+            : null,
+        base64Preview: base64Decoded
+            ? base64Decoded.subarray(0, 64).toString("latin1")
+            : null,
+
+        decodeError,
+        base64Error
+    });
+}
+
                         }
                     }
                 }
