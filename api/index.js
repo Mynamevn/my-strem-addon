@@ -39159,13 +39159,13 @@ if (!earlyTokenPromise) {
             "EARLY JS TOKEN PREFETCH START"
         );
 
-        earlyTokenPromise = axios.get(
+        earlyTokenPromise = phimhdcsFhdcHttp2Get(
             earlyTokenOrigin +
                 "/api/js-token?name=play_guard&jobId=" +
                 encodeURIComponent(earlyJobId),
             {
                 headers: headers(nextUrl.href),
-httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                 timeout,
                 maxRedirects: 5
             }
@@ -39196,7 +39196,7 @@ httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
 
 const fhdcIframeStartedAt = Date.now();
 
-            const iframeResponse = await axios.get(
+            const iframeResponse = await phimhdcsFhdcHttp2Get(
                 nextUrl.href,
                 {
                     headers: {
@@ -39204,7 +39204,7 @@ const fhdcIframeStartedAt = Date.now();
                         "Accept":
                             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                     },
-httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                    httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                     timeout,
                     maxRedirects: 8,
                     responseType: "text",
