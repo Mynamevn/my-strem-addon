@@ -42596,16 +42596,15 @@ const hdcResult =
             });
 
 
-
         } else {
 
             const embedUrl =
                 server.url;
 
-            let legacyStreamCPlayerUrl = null;
+            let isStreamC = false;
 
-            // Nhận diện StreamC nhưng không thay đổi URL gốc.
-            // Giữ Player StreamC cũ làm lựa chọn dự phòng.
+            let streamCPlayerUrl = null;
+
             try {
 
                 const parsedEmbedUrl =
@@ -42614,7 +42613,7 @@ const hdcResult =
                 const embedHost =
                     parsedEmbedUrl.hostname.toLowerCase();
 
-                const isStreamC =
+                isStreamC =
                     parsedEmbedUrl.protocol === "https:" &&
                     (
                         embedHost === "streamc.xyz" ||
@@ -42623,7 +42622,7 @@ const hdcResult =
 
                 if (isStreamC) {
 
-                    legacyStreamCPlayerUrl =
+                    streamCPlayerUrl =
                         "https://my-strem-addon.vercel.app/phimhdcs-player?url=" +
                         encodeURIComponent(parsedEmbedUrl.href);
 
@@ -42638,60 +42637,38 @@ const hdcResult =
 
             }
 
-            // LUỒNG CHÍNH: mở trực tiếp embedUrl gốc.
-            streams.push({
+            if (isStreamC) {
 
-                name:
-                    "▶️ [PhimHDCS] " +
-                    languageName +
-                    " - Server " +
-                    serverNumber,
+                // STREAMC: chỉ giữ Player cũ làm luồng dự phòng.
 
-                title:
-                    movieName +
-                    " - " +
-                    languageName +
-                    " - Server " +
-                    serverNumber,
-
-                externalUrl:
-                    embedUrl,
-
-                widgetPlayer:
-                    embedUrl,
-
-                widgetPlayerStates: [
-                    "replaceplayer"
-                ],
-
-                behaviorHints: {
-
-                    bingeGroup:
-                        "phimhdcs-" +
-                        serverNumber
-
-                }
-
-            });
-
-            // LUỒNG DỰ PHÒNG: giữ nguyên Player StreamC cũ.
-            if (legacyStreamCPlayerUrl) {
+                console.log(
+                    "[PHIMHDCS] ADD STREAMC FALLBACK:",
+                    {
+                        language: languageName,
+                        number: serverNumber,
+                        url: embedUrl
+                    }
+                );
 
                 streams.push({
 
                     name:
-                        "🛟 [PhimHDCS] StreamC Player dự phòng " +
+                        "🛟 [PhimHDCS] " +
+                        languageName +
+                        " - StreamC dự phòng " +
                         serverNumber,
 
                     title:
                         movieName +
-                        " - StreamC Player dự phòng",
+                        " - " +
+                        languageName +
+                        " - StreamC Player",
 
                     externalUrl:
-                        legacyStreamCPlayerUrl,
+                        streamCPlayerUrl,
 
                     widgetPlayer:
-                        legacyStreamCPlayerUrl,
+                        streamCPlayerUrl,
 
                     widgetPlayerStates: [
                         "replaceplayer"
@@ -42700,7 +42677,49 @@ const hdcResult =
                     behaviorHints: {
 
                         bingeGroup:
-                            "phimhdcs-streamc-legacy-" +
+                            "phimhdcs-streamc-" +
+                            serverNumber
+
+                    }
+
+                });
+
+            } else {
+
+                // NC: mở trực tiếp URL đã được bóc khỏi player.php.
+                // Không tạo PhimHDCS Client mới.
+                // Không bọc qua Vercel.
+
+                console.log(
+                    "[PHIMHDCS] ADD NC EMBED DIRECT:",
+                    {
+                        language: languageName,
+                        number: serverNumber,
+                        url: embedUrl
+                    }
+                );
+
+                streams.push({
+
+                    name:
+                        "▶️ [PhimHDCS] " +
+                        languageName +
+                        " - NC Direct " +
+                        serverNumber,
+
+                    title:
+                        movieName +
+                        " - " +
+                        languageName +
+                        " - NC",
+
+                    externalUrl:
+                        embedUrl,
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "phimhdcs-nc-" +
                             serverNumber
 
                     }
@@ -42710,8 +42729,6 @@ const hdcResult =
             }
 
         }
-
-
     }
 
 }
