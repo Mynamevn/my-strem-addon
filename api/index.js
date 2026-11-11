@@ -41201,7 +41201,7 @@ console.log(
  // ====================================================
 
 const PHIMHDCS_V11_TIMEOUT = 6000;
-const PHIMHDCS_V11_TOTAL_BUDGET = 14000;
+const PHIMHDCS_V11_TOTAL_BUDGET = 8000;
 
 const episodePageSettled =
     new Array(selectedEpisodes.length);
