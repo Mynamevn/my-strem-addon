@@ -30,8 +30,19 @@ const cheerio = require('cheerio');
 const { waitUntil } = require('@vercel/functions');
 
 const crypto = require('crypto');
+
 const http2 = require('http2');
+const https = require('https');
 const express = require('express');
+
+// [FHDC] Dedicated HTTPS keep-alive connection pool.
+const PHIMHDCS_FHDC_HTTPS_AGENT = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 1000,
+    maxSockets: 16,
+    maxFreeSockets: 8,
+    timeout: 60000
+});
 
 // =========================================================================
 // [MỚI CHÈN] - CÁC HÀM TIỆN ÍCH BYPASS ANIMESUB (MIỄN PHÍ)
@@ -38307,6 +38318,7 @@ async function phimhdcsResolveHdcPlayer(
                         "Accept-Language": "vi-VN,vi;q=0.9",
                         "Referer": currentUrl
                     },
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                     timeout,
                     maxRedirects: 8,
                     responseType: "text",
@@ -38858,6 +38870,7 @@ const fhdcPlayerStartedAt = Date.now();
                     "Accept":
                         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                 },
+        httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                 timeout,
                 maxRedirects: 8,
                 responseType: "text",
@@ -38956,6 +38969,7 @@ if (!earlyTokenPromise) {
                 encodeURIComponent(earlyJobId),
             {
                 headers: headers(nextUrl.href),
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                 timeout,
                 maxRedirects: 5
             }
@@ -39273,6 +39287,7 @@ const fhdcMasterStartedAt = Date.now();
                     "X-Play-Guard": playGuard,
                     "X-Playback-Window": pw
                 },
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                 timeout: 20000,
                 maxRedirects: 5
             }
