@@ -38776,10 +38776,140 @@ if (!resolvedUrl) {
     }
 }
 
+// ============================================================
+// [FHDC-HTTP2-POOL] SHARED HTTP/2 SESSION POOL
+// ============================================================
+
+const PHIMHDCS_FHDC_HTTP2_SESSIONS = new Map();
+
+const PHIMHDCS_FHDC_HTTP2_IDLE_TIMEOUT = 10000;
+
+function phimhdcsFhdcGetHttp2Session(origin) {
+    let entry =
+        PHIMHDCS_FHDC_HTTP2_SESSIONS.get(origin);
+
+    if (
+        entry &&
+        (
+            entry.session.destroyed ||
+            entry.session.closed ||
+            entry.draining
+        )
+    ) {
+        PHIMHDCS_FHDC_HTTP2_SESSIONS.delete(origin);
+        entry = null;
+    }
+
+    if (!entry) {
+        const session = http2.connect(origin);
+
+        entry = {
+            session,
+            active: 0,
+            idleTimer: null,
+            draining: false
+        };
+
+        PHIMHDCS_FHDC_HTTP2_SESSIONS.set(
+            origin,
+            entry
+        );
+
+        session.on("error", error => {
+            console.warn(
+                "[FHDC-HTTP2-POOL] SESSION ERROR:",
+                {
+                    origin,
+                    reason: error.message
+                }
+            );
+
+            if (
+                PHIMHDCS_FHDC_HTTP2_SESSIONS.get(origin) === entry
+            ) {
+                PHIMHDCS_FHDC_HTTP2_SESSIONS.delete(origin);
+            }
+        });
+
+        session.on("goaway", () => {
+            entry.draining = true;
+
+            if (
+                PHIMHDCS_FHDC_HTTP2_SESSIONS.get(origin) === entry
+            ) {
+                PHIMHDCS_FHDC_HTTP2_SESSIONS.delete(origin);
+            }
+
+            if (entry.active === 0) {
+                try {
+                    session.close();
+                } catch (_) {}
+            }
+        });
+
+        session.on("close", () => {
+            if (
+                PHIMHDCS_FHDC_HTTP2_SESSIONS.get(origin) === entry
+            ) {
+                PHIMHDCS_FHDC_HTTP2_SESSIONS.delete(origin);
+            }
+        });
+    }
+
+    if (entry.idleTimer) {
+        clearTimeout(entry.idleTimer);
+        entry.idleTimer = null;
+    }
+
+    entry.active++;
+
+    return entry;
+}
+
+function phimhdcsFhdcReleaseHttp2Session(
+    origin,
+    entry
+) {
+    entry.active = Math.max(
+        0,
+        entry.active - 1
+    );
+
+    if (entry.active !== 0) {
+        return;
+    }
+
+    if (
+        entry.draining ||
+        entry.session.destroyed ||
+        entry.session.closed
+    ) {
+        try {
+            entry.session.close();
+        } catch (_) {}
+
+        return;
+    }
+
+    entry.idleTimer = setTimeout(() => {
+        if (
+            entry.active === 0 &&
+            PHIMHDCS_FHDC_HTTP2_SESSIONS.get(origin) === entry
+        ) {
+            PHIMHDCS_FHDC_HTTP2_SESSIONS.delete(origin);
+
+            try {
+                entry.session.close();
+            } catch (_) {}
+        }
+    }, PHIMHDCS_FHDC_HTTP2_IDLE_TIMEOUT);
+
+    entry.idleTimer.unref?.();
+}
 
 // ============================================================
 // [FHDC-HTTP2-TEST] HTTP/2 GET WITH AXIOS FALLBACK
-// Chỉ áp dụng cho các request GET thuộc FHDC.
+// REUSABLE SESSION POOL
 // ============================================================
 
 async function phimhdcsFhdcHttp2Get(url, config = {}) {
@@ -38809,7 +38939,9 @@ async function phimhdcsFhdcHttp2Get(url, config = {}) {
         ":path": target.pathname + target.search
     };
 
-    for (const [name, value] of Object.entries(config.headers || {})) {
+    for (const [name, value] of Object.entries(
+        config.headers || {}
+    )) {
         const key = name.toLowerCase();
 
         if (
@@ -38828,43 +38960,60 @@ async function phimhdcsFhdcHttp2Get(url, config = {}) {
 
     try {
         const result = await new Promise((resolve, reject) => {
-            let session;
+            let entry;
             let request;
             let timer;
             let settled = false;
             let responseHeaders = {};
+
             const chunks = [];
 
             const finish = (error, value) => {
                 if (settled) return;
+
                 settled = true;
 
                 clearTimeout(timer);
 
-                try {
-                    if (error) {
-                        session?.destroy();
-                    } else {
-                        session?.close();
-                    }
-                } catch (_) {}
+                if (error) {
+                    try {
+                        request?.close(
+                            http2.constants.NGHTTP2_CANCEL
+                        );
+                    } catch (_) {}
+                }
 
-                if (error) reject(error);
-                else resolve(value);
+                if (entry) {
+                    phimhdcsFhdcReleaseHttp2Session(
+                        target.origin,
+                        entry
+                    );
+                }
+
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve(value);
+                }
             };
 
             try {
-                session = http2.connect(target.origin);
+                entry =
+                    phimhdcsFhdcGetHttp2Session(
+                        target.origin
+                    );
+
+                const session = entry.session;
 
                 timer = setTimeout(() => {
-                    finish(new Error("FHDC HTTP/2 timeout"));
+                    finish(
+                        new Error("FHDC HTTP/2 timeout")
+                    );
                 }, config.timeout || 15000);
 
-                session.once("error", error => {
-                    finish(error);
-                });
-
-                request = session.request(requestHeaders);
+                request = session.request(
+                    requestHeaders
+                );
 
                 request.on("response", headers => {
                     responseHeaders = headers || {};
@@ -38904,6 +39053,7 @@ async function phimhdcsFhdcHttp2Get(url, config = {}) {
             );
 
             redirectError.fallbackToAxios = true;
+
             throw redirectError;
         }
 
@@ -38929,7 +39079,11 @@ async function phimhdcsFhdcHttp2Get(url, config = {}) {
                 host: target.host,
                 status: result.status,
                 length: result.data.length,
-                elapsedMs: Date.now() - startedAt
+                elapsedMs: Date.now() - startedAt,
+                pooledSession:
+                    PHIMHDCS_FHDC_HTTP2_SESSIONS.has(
+                        target.origin
+                    )
             }
         );
 
