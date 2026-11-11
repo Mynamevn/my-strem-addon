@@ -54393,6 +54393,62 @@ console.log("[FHDC-DIAG-03] RESOURCE RESPONSE:", {
     signature: body.subarray(0, 16).toString("hex")
 });
 
+// [FHDC-DIAG-04] Inspect PNG/APNG segment structure.
+if (
+    body.length >= 24 &&
+    body.subarray(0, 8).equals(
+        Buffer.from([
+            0x89, 0x50, 0x4e, 0x47,
+            0x0d, 0x0a, 0x1a, 0x0a
+        ])
+    )
+) {
+    const pngChunks = [];
+    let offset = 8;
+    let frameCount = null;
+    let playCount = null;
+
+    while (
+        offset + 12 <= body.length &&
+        pngChunks.length < 30
+    ) {
+        const chunkLength = body.readUInt32BE(offset);
+        const chunkType = body.toString(
+            "ascii",
+            offset + 4,
+            offset + 8
+        );
+
+        if (
+            chunkLength > body.length ||
+            offset + 12 + chunkLength > body.length
+        ) {
+            break;
+        }
+
+        pngChunks.push(chunkType);
+
+        if (chunkType === "acTL" && chunkLength >= 8) {
+            frameCount = body.readUInt32BE(offset + 8);
+            playCount = body.readUInt32BE(offset + 12);
+        }
+
+        offset += chunkLength + 12;
+
+        if (chunkType === "IEND") break;
+    }
+
+    console.log("[FHDC-DIAG-04] PNG STRUCTURE:", {
+        width: body.readUInt32BE(16),
+        height: body.readUInt32BE(20),
+        chunks: pngChunks,
+        animated: pngChunks.includes("acTL"),
+        frameCount,
+        playCount,
+        totalBytes: body.length
+    });
+}
+
             const isPlaylist =
                 contentType.includes("mpegurl") ||
                 /\.m3u8(?:[?#]|$)/i.test(targetUrl.href) ||
