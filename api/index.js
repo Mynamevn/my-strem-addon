@@ -54428,101 +54428,147 @@ if (
 
         pngChunks.push(chunkType);
 
+
         if (chunkType === "iTXt") {
             const dataStart = offset + 8;
             const dataEnd = dataStart + chunkLength;
-
             let p = dataStart;
 
             const keywordEnd = body.indexOf(0, p);
-            if (keywordEnd < 0 || keywordEnd >= dataEnd) continue;
 
-            const keyword = body.toString("utf8", p, keywordEnd);
-            p = keywordEnd + 1;
+            if (keywordEnd >= 0 && keywordEnd < dataEnd) {
+                const keyword = body.toString(
+                    "utf8",
+                    p,
+                    keywordEnd
+                );
 
-            if (p + 2 > dataEnd) continue;
+                p = keywordEnd + 1;
 
-            const compressionFlag = body[p++];
-            const compressionMethod = body[p++];
+                if (p + 2 <= dataEnd) {
+                    const compressionFlag = body[p++];
+                    const compressionMethod = body[p++];
 
-            const languageEnd = body.indexOf(0, p);
-            if (languageEnd < 0 || languageEnd >= dataEnd) continue;
+                    const languageEnd = body.indexOf(0, p);
 
-            const language = body.toString("utf8", p, languageEnd);
-            p = languageEnd + 1;
-
-            const translatedEnd = body.indexOf(0, p);
-            if (translatedEnd < 0 || translatedEnd >= dataEnd) continue;
-
-            const translatedKeyword = body.toString(
-                "utf8",
-                p,
-                translatedEnd
-            );
-            p = translatedEnd + 1;
-
-            const payload = body.subarray(p, dataEnd);
-
-            if (keyword === "payload-0001") {
-                let decoded = null;
-                let decodeError = null;
-
-                try {
-                    decoded = require("zlib").inflateSync(payload);
-                } catch (err) {
-                    decodeError = err.message;
-                }
-
-                const signature = decoded
-                    ? decoded.subarray(0, 32).toString("hex")
-                    : null;
-
-                const asciiPreview = decoded
-                    ? decoded.subarray(0, 100).toString("latin1")
-                    : null;
-
-                let format = "UNKNOWN";
-
-                if (decoded) {
-                    if (decoded.subarray(4, 8).toString() === "ftyp") {
-                        format = "MP4";
-                    } else if (decoded.subarray(0, 4).toString() === "ftyp") {
-                        format = "MP4";
-                    } else if (decoded[0] === 0x47) {
-                        format = "MPEG-TS-POSSIBLE";
-                    } else if (
-                        decoded.subarray(0, 4).toString() === "OggS"
+                    if (
+                        languageEnd >= 0 &&
+                        languageEnd < dataEnd
                     ) {
-                        format = "OGG";
-                    } else if (
-                        decoded.subarray(0, 4).toString() === "RIFF"
-                    ) {
-                        format = "RIFF";
-                    } else if (
-                        decoded.subarray(0, 4).toString() === "fLaC"
-                    ) {
-                        format = "FLAC";
-                    } else if (
-                        decoded.subarray(0, 4).toString() === "\x1a\x45\xdf\xa3"
-                    ) {
-                        format = "WEBM-MKV";
-                    } else if (
-                        decoded.subarray(0, 3).toString() === "ID3"
-                    ) {
-                        format = "MP3";
+                        const language = body.toString(
+                            "utf8",
+                            p,
+                            languageEnd
+                        );
+
+                        p = languageEnd + 1;
+
+                        const translatedEnd = body.indexOf(0, p);
+
+                        if (
+                            translatedEnd >= 0 &&
+                            translatedEnd < dataEnd
+                        ) {
+                            const translatedKeyword = body.toString(
+                                "utf8",
+                                p,
+                                translatedEnd
+                            );
+
+                            p = translatedEnd + 1;
+
+                            const payload = body.subarray(
+                                p,
+                                dataEnd
+                            );
+
+                            if (keyword === "payload-0001") {
+                                let decoded = null;
+                                let decodeError = null;
+
+                                try {
+                                    if (
+                                        compressionFlag === 1 &&
+                                        compressionMethod === 0
+                                    ) {
+                                        decoded = require("zlib")
+                                            .inflateSync(payload);
+                                    } else {
+                                        decoded = payload;
+                                    }
+                                } catch (err) {
+                                    decodeError = err.message;
+                                }
+
+                                const signature = decoded
+                                    ? decoded.subarray(0, 32)
+                                        .toString("hex")
+                                    : null;
+
+                                const asciiPreview = decoded
+                                    ? decoded.subarray(0, 100)
+                                        .toString("latin1")
+                                    : null;
+
+                                let format = "UNKNOWN";
+
+                                if (decoded) {
+                                    if (
+                                        decoded.subarray(4, 8)
+                                            .toString() === "ftyp"
+                                    ) {
+                                        format = "MP4";
+                                    } else if (decoded[0] === 0x47) {
+                                        format = "MPEG-TS-POSSIBLE";
+                                    } else if (
+                                        decoded.subarray(0, 4)
+                                            .toString() === "OggS"
+                                    ) {
+                                        format = "OGG";
+                                    } else if (
+                                        decoded.subarray(0, 4)
+                                            .toString() === "RIFF"
+                                    ) {
+                                        format = "RIFF";
+                                    } else if (
+                                        decoded.subarray(0, 4)
+                                            .toString() === "fLaC"
+                                    ) {
+                                        format = "FLAC";
+                                    } else if (
+                                        decoded.subarray(0, 4)
+                                            .toString("hex") === "1a45dfa3"
+                                    ) {
+                                        format = "WEBM-MKV";
+                                    } else if (
+                                        decoded.subarray(0, 3)
+                                            .toString() === "ID3"
+                                    ) {
+                                        format = "MP3";
+                                    }
+                                }
+
+                                console.log(
+                                    "[FHDC-DIAG-06] DECOMPRESSED PAYLOAD:",
+                                    {
+                                        keyword,
+                                        compressionFlag,
+                                        compressionMethod,
+                                        compressedBytes: payload.length,
+                                        decompressedBytes:
+                                            decoded?.length || 0,
+                                        signature,
+                                        format,
+                                        asciiPreview,
+                                        decodeError
+                                    }
+                                );
+                            }
+                        }
                     }
                 }
-
-                console.log("[FHDC-DIAG-06] DECOMPRESSED PAYLOAD:", {
-                    keyword,
-                    compressedBytes: payload.length,
-                    decompressedBytes: decoded?.length || 0,
-                    signature,
-                    format,
-                    asciiPreview,
-                    decodeError
-                });
             }
+        }
 
         if (chunkType === "acTL" && chunkLength >= 8) {
             frameCount = body.readUInt32BE(offset + 8);
