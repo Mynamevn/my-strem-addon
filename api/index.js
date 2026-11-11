@@ -38782,6 +38782,19 @@ async function phimhdcsResolveFhdcManifest(
 
     const timeout = 15000;
 
+const fhdcResolverStartedAt = Date.now();
+
+const fhdcLogTiming = (stage, startedAt) => {
+    console.log(
+        "[FHDC-TIMING]",
+        JSON.stringify({
+            stage,
+            elapsedMs: Date.now() - startedAt,
+            totalMs: Date.now() - fhdcResolverStartedAt
+        })
+    );
+};
+
     const headers = referer => ({
         "User-Agent": userAgent,
         "Accept": "*/*",
@@ -38835,6 +38848,8 @@ async function phimhdcsResolveFhdcManifest(
         const parentReferer =
             parentPageUrl || initialUrl.origin + "/";
 
+const fhdcPlayerStartedAt = Date.now();
+
         const firstResponse = await axios.get(
             currentUrl,
             {
@@ -38850,6 +38865,11 @@ async function phimhdcsResolveFhdcManifest(
                     status >= 200 && status < 400
             }
         );
+
+    fhdcLogTiming(
+        "PLAYER PAGE",
+        fhdcPlayerStartedAt
+    );
 
         currentUrl =
             firstResponse.request?.res?.responseUrl ||
@@ -38893,6 +38913,8 @@ if (!currentHtml) {
 
             if (nextUrl.href === currentUrl) break;
 
+const fhdcIframeStartedAt = Date.now();
+
             const iframeResponse = await axios.get(
                 nextUrl.href,
                 {
@@ -38908,6 +38930,11 @@ if (!currentHtml) {
                         status >= 200 && status < 400
                 }
             );
+
+fhdcLogTiming(
+    "IFRAME DEPTH " + (depth + 1),
+    fhdcIframeStartedAt
+);
 
             currentUrl =
                 iframeResponse.request?.res?.responseUrl ||
@@ -39085,6 +39112,9 @@ if (!jobId) {
         let playGuard = "";
 
         try {
+
+const fhdcTokenStartedAt = Date.now();
+
             const tokenResponse = await axios.get(
                 baseUrl +
                     "/api/js-token?name=play_guard&jobId=" +
@@ -39095,6 +39125,11 @@ if (!jobId) {
                     maxRedirects: 5
                 }
             );
+
+fhdcLogTiming(
+    "JS TOKEN",
+    fhdcTokenStartedAt
+);
 
             const tokenData =
                 parseJson(tokenResponse.data);
@@ -39133,6 +39168,8 @@ if (!jobId) {
         // Smali: fetchFhdcManifest()
         // ----------------------------------------------------
 
+const fhdcMasterStartedAt = Date.now();
+
         const masterResponse = await axios.post(
             baseUrl + "/api/master-inline",
             {
@@ -39153,6 +39190,11 @@ if (!jobId) {
                 maxRedirects: 5
             }
         );
+
+fhdcLogTiming(
+    "MASTER INLINE",
+    fhdcMasterStartedAt
+);
 
         const masterData =
             parseJson(masterResponse.data);
@@ -39199,6 +39241,11 @@ if (!jobId) {
             }
         );
 
+fhdcLogTiming(
+    "RESOLVER TOTAL",
+    fhdcResolverStartedAt
+);
+
         return {
             success: true,
             manifest: manifestText,
@@ -39207,6 +39254,11 @@ if (!jobId) {
             key,
             delivery
         };
+
+fhdcLogTiming(
+    "RESOLVER FAILED",
+    fhdcResolverStartedAt
+);
 
     } catch (error) {
         console.error(
