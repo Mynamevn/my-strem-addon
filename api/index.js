@@ -33127,19 +33127,6 @@ const soraRecords = Array.isArray(payload?.records)
 
 // 2. Nếu trang hiện tại là SN, tải trang PA tương ứng.
 // Không được lấy epId hoặc embedUrl của SN để giả làm PA.
-console.info("[ONFLIX-DEBUG] BEFORE PA FETCH", {
-    inputType: typeof input,
-    inputIsString: typeof input === "string",
-    inputPreview: typeof input === "string" ? input.slice(0, 250) : null,
-    payloadKeys: payload && typeof payload === "object"
-        ? Object.keys(payload)
-        : [],
-    watchUrl: payload?.watchUrl || "",
-    detailUrl: payload?.detailUrl || "",
-    recordCount: Array.isArray(payload?.records)
-        ? payload.records.length
-        : 0
-});
 
 const currentWatchUrl = String(
     payload?.watchUrl ||
@@ -33172,16 +33159,6 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
                 .trim()
                 .toLowerCase() === "pa"
         );
-
-        // DEBUG: kiểm tra các bản ghi PA lấy được từ trang tập phim.
-        console.info("[ONFLIX] PA RECORD DEBUG", paOnly.map(record => ({
-            src: onflixSoraGetSource(record),
-            epId: onflixSoraGetEpisodeId(record),
-            name: record?.name || "",
-            slug: record?.slug || "",
-            embed: record?.link_embed || "",
-            m3u8: record?.link_m3u8 || ""
-        })));
 
         for (const record of paOnly) {
 
@@ -46004,62 +45981,6 @@ console.log(
       onflix.length
   );
 
-// =====================================================
-// DEBUG — STREAM THỰC TẾ SAU FETCH
-//
-// Đây là log quan trọng nhất lúc này.
-//
-// Không thay đổi stream.
-// Chỉ kiểm tra object thực tế mà
-// fetchAnimeHay() trả về cho pipeline.
-// =====================================================
-
-console.log(
-    "[ANIMEHAY] FINAL OBJECTS BEFORE MERGE:",
-    JSON.stringify(
-        Array.isArray(animehay)
-            ? animehay.map(
-                stream => ({
-                    name:
-                        stream?.name,
-
-                    title:
-                        stream?.title,
-
-                    url:
-                        stream?.url,
-
-                    externalUrl:
-                        stream?.externalUrl,
-
-                    type:
-                        stream?.type,
-
-                    quality:
-                        stream?.quality,
-
-                    referer:
-                        stream?.referer,
-
-                    headers:
-                        stream?.headers,
-
-                    resolver:
-                        stream?.resolver,
-
-                    resolverOptions:
-                        stream?.resolverOptions,
-
-                    behaviorHints:
-                        stream?.behaviorHints
-                })
-            )
-            : [],
-        null,
-        2
-    )
-);
-
 const directStreams = [
 
     ...nguonc,
@@ -46078,29 +45999,6 @@ const directStreams = [
     nguoncClientStream
 
 ];
-
-
-console.log(
-    "[DEBUG] DIRECT STREAM DETAILS:",
-    JSON.stringify(
-        directStreams.map(
-            (stream, index) => ({
-                index,
-                name: stream?.name,
-                title: stream?.title,
-                url: stream?.url,
-                ytId: stream?.ytId,
-                provider: stream?.provider,
-                source: stream?.source,
-                externalUrl: stream?.externalUrl,
-                behaviorHints: stream?.behaviorHints
-            })
-        ),
-        null,
-        2
-    )
-);
-
 
 // =====================================================
 // 12. FALLBACK CHUNG
@@ -50319,41 +50217,6 @@ app.get(
                 "→",
                 rewrittenText.length
             );
-
-
-            // -------------------------------------------------
-            // DEBUG FIRST LINES
-            // -------------------------------------------------
-
-            const outputLines =
-                rewrittenText
-                    .split("\n");
-
-
-            console.log(
-                "[VSMOV HLS PROXY] OUTPUT:",
-                outputLines
-                    .slice(
-                        0,
-                        14
-                    )
-                    .join("\n")
-            );
-
-
-            // -------------------------------------------------
-            // DEBUG LAST LINES
-            // -------------------------------------------------
-
-            console.log(
-                "[VSMOV HLS PROXY] OUTPUT TAIL:",
-                outputLines
-                    .slice(
-                        -6
-                    )
-                    .join("\n")
-            );
-
 
             // -------------------------------------------------
             // FINAL VALIDATION
