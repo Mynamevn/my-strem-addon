@@ -54307,6 +54307,20 @@ function phimhdcsFhdcRewritePlaylist(
 // MASTER PLAYLIST
 // ------------------------------------------------------------
 
+// ============================================================
+// FHDC MASTER PLAYLIST SHORT CACHE
+// Chỉ cache playlist thành công trong 8 giây.
+// ============================================================
+
+const PHIMHDCS_FHDC_MASTER_CACHE =
+    new Map();
+
+const PHIMHDCS_FHDC_MASTER_CACHE_TTL =
+    8000;
+
+const PHIMHDCS_FHDC_MASTER_CACHE_MAX =
+    100;
+
 app.get(
     "/phimhdcs/fhdc/master",
     async (req, res) => {
@@ -54322,6 +54336,59 @@ app.get(
                     "Missing FHDC player URL"
                 );
             }
+
+// ============================================================
+// FHDC MASTER CACHE HIT
+// ============================================================
+
+const masterCacheKey =
+    playerUrl + "\n" + parentUrl;
+
+const cachedMaster =
+    PHIMHDCS_FHDC_MASTER_CACHE.get(
+        masterCacheKey
+    );
+
+if (
+    cachedMaster &&
+    cachedMaster.expiresAt > Date.now()
+) {
+
+    console.log(
+        "[PHIMHDCS][FHDC] MASTER CACHE HIT"
+    );
+
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.apple.mpegurl"
+    );
+
+    res.setHeader(
+        "Cache-Control",
+        "no-store"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Origin",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Headers",
+        "*"
+    );
+
+    return res
+        .status(200)
+        .send(cachedMaster.body);
+
+}
+
+if (cachedMaster) {
+    PHIMHDCS_FHDC_MASTER_CACHE.delete(
+        masterCacheKey
+    );
+}
 
             console.log(
                 "[PHIMHDCS][FHDC PROXY] MASTER REQUEST:",
@@ -54372,6 +54439,37 @@ const rewritten =
         result.baseUrl,
         result.referer
     );
+
+// ============================================================
+// SAVE SUCCESSFUL FHDC MASTER
+// ============================================================
+
+if (
+    PHIMHDCS_FHDC_MASTER_CACHE.size >=
+    PHIMHDCS_FHDC_MASTER_CACHE_MAX
+) {
+
+    const oldestKey =
+        PHIMHDCS_FHDC_MASTER_CACHE.keys()
+            .next().value;
+
+    if (oldestKey) {
+        PHIMHDCS_FHDC_MASTER_CACHE.delete(
+            oldestKey
+        );
+    }
+
+}
+
+PHIMHDCS_FHDC_MASTER_CACHE.set(
+    masterCacheKey,
+    {
+        body: rewritten,
+        expiresAt:
+            Date.now() +
+            PHIMHDCS_FHDC_MASTER_CACHE_TTL
+    }
+);
 
             res.setHeader(
                 "Content-Type",
