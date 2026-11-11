@@ -38308,7 +38308,7 @@ async function phimhdcsResolveHdcPlayer(
                 innerFrameUrl
             );
 
-            const iframeResponse = await axios.get(
+           const iframeResponse = await phimhdcsFhdcHttp2Get(
                 innerFrameUrl,
                 {
                     headers: {
@@ -38778,6 +38778,202 @@ if (!resolvedUrl) {
 
 
 // ============================================================
+// [FHDC-HTTP2-TEST] HTTP/2 GET WITH AXIOS FALLBACK
+// Chỉ áp dụng cho các request GET thuộc FHDC.
+// ============================================================
+
+async function phimhdcsFhdcHttp2Get(url, config = {}) {
+    const target = new URL(url);
+    const startedAt = Date.now();
+
+    if (
+        target.protocol !== "https:" ||
+        !/phimhdc\./i.test(target.hostname)
+    ) {
+        return axios.get(url, config);
+    }
+
+    const blockedHeaders = new Set([
+        "connection",
+        "host",
+        "keep-alive",
+        "proxy-connection",
+        "transfer-encoding",
+        "upgrade"
+    ]);
+
+    const requestHeaders = {
+        ":method": "GET",
+        ":scheme": "https",
+        ":authority": target.host,
+        ":path": target.pathname + target.search
+    };
+
+    for (const [name, value] of Object.entries(config.headers || {})) {
+        const key = name.toLowerCase();
+
+        if (
+            key.startsWith(":") ||
+            blockedHeaders.has(key) ||
+            value === undefined ||
+            value === null
+        ) {
+            continue;
+        }
+
+        requestHeaders[key] = Array.isArray(value)
+            ? value.join(", ")
+            : String(value);
+    }
+
+    try {
+        const result = await new Promise((resolve, reject) => {
+            let session;
+            let request;
+            let timer;
+            let settled = false;
+            let responseHeaders = {};
+            const chunks = [];
+
+            const finish = (error, value) => {
+                if (settled) return;
+                settled = true;
+
+                clearTimeout(timer);
+
+                try {
+                    if (error) {
+                        session?.destroy();
+                    } else {
+                        session?.close();
+                    }
+                } catch (_) {}
+
+                if (error) reject(error);
+                else resolve(value);
+            };
+
+            try {
+                session = http2.connect(target.origin);
+
+                timer = setTimeout(() => {
+                    finish(new Error("FHDC HTTP/2 timeout"));
+                }, config.timeout || 15000);
+
+                session.once("error", error => {
+                    finish(error);
+                });
+
+                request = session.request(requestHeaders);
+
+                request.on("response", headers => {
+                    responseHeaders = headers || {};
+                });
+
+                request.on("data", chunk => {
+                    chunks.push(Buffer.from(chunk));
+                });
+
+                request.once("end", () => {
+                    finish(null, {
+                        status: Number(
+                            responseHeaders[":status"] || 0
+                        ),
+                        headers: responseHeaders,
+                        data: Buffer.concat(chunks).toString("utf8")
+                    });
+                });
+
+                request.once("error", error => {
+                    finish(error);
+                });
+
+                request.end();
+
+            } catch (error) {
+                finish(error);
+            }
+        });
+
+        if (
+            result.status >= 300 &&
+            result.status < 400
+        ) {
+            const redirectError = new Error(
+                "FHDC HTTP/2 redirect; use Axios"
+            );
+
+            redirectError.fallbackToAxios = true;
+            throw redirectError;
+        }
+
+        if (
+            result.status < 200 ||
+            result.status >= 400
+        ) {
+            const statusError = new Error(
+                "FHDC HTTP/2 HTTP " + result.status
+            );
+
+            statusError.response = {
+                status: result.status,
+                data: result.data
+            };
+
+            throw statusError;
+        }
+
+        console.log(
+            "[FHDC-HTTP2] SUCCESS:",
+            {
+                host: target.host,
+                status: result.status,
+                length: result.data.length,
+                elapsedMs: Date.now() - startedAt
+            }
+        );
+
+        return {
+            data: result.data,
+            status: result.status,
+            headers: result.headers,
+            config: {
+                ...config,
+                url
+            },
+            request: {
+                res: {
+                    responseUrl: target.href
+                }
+            }
+        };
+
+    } catch (error) {
+        if (
+            error.response &&
+            !error.fallbackToAxios
+        ) {
+            throw error;
+        }
+
+        console.warn(
+            "[FHDC-HTTP2] FALLBACK AXIOS:",
+            {
+                host: target.host,
+                reason: error.message
+            }
+        );
+
+        return axios.get(url, {
+            ...config,
+            httpsAgent:
+                config.httpsAgent ||
+                PHIMHDCS_FHDC_HTTPS_AGENT
+        });
+    }
+}
+
+// ============================================================
 // [PHIMHDCS-FHDC-002] FHDC TIKTOK MANIFEST RESOLVER
 // Port processFhdcAndTiktok() + fetchFhdcManifest() từ Smali.
 // ============================================================
@@ -38862,7 +39058,7 @@ const fhdcLogTiming = (stage, startedAt) => {
 
 const fhdcPlayerStartedAt = Date.now();
 
-        const firstResponse = await axios.get(
+        const firstResponse = await phimhdcsFhdcHttp2Get(
             currentUrl,
             {
                 headers: {
