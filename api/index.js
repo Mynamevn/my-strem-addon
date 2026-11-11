@@ -30,8 +30,19 @@ const cheerio = require('cheerio');
 const { waitUntil } = require('@vercel/functions');
 
 const crypto = require('crypto');
+
 const http2 = require('http2');
+const https = require('https');
 const express = require('express');
+
+// [FHDC] Dedicated HTTPS keep-alive connection pool.
+const PHIMHDCS_FHDC_HTTPS_AGENT = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 1000,
+    maxSockets: 16,
+    maxFreeSockets: 8,
+    timeout: 60000
+});
 
 // =========================================================================
 // [MỚI CHÈN] - CÁC HÀM TIỆN ÍCH BYPASS ANIMESUB (MIỄN PHÍ)
@@ -33116,19 +33127,6 @@ const soraRecords = Array.isArray(payload?.records)
 
 // 2. Nếu trang hiện tại là SN, tải trang PA tương ứng.
 // Không được lấy epId hoặc embedUrl của SN để giả làm PA.
-console.info("[ONFLIX-DEBUG] BEFORE PA FETCH", {
-    inputType: typeof input,
-    inputIsString: typeof input === "string",
-    inputPreview: typeof input === "string" ? input.slice(0, 250) : null,
-    payloadKeys: payload && typeof payload === "object"
-        ? Object.keys(payload)
-        : [],
-    watchUrl: payload?.watchUrl || "",
-    detailUrl: payload?.detailUrl || "",
-    recordCount: Array.isArray(payload?.records)
-        ? payload.records.length
-        : 0
-});
 
 const currentWatchUrl = String(
     payload?.watchUrl ||
@@ -33161,16 +33159,6 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
                 .trim()
                 .toLowerCase() === "pa"
         );
-
-        // DEBUG: kiểm tra các bản ghi PA lấy được từ trang tập phim.
-        console.info("[ONFLIX] PA RECORD DEBUG", paOnly.map(record => ({
-            src: onflixSoraGetSource(record),
-            epId: onflixSoraGetEpisodeId(record),
-            name: record?.name || "",
-            slug: record?.slug || "",
-            embed: record?.link_embed || "",
-            m3u8: record?.link_m3u8 || ""
-        })));
 
         for (const record of paOnly) {
 
@@ -38166,6 +38154,11 @@ return finalStreams;
 // Resolve play.streamxemphimhd.site/m3/ through the original HDC guard flow.
 // This helper does not modify existing direct M3U8/MP4 or other providers.
 
+// [PHIMHDCS] HDC M3 PLAYER HTTP RESOLVER
+// Port luồng resolveInnerIframe -> processHdcApi từ CloudStream.
+// Chỉ xử lý HDC player URL; không can thiệp direct M3U8/MP4,
+// FHDC, NC, StreamC hoặc các provider khác.
+
 async function phimhdcsResolveHdcPlayer(
     playerUrl,
     parentPageUrl
@@ -38174,13 +38167,36 @@ async function phimhdcsResolveHdcPlayer(
 
     const userAgent =
         "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+        "(KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36";
 
-    const baseHeaders = {
-        "User-Agent": userAgent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": parentPageUrl || playerUrl
+    const timeout = 15000;
+
+    const parseJson = value => {
+        if (typeof value !== "string") return value;
+
+        try {
+            return JSON.parse(value);
+        } catch (_) {
+            return value;
+        }
+    };
+
+    const cleanUrl = value => {
+        let result = String(value || "")
+            .replace(/\\u0026/gi, "&")
+            .replace(/\\u003d/gi, "=")
+            .replace(/\\\//g, "/")
+            .replace(/&amp;/gi, "&")
+            .trim();
+
+        if (
+            result.startsWith("'") ||
+            result.startsWith('"')
+        ) {
+            result = result.slice(1, -1);
+        }
+
+        return result;
     };
 
     try {
@@ -38191,79 +38207,189 @@ async function phimhdcsResolveHdcPlayer(
             throw new Error("Missing HDC player URL");
         }
 
-        const parsedPlayerUrl = new URL(playerUrl);
-        const playerOrigin = parsedPlayerUrl.origin;
+        const initialUrl = new URL(playerUrl).href;
+        const parentUrl = parentPageUrl || initialUrl;
 
-        // 1. Load the actual /m3/ player page.
-        const pageResponse = await axios.get(playerUrl, {
-            headers: baseHeaders,
-            timeout: 15000,
+        // -------------------------------------------------
+        // 1. TẢI PLAYER /m3/
+        // -------------------------------------------------
+
+        const initialResponse = await axios.get(initialUrl, {
+            headers: {
+                "User-Agent": userAgent,
+                "Accept":
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "vi-VN,vi;q=0.9",
+                "Referer": parentUrl
+            },
+            timeout,
             maxRedirects: 8,
             responseType: "text",
-            validateStatus: status => status >= 200 && status < 400
+            validateStatus: status =>
+                status >= 200 && status < 400
         });
 
-        const html = String(pageResponse.data || "");
+        let currentUrl =
+            initialResponse.request?.res?.responseUrl ||
+            initialResponse.config?.url ||
+            initialUrl;
 
-        if (!html) {
-            throw new Error("Empty HDC player page");
+        let currentHtml =
+            String(initialResponse.data || "");
+
+        if (!currentHtml) {
+            throw new Error("Empty initial HDC player page");
         }
 
-        // 2. Extract the 32-character video hash.
-        let videoHash = "";
-
-        const hashPatterns = [
-            /\/(?:video|embed|hls)\/([a-f0-9]{32})/i,
-            /(?:hash|data)\s*[:=]\s*["']([a-f0-9]{32})["']/i,
-            /(?:hash|video_id|videoId)\s*[:=]\s*["']([a-f0-9]{32})["']/i
-        ];
-
-        for (const pattern of hashPatterns) {
-            const match = html.match(pattern);
-
-            if (match && match[1]) {
-                videoHash = match[1];
-                break;
+        console.log(
+            logPrefix,
+            "INITIAL PAGE:",
+            {
+                status: initialResponse.status,
+                length: currentHtml.length,
+                url: currentUrl
             }
+        );
+
+        // -------------------------------------------------
+        // 2. RESOLVE INNER IFRAME
+        // Tương ứng resolveInnerIframe() trong Smali.
+        // -------------------------------------------------
+
+        let innerFrameUrl = "";
+
+        try {
+            const $ = cheerio.load(currentHtml);
+
+            const iframeSrc =
+                $("iframe[src]").first().attr("src") || "";
+
+            if (iframeSrc) {
+                innerFrameUrl = new URL(
+                    iframeSrc,
+                    currentUrl
+                ).href;
+            }
+        } catch (iframeParseError) {
+            console.log(
+                logPrefix,
+                "IFRAME PARSE ERROR:",
+                iframeParseError.message
+            );
         }
 
-        if (!videoHash) {
-            const urlHashMatch = playerUrl.match(
-                /\/(?:video|embed|hls)\/([a-f0-9]{32})/i
+        if (innerFrameUrl) {
+            console.log(
+                logPrefix,
+                "INNER IFRAME FOUND:",
+                innerFrameUrl
             );
 
-            if (urlHashMatch) {
-                videoHash = urlHashMatch[1];
+            const iframeResponse = await axios.get(
+                innerFrameUrl,
+                {
+                    headers: {
+                        "User-Agent": userAgent,
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "vi-VN,vi;q=0.9",
+                        "Referer": currentUrl
+                    },
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                    timeout,
+                    maxRedirects: 8,
+                    responseType: "text",
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            currentUrl =
+                iframeResponse.request?.res?.responseUrl ||
+                iframeResponse.config?.url ||
+                innerFrameUrl;
+
+            currentHtml =
+                String(iframeResponse.data || "");
+
+            if (!currentHtml) {
+                throw new Error("Empty inner iframe page");
             }
+
+            console.log(
+                logPrefix,
+                "INNER IFRAME LOADED:",
+                {
+                    status: iframeResponse.status,
+                    length: currentHtml.length,
+                    url: currentUrl
+                }
+            );
+        } else {
+            console.log(
+                logPrefix,
+                "NO INNER IFRAME - USE INITIAL PLAYER PAGE"
+            );
         }
+
+        // -------------------------------------------------
+        // 3. EXTRACT VIDEO HASH
+        // Ưu tiên URL iframe cuối, sau đó mới đến HTML.
+        // -------------------------------------------------
+
+        const hashUrlMatch = currentUrl.match(
+            /\/(?:video|embed|hls)\/([a-f0-9]{32})(?:[/?#]|$)/i
+        );
+
+        const hashHtmlMatch = currentHtml.match(
+            /(?:hash|data)\s*[:=]\s*['"]([a-f0-9]{32})['"]/i
+        );
+
+        const videoHash =
+            hashUrlMatch?.[1] ||
+            hashHtmlMatch?.[1] ||
+            "";
 
         if (!videoHash) {
-            throw new Error("Cannot extract 32-character HDC video hash");
+            throw new Error(
+                "Cannot find HDC hash after resolving inner iframe"
+            );
         }
 
-        // 3. Discover the API host from the player HTML.
-        let apiDomain = playerOrigin;
+        // -------------------------------------------------
+        // 4. DISCOVER API DOMAIN
+        // -------------------------------------------------
 
-        const apiMatch = html.match(
+        const apiMatch = currentHtml.match(
             /(https?:\/\/[^/"'\s]+)\/player\/index\.php/i
         );
 
-        if (apiMatch && apiMatch[1]) {
-            apiDomain = apiMatch[1].replace(/\/+$/, "");
-        }
+        const currentOrigin =
+            new URL(currentUrl).origin;
 
-        const apiHost = new URL(apiDomain).host;
+        const apiDomain = (
+            apiMatch?.[1] ||
+            currentOrigin
+        ).replace(/\/+$/, "");
+
+        const apiHost =
+            new URL(apiDomain).host;
 
         console.log(
             logPrefix,
             "PLAYER IDENTIFIED:",
-            JSON.stringify({
-                hashFound: true,
-                apiHost: apiHost
-            })
+            {
+                hash: videoHash,
+                apiDomain,
+                iframeUrl: currentUrl
+            }
         );
 
-        // 4. Build X-FP-Runtime using the six fields used by the original app.
+        // -------------------------------------------------
+        // 5. BUILD X-FP-RUNTIME
+        // Theo sáu trường trong hdcFpRuntime() của Smali.
+        // -------------------------------------------------
+
         const monotonicMs = Number(
             process.hrtime.bigint() / 1000000n
         ) % 100000;
@@ -38281,14 +38407,27 @@ async function phimhdcsResolveHdcPlayer(
             .from(fpRuntimeRaw, "utf8")
             .toString("base64");
 
+        // -------------------------------------------------
+        // 6. EXACT XHR HEADERS
+        // -------------------------------------------------
+
         const xhrHeaders = {
-            ...baseHeaders,
-            "Origin": apiDomain,
+            "User-Agent": userAgent,
+            "Accept":
+                "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "vi-VN,vi;q=0.9",
             "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+            "Origin": apiDomain,
+            "Referer": currentUrl,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin"
         };
 
-        // 5. Acquire the HDC guard token.
+        // -------------------------------------------------
+        // 7. ACQUIRE GUARD TOKEN
+        // -------------------------------------------------
+
         let guardToken = "";
 
         try {
@@ -38304,22 +38443,17 @@ async function phimhdcsResolveHdcPlayer(
                 {
                     headers: {
                         ...xhrHeaders,
+                        "Content-Type":
+                            "application/x-www-form-urlencoded; charset=UTF-8",
                         "X-FP-Runtime": fpRuntime
                     },
-                    timeout: 12000,
+                    timeout,
                     maxRedirects: 5
                 }
             );
 
-            let guardData = guardResponse.data;
-
-            if (typeof guardData === "string") {
-                try {
-                    guardData = JSON.parse(guardData);
-                } catch (_) {
-                    guardData = {};
-                }
-            }
+            const guardData =
+                parseJson(guardResponse.data);
 
             guardToken =
                 guardData?.token ||
@@ -38330,21 +38464,27 @@ async function phimhdcsResolveHdcPlayer(
             console.log(
                 logPrefix,
                 "GUARD RESULT:",
-                guardToken ? "TOKEN RECEIVED" : "NO TOKEN"
+                guardToken
+                    ? "TOKEN RECEIVED"
+                    : "NO TOKEN"
             );
 
         } catch (guardError) {
             console.log(
                 logPrefix,
                 "GUARD REQUEST FAILED:",
-                guardError.response?.status || guardError.message
+                guardError.response?.status ||
+                guardError.message
             );
         }
 
-        // 6. Call the original getVideo endpoint.
+        // -------------------------------------------------
+        // 8. CALL getVideo
+        // -------------------------------------------------
+
         const videoBody = new URLSearchParams({
             hash: videoHash,
-            r: parentPageUrl || playerUrl,
+            r: parentUrl,
             fp_guard: guardToken
         }).toString();
 
@@ -38357,6 +38497,8 @@ async function phimhdcsResolveHdcPlayer(
             {
                 headers: {
                     ...xhrHeaders,
+                    "Content-Type":
+                        "application/x-www-form-urlencoded; charset=UTF-8",
                     ...(guardToken
                         ? { "X-FP-Guard": guardToken }
                         : {})
@@ -38366,168 +38508,718 @@ async function phimhdcsResolveHdcPlayer(
             }
         );
 
-        let videoData = videoResponse.data;
+        const videoData =
+            parseJson(videoResponse.data);
 
-        if (typeof videoData === "string") {
-            try {
-                videoData = JSON.parse(videoData);
-            } catch (_) {
-                // Some versions may return a plain URL or HTML.
-            }
-        }
-
-        function findHdcVideoUrl(value, depth = 0) {
-            if (depth > 5 || value == null) {
-                return "";
-            }
-
-            if (typeof value === "string") {
-                const trimmed = value.trim();
-
-                if (/^https?:\/\//i.test(trimmed)) {
-                    return trimmed;
-                }
-
-                if (
-                    trimmed.startsWith("{") ||
-                    trimmed.startsWith("[")
-                ) {
-                    try {
-                        return findHdcVideoUrl(
-                            JSON.parse(trimmed),
-                            depth + 1
-                        );
-                    } catch (_) {}
-                }
-
-                return "";
-            }
-
-            if (Array.isArray(value)) {
-                for (const item of value) {
-                    const found = findHdcVideoUrl(item, depth + 1);
-
-                    if (found) return found;
-                }
-
-                return "";
-            }
-
-            if (typeof value === "object") {
-                const preferredKeys = [
-                    "videoSource",
-                    "securedLink",
-                    "video_source",
-                    "secured_link",
-                    "source",
-                    "url",
-                    "link"
-                ];
-
-                for (const key of preferredKeys) {
-                    if (value[key]) {
-                        const found = findHdcVideoUrl(
-                            value[key],
-                            depth + 1
-                        );
-
-                        if (found) return found;
-                    }
-                }
-
-                for (const key of Object.keys(value)) {
-                    const found = findHdcVideoUrl(
-                        value[key],
-                        depth + 1
-                    );
-
-                    if (found) return found;
-                }
-            }
-
-            return "";
-        }
-
-        let videoUrl = findHdcVideoUrl(videoData);
-
-        if (!videoUrl) {
+        if (
+            !videoData ||
+            typeof videoData !== "object"
+        ) {
             throw new Error(
-                "getVideo response contains no videoSource/securedLink"
+                "getVideo returned an invalid response"
             );
         }
 
-        // 7. Sign secured master URLs when the player returns one.
-        if (
-            /master/i.test(videoUrl) ||
-            /secured/i.test(videoUrl)
-        ) {
-            try {
-                const signBody = new URLSearchParams({
-                    id: videoHash,
-                    url: videoUrl
-                }).toString();
+        // Smali VideoResponse sử dụng hai trường này.
+        const videoSource = cleanUrl(
+            videoData.videoSource ||
+            videoData.video_source ||
+            ""
+        );
 
-                const signResponse = await axios.post(
-                    apiDomain + "/player/master_sign.php",
-                    signBody,
-                    {
-                        headers: {
-                            ...xhrHeaders,
-                            "User-Agent": userAgent
-                        },
-                        timeout: 15000,
-                        maxRedirects: 5
-                    }
-                );
+        const securedLink = cleanUrl(
+            videoData.securedLink ||
+            videoData.secured_link ||
+            ""
+        );
 
-                const signedUrl = findHdcVideoUrl(
-                    signResponse.data
-                );
+        const candidates = [
+            videoSource,
+            securedLink
+        ].filter((url, index, list) =>
+            /^https?:\/\//i.test(url) &&
+            list.indexOf(url) === index
+        );
 
-                if (signedUrl) {
-                    videoUrl = signedUrl;
-                }
+        if (!candidates.length) {
+            console.log(
+                logPrefix,
+                "GETVIDEO RESPONSE:",
+                JSON.stringify(videoData).slice(0, 1500)
+            );
 
-            } catch (signError) {
-                console.log(
-                    logPrefix,
-                    "MASTER SIGN FAILED:",
-                    signError.response?.status || signError.message
-                );
-            }
-        }
-
-        // Validate the returned URL before handing it to the next resolver stage.
-        const resolvedUrl = new URL(videoUrl);
-
-        if (!/^https?:$/.test(resolvedUrl.protocol)) {
-            throw new Error("HDC returned an unsupported URL protocol");
+            throw new Error(
+                "getVideo has no videoSource or securedLink"
+            );
         }
 
         console.log(
             logPrefix,
-            "VIDEO URL RECEIVED:",
-            resolvedUrl.pathname
+            "VIDEO SOURCES:",
+            {
+                videoSource: Boolean(videoSource),
+                securedLink: Boolean(securedLink),
+                count: candidates.length
+            }
+        );
+
+        // -------------------------------------------------
+// 9. SIGN + VERIFY HDC MASTER PLAYLIST
+// Chỉ chấp nhận URL thực sự trả về nội dung HLS.
+// -------------------------------------------------
+
+let resolvedUrl = "";
+
+for (const candidate of candidates) {
+    let targetUrl = candidate;
+
+    const needsSigning =
+        candidate === securedLink ||
+        /master|secured/i.test(candidate);
+
+    if (needsSigning) {
+        try {
+            const signBody = new URLSearchParams({
+                id: videoHash,
+                url: candidate
+            }).toString();
+
+            const signResponse = await axios.post(
+                apiDomain + "/player/master_sign.php",
+                signBody,
+                {
+                    headers: {
+                        ...xhrHeaders,
+                        "User-Agent": userAgent,
+                        "Content-Type":
+                            "application/x-www-form-urlencoded; charset=UTF-8"
+                    },
+                    timeout,
+                    maxRedirects: 5
+                }
+            );
+
+            const signData =
+                parseJson(signResponse.data);
+
+            const signedUrl = cleanUrl(
+                typeof signData === "string"
+                    ? signData
+                    : (
+                        signData?.url ||
+                        signData?.data?.url ||
+                        ""
+                    )
+            );
+
+            if (/^https?:\/\//i.test(signedUrl)) {
+                targetUrl = signedUrl;
+            }
+
+        } catch (signError) {
+            console.log(
+                logPrefix,
+                "MASTER SIGN FAILED:",
+                signError.response?.status ||
+                signError.message
+            );
+        }
+    }
+
+    try {
+        const parsedTarget = new URL(targetUrl);
+
+        if (
+            parsedTarget.protocol !== "https:" &&
+            parsedTarget.protocol !== "http:"
+        ) {
+            continue;
+        }
+
+        const playlistResponse = await axios.get(
+            parsedTarget.href,
+            {
+                headers: {
+                    "User-Agent": userAgent,
+                    "Accept": "*/*",
+                    "Referer": currentUrl,
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-origin"
+                },
+                timeout,
+                maxRedirects: 5,
+                responseType: "text",
+                transformResponse: [
+                    data => data
+                ],
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        const playlistText =
+            String(playlistResponse.data || "")
+                .replace(/^\uFEFF/, "")
+                .trim();
+
+        const finalPlaylistUrl =
+            playlistResponse.request?.res?.responseUrl ||
+            parsedTarget.href;
+
+        if (!playlistText.startsWith("#EXTM3U")) {
+            console.warn(
+                logPrefix,
+                "INVALID MASTER PLAYLIST:",
+                {
+                    host: parsedTarget.host,
+                    status: playlistResponse.status,
+                    length: playlistText.length,
+                    preview: playlistText.slice(0, 120)
+                }
+            );
+
+            continue;
+        }
+
+        resolvedUrl = finalPlaylistUrl;
+
+        console.log(
+            logPrefix,
+            "MASTER PLAYLIST VERIFIED:",
+            {
+                host: new URL(resolvedUrl).host,
+                length: playlistText.length,
+                hasVariants:
+                    /#EXT-X-STREAM-INF/i.test(playlistText),
+                hasSegments:
+                    /#EXTINF/i.test(playlistText)
+            }
+        );
+
+        break;
+
+    } catch (verifyError) {
+        console.warn(
+            logPrefix,
+            "MASTER PLAYLIST VERIFY FAILED:",
+            {
+                candidate: targetUrl,
+                status: verifyError.response?.status || 0,
+                error: verifyError.message
+            }
+        );
+    }
+}
+
+if (!resolvedUrl) {
+    throw new Error(
+        "HDC returned no valid #EXTM3U master playlist"
+    );
+}
+
+        console.log(
+            logPrefix,
+            "RESOLVE SUCCESS:",
+            {
+                hash: videoHash,
+                host: new URL(resolvedUrl).host,
+                path: new URL(resolvedUrl).pathname
+            }
         );
 
         return {
             success: true,
-            url: resolvedUrl.href,
+            url: resolvedUrl,
             hash: videoHash,
-            apiDomain: apiDomain,
-            referer: playerUrl
+            apiDomain,
+            referer: currentUrl
         };
 
     } catch (error) {
         console.log(
             logPrefix,
             "RESOLVE FAILED:",
-            error.response?.status || error.message
+            error.response?.status ||
+            error.message
         );
 
         return {
             success: false,
-            error: error.message || "HDC player resolution failed"
+            error:
+                error.message ||
+                "HDC player resolution failed"
+        };
+    }
+}
+
+
+// ============================================================
+// [PHIMHDCS-FHDC-002] FHDC TIKTOK MANIFEST RESOLVER
+// Port processFhdcAndTiktok() + fetchFhdcManifest() từ Smali.
+// ============================================================
+
+async function phimhdcsResolveFhdcManifest(
+    playerUrl,
+    parentPageUrl = ""
+) {
+    const logPrefix = "[PHIMHDCS][FHDC]";
+
+    const userAgent =
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36";
+
+    const timeout = 15000;
+
+    const headers = referer => ({
+        "User-Agent": userAgent,
+        "Accept": "*/*",
+        "Accept-Language":
+            "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": referer,
+        "X-Requested-With": "XMLHttpRequest",
+        "Sec-CH-UA":
+            '"Chromium";v="148", "Not/A)Brand";v="99"',
+        "Sec-CH-UA-Mobile": "?1",
+        "Sec-CH-UA-Platform": '"Android"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Storage-Access": "none",
+        "DNT": "1",
+        "Sec-GPC": "1",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    });
+
+    const parseJson = value => {
+        if (typeof value !== "string") return value;
+
+        try {
+            return JSON.parse(value);
+        } catch (_) {
+            return null;
+        }
+    };
+
+    try {
+        const initialUrl = new URL(playerUrl);
+
+        if (
+            initialUrl.protocol !== "https:" ||
+            !/(?:^|\.)tiktok\.phimhdc\./i.test(
+                initialUrl.hostname
+            )
+        ) {
+            throw new Error("Invalid FHDC TikTok URL");
+        }
+
+        // ----------------------------------------------------
+        // 1. LOAD PLAYER PAGE
+        // ----------------------------------------------------
+
+        let currentUrl = initialUrl.href;
+        let currentHtml = "";
+
+        const parentReferer =
+            parentPageUrl || initialUrl.origin + "/";
+
+        const firstResponse = await axios.get(
+            currentUrl,
+            {
+                headers: {
+                    ...headers(parentReferer),
+                    "Accept":
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                },
+        httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                timeout,
+                maxRedirects: 8,
+                responseType: "text",
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        currentUrl =
+            firstResponse.request?.res?.responseUrl ||
+            firstResponse.config?.url ||
+            currentUrl;
+
+        currentHtml =
+    String(firstResponse.data || "");
+
+// Lưu HTML của trang đầu tiên để tìm jobId
+// kể cả khi jobId nằm ở trang cha.
+const pageHtmlCandidates = [currentHtml];
+
+if (!currentHtml) {
+            throw new Error("FHDC player page is empty");
+        }
+
+        // ----------------------------------------------------
+        // 2. RESOLVE INNER IFRAMES
+        // ----------------------------------------------------
+
+let earlyTokenPromise = null;
+let earlyTokenOrigin = "";
+
+        for (let depth = 0; depth < 3; depth++) {
+            const $ = cheerio.load(currentHtml);
+
+            const iframeSrc =
+                $("iframe[src]").first().attr("src") || "";
+
+            if (!iframeSrc) break;
+
+            const nextUrl = new URL(
+                iframeSrc,
+                currentUrl
+            );
+
+            if (
+                nextUrl.protocol !== "https:" ||
+                !/phimhdc\./i.test(nextUrl.hostname)
+            ) {
+                break;
+            }
+
+            if (nextUrl.href === currentUrl) break;
+
+// =====================================================
+// EARLY JS TOKEN PREFETCH
+// Chỉ chạy khi jobId đã có trong HTML hiện tại
+// và iframe cùng origin với trang cha.
+// =====================================================
+
+if (!earlyTokenPromise) {
+    const normalizedCurrentHtml =
+        String(currentHtml || "")
+            .replace(/\\"/g, '"')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#34;/gi, '"')
+            .replace(/\\u0022/gi, '"');
+
+    const earlyJobMatch =
+        normalizedCurrentHtml.match(
+            /"jobId"\s*:\s*"([a-f0-9-]{36})"/i
+        );
+
+    if (
+        earlyJobMatch?.[1] &&
+        nextUrl.origin === new URL(currentUrl).origin
+    ) {
+        const earlyJobId = earlyJobMatch[1];
+
+        earlyTokenOrigin = nextUrl.origin;
+
+        earlyTokenPromise = axios.get(
+            earlyTokenOrigin +
+                "/api/js-token?name=play_guard&jobId=" +
+                encodeURIComponent(earlyJobId),
+            {
+                headers: headers(nextUrl.href),
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                timeout,
+                maxRedirects: 5
+            }
+        )
+        .then(response => {
+            const tokenData =
+                parseJson(response.data);
+
+            return (
+                tokenData?.token ||
+                tokenData?.data?.token ||
+                tokenData?.playGuard ||
+                ""
+            );
+        })
+        .catch(error => {
+            console.log(
+                logPrefix,
+                "EARLY JS TOKEN ERROR:",
+                error.response?.status ||
+                error.message
+            );
+
+            return "";
+        });
+    }
+}
+
+            const iframeResponse = await axios.get(
+                nextUrl.href,
+                {
+                    headers: {
+                        ...headers(currentUrl),
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    },
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                    timeout,
+                    maxRedirects: 8,
+                    responseType: "text",
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            currentUrl =
+                iframeResponse.request?.res?.responseUrl ||
+                iframeResponse.config?.url ||
+                nextUrl.href;
+
+            currentHtml =
+    String(iframeResponse.data || "");
+
+// Giữ lại HTML của từng tầng iframe.
+pageHtmlCandidates.push(currentHtml);
+
+if (!currentHtml) {
+                throw new Error("FHDC iframe page is empty");
+            }
+        }
+
+        const currentParsedUrl =
+            new URL(currentUrl);
+
+        if (
+            currentParsedUrl.protocol !== "https:" ||
+            !/phimhdc\./i.test(currentParsedUrl.hostname)
+        ) {
+            throw new Error("FHDC iframe host rejected");
+        }
+
+        // ----------------------------------------------------
+        // 3. EXTRACT KEY / DELIVERY / JOB ID
+        // ----------------------------------------------------
+
+        const key =
+            currentParsedUrl.searchParams.get("key") ||
+            (
+                currentUrl.match(
+                    /[?&]key=([a-zA-Z0-9-]+)/i
+                ) || []
+            )[1] ||
+            "";
+
+        const delivery =
+            currentParsedUrl.searchParams.get("delivery") ||
+            (
+                currentUrl.match(
+                    /[?&]delivery=([^&]+)/i
+                ) || []
+            )[1] ||
+            "direct";
+
+        // Tìm jobId ở tất cả các tầng HTML:
+// trang embed ban đầu và những iframe đã mở.
+let jobId = "";
+
+for (
+    let htmlIndex = pageHtmlCandidates.length - 1;
+    htmlIndex >= 0;
+    htmlIndex--
+) {
+    const normalizedHtml =
+        String(pageHtmlCandidates[htmlIndex] || "")
+            .replace(/\\"/g, '"')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#34;/gi, '"')
+            .replace(/\\u0022/gi, '"');
+
+    const jobMatch =
+        normalizedHtml.match(
+            /"jobId"\s*:\s*"([a-f0-9-]{36})"/i
+        );
+
+    if (jobMatch?.[1]) {
+        jobId = jobMatch[1];
+        break;
+    }
+}
+
+        if (!key) {
+            throw new Error("FHDC key not found");
+        }
+
+        if (!jobId) {
+            throw new Error("FHDC jobId not found");
+        }
+
+        // Token bootstrap dự phòng theo regex Smali.
+        const bootstrapMatch =
+            currentHtml.match(
+                /"token"\s*:\s*"(v1\.[0-9]+\.[a-f0-9]{24}\.[a-f0-9]{32}\.[a-f0-9]{64})"/i
+            );
+
+        const bootstrapToken =
+            bootstrapMatch?.[1] || "";
+
+        const baseUrl =
+            currentParsedUrl.origin;
+
+        // ----------------------------------------------------
+        // 4. GET PLAY GUARD TOKEN
+        // Smali: /api/js-token?name=play_guard&jobId=...
+        // ----------------------------------------------------
+
+let playGuard = "";
+
+// Ưu tiên token đã được lấy song song với iframe.
+if (
+    earlyTokenPromise &&
+    earlyTokenOrigin === baseUrl
+) {
+    playGuard = await earlyTokenPromise;
+
+}
+
+// Nếu không có token sớm hoặc token sớm không hợp lệ,
+// giữ nguyên request dự phòng như cơ chế cũ.
+if (!playGuard) {
+    try {
+
+        const tokenResponse = await axios.get(
+            baseUrl +
+                "/api/js-token?name=play_guard&jobId=" +
+                encodeURIComponent(jobId),
+            {
+                headers: headers(currentUrl),
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                timeout,
+                maxRedirects: 5
+            }
+        );
+
+        const tokenData =
+            parseJson(tokenResponse.data);
+
+        playGuard =
+            tokenData?.token ||
+            tokenData?.data?.token ||
+            tokenData?.playGuard ||
+            "";
+
+    } catch (tokenError) {
+        console.log(
+            logPrefix,
+            "JS TOKEN ERROR:",
+            tokenError.response?.status ||
+            tokenError.message
+        );
+    }
+}
+
+        if (!playGuard) {
+            playGuard = bootstrapToken;
+        }
+
+        if (!playGuard) {
+            throw new Error("FHDC playGuard token unavailable");
+        }
+
+        // ----------------------------------------------------
+        // 5. GENERATE PLAYBACK WINDOW UUID
+        // ----------------------------------------------------
+
+        const pw = crypto.randomUUID();
+
+        // ----------------------------------------------------
+        // 6. POST MASTER INLINE
+        // Smali: fetchFhdcManifest()
+        // ----------------------------------------------------
+
+        const masterResponse = await axios.post(
+            baseUrl + "/api/master-inline",
+            {
+                jobId,
+                delivery,
+                playGuard,
+                pw
+            },
+            {
+                headers: {
+                    ...headers(currentUrl),
+                    "Content-Type": "application/json",
+                    "Origin": baseUrl,
+                    "X-Play-Guard": playGuard,
+                    "X-Playback-Window": pw
+                },
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
+                timeout: 20000,
+                maxRedirects: 5
+            }
+        );
+
+        const masterData =
+            parseJson(masterResponse.data);
+
+        const manifest =
+            typeof masterData === "string"
+                ? masterData
+                : (
+                    masterData?.manifest ||
+                    masterData?.data?.manifest ||
+                    ""
+                );
+
+        const manifestText =
+            String(manifest || "")
+                .replace(/^\uFEFF/, "")
+                .trim();
+
+        if (!manifestText.startsWith("#EXTM3U")) {
+            console.log(
+                logPrefix,
+                "MASTER INLINE INVALID:",
+                {
+                    status: masterResponse.status,
+                    response:
+                        JSON.stringify(masterData).slice(0, 1000)
+                }
+            );
+
+            throw new Error(
+                "FHDC master-inline did not return #EXTM3U"
+            );
+        }
+
+        console.log(
+            logPrefix,
+            "MASTER INLINE SUCCESS:",
+            {
+                length: manifestText.length,
+                hasVariants:
+                    /#EXT-X-STREAM-INF/i.test(manifestText),
+                hasSegments:
+                    /#EXTINF/i.test(manifestText)
+            }
+        );
+
+        return {
+            success: true,
+            manifest: manifestText,
+            baseUrl,
+            referer: currentUrl,
+            key,
+            delivery
+        };
+
+    } catch (error) {
+        console.error(
+            logPrefix,
+            "RESOLVE FAILED:",
+            error.response?.status ||
+            error.message
+        );
+
+        return {
+            success: false,
+            error:
+                error.message ||
+                "FHDC resolver failed"
         };
     }
 }
@@ -40509,9 +41201,15 @@ console.log(
  // ====================================================
 
 const PHIMHDCS_V11_TIMEOUT = 6000;
+const PHIMHDCS_V11_TOTAL_BUDGET = 14000;
 
-const episodePageResults = await Promise.all(
-    selectedEpisodes.map(async (selected, index) => {
+const episodePageSettled =
+    new Array(selectedEpisodes.length);
+
+const episodePageTasks =
+    selectedEpisodes.map(
+        (selected, index) =>
+            (async () => {
 
         const episodeUrl =
             String(
@@ -40519,12 +41217,14 @@ const episodePageResults = await Promise.all(
             ).trim();
 
         const startedAt = Date.now();
+const deadlineAt =
+    startedAt + PHIMHDCS_V11_TOTAL_BUDGET;
 
-        const requestId =
-            "PHIMHDCS-V11-" +
-            startedAt +
-            "-" +
-            index;
+const requestId =
+    "PHIMHDCS-V11-" +
+    startedAt +
+    "-" +
+    index;
 
         if (!episodeUrl) {
             return {
@@ -40590,9 +41290,26 @@ const episodePageResults = await Promise.all(
         let winningPage = null;
         let lastError = null;
 
-        for (const candidateOrigin of candidateOrigins) {
+        
+for (const candidateOrigin of candidateOrigins) {
 
-            const requestUrl =
+    const remainingBudget =
+        deadlineAt - Date.now();
+
+    if (remainingBudget <= 0) {
+        console.warn(
+            "[PHIMHDCS V11] TOTAL TIME BUDGET EXHAUSTED:",
+            {
+                requestId,
+                server: selected.server,
+                elapsedMs: Date.now() - startedAt
+            }
+        );
+        break;
+    }
+
+    const requestUrl =
+
                 new URL(
                     originalUrl.pathname +
                     originalUrl.search +
@@ -40640,7 +41357,13 @@ const episodePageResults = await Promise.all(
                             },
 
                             timeout:
-                                PHIMHDCS_V11_TIMEOUT,
+    Math.max(
+        1,
+        Math.min(
+            PHIMHDCS_V11_TIMEOUT,
+            deadlineAt - Date.now()
+        )
+    ),
 
                             maxRedirects: 5,
 
@@ -40769,15 +41492,60 @@ const episodePageResults = await Promise.all(
                 elapsedMs:
                     Date.now() - startedAt
             }
-        );
-
-        return {
+        );        return {
             status: "rejected",
             reason:
                 lastError ||
                 new Error("All episode origins failed")
         };
-    })
+    })().then(
+        result => {
+            episodePageSettled[index] = result;
+            return result;
+        },
+        error => {
+            const result = {
+                status: "rejected",
+                reason: error
+            };
+
+            episodePageSettled[index] = result;
+            return result;
+        }
+    )
+);
+
+
+const episodePageWaitStartedAt = Date.now();
+
+// Mỗi request đã có deadline riêng tối đa 8 giây.
+// Chờ các request kết thúc để không bỏ mất trang tải chậm.
+const episodePageResults =
+    await Promise.all(episodePageTasks);
+
+console.log(
+    "[PHIMHDCS V11] EPISODE PAGE WAIT FINISHED:",
+    {
+        total: selectedEpisodes.length,
+
+        completed:
+            episodePageResults.length,
+
+        fulfilled:
+            episodePageResults.filter(
+                result =>
+                    result.status === "fulfilled"
+            ).length,
+
+        rejected:
+            episodePageResults.filter(
+                result =>
+                    result.status === "rejected"
+            ).length,
+
+        elapsedMs:
+            Date.now() - episodePageWaitStartedAt
+    }
 );
 
 console.log(
@@ -41486,19 +42254,21 @@ for (
 
         }
 
-        if (
-            cleanUrl.includes(
-                "tiktok"
-            )
-        ) {
+        // [PHIMHDCS-FHDC-001]
+        // Không loại URL TikTok của FHDC.
+        // Giữ URL để chuyển sang bước nhận diện FHDC.
 
+        const isFhdcTikTok =
+            /(?:^|[./])tiktok\.phimhdc\./i.test(
+                new URL(cleanUrl).hostname
+            ) ||
+            cleanUrl.includes("tiktok.phimhdc");
+
+        if (isFhdcTikTok) {
             console.log(
-                "[PHIMHDCS] SKIP TIKTOK:",
+                "[PHIMHDCS][FHDC] TIKTOK URL PRESERVED:",
                 cleanUrl
             );
-
-            continue;
-
         }
 
         seenServerUrls.add(
@@ -41507,11 +42277,12 @@ for (
        
 
 
+
 // [PHIMHDCS] CLASSIFY HDC PLAYER URL
-// Nhận diện đầy đủ các đường dẫn player của hệ thống HDC.
-// Không phân loại nhầm M3U8 / MP4 direct thành player page.
+// Nhận diện riêng HDC và FHDC TikTok.
 
 let isHdcPlayer = false;
+let isFhdcTikTokServer = false;
 
 try {
     const parsedServerUrl = new URL(cleanUrl);
@@ -41532,14 +42303,15 @@ try {
         );
 
     const isDirectFile =
-        /\.(?:m3u8|mp4)(?:$|\/)/i.test(
-            serverPath
-        );
+        /\.(?:m3u8|mp4)(?:$|\/)/i.test(serverPath);
 
     isHdcPlayer =
         isHdcHost &&
         isHdcPlayerPath &&
         !isDirectFile;
+
+    isFhdcTikTokServer =
+        /(?:^|\.)tiktok\.phimhdc\./i.test(serverHost);
 
 } catch (serverUrlError) {
     console.log(
@@ -41553,21 +42325,23 @@ const isDirect =
 
 decodedServers.push({
     url: cleanUrl,
-    isDirect: isDirect,
-    isHdcPlayer: isHdcPlayer
+    isDirect,
+    isHdcPlayer,
+    isFhdcTikTok: isFhdcTikTokServer
 });
-
 
 console.log(
     "[PHIMHDCS] SERVER CLASSIFICATION:",
     {
         server: data?.server,
         url: cleanUrl,
-        type: isHdcPlayer
-            ? "HDC_PLAYER"
-            : isDirect
-                ? "DIRECT"
-                : "EMBED"
+        type: isFhdcTikTokServer
+            ? "FHDC_TIKTOK"
+            : isHdcPlayer
+                ? "HDC_PLAYER"
+                : isDirect
+                    ? "DIRECT"
+                    : "EMBED"
     }
 );
 
@@ -41618,7 +42392,49 @@ console.log(
                 "PhimHDCS"
             ).trim();
 
-        if (server.isHdcPlayer) {
+        
+if (server.isFhdcTikTok) {
+
+    const fhdcPlayerUrl =
+        "https://my-strem-addon.vercel.app/phimhdcs/fhdc/master?url=" +
+        encodeURIComponent(server.url) +
+        "&referer=" +
+        encodeURIComponent(data.url || "");
+
+    console.log(
+        "[PHIMHDCS][FHDC] ADD RESOLVER STREAM:",
+        {
+            server: languageName,
+            number: serverNumber,
+            playerUrl: server.url,
+            proxyUrl: fhdcPlayerUrl
+        }
+    );
+
+    streams.push({
+        name:
+            "📺 [PhimHDCS] " +
+            languageName +
+            " - FHDC Direct " +
+            serverNumber,
+
+        title:
+            movieName +
+            " - " +
+            languageName +
+            " - FHDC",
+
+        url: fhdcPlayerUrl,
+
+        behaviorHints: {
+            bingeGroup:
+                "phimhdcs-fhdc-" +
+                serverNumber
+        }
+    });
+
+} else if (server.isHdcPlayer) {
+
 
             console.log(
                 "[PHIMHDCS][HDC-PLAYER] RESOLVE START:",
@@ -41779,24 +42595,25 @@ const hdcResult =
 
             });
 
+
         } else {
 
-            let embedPlayerUrl =
+            const embedUrl =
                 server.url;
 
-            // Chỉ chuyển StreamC sang player riêng.
-            // Các embed host khác giữ nguyên hành vi cũ.
+            let isStreamC = false;
+
+            let streamCPlayerUrl = null;
+
             try {
 
                 const parsedEmbedUrl =
-                    new URL(
-                        server.url
-                    );
+                    new URL(embedUrl);
 
                 const embedHost =
                     parsedEmbedUrl.hostname.toLowerCase();
 
-                const isStreamC =
+                isStreamC =
                     parsedEmbedUrl.protocol === "https:" &&
                     (
                         embedHost === "streamc.xyz" ||
@@ -41805,11 +42622,9 @@ const hdcResult =
 
                 if (isStreamC) {
 
-                    embedPlayerUrl =
+                    streamCPlayerUrl =
                         "https://my-strem-addon.vercel.app/phimhdcs-player?url=" +
-                        encodeURIComponent(
-                            parsedEmbedUrl.href
-                        );
+                        encodeURIComponent(parsedEmbedUrl.href);
 
                 }
 
@@ -41822,63 +42637,98 @@ const hdcResult =
 
             }
 
-            console.log(
-                "[PHIMHDCS] ADD SERVER:",
-                {
-                    language:
-                        languageName,
+            if (isStreamC) {
 
-                    number:
+                // STREAMC: chỉ giữ Player cũ làm luồng dự phòng.
+
+                console.log(
+                    "[PHIMHDCS] ADD STREAMC FALLBACK:",
+                    {
+                        language: languageName,
+                        number: serverNumber,
+                        url: embedUrl
+                    }
+                );
+
+                streams.push({
+
+                    name:
+                        "🛟 [PhimHDCS] " +
+                        languageName +
+                        " - StreamC dự phòng " +
                         serverNumber,
 
-                    type:
-                        "EMBED",
+                    title:
+                        movieName +
+                        " - " +
+                        languageName +
+                        " - StreamC Player",
 
-                    originalUrl:
-                        server.url,
+                    externalUrl:
+                        streamCPlayerUrl,
 
-                    playerUrl:
-                        embedPlayerUrl
-                }
-            );
+                    widgetPlayer:
+                        streamCPlayerUrl,
 
-            streams.push({
+                    widgetPlayerStates: [
+                        "replaceplayer"
+                    ],
 
-                name:
-                    "▶️ [PhimHDCS] " +
-                    languageName +
-                    " - Server " +
-                    serverNumber,
+                    behaviorHints: {
 
-                title:
-                    movieName +
-                    " - " +
-                    languageName +
-                    " - Server " +
-                    serverNumber,
+                        bingeGroup:
+                            "phimhdcs-streamc-" +
+                            serverNumber
 
-                externalUrl:
-                    embedPlayerUrl,
+                    }
 
-                widgetPlayer:
-                    embedPlayerUrl,
+                });
 
-                widgetPlayerStates: [
-                    "replaceplayer"
-                ],
+            } else {
 
-                behaviorHints: {
+                // NC: mở trực tiếp URL đã được bóc khỏi player.php.
+                // Không tạo PhimHDCS Client mới.
+                // Không bọc qua Vercel.
 
-                    bingeGroup:
-                        "phimhdcs-" +
-                        serverNumber
+                console.log(
+                    "[PHIMHDCS] ADD NC EMBED DIRECT:",
+                    {
+                        language: languageName,
+                        number: serverNumber,
+                        url: embedUrl
+                    }
+                );
 
-                }
+                streams.push({
 
-            });
+                    name:
+                        "▶️ [PhimHDCS] " +
+                        languageName +
+                        " - NC Direct " +
+                        serverNumber,
+
+                    title:
+                        movieName +
+                        " - " +
+                        languageName +
+                        " - NC",
+
+                    externalUrl:
+                        embedUrl,
+
+                    behaviorHints: {
+
+                        bingeGroup:
+                            "phimhdcs-nc-" +
+                            serverNumber
+
+                    }
+
+                });
+
+            }
 
         }
-
     }
 
 }
@@ -45165,62 +46015,6 @@ console.log(
       onflix.length
   );
 
-// =====================================================
-// DEBUG — STREAM THỰC TẾ SAU FETCH
-//
-// Đây là log quan trọng nhất lúc này.
-//
-// Không thay đổi stream.
-// Chỉ kiểm tra object thực tế mà
-// fetchAnimeHay() trả về cho pipeline.
-// =====================================================
-
-console.log(
-    "[ANIMEHAY] FINAL OBJECTS BEFORE MERGE:",
-    JSON.stringify(
-        Array.isArray(animehay)
-            ? animehay.map(
-                stream => ({
-                    name:
-                        stream?.name,
-
-                    title:
-                        stream?.title,
-
-                    url:
-                        stream?.url,
-
-                    externalUrl:
-                        stream?.externalUrl,
-
-                    type:
-                        stream?.type,
-
-                    quality:
-                        stream?.quality,
-
-                    referer:
-                        stream?.referer,
-
-                    headers:
-                        stream?.headers,
-
-                    resolver:
-                        stream?.resolver,
-
-                    resolverOptions:
-                        stream?.resolverOptions,
-
-                    behaviorHints:
-                        stream?.behaviorHints
-                })
-            )
-            : [],
-        null,
-        2
-    )
-);
-
 const directStreams = [
 
     ...nguonc,
@@ -45239,29 +46033,6 @@ const directStreams = [
     nguoncClientStream
 
 ];
-
-
-console.log(
-    "[DEBUG] DIRECT STREAM DETAILS:",
-    JSON.stringify(
-        directStreams.map(
-            (stream, index) => ({
-                index,
-                name: stream?.name,
-                title: stream?.title,
-                url: stream?.url,
-                ytId: stream?.ytId,
-                provider: stream?.provider,
-                source: stream?.source,
-                externalUrl: stream?.externalUrl,
-                behaviorHints: stream?.behaviorHints
-            })
-        ),
-        null,
-        2
-    )
-);
-
 
 // =====================================================
 // 12. FALLBACK CHUNG
@@ -49481,41 +50252,6 @@ app.get(
                 rewrittenText.length
             );
 
-
-            // -------------------------------------------------
-            // DEBUG FIRST LINES
-            // -------------------------------------------------
-
-            const outputLines =
-                rewrittenText
-                    .split("\n");
-
-
-            console.log(
-                "[VSMOV HLS PROXY] OUTPUT:",
-                outputLines
-                    .slice(
-                        0,
-                        14
-                    )
-                    .join("\n")
-            );
-
-
-            // -------------------------------------------------
-            // DEBUG LAST LINES
-            // -------------------------------------------------
-
-            console.log(
-                "[VSMOV HLS PROXY] OUTPUT TAIL:",
-                outputLines
-                    .slice(
-                        -6
-                    )
-                    .join("\n")
-            );
-
-
             // -------------------------------------------------
             // FINAL VALIDATION
             // -------------------------------------------------
@@ -52627,11 +53363,26 @@ const allowedHost =
 
             };
 
-            if (req.headers.range) {
+// =================================================
+// RANGE
+//
+// Playlist M3U8 phải tải đầy đủ.
+// Chỉ chuyển tiếp Range cho video / segment.
+// =================================================
 
-                requestHeaders.Range =
-                    req.headers.range;
-            }
+const isPlaylistRequest =
+    /\.m3u8(?:$|[?#])/i.test(
+        targetUrl.href
+    );
+
+if (
+    req.headers.range &&
+    !isPlaylistRequest
+) {
+
+    requestHeaders.Range =
+        req.headers.range;
+}
 
             console.log(
                 "[PLT PROXY] REQUEST:"
@@ -52907,9 +53658,11 @@ if (isM3U8) {
                 // RESPONSE
                 // =================================================
 
-                res.status(
-                    upstream.status
-                );
+res.status(
+    isM3U8
+        ? 200
+        : upstream.status
+);
 
                 res.setHeader(
                     "Content-Type",
@@ -53058,6 +53811,953 @@ if (isM3U8) {
                         "PhimLongTieng proxy error"
                     );
             }
+        }
+    }
+);
+
+// ============================================================
+// [RES-PHIMHDCS-FHDC-003] PNG CARRIER -> MPEG-TS
+// Port từ PhimHDCProvider.unwrapPngPayloadToTs()
+// ============================================================
+
+function phimhdcsFhdcUnwrapPngPayloadToTs(input) {
+
+    const zlib = require("zlib");
+
+    const body =
+        Buffer.isBuffer(input)
+            ? input
+            : Buffer.from(input || []);
+
+    const pngSignature = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47,
+        0x0d, 0x0a, 0x1a, 0x0a
+    ]);
+
+    if (
+        body.length < 16 ||
+        !body.subarray(0, 8).equals(pngSignature)
+    ) {
+        return null;
+    }
+
+    const parts = [];
+
+    let offset = 8;
+
+    while (offset + 12 <= body.length) {
+
+        const chunkLength =
+            body.readUInt32BE(offset);
+
+        const chunkType =
+            body.toString(
+                "ascii",
+                offset + 4,
+                offset + 8
+            );
+
+        const dataStart = offset + 8;
+        const dataEnd = dataStart + chunkLength;
+
+        if (
+            chunkLength > body.length ||
+            dataEnd + 4 > body.length
+        ) {
+            break;
+        }
+
+        if (chunkType === "iTXt") {
+
+            let p = dataStart;
+
+            const keywordEnd =
+                body.indexOf(0, p);
+
+            if (
+                keywordEnd >= 0 &&
+                keywordEnd < dataEnd
+            ) {
+
+                const keyword =
+                    body.toString(
+                        "utf8",
+                        p,
+                        keywordEnd
+                    );
+
+                if (keyword.startsWith("payload-")) {
+
+                    const rawIndex =
+                        keyword.substring(8);
+
+                    const parsedIndex =
+                        /^\d+$/.test(rawIndex)
+                            ? Number(rawIndex)
+                            : parts.length;
+
+                    p = keywordEnd + 1;
+
+                    if (p + 2 <= dataEnd) {
+
+                        const compressionFlag =
+                            body[p];
+
+                        p += 2;
+
+                        const languageEnd =
+                            body.indexOf(0, p);
+
+                        p =
+                            (
+                                languageEnd >= 0 &&
+                                languageEnd < dataEnd
+                                    ? languageEnd
+                                    : p
+                            ) + 1;
+
+                        const translatedEnd =
+                            body.indexOf(0, p);
+
+                        p =
+                            (
+                                translatedEnd >= 0 &&
+                                translatedEnd < dataEnd
+                                    ? translatedEnd
+                                    : p
+                            ) + 1;
+
+                        if (p < dataEnd) {
+
+                            const raw =
+                                body.subarray(
+                                    p,
+                                    dataEnd
+                                );
+
+                            let data = null;
+
+                            try {
+
+                                data =
+                                    compressionFlag === 1
+                                        ? zlib.inflateSync(raw)
+                                        : raw;
+
+                            } catch (_) {
+
+                                data = null;
+
+                            }
+
+                            if (data) {
+
+                                parts.push({
+                                    index: parsedIndex,
+                                    data
+                                });
+
+                            }
+
+                        }
+
+                    }
+
+                }
+
+            }
+
+        }
+
+        offset = dataEnd + 4;
+
+        if (chunkType === "IEND") {
+            break;
+        }
+
+    }
+
+    if (parts.length === 0) {
+        return null;
+    }
+
+    // Sắp xếp payload theo số thứ tự.
+    parts.sort(
+        (a, b) => a.index - b.index
+    );
+
+    // Nối toàn bộ mảnh sau khi giải nén.
+    const combined =
+        Buffer.concat(
+            parts.map(part => part.data)
+        );
+
+    // Bổ sung Base64 padding giống Smali.
+    const pad =
+        (4 - (combined.length % 4)) % 4;
+
+    const base64Buffer =
+        pad > 0
+            ? Buffer.concat([
+                combined,
+                Buffer.alloc(pad, 0x3d)
+            ])
+            : combined;
+
+    let decoded = null;
+
+    try {
+
+        decoded =
+            Buffer.from(
+                base64Buffer.toString("ascii"),
+                "base64"
+            );
+
+    } catch (_) {
+
+        decoded = null;
+
+    }
+
+    // Căn chỉnh MPEG-TS theo sync byte 0x47.
+    function alignTs(bytes) {
+
+        if (
+            !bytes ||
+            bytes.length < 564
+        ) {
+            return null;
+        }
+
+        function isAlignedAt(index) {
+
+            return (
+                bytes[index] === 0x47 &&
+                bytes[index + 188] === 0x47 &&
+                bytes[index + 376] === 0x47
+            );
+
+        }
+
+        if (isAlignedAt(0)) {
+            return bytes;
+        }
+
+        const limit =
+            Math.min(
+                bytes.length - 564,
+                4096
+            );
+
+        for (
+            let i = 1;
+            i <= limit;
+            i++
+        ) {
+
+            if (isAlignedAt(i)) {
+                return bytes.subarray(i);
+            }
+
+        }
+
+        return null;
+
+    }
+
+    return (
+        alignTs(decoded) ||
+        alignTs(combined)
+    );
+
+}
+
+// ============================================================
+// [PX-PHIMHDCS-FHDC-001] FHDC HLS PROXY
+// Master playlist -> child playlist -> key / map / segments.
+// Chỉ cho phép tài nguyên cùng origin FHDC đã resolve.
+// ============================================================
+
+function phimhdcsFhdcProxyUrl(
+    targetUrl,
+    origin,
+    referer
+) {
+    const parsedTarget = new URL(targetUrl);
+    const parsedOrigin = new URL(origin);
+
+    // Chỉ nhận HTTPS.
+    if (
+        parsedTarget.protocol !== "https:" ||
+        parsedOrigin.protocol !== "https:"
+    ) {
+        throw new Error(
+            "FHDC proxy requires HTTPS"
+        );
+    }
+
+    // Origin gốc phải thuộc hệ thống FHDC.
+    if (
+        !/(^|\.)phimhdc\.com$/i.test(
+            parsedOrigin.hostname
+        )
+    ) {
+        throw new Error(
+            "FHDC origin rejected"
+        );
+    }
+
+    // Cho phép CDN khác domain, nhưng không cho
+    // localhost hoặc địa chỉ IP trực tiếp.
+    const targetHost =
+        parsedTarget.hostname.toLowerCase();
+
+    const isIpAddress =
+        require("net").isIP(targetHost) !== 0;
+
+    if (
+        isIpAddress ||
+        !targetHost ||
+        targetHost === "localhost" ||
+        /\.(?:local|internal|localhost|test)$/i.test(
+            targetHost
+        ) ||
+        parsedTarget.username ||
+        parsedTarget.password
+    ) {
+        throw new Error(
+            "FHDC CDN host rejected"
+        );
+    }
+
+    return (
+        "/phimhdcs/fhdc/resource?url=" +
+        encodeURIComponent(parsedTarget.href) +
+        "&origin=" +
+        encodeURIComponent(parsedOrigin.origin) +
+        "&referer=" +
+        encodeURIComponent(referer)
+    );
+}
+
+function phimhdcsFhdcRewritePlaylist(
+    playlist,
+    playlistUrl,
+    origin,
+    referer
+) {
+    let rewritten = String(playlist || "");
+
+    rewritten = rewritten.replace(
+        /URI="([^"]+)"/gi,
+        (full, rawUri) => {
+            try {
+                if (/^(?:data:|skd:)/i.test(rawUri)) {
+                    return full;
+                }
+
+                const absolute = new URL(
+                    rawUri,
+                    playlistUrl
+                );
+
+                return (
+                    'URI="' +
+                    phimhdcsFhdcProxyUrl(
+                        absolute.href,
+                        origin,
+                        referer
+                    ) +
+                    '"'
+                );
+
+            } catch (error) {
+                console.log(
+                    "[PHIMHDCS][FHDC] URI REWRITE ERROR:",
+                    error.message
+                );
+
+                return full;
+            }
+        }
+    );
+
+    rewritten = rewritten
+        .split(/\r?\n/)
+        .map(line => {
+            const trimmed = line.trim();
+
+            if (
+                !trimmed ||
+                trimmed.startsWith("#") ||
+                /^(?:data:|skd:)/i.test(trimmed)
+            ) {
+                return line;
+            }
+
+            try {
+                const absolute = new URL(
+                    trimmed,
+                    playlistUrl
+                );
+
+                return phimhdcsFhdcProxyUrl(
+                    absolute.href,
+                    origin,
+                    referer
+                );
+
+            } catch (error) {
+                console.log(
+                    "[PHIMHDCS][FHDC] CHILD REWRITE ERROR:",
+                    error.message
+                );
+
+                return line;
+            }
+        })
+        .join("\n");
+
+    return rewritten;
+}
+
+// ------------------------------------------------------------
+// MASTER PLAYLIST
+// ------------------------------------------------------------
+
+// ============================================================
+// FHDC MASTER PLAYLIST SHORT CACHE
+// Chỉ cache playlist thành công trong 8 giây.
+// ============================================================
+
+const PHIMHDCS_FHDC_MASTER_CACHE =
+    new Map();
+
+const PHIMHDCS_FHDC_MASTER_CACHE_TTL =
+    8000;
+
+const PHIMHDCS_FHDC_MASTER_CACHE_MAX =
+    100;
+
+app.get(
+    "/phimhdcs/fhdc/master",
+    async (req, res) => {
+        try {
+            const playerUrl =
+                String(req.query?.url || "").trim();
+
+            const parentUrl =
+                String(req.query?.referer || "").trim();
+
+            if (!playerUrl) {
+                return res.status(400).send(
+                    "Missing FHDC player URL"
+                );
+            }
+
+// ============================================================
+// FHDC MASTER CACHE HIT
+// ============================================================
+
+const masterCacheKey =
+    playerUrl + "\n" + parentUrl;
+
+const cachedMaster =
+    PHIMHDCS_FHDC_MASTER_CACHE.get(
+        masterCacheKey
+    );
+
+if (
+    cachedMaster &&
+    cachedMaster.expiresAt > Date.now()
+) {
+
+    console.log(
+        "[PHIMHDCS][FHDC] MASTER CACHE HIT"
+    );
+
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.apple.mpegurl"
+    );
+
+    res.setHeader(
+        "Cache-Control",
+        "no-store"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Origin",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Headers",
+        "*"
+    );
+
+    return res
+        .status(200)
+        .send(cachedMaster.body);
+
+}
+
+if (cachedMaster) {
+    PHIMHDCS_FHDC_MASTER_CACHE.delete(
+        masterCacheKey
+    );
+}
+
+            console.log(
+                "[PHIMHDCS][FHDC PROXY] MASTER REQUEST:",
+                playerUrl
+            );
+
+            const result =
+                await phimhdcsResolveFhdcManifest(
+                    playerUrl,
+                    parentUrl
+                );
+
+            if (
+                !result.success ||
+                !result.manifest
+            ) {
+                return res
+                    .status(502)
+                    .type("text/plain")
+                    .send(
+                        result.error ||
+                        "FHDC manifest resolution failed"
+                    );
+            }
+
+
+
+            // Tạo URL master ảo giống cơ chế phát trong Smali.
+            const syntheticMasterUrl = new URL(
+                "/video/" +
+                    encodeURIComponent(result.key) +
+                    "/master.m3u8?delivery=" +
+                    encodeURIComponent(result.delivery) +
+                    "&_=" +
+                    Date.now(),
+                result.baseUrl
+            ).href;
+
+            console.log(
+                "[PHIMHDCS][FHDC] SYNTHETIC MASTER:",
+                syntheticMasterUrl
+            );
+
+const rewritten =
+    phimhdcsFhdcRewritePlaylist(
+        result.manifest,
+        syntheticMasterUrl,
+        result.baseUrl,
+        result.referer
+    );
+
+// ============================================================
+// SAVE SUCCESSFUL FHDC MASTER
+// ============================================================
+
+if (
+    PHIMHDCS_FHDC_MASTER_CACHE.size >=
+    PHIMHDCS_FHDC_MASTER_CACHE_MAX
+) {
+
+    const oldestKey =
+        PHIMHDCS_FHDC_MASTER_CACHE.keys()
+            .next().value;
+
+    if (oldestKey) {
+        PHIMHDCS_FHDC_MASTER_CACHE.delete(
+            oldestKey
+        );
+    }
+
+}
+
+PHIMHDCS_FHDC_MASTER_CACHE.set(
+    masterCacheKey,
+    {
+        body: rewritten,
+        expiresAt:
+            Date.now() +
+            PHIMHDCS_FHDC_MASTER_CACHE_TTL
+    }
+);
+
+            res.setHeader(
+                "Content-Type",
+                "application/vnd.apple.mpegurl"
+            );
+
+            res.setHeader(
+                "Cache-Control",
+                "no-store, no-cache, must-revalidate"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+            console.log(
+                "[PHIMHDCS][FHDC PROXY] MASTER SENT:",
+                {
+                    length: rewritten.length,
+                    origin: result.baseUrl
+                }
+            );
+
+            return res.status(200).send(rewritten);
+
+        } catch (error) {
+            console.error(
+                "[PHIMHDCS][FHDC PROXY] MASTER ERROR:",
+                error.message
+            );
+
+            return res
+                .status(502)
+                .type("text/plain")
+                .send("FHDC master proxy error");
+        }
+    }
+);
+
+// ------------------------------------------------------------
+// CHILD PLAYLIST / KEY / MAP / SEGMENT
+// ------------------------------------------------------------
+
+app.get(
+    "/phimhdcs/fhdc/resource",
+    async (req, res) => {
+        try {
+            const rawUrl =
+                String(req.query?.url || "").trim();
+
+            const rawOrigin =
+                String(req.query?.origin || "").trim();
+
+            const referer =
+                String(req.query?.referer || "").trim();
+
+            if (
+                !rawUrl ||
+                !rawOrigin ||
+                !referer
+            ) {
+                return res.status(400).send(
+                    "Missing FHDC resource parameters"
+                );
+            }
+
+            const targetUrl = new URL(rawUrl);
+const allowedOrigin = new URL(rawOrigin);
+
+const targetHost =
+    targetUrl.hostname.toLowerCase();
+
+const isTikTokCarrierHost =
+    /(?:^|\.)tiktokcdn\.com$/i.test(targetHost) ||
+    /(?:^|\.)ibyteimg\.com$/i.test(targetHost);
+
+const isIpAddress =
+    require("net").isIP(targetHost) !== 0;
+
+const validOrigin =
+    allowedOrigin.protocol === "https:" &&
+    /(^|\.)phimhdc\.com$/i.test(
+        allowedOrigin.hostname
+    );
+
+const validTarget =
+    targetUrl.protocol === "https:" &&
+    !isIpAddress &&
+    targetHost !== "localhost" &&
+    !/\.(?:local|internal|localhost|test)$/i.test(
+        targetHost
+    ) &&
+    !targetUrl.username &&
+    !targetUrl.password;
+
+if (!validOrigin || !validTarget) {
+    console.log(
+        "[PHIMHDCS][FHDC] RESOURCE HOST REJECTED:",
+        {
+            targetHost,
+            originHost: allowedOrigin.hostname
+        }
+    );
+
+    return res.status(403).send(
+        "FHDC resource host rejected"
+    );
+}
+
+            const requestHeaders = {
+                "User-Agent":
+                    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
+
+                "Accept": "*/*",
+                "Referer": referer,
+                "Origin": allowedOrigin.origin,
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin"
+            };
+
+if (
+    req.headers.range &&
+    !isTikTokCarrierHost
+) {
+    requestHeaders.Range =
+        req.headers.range;
+}
+            
+const upstream = await axios.get(
+    targetUrl.href,
+    {
+        headers: requestHeaders,
+        timeout: 25000,
+        maxRedirects: 5,
+
+        beforeRedirect: (options) => {
+            const redirectProtocol =
+                String(options.protocol || "");
+
+            const redirectHost =
+                String(options.hostname || "")
+                    .toLowerCase();
+
+            const redirectIsIp =
+                require("net").isIP(redirectHost) !== 0;
+
+            if (
+                redirectProtocol !== "https:" ||
+                redirectIsIp ||
+                redirectHost === "localhost" ||
+                /\.(?:local|internal|localhost|test)$/i.test(
+                    redirectHost
+                )
+            ) {
+                throw new Error(
+                    "FHDC CDN redirect rejected"
+                );
+            }
+        },
+
+        responseType: "arraybuffer",
+
+        validateStatus: status =>
+            status >= 200 && status < 400
+    }
+);
+
+            const contentType =
+                String(
+                    upstream.headers?.["content-type"] || ""
+                ).toLowerCase();
+
+            const body =
+                Buffer.from(upstream.data || []);
+
+            const isPlaylist =
+                contentType.includes("mpegurl") ||
+                /\.m3u8(?:[?#]|$)/i.test(targetUrl.href) ||
+                body
+                    .subarray(0, 64)
+                    .toString("utf8")
+                    .trimStart()
+                    .startsWith("#EXTM3U");
+
+            if (isPlaylist) {
+                const playlist =
+                    body.toString("utf8")
+                        .replace(/^\uFEFF/, "")
+                        .trim();
+
+                if (!playlist.startsWith("#EXTM3U")) {
+                    return res.status(502).send(
+                        "Invalid FHDC child playlist"
+                    );
+                }
+
+                const rewritten =
+                    phimhdcsFhdcRewritePlaylist(
+                        playlist,
+                        targetUrl.href,
+                        allowedOrigin.origin,
+                        referer
+                    );
+
+                res.setHeader(
+                    "Content-Type",
+                    "application/vnd.apple.mpegurl"
+                );
+
+                res.setHeader(
+                    "Cache-Control",
+                    "no-store, no-cache, must-revalidate"
+                );
+
+                res.setHeader(
+                    "Access-Control-Allow-Origin",
+                    "*"
+                );
+
+                res.setHeader(
+                    "Access-Control-Allow-Headers",
+                    "*"
+                );
+
+                return res.status(upstream.status).send(
+                    rewritten
+                );
+            }
+
+// ============================================================
+// FHDC TIKTOK PNG CARRIER -> MPEG-TS
+// ============================================================
+
+const pngSignature = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47,
+    0x0d, 0x0a, 0x1a, 0x0a
+]);
+
+const isFhdcPngCarrier =
+    isTikTokCarrierHost &&
+    body.length >= 8 &&
+    body.subarray(0, 8).equals(pngSignature);
+
+if (isFhdcPngCarrier) {
+
+    const ts =
+        phimhdcsFhdcUnwrapPngPayloadToTs(body);
+
+    if (!ts) {
+
+        console.error(
+            "[FHDC-DECODE] PNG TO TS FAILED:",
+            {
+                host: targetHost,
+                inputBytes: body.length
+            }
+        );
+
+        return res
+            .status(502)
+            .type("text/plain")
+            .send("FHDC PNG-to-TS decoding failed");
+
+    }
+
+    res.status(200);
+
+    res.setHeader(
+        "Content-Type",
+        "video/mp2t"
+    );
+
+    res.setHeader(
+        "Content-Length",
+        String(ts.length)
+    );
+
+    res.setHeader(
+        "Accept-Ranges",
+        "none"
+    );
+
+    res.setHeader(
+        "Cache-Control",
+        "no-store"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Origin",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Headers",
+        "*"
+    );
+
+    return res.send(ts);
+
+}
+
+            const responseType =
+                upstream.headers?.["content-type"];
+
+            if (responseType) {
+                res.setHeader(
+                    "Content-Type",
+                    responseType
+                );
+            }
+
+            const contentRange =
+                upstream.headers?.["content-range"];
+
+            if (contentRange) {
+                res.setHeader(
+                    "Content-Range",
+                    contentRange
+                );
+            }
+
+            const acceptRanges =
+                upstream.headers?.["accept-ranges"];
+
+            if (acceptRanges) {
+                res.setHeader(
+                    "Accept-Ranges",
+                    acceptRanges
+                );
+            }
+
+            res.setHeader(
+                "Cache-Control",
+                "no-store"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+            return res
+                .status(upstream.status)
+                .send(body);
+
+        } catch (error) {
+            console.error(
+                "[PHIMHDCS][FHDC PROXY] RESOURCE ERROR:",
+                error.response?.status ||
+                error.message
+            );
+
+            return res
+                .status(502)
+                .type("text/plain")
+                .send("FHDC resource proxy error");
         }
     }
 );
