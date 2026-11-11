@@ -53896,6 +53896,263 @@ res.status(
     }
 );
 
+// ============================================================
+// [RES-PHIMHDCS-FHDC-003] PNG CARRIER -> MPEG-TS
+// Port từ PhimHDCProvider.unwrapPngPayloadToTs()
+// ============================================================
+
+function phimhdcsFhdcUnwrapPngPayloadToTs(input) {
+
+    const zlib = require("zlib");
+
+    const body =
+        Buffer.isBuffer(input)
+            ? input
+            : Buffer.from(input || []);
+
+    const pngSignature = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47,
+        0x0d, 0x0a, 0x1a, 0x0a
+    ]);
+
+    if (
+        body.length < 16 ||
+        !body.subarray(0, 8).equals(pngSignature)
+    ) {
+        return null;
+    }
+
+    const parts = [];
+
+    let offset = 8;
+
+    while (offset + 12 <= body.length) {
+
+        const chunkLength =
+            body.readUInt32BE(offset);
+
+        const chunkType =
+            body.toString(
+                "ascii",
+                offset + 4,
+                offset + 8
+            );
+
+        const dataStart = offset + 8;
+        const dataEnd = dataStart + chunkLength;
+
+        if (
+            chunkLength > body.length ||
+            dataEnd + 4 > body.length
+        ) {
+            break;
+        }
+
+        if (chunkType === "iTXt") {
+
+            let p = dataStart;
+
+            const keywordEnd =
+                body.indexOf(0, p);
+
+            if (
+                keywordEnd >= 0 &&
+                keywordEnd < dataEnd
+            ) {
+
+                const keyword =
+                    body.toString(
+                        "utf8",
+                        p,
+                        keywordEnd
+                    );
+
+                if (keyword.startsWith("payload-")) {
+
+                    const rawIndex =
+                        keyword.substring(8);
+
+                    const parsedIndex =
+                        /^\d+$/.test(rawIndex)
+                            ? Number(rawIndex)
+                            : parts.length;
+
+                    p = keywordEnd + 1;
+
+                    if (p + 2 <= dataEnd) {
+
+                        const compressionFlag =
+                            body[p];
+
+                        p += 2;
+
+                        const languageEnd =
+                            body.indexOf(0, p);
+
+                        p =
+                            (
+                                languageEnd >= 0 &&
+                                languageEnd < dataEnd
+                                    ? languageEnd
+                                    : p
+                            ) + 1;
+
+                        const translatedEnd =
+                            body.indexOf(0, p);
+
+                        p =
+                            (
+                                translatedEnd >= 0 &&
+                                translatedEnd < dataEnd
+                                    ? translatedEnd
+                                    : p
+                            ) + 1;
+
+                        if (p < dataEnd) {
+
+                            const raw =
+                                body.subarray(
+                                    p,
+                                    dataEnd
+                                );
+
+                            let data = null;
+
+                            try {
+
+                                data =
+                                    compressionFlag === 1
+                                        ? zlib.inflateSync(raw)
+                                        : raw;
+
+                            } catch (_) {
+
+                                data = null;
+
+                            }
+
+                            if (data) {
+
+                                parts.push({
+                                    index: parsedIndex,
+                                    data
+                                });
+
+                            }
+
+                        }
+
+                    }
+
+                }
+
+            }
+
+        }
+
+        offset = dataEnd + 4;
+
+        if (chunkType === "IEND") {
+            break;
+        }
+
+    }
+
+    if (parts.length === 0) {
+        return null;
+    }
+
+    // Sắp xếp payload theo số thứ tự.
+    parts.sort(
+        (a, b) => a.index - b.index
+    );
+
+    // Nối toàn bộ mảnh sau khi giải nén.
+    const combined =
+        Buffer.concat(
+            parts.map(part => part.data)
+        );
+
+    // Bổ sung Base64 padding giống Smali.
+    const pad =
+        (4 - (combined.length % 4)) % 4;
+
+    const base64Buffer =
+        pad > 0
+            ? Buffer.concat([
+                combined,
+                Buffer.alloc(pad, 0x3d)
+            ])
+            : combined;
+
+    let decoded = null;
+
+    try {
+
+        decoded =
+            Buffer.from(
+                base64Buffer.toString("ascii"),
+                "base64"
+            );
+
+    } catch (_) {
+
+        decoded = null;
+
+    }
+
+    // Căn chỉnh MPEG-TS theo sync byte 0x47.
+    function alignTs(bytes) {
+
+        if (
+            !bytes ||
+            bytes.length < 564
+        ) {
+            return null;
+        }
+
+        function isAlignedAt(index) {
+
+            return (
+                bytes[index] === 0x47 &&
+                bytes[index + 188] === 0x47 &&
+                bytes[index + 376] === 0x47
+            );
+
+        }
+
+        if (isAlignedAt(0)) {
+            return bytes;
+        }
+
+        const limit =
+            Math.min(
+                bytes.length - 564,
+                4096
+            );
+
+        for (
+            let i = 1;
+            i <= limit;
+            i++
+        ) {
+
+            if (isAlignedAt(i)) {
+                return bytes.subarray(i);
+            }
+
+        }
+
+        return null;
+
+    }
+
+    return (
+        alignTs(decoded) ||
+        alignTs(combined)
+    );
+
+}
 
 // ============================================================
 // [PX-PHIMHDCS-FHDC-001] FHDC HLS PROXY
@@ -54280,6 +54537,10 @@ const allowedOrigin = new URL(rawOrigin);
 const targetHost =
     targetUrl.hostname.toLowerCase();
 
+const isTikTokCarrierHost =
+    /(?:^|\.)tiktokcdn\.com$/i.test(targetHost) ||
+    /(?:^|\.)ibyteimg\.com$/i.test(targetHost);
+
 const isIpAddress =
     require("net").isIP(targetHost) !== 0;
 
@@ -54326,10 +54587,13 @@ if (!validOrigin || !validTarget) {
                 "Sec-Fetch-Site": "same-origin"
             };
 
-            if (req.headers.range) {
-                requestHeaders.Range =
-                    req.headers.range;
-            }
+if (
+    req.headers.range &&
+    !isTikTokCarrierHost
+) {
+    requestHeaders.Range =
+        req.headers.range;
+}
 
 console.log("[FHDC-DIAG-02] RESOURCE REQUEST:", {
     host: targetUrl.hostname,
@@ -54614,6 +54878,87 @@ if (keyword === "payload-0001") {
                     rewritten
                 );
             }
+
+// ============================================================
+// FHDC TIKTOK PNG CARRIER -> MPEG-TS
+// ============================================================
+
+const pngSignature = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47,
+    0x0d, 0x0a, 0x1a, 0x0a
+]);
+
+const isFhdcPngCarrier =
+    isTikTokCarrierHost &&
+    body.length >= 8 &&
+    body.subarray(0, 8).equals(pngSignature);
+
+if (isFhdcPngCarrier) {
+
+    const ts =
+        phimhdcsFhdcUnwrapPngPayloadToTs(body);
+
+    if (!ts) {
+
+        console.error(
+            "[FHDC-DECODE] PNG TO TS FAILED:",
+            {
+                host: targetHost,
+                inputBytes: body.length
+            }
+        );
+
+        return res
+            .status(502)
+            .type("text/plain")
+            .send("FHDC PNG-to-TS decoding failed");
+
+    }
+
+    console.log(
+        "[FHDC-DECODE] PNG TO TS SUCCESS:",
+        {
+            inputBytes: body.length,
+            outputBytes: ts.length,
+            signature: ts.subarray(0, 16).toString("hex")
+        }
+    );
+
+    res.status(200);
+
+    res.setHeader(
+        "Content-Type",
+        "video/mp2t"
+    );
+
+    res.setHeader(
+        "Content-Length",
+        String(ts.length)
+    );
+
+    res.setHeader(
+        "Accept-Ranges",
+        "none"
+    );
+
+    res.setHeader(
+        "Cache-Control",
+        "no-store"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Origin",
+        "*"
+    );
+
+    res.setHeader(
+        "Access-Control-Allow-Headers",
+        "*"
+    );
+
+    return res.send(ts);
+
+}
 
             const responseType =
                 upstream.headers?.["content-type"];
