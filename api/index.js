@@ -54428,6 +54428,55 @@ if (
 
         pngChunks.push(chunkType);
 
+        if (chunkType === "iTXt") {
+            const dataStart = offset + 8;
+            const dataEnd = dataStart + chunkLength;
+
+            let p = dataStart;
+
+            const keywordEnd = body.indexOf(0, p);
+            if (keywordEnd < 0 || keywordEnd >= dataEnd) continue;
+
+            const keyword = body.toString("utf8", p, keywordEnd);
+            p = keywordEnd + 1;
+
+            if (p + 2 > dataEnd) continue;
+
+            const compressionFlag = body[p++];
+            const compressionMethod = body[p++];
+
+            const languageEnd = body.indexOf(0, p);
+            if (languageEnd < 0 || languageEnd >= dataEnd) continue;
+
+            const language = body.toString("utf8", p, languageEnd);
+            p = languageEnd + 1;
+
+            const translatedEnd = body.indexOf(0, p);
+            if (translatedEnd < 0 || translatedEnd >= dataEnd) continue;
+
+            const translatedKeyword = body.toString(
+                "utf8",
+                p,
+                translatedEnd
+            );
+            p = translatedEnd + 1;
+
+            const payload = body.subarray(p, dataEnd);
+
+            console.log("[FHDC-DIAG-05] ITXT CHUNK:", {
+                keyword,
+                compressionFlag,
+                compressionMethod,
+                language,
+                translatedKeyword,
+                payloadBytes: payload.length,
+                payloadSignature: payload.subarray(0, 16).toString("hex"),
+                payloadPreview: compressionFlag === 0
+                    ? payload.subarray(0, 100).toString("utf8")
+                    : "[COMPRESSED]"
+            });
+        }
+
         if (chunkType === "acTL" && chunkLength >= 8) {
             frameCount = body.readUInt32BE(offset + 8);
             playCount = body.readUInt32BE(offset + 12);
