@@ -38891,6 +38891,10 @@ if (!currentHtml) {
         // 2. RESOLVE INNER IFRAMES
         // ----------------------------------------------------
 
+let earlyTokenPromise = null;
+let earlyTokenOrigin = "";
+let earlyTokenStartedAt = 0;
+
         for (let depth = 0; depth < 3; depth++) {
             const $ = cheerio.load(currentHtml);
 
@@ -38912,6 +38916,73 @@ if (!currentHtml) {
             }
 
             if (nextUrl.href === currentUrl) break;
+
+// =====================================================
+// EARLY JS TOKEN PREFETCH
+// Chỉ chạy khi jobId đã có trong HTML hiện tại
+// và iframe cùng origin với trang cha.
+// =====================================================
+
+if (!earlyTokenPromise) {
+    const normalizedCurrentHtml =
+        String(currentHtml || "")
+            .replace(/\\"/g, '"')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#34;/gi, '"')
+            .replace(/\\u0022/gi, '"');
+
+    const earlyJobMatch =
+        normalizedCurrentHtml.match(
+            /"jobId"\s*:\s*"([a-f0-9-]{36})"/i
+        );
+
+    if (
+        earlyJobMatch?.[1] &&
+        nextUrl.origin === new URL(currentUrl).origin
+    ) {
+        const earlyJobId = earlyJobMatch[1];
+
+        earlyTokenOrigin = nextUrl.origin;
+        earlyTokenStartedAt = Date.now();
+
+        console.log(
+            logPrefix,
+            "EARLY JS TOKEN PREFETCH START"
+        );
+
+        earlyTokenPromise = axios.get(
+            earlyTokenOrigin +
+                "/api/js-token?name=play_guard&jobId=" +
+                encodeURIComponent(earlyJobId),
+            {
+                headers: headers(nextUrl.href),
+                timeout,
+                maxRedirects: 5
+            }
+        )
+        .then(response => {
+            const tokenData =
+                parseJson(response.data);
+
+            return (
+                tokenData?.token ||
+                tokenData?.data?.token ||
+                tokenData?.playGuard ||
+                ""
+            );
+        })
+        .catch(error => {
+            console.log(
+                logPrefix,
+                "EARLY JS TOKEN ERROR:",
+                error.response?.status ||
+                error.message
+            );
+
+            return "";
+        });
+    }
+}
 
 const fhdcIframeStartedAt = Date.now();
 
@@ -39109,45 +39180,61 @@ if (!jobId) {
         // Smali: /api/js-token?name=play_guard&jobId=...
         // ----------------------------------------------------
 
-        let playGuard = "";
+let playGuard = "";
 
-        try {
+// Ưu tiên token đã được lấy song song với iframe.
+if (
+    earlyTokenPromise &&
+    earlyTokenOrigin === baseUrl
+) {
+    playGuard = await earlyTokenPromise;
 
-const fhdcTokenStartedAt = Date.now();
+    fhdcLogTiming(
+        "JS TOKEN PREFETCH",
+        earlyTokenStartedAt
+    );
+}
 
-            const tokenResponse = await axios.get(
-                baseUrl +
-                    "/api/js-token?name=play_guard&jobId=" +
-                    encodeURIComponent(jobId),
-                {
-                    headers: headers(currentUrl),
-                    timeout,
-                    maxRedirects: 5
-                }
-            );
+// Nếu không có token sớm hoặc token sớm không hợp lệ,
+// giữ nguyên request dự phòng như cơ chế cũ.
+if (!playGuard) {
+    try {
+        const fhdcTokenStartedAt = Date.now();
 
-fhdcLogTiming(
-    "JS TOKEN",
-    fhdcTokenStartedAt
-);
+        const tokenResponse = await axios.get(
+            baseUrl +
+                "/api/js-token?name=play_guard&jobId=" +
+                encodeURIComponent(jobId),
+            {
+                headers: headers(currentUrl),
+                timeout,
+                maxRedirects: 5
+            }
+        );
 
-            const tokenData =
-                parseJson(tokenResponse.data);
+        fhdcLogTiming(
+            "JS TOKEN",
+            fhdcTokenStartedAt
+        );
 
-            playGuard =
-                tokenData?.token ||
-                tokenData?.data?.token ||
-                tokenData?.playGuard ||
-                "";
+        const tokenData =
+            parseJson(tokenResponse.data);
 
-        } catch (tokenError) {
-            console.log(
-                logPrefix,
-                "JS TOKEN ERROR:",
-                tokenError.response?.status ||
-                tokenError.message
-            );
-        }
+        playGuard =
+            tokenData?.token ||
+            tokenData?.data?.token ||
+            tokenData?.playGuard ||
+            "";
+
+    } catch (tokenError) {
+        console.log(
+            logPrefix,
+            "JS TOKEN ERROR:",
+            tokenError.response?.status ||
+            tokenError.message
+        );
+    }
+}
 
         if (!playGuard) {
             playGuard = bootstrapToken;
