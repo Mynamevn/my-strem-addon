@@ -54463,19 +54463,66 @@ if (
 
             const payload = body.subarray(p, dataEnd);
 
-            console.log("[FHDC-DIAG-05] ITXT CHUNK:", {
-                keyword,
-                compressionFlag,
-                compressionMethod,
-                language,
-                translatedKeyword,
-                payloadBytes: payload.length,
-                payloadSignature: payload.subarray(0, 16).toString("hex"),
-                payloadPreview: compressionFlag === 0
-                    ? payload.subarray(0, 100).toString("utf8")
-                    : "[COMPRESSED]"
-            });
-        }
+            if (keyword === "payload-0001") {
+                let decoded = null;
+                let decodeError = null;
+
+                try {
+                    decoded = require("zlib").inflateSync(payload);
+                } catch (err) {
+                    decodeError = err.message;
+                }
+
+                const signature = decoded
+                    ? decoded.subarray(0, 32).toString("hex")
+                    : null;
+
+                const asciiPreview = decoded
+                    ? decoded.subarray(0, 100).toString("latin1")
+                    : null;
+
+                let format = "UNKNOWN";
+
+                if (decoded) {
+                    if (decoded.subarray(4, 8).toString() === "ftyp") {
+                        format = "MP4";
+                    } else if (decoded.subarray(0, 4).toString() === "ftyp") {
+                        format = "MP4";
+                    } else if (decoded[0] === 0x47) {
+                        format = "MPEG-TS-POSSIBLE";
+                    } else if (
+                        decoded.subarray(0, 4).toString() === "OggS"
+                    ) {
+                        format = "OGG";
+                    } else if (
+                        decoded.subarray(0, 4).toString() === "RIFF"
+                    ) {
+                        format = "RIFF";
+                    } else if (
+                        decoded.subarray(0, 4).toString() === "fLaC"
+                    ) {
+                        format = "FLAC";
+                    } else if (
+                        decoded.subarray(0, 4).toString() === "\x1a\x45\xdf\xa3"
+                    ) {
+                        format = "WEBM-MKV";
+                    } else if (
+                        decoded.subarray(0, 3).toString() === "ID3"
+                    ) {
+                        format = "MP3";
+                    }
+                }
+
+                console.log("[FHDC-DIAG-06] DECOMPRESSED PAYLOAD:", {
+                    keyword,
+                    compressedBytes: payload.length,
+                    decompressedBytes: decoded?.length || 0,
+                    signature,
+                    format,
+                    asciiPreview,
+                    decodeError
+                });
+            }
 
         if (chunkType === "acTL" && chunkLength >= 8) {
             frameCount = body.readUInt32BE(offset + 8);
