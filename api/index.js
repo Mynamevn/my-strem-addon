@@ -53689,83 +53689,47 @@ res.status(
                 );
             }
 
+
             // =================================================
             // VIDEO / TS / BINARY
             //
-            // Ví dụ:
-            //
-            // .ts
-            // .aac
-            // .mp4
-            // key.bin
-            //
-            // Không rewrite.
-            // Chỉ relay binary về Stremio.
+            // Stream trực tiếp từng phần về Stremio.
+            // Không buffer toàn bộ video trước khi trả.
+            // Giữ HTTP status và Range headers từ upstream.
             // =================================================
 
-            const buffer =
-                Buffer.from(
-                    await upstream.arrayBuffer()
-                );
-
-            // =================================================
-            // COPY MỘT SỐ RESPONSE HEADERS
-            // =================================================
+            const { Readable } =
+                require("node:stream");
 
             const responseContentType =
-                upstream.headers.get(
-                    "content-type"
-                );
+                upstream.headers.get("content-type");
 
-            if (
-                responseContentType
-            ) {
+            const contentRange =
+                upstream.headers.get("content-range");
 
+            const acceptRanges =
+                upstream.headers.get("accept-ranges");
+
+            if (responseContentType) {
                 res.setHeader(
                     "Content-Type",
                     responseContentType
                 );
-            }
-
-            const contentLength =
-                upstream.headers.get(
-                    "content-length"
-                );
-
-            if (
-                contentLength
-            ) {
-
+            } else {
                 res.setHeader(
-                    "Content-Length",
-                    contentLength
+                    "Content-Type",
+                    "application/octet-stream"
                 );
             }
 
-            const contentRange =
-                upstream.headers.get(
-                    "content-range"
-                );
-
-            if (
-                contentRange
-            ) {
-
+            if (contentRange) {
                 res.setHeader(
                     "Content-Range",
                     contentRange
                 );
             }
 
-            const acceptRanges =
-                upstream.headers.get(
-                    "accept-ranges"
-                );
-
-            if (
-                acceptRanges
-            ) {
-
+            if (acceptRanges) {
                 res.setHeader(
                     "Accept-Ranges",
                     acceptRanges
@@ -53787,11 +53751,69 @@ res.status(
                 "*"
             );
 
-            return res
-                .status(
-                    upstream.status
-                )
-                .send(buffer);
+            // Không chuyển tiếp Content-Length:
+            // tránh sai lệch khi fetch tự xử lý
+            // content-encoding của upstream.
+
+            res.status(upstream.status);
+
+            if (!upstream.body) {
+                return res.end();
+            }
+
+            const sourceStream =
+                Readable.fromWeb(upstream.body);
+
+            let streamedBytes = 0;
+
+            sourceStream.on("data", chunk => {
+                streamedBytes += chunk.length;
+            });
+
+            sourceStream.on("error", error => {
+                console.log(
+                    "[PLT PROXY] STREAM ERROR:",
+                    error?.message || error
+                );
+
+                if (!res.headersSent) {
+                    res.status(502).end();
+                } else if (!res.destroyed) {
+                    res.destroy(error);
+                }
+            });
+
+            res.once("close", () => {
+                if (
+                    !res.writableFinished &&
+                    !sourceStream.destroyed
+                ) {
+                    sourceStream.destroy();
+                }
+            });
+
+            res.once("finish", () => {
+                console.log(
+                    "[PLT PROXY] STREAM FINISH:",
+                    {
+                        status: res.statusCode,
+                        bytes: streamedBytes,
+                        range: contentRange || null
+                    }
+                );
+            });
+
+            console.log(
+                "[PLT PROXY] STREAM START:",
+                {
+                    status: upstream.status,
+                    contentType: responseContentType || null,
+                    range: contentRange || null
+                }
+            );
+
+            return sourceStream.pipe(res);
+
 
         } catch (e) {
 
