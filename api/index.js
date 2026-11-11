@@ -39221,6 +39221,7 @@ if (!playGuard) {
                 encodeURIComponent(jobId),
             {
                 headers: headers(currentUrl),
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                 timeout,
                 maxRedirects: 5
             }
