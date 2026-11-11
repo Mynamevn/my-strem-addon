@@ -53293,12 +53293,16 @@ const isCloudbetaHost =
 const isCbPlayHost =
     /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(hostname);
 
+const isTikTokCarrierHost =
+    /(?:^|\.)tiktokcdn\.com$/i.test(hostname);
+
 const allowedHost =
     is1PhimHost ||
     is8PhimHost ||
     isRophimHost ||
     isCloudbetaHost ||
-    isCbPlayHost;
+    isCbPlayHost ||
+    isTikTokCarrierHost;
 
             if (!allowedHost) {
 
@@ -53573,7 +53577,8 @@ if (isM3U8) {
     /^www\.8phim1\.com$/i.test(childHost) ||
     /^player\.rophim12\.com$/i.test(childHost) ||
     /^api\.cloudbeta\.win$/i.test(childHost) ||
-    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost);
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost) ||
+    /(?:^|\.)tiktokcdn\.com$/i.test(childHost);
 
                         if (
                             !childAllowed
@@ -53690,16 +53695,12 @@ res.status(
             }
 
 
+            
             // =================================================
             // VIDEO / TS / BINARY
-            //
-            // Stream trực tiếp từng phần về Stremio.
-            // Không buffer toàn bộ video trước khi trả.
-            // Giữ HTTP status và Range headers từ upstream.
+            // PLT TIKTOK PNG CARRIER -> MPEG-TS
+            // Các host khác giữ nguyên streaming.
             // =================================================
-
-            const { Readable } =
-                require("node:stream");
 
             const responseContentType =
                 upstream.headers.get("content-type");
@@ -53709,6 +53710,128 @@ res.status(
 
             const acceptRanges =
                 upstream.headers.get("accept-ranges");
+
+            res.setHeader(
+                "Cache-Control",
+                "no-store"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
+
+            // -------------------------------------------------
+            // TIKTOK PNG CARRIER
+            // -------------------------------------------------
+
+            const isPltTikTokCarrierHost =
+                /(?:^|\.)tiktokcdn\.com$/i.test(hostname);
+
+            if (isPltTikTokCarrierHost) {
+
+                const carrierBuffer =
+                    Buffer.from(
+                        await upstream.arrayBuffer()
+                    );
+
+                const pngSignature = Buffer.from([
+                    0x89, 0x50, 0x4e, 0x47,
+                    0x0d, 0x0a, 0x1a, 0x0a
+                ]);
+
+                const isPngCarrier =
+                    carrierBuffer.length >= 8 &&
+                    carrierBuffer.subarray(0, 8)
+                        .equals(pngSignature);
+
+                if (isPngCarrier) {
+
+                    const ts =
+                        phimhdcsFhdcUnwrapPngPayloadToTs(
+                            carrierBuffer
+                        );
+
+                    if (!ts) {
+
+                        console.error(
+                            "[PLT PROXY] TIKTOK PNG DECODE FAILED:",
+                            {
+                                host: hostname,
+                                inputBytes: carrierBuffer.length
+                            }
+                        );
+
+                        return res
+                            .status(502)
+                            .type("text/plain")
+                            .send(
+                                "PLT TikTok PNG-to-TS decoding failed"
+                            );
+                    }
+
+                    console.log(
+                        "[PLT PROXY] TIKTOK PNG DECODE SUCCESS:",
+                        {
+                            inputBytes: carrierBuffer.length,
+                            outputBytes: ts.length
+                        }
+                    );
+
+                    res.status(200);
+
+                    res.setHeader(
+                        "Content-Type",
+                        "video/mp2t"
+                    );
+
+                    res.setHeader(
+                        "Content-Length",
+                        String(ts.length)
+                    );
+
+                    res.setHeader(
+                        "Accept-Ranges",
+                        "none"
+                    );
+
+                    return res.send(ts);
+                }
+
+                // TikTok response không phải PNG:
+                // giữ nguyên dữ liệu, không giải mã nhầm.
+                console.log(
+                    "[PLT PROXY] TIKTOK NON-PNG RESPONSE:",
+                    {
+                        contentType: responseContentType,
+                        bytes: carrierBuffer.length
+                    }
+                );
+
+                res.status(upstream.status);
+
+                if (responseContentType) {
+                    res.setHeader(
+                        "Content-Type",
+                        responseContentType
+                    );
+                }
+
+                return res.send(carrierBuffer);
+            }
+
+            // -------------------------------------------------
+            // NORMAL VIDEO / TS / BINARY
+            // Giữ nguyên streaming cho các host khác.
+            // -------------------------------------------------
+
+            const { Readable } =
+                require("node:stream");
 
             if (responseContentType) {
                 res.setHeader(
@@ -53735,25 +53858,6 @@ res.status(
                     acceptRanges
                 );
             }
-
-            res.setHeader(
-                "Cache-Control",
-                "no-store"
-            );
-
-            res.setHeader(
-                "Access-Control-Allow-Origin",
-                "*"
-            );
-
-            res.setHeader(
-                "Access-Control-Allow-Headers",
-                "*"
-            );
-
-            // Không chuyển tiếp Content-Length:
-            // tránh sai lệch khi fetch tự xử lý
-            // content-encoding của upstream.
 
             res.status(upstream.status);
 
@@ -53813,7 +53917,6 @@ res.status(
             );
 
             return sourceStream.pipe(res);
-
 
         } catch (e) {
 
