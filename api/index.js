@@ -39008,6 +39008,7 @@ const fhdcIframeStartedAt = Date.now();
                         "Accept":
                             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                     },
+httpsAgent: PHIMHDCS_FHDC_HTTPS_AGENT,
                     timeout,
                     maxRedirects: 8,
                     responseType: "text",
