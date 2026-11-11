@@ -54365,100 +54365,13 @@ app.get(
                 syntheticMasterUrl
             );
 
-            // Rewrite manifest trước khi chẩn đoán.
-            const rewritten =
-                phimhdcsFhdcRewritePlaylist(
-                    result.manifest,
-                    syntheticMasterUrl,
-                    result.baseUrl,
-                    result.referer
-                );
-
-            // [FHDC-DIAG-01] Kiểm tra URL segment.
-            const fhdcSafeUrl = value => {
-                try {
-                    const parsed = new URL(
-                        value,
-                        syntheticMasterUrl
-                    );
-                    return parsed.origin + parsed.pathname;
-                } catch (_) {
-                    return String(value || "").slice(0, 100);
-                }
-            };
-
-            const fhdcOriginalUris = result.manifest
-                .split(/\r?\n/)
-                .map(line => line.trim())
-                .filter(line => line && !line.startsWith("#"))
-                .slice(0, 5)
-                .map(fhdcSafeUrl);
-
-            const fhdcRewrittenUris = rewritten
-                .split(/\r?\n/)
-                .map(line => line.trim())
-                .filter(line =>
-                    line.startsWith("/phimhdcs/fhdc/resource?")
-                )
-                .slice(0, 5)
-                .map(line => {
-                    try {
-                        const parsed = new URL(
-                            line,
-                            "https://movina.local"
-                        );
-                        return fhdcSafeUrl(
-                            parsed.searchParams.get("url") || ""
-                        );
-                    } catch (_) {
-                        return "INVALID_REWRITTEN_URL";
-                    }
-                });
-
-
-            console.log("[FHDC-DIAG-01] PLAYLIST:", {
-                originalUriCount: result.manifest
-                    .split(/\r?\n/)
-                    .filter(line =>
-                        line.trim() &&
-                        !line.trim().startsWith("#")
-                    ).length,
-
-                originalUris: fhdcOriginalUris,
-                rewrittenUris: fhdcRewrittenUris,
-
-                hasExtinf: result.manifest.includes("#EXTINF"),
-                hasKey: /#EXT-X-KEY/i.test(result.manifest),
-                hasMap: /#EXT-X-MAP/i.test(result.manifest),
-
-                // Tổng số URL đã chuyển qua proxy.
-                proxyRouteCount: (
-                    rewritten.match(
-                        /\/phimhdcs\/fhdc\/resource\?/g
-                    ) || []
-                ).length,
-
-                // 12 dòng đầu tiên sau khi rewrite.
-                rewrittenPrefix: rewritten
-                    .split(/\r?\n/)
-                    .slice(0, 12)
-                    .map(line =>
-                        line.startsWith(
-                            "/phimhdcs/fhdc/resource?"
-                        )
-                            ? "/phimhdcs/fhdc/resource?[URL]"
-                            : line.slice(0, 180)
-                    ),
-
-                // Các thẻ HLS đầu tiên trong manifest gốc.
-                playlistTags: result.manifest
-                    .split(/\r?\n/)
-                    .filter(line =>
-                        line.trim().startsWith("#")
-                    )
-                    .slice(0, 15)
-            });
-
+const rewritten =
+    phimhdcsFhdcRewritePlaylist(
+        result.manifest,
+        syntheticMasterUrl,
+        result.baseUrl,
+        result.referer
+    );
 
             res.setHeader(
                 "Content-Type",
@@ -54594,12 +54507,6 @@ if (
     requestHeaders.Range =
         req.headers.range;
 }
-
-console.log("[FHDC-DIAG-02] RESOURCE REQUEST:", {
-    host: targetUrl.hostname,
-    path: targetUrl.pathname,
-    range: req.headers.range || ""
-});
             
 const upstream = await axios.get(
     targetUrl.href,
@@ -54647,183 +54554,6 @@ const upstream = await axios.get(
 
             const body =
                 Buffer.from(upstream.data || []);
-
-console.log("[FHDC-DIAG-03] RESOURCE RESPONSE:", {
-    status: upstream.status,
-    host: targetUrl.hostname,
-    path: targetUrl.pathname,
-    contentType,
-    bytes: body.length,
-    signature: body.subarray(0, 16).toString("hex")
-});
-
-// [FHDC-DIAG-04] Inspect PNG/APNG segment structure.
-if (
-    body.length >= 24 &&
-    body.subarray(0, 8).equals(
-        Buffer.from([
-            0x89, 0x50, 0x4e, 0x47,
-            0x0d, 0x0a, 0x1a, 0x0a
-        ])
-    )
-) {
-    const pngChunks = [];
-    let offset = 8;
-    let frameCount = null;
-    let playCount = null;
-
-    while (
-        offset + 12 <= body.length &&
-        pngChunks.length < 30
-    ) {
-        const chunkLength = body.readUInt32BE(offset);
-        const chunkType = body.toString(
-            "ascii",
-            offset + 4,
-            offset + 8
-        );
-
-        if (
-            chunkLength > body.length ||
-            offset + 12 + chunkLength > body.length
-        ) {
-            break;
-        }
-
-        pngChunks.push(chunkType);
-
-
-        if (chunkType === "iTXt") {
-            const dataStart = offset + 8;
-            const dataEnd = dataStart + chunkLength;
-            let p = dataStart;
-
-            const keywordEnd = body.indexOf(0, p);
-
-            if (keywordEnd >= 0 && keywordEnd < dataEnd) {
-                const keyword = body.toString(
-                    "utf8",
-                    p,
-                    keywordEnd
-                );
-
-                p = keywordEnd + 1;
-
-                if (p + 2 <= dataEnd) {
-                    const compressionFlag = body[p++];
-                    const compressionMethod = body[p++];
-
-                    const languageEnd = body.indexOf(0, p);
-
-                    if (
-                        languageEnd >= 0 &&
-                        languageEnd < dataEnd
-                    ) {
-                        const language = body.toString(
-                            "utf8",
-                            p,
-                            languageEnd
-                        );
-
-                        p = languageEnd + 1;
-
-                        const translatedEnd = body.indexOf(0, p);
-
-                        if (
-                            translatedEnd >= 0 &&
-                            translatedEnd < dataEnd
-                        ) {
-                            const translatedKeyword = body.toString(
-                                "utf8",
-                                p,
-                                translatedEnd
-                            );
-
-                            p = translatedEnd + 1;
-
-                            const payload = body.subarray(
-                                p,
-                                dataEnd
-                            );
-
-
-if (keyword === "payload-0001") {
-    let decoded = null;
-    let decodeError = null;
-
-    try {
-        decoded = require("zlib").inflateSync(payload);
-    } catch (err) {
-        decodeError = err.message;
-    }
-
-    let base64Decoded = null;
-    let base64Error = null;
-    let base64Candidate = false;
-
-    if (decoded) {
-        const textData = decoded.toString("ascii").trim();
-
-        base64Candidate =
-            /^[A-Za-z0-9+/]+={0,2}$/.test(textData) &&
-            textData.length >= 16;
-
-        if (base64Candidate) {
-            try {
-                base64Decoded = Buffer.from(textData, "base64");
-            } catch (err) {
-                base64Error = err.message;
-            }
-        }
-    }
-
-    console.log("[FHDC-DIAG-07] PAYLOAD ANALYSIS:", {
-        compressedBytes: payload.length,
-        decompressedBytes: decoded?.length || 0,
-        decompressedPreview: decoded
-            ? decoded.subarray(0, 100).toString("ascii")
-            : null,
-
-        base64Candidate,
-        base64Bytes: base64Decoded?.length || 0,
-        base64Signature: base64Decoded
-            ? base64Decoded.subarray(0, 64).toString("hex")
-            : null,
-        base64Preview: base64Decoded
-            ? base64Decoded.subarray(0, 64).toString("latin1")
-            : null,
-
-        decodeError,
-        base64Error
-    });
-}
-
-                        }
-                    }
-                }
-            }
-        }
-
-        if (chunkType === "acTL" && chunkLength >= 8) {
-            frameCount = body.readUInt32BE(offset + 8);
-            playCount = body.readUInt32BE(offset + 12);
-        }
-
-        offset += chunkLength + 12;
-
-        if (chunkType === "IEND") break;
-    }
-
-    console.log("[FHDC-DIAG-04] PNG STRUCTURE:", {
-        width: body.readUInt32BE(16),
-        height: body.readUInt32BE(20),
-        chunks: pngChunks,
-        animated: pngChunks.includes("acTL"),
-        frameCount,
-        playCount,
-        totalBytes: body.length
-    });
-}
 
             const isPlaylist =
                 contentType.includes("mpegurl") ||
@@ -54914,15 +54644,6 @@ if (isFhdcPngCarrier) {
             .send("FHDC PNG-to-TS decoding failed");
 
     }
-
-    console.log(
-        "[FHDC-DECODE] PNG TO TS SUCCESS:",
-        {
-            inputBytes: body.length,
-            outputBytes: ts.length,
-            signature: ts.subarray(0, 16).toString("hex")
-        }
-    );
 
     res.status(200);
 
