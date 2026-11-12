@@ -47885,11 +47885,21 @@ const params =
 const MOVIE_TITLE =
     \`${safeTitle}\`;
 
-const MOVIE_YEAR =
-    Number(
-        params.get("year") ||
-        0
+
+const MOVIE_YEAR = (() => {
+    const rawYear = String(
+        params.get("year") || ""
     );
+
+    const match = rawYear.match(
+        /(?:19|20)[0-9]{2}/
+    );
+
+    return match
+        ? Number(match[0])
+        : 0;
+})();
+
 
 const STREAM_TYPE =
     params.get("type") ||
@@ -47984,7 +47994,6 @@ function normalizeIdentityTitle(value) {
 // STRICT NGUONC IDENTITY MATCHING
 // =====================================================
 
-
 function scoreMovie(item) {
     const targetTitles = [
         ...new Set(
@@ -48045,12 +48054,39 @@ function scoreMovie(item) {
             )
         );
 
+    // Không có bằng chứng tên hoặc alias:
+    // không đưa ứng viên vào vòng Detail.
+    if (
+        !exactTitleMatch &&
+        !containsTitleMatch &&
+        !searchedByKnownAlias
+    ) {
+        return -10000;
+    }
+
     let candidateYear = Number(
         item?.year ||
         item?.release_year ||
         item?.releaseYear ||
         0
     );
+
+    if (!Number.isFinite(candidateYear) || candidateYear <= 0) {
+        const yearValue = String(
+            item?.year ||
+            item?.release_year ||
+            item?.releaseYear ||
+            ""
+        );
+
+        const match = yearValue.match(
+            /(?:19|20)[0-9]{2}/
+        );
+
+        candidateYear = match
+            ? Number(match[0])
+            : 0;
+    }
 
     if (!candidateYear) {
         for (const title of rawTitles) {
@@ -48079,32 +48115,31 @@ function scoreMovie(item) {
     const candidateIsMovie =
         /movie|single|phim[- ]?le/.test(candidateType);
 
-    // Không loại ứng viên tại Search API chỉ vì thiếu
-    // năm hoặc loại phim. Detail API sẽ xác minh sau.
+    // SEARCH CHỈ XẾP HẠNG.
+    // Không được loại ứng viên vì năm hoặc loại phim
+    // lấy từ Search API. Việc đó thuộc bước Detail.
+
     let score = 0;
 
     if (exactTitleMatch) {
-        score += 3000;
+        score += 5000;
     } else if (containsTitleMatch) {
-        score += 2000;
+        score += 3500;
     } else if (searchedByKnownAlias) {
-        score += 1000;
-    } else {
-        return -10000;
+        score += 2000;
     }
 
-    // Năm khớp: cộng điểm.
-    // Năm khác: trừ điểm mạnh, nhưng vẫn cho Detail
-    // cơ hội xác minh lại dữ liệu đầy đủ hơn.
-    if (MOVIE_YEAR > 0 && candidateYear > 0) {
-        if (candidateYear === MOVIE_YEAR) {
-            score += 500;
-        } else {
-            score -= 2500;
-        }
+    // Năm trùng chỉ giúp ưu tiên.
+    // Năm khác không bị trừ điểm ở Search.
+    if (
+        MOVIE_YEAR > 0 &&
+        candidateYear === MOVIE_YEAR
+    ) {
+        score += 500;
     }
 
-    // Loại phim chỉ dùng để xếp hạng ở bước Search.
+    // Loại phim trùng chỉ giúp ưu tiên.
+    // Loại phim khác không bị loại ở Search.
     if (
         STREAM_TYPE === "series" &&
         candidateIsSeries
@@ -48115,15 +48150,11 @@ function scoreMovie(item) {
         candidateIsMovie
     ) {
         score += 200;
-    } else if (
-        candidateIsSeries ||
-        candidateIsMovie
-    ) {
-        score -= 1500;
     }
 
     return score;
 }
+
 
 // =====================================================
 // SHOW ERROR
@@ -49078,28 +49109,39 @@ function getNguonCIdentity(item, detail) {
         )
     ];
 
-    let year = Number(
-        movie?.year ||
-        movie?.release_year ||
-        movie?.releaseYear ||
-        item?.year ||
-        item?.release_year ||
-        item?.releaseYear ||
-        0
+const rawYear =
+    movie?.year ||
+    movie?.release_year ||
+    movie?.releaseYear ||
+    item?.year ||
+    item?.release_year ||
+    item?.releaseYear ||
+    "";
+
+let year = Number(rawYear);
+
+if (!Number.isFinite(year) || year <= 0) {
+    const match = String(rawYear).match(
+        /(?:19|20)[0-9]{2}/
     );
 
-    if (!year) {
-        for (const title of rawTitles) {
-            const match = title.match(
-                /(?:19|20)[0-9]{2}/
-            );
+    year = match
+        ? Number(match[0])
+        : 0;
+}
 
-            if (match) {
-                year = Number(match[0]);
-                break;
-            }
+if (!year) {
+    for (const title of rawTitles) {
+        const match = title.match(
+            /(?:19|20)[0-9]{2}/
+        );
+
+        if (match) {
+            year = Number(match[0]);
+            break;
         }
     }
+}
 
     const type = String(
         movie?.type ||
@@ -49182,12 +49224,13 @@ function nguoncHasTypeConflict(identity) {
 // XÁC MINH ỨNG VIÊN BẰNG DETAIL API
 // -----------------------------------------------------
 
+
 const detailCandidates = ranked
     .filter(entry =>
         entry.score > -1000 &&
         Boolean(entry.item?.slug)
     )
-    .slice(0, 12);
+    .slice(0, 24);
 
 console.log(
     "[NGUONC CLIENT] DETAIL CANDIDATES:",
