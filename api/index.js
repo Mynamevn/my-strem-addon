@@ -22746,7 +22746,7 @@ async function kkphimGetMetadataTitleVariants(
                 ...basic,
                 ...KKPHIM_TITLE_VARIANT_CACHE.get(cacheKey)
             ])
-        ].slice(0, 12);
+        ].slice(0, 24);
     }
 
     const variants = [];
@@ -46518,28 +46518,24 @@ console.log(
 // NGUONC CLIENT URL
 // =====================================================
 
+
 const nguoncClientUrl =
     "https://my-strem-addon.vercel.app/nguonc-player" +
     "?title=" +
-    encodeURIComponent(
-        movieName
-    ) +
+    encodeURIComponent(movieName) +
     "&year=" +
-    encodeURIComponent(
-        movieYear || 0
-    ) +
+    encodeURIComponent(movieYear || 0) +
     "&type=" +
-    encodeURIComponent(
-        streamType || "movie"
-    ) +
+    encodeURIComponent(streamType || "movie") +
     "&season=" +
-    encodeURIComponent(
-        seasonNumber || 0
-    ) +
+    encodeURIComponent(seasonNumber || 0) +
     "&episode=" +
+    encodeURIComponent(episodeNumber || 0) +
+    "&titles=" +
     encodeURIComponent(
-        episodeNumber || 0
+        JSON.stringify(nguoncTitleVariants)
     );
+
 
 const nguoncClientStream = {
 
@@ -47999,6 +47995,7 @@ function normalizeIdentityTitle(value) {
 // STRICT NGUONC IDENTITY MATCHING
 // =====================================================
 
+
 function scoreMovie(item) {
     const targetTitles = [
         ...new Set(
@@ -48059,23 +48056,23 @@ function scoreMovie(item) {
             )
         );
 
-    let candidateYear = Number(
-        item?.year ||
-        item?.release_year ||
-        item?.releaseYear ||
-        0
-    );
+    let candidateYear = 0;
 
-    if (!candidateYear) {
-        for (const title of rawTitles) {
-            const match = title.match(
-                /(?:19|20)[0-9]{2}/
-            );
+    const yearFields = [
+        item?.year,
+        item?.release_year,
+        item?.releaseYear,
+        ...rawTitles
+    ];
 
-            if (match) {
-                candidateYear = Number(match[0]);
-                break;
-            }
+    for (const value of yearFields) {
+        const match = String(value || "").match(
+            /(?:19|20)[0-9]{2}/
+        );
+
+        if (match) {
+            candidateYear = Number(match[0]);
+            break;
         }
     }
 
@@ -48093,8 +48090,6 @@ function scoreMovie(item) {
     const candidateIsMovie =
         /movie|single|phim[- ]?le/.test(candidateType);
 
-    // Không loại ứng viên tại Search API chỉ vì thiếu
-    // năm hoặc loại phim. Detail API sẽ xác minh sau.
     let score = 0;
 
     if (exactTitleMatch) {
@@ -48107,18 +48102,24 @@ function scoreMovie(item) {
         return -10000;
     }
 
-    // Năm khớp: cộng điểm.
-    // Năm khác: trừ điểm mạnh, nhưng vẫn cho Detail
-    // cơ hội xác minh lại dữ liệu đầy đủ hơn.
+    // Năm chỉ dùng để xếp hạng.
+    // Quyết định chấp nhận hay từ chối sẽ được thực hiện
+    // sau khi tải Detail.
     if (MOVIE_YEAR > 0 && candidateYear > 0) {
-        if (candidateYear === MOVIE_YEAR) {
+        const difference =
+            Math.abs(candidateYear - MOVIE_YEAR);
+
+        if (difference === 0) {
             score += 500;
+        } else if (difference === 1) {
+            score += 150;
         } else {
-            score -= 2500;
+            score -= 300;
         }
     }
 
-    // Loại phim chỉ dùng để xếp hạng ở bước Search.
+    // Loại phim chỉ dùng để cộng điểm khi khớp.
+    // Không loại ứng viên chỉ vì Search API ghi sai loại.
     if (
         STREAM_TYPE === "series" &&
         candidateIsSeries
@@ -48129,15 +48130,11 @@ function scoreMovie(item) {
         candidateIsMovie
     ) {
         score += 200;
-    } else if (
-        candidateIsSeries ||
-        candidateIsMovie
-    ) {
-        score -= 1500;
     }
 
     return score;
 }
+
 
 // =====================================================
 // SHOW ERROR
@@ -49244,60 +49241,43 @@ for (const entry of detailCandidates) {
                 )
             );
 
-        const yearMatches =
-            MOVIE_YEAR > 0 &&
-            identity.year === MOVIE_YEAR;
 
-        const yearConflicts =
-            MOVIE_YEAR > 0 &&
-            identity.year > 0 &&
-            identity.year !== MOVIE_YEAR;
+const yearMatches =
+    MOVIE_YEAR > 0 &&
+    identity.year > 0 &&
+    identity.year === MOVIE_YEAR;
 
-        const typeConflicts =
-            nguoncHasTypeConflict(identity);
+const yearDifference =
+    MOVIE_YEAR > 0 && identity.year > 0
+        ? Math.abs(identity.year - MOVIE_YEAR)
+        : null;
 
-        // Có tên khớp nhưng năm khác:
-        // từ chối để tránh phát nhầm bản phim khác.
-        if (yearConflicts) {
-            console.log(
-                "[NGUONC CLIENT] REJECT YEAR:",
-                {
-                    name: item?.name,
-                    expected: MOVIE_YEAR,
-                    actual: identity.year
-                }
-            );
+// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
+// Thiếu năm ở Detail không phải lý do để từ chối.
+const yearConflicts =
+    yearDifference !== null &&
+    yearDifference >= 2;
 
-            continue;
+// Không dùng loại movie/series để loại ứng viên.
+// NguonC có thể phân loại khác với metadata MOVINA.
+const typeConflicts = false;
+
+if (yearConflicts) {
+    console.log(
+        "[NGUONC CLIENT] REJECT YEAR:",
+        {
+            name: item?.name,
+            expected: MOVIE_YEAR,
+            actual: identity.year,
+            difference: yearDifference
         }
+    );
 
-        if (typeConflicts) {
-            console.log(
-                "[NGUONC CLIENT] REJECT TYPE:",
-                {
-                    name: item?.name,
-                    expected: STREAM_TYPE,
-                    actual: identity.type
-                }
-            );
+    continue;
+}
 
-            continue;
-        }
-
-// -----------------------------------------------------
-// XÁC NHẬN DANH TÍNH PHIM — MULTILINGUAL SEARCH
-// -----------------------------------------------------
-
-// Nếu tên phim khớp một alias đã biết:
-// chấp nhận khi không có năm hoặc loại phim mâu thuẫn.
-//
-// Nếu tên hiển thị khác alias:
-// vẫn chấp nhận khi NguonC đã trả kết quả từ
-// một từ khóa alias hợp lệ.
-//
-// Không bắt buộc Detail API phải có trường year/type.
-// Chỉ từ chối khi dữ liệu thực tế mâu thuẫn rõ ràng.
-
+// Tên phim phải khớp một tên đã biết,
+// hoặc NguonC phải trả kết quả từ một alias hợp lệ.
 const identityAccepted =
     titleMatches ||
     searchedByKnownAlias;
@@ -49312,6 +49292,7 @@ console.log(
         titleMatches,
         expectedYear: MOVIE_YEAR,
         actualYear: identity.year,
+        yearDifference,
         yearMatches,
         yearConflicts,
         type: identity.type,
@@ -49320,7 +49301,7 @@ console.log(
     }
 );
 
-        if (!identityAccepted) {
+if (!identityAccepted) {
             console.log(
                 "[NGUONC CLIENT] REJECT IDENTITY:",
                 {
