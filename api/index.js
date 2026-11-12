@@ -46520,21 +46520,25 @@ console.log(
 const nguoncClientUrl =
     "https://my-strem-addon.vercel.app/nguonc-player" +
     "?title=" +
-    encodeURIComponent(movieName) +
-    "&titles=" +
     encodeURIComponent(
-        JSON.stringify(
-            nguoncTitleVariants.slice(0, 12)
-        )
+        movieName
     ) +
     "&year=" +
-    encodeURIComponent(movieYear || 0) +
+    encodeURIComponent(
+        movieYear || 0
+    ) +
     "&type=" +
-    encodeURIComponent(streamType || "movie") +
+    encodeURIComponent(
+        streamType || "movie"
+    ) +
     "&season=" +
-    encodeURIComponent(seasonNumber || 0) +
+    encodeURIComponent(
+        seasonNumber || 0
+    ) +
     "&episode=" +
-    encodeURIComponent(episodeNumber || 0);
+    encodeURIComponent(
+        episodeNumber || 0
+    );
 
 const nguoncClientStream = {
 
