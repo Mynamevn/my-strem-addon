@@ -47962,10 +47962,11 @@ function findVideoUrlForEpisode(
             of episodes
         ) {
 
-            const items =
-                server?.items ||
-                server?.server_data ||
-                [];
+const items =
+    server?.items ||
+    server?.server_data ||
+    server?.list ||
+    [];
 
             if (
                 !Array.isArray(
