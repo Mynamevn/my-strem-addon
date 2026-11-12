@@ -45988,7 +45988,7 @@ const animehayPromise = (async () => {
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
-      fetchNguonC(nguonCFallbackName),
+      Promise.resolve([]),
 
       fetchVSMov(
           movieName,
@@ -46185,25 +46185,21 @@ console.log(
 const nguoncClientUrl =
     "https://my-strem-addon.vercel.app/nguonc-player" +
     "?title=" +
+    encodeURIComponent(movieName) +
+    "&titles=" +
     encodeURIComponent(
-        movieName
+        JSON.stringify(
+            phimhdcsTitleVariants.slice(0, 6)
+        )
     ) +
     "&year=" +
-    encodeURIComponent(
-        movieYear || 0
-    ) +
+    encodeURIComponent(movieYear || 0) +
     "&type=" +
-    encodeURIComponent(
-        streamType || "movie"
-    ) +
+    encodeURIComponent(streamType || "movie") +
     "&season=" +
-    encodeURIComponent(
-        seasonNumber || 0
-    ) +
+    encodeURIComponent(seasonNumber || 0) +
     "&episode=" +
-    encodeURIComponent(
-        episodeNumber || 0
-    );
+    encodeURIComponent(episodeNumber || 0);
 
 const nguoncClientStream = {
 
@@ -47606,181 +47602,176 @@ const openNguonC =
 
 
 // =====================================================
-// NORMALIZE TITLE
+// NORMALIZE TITLE + TITLE ALIASES
 // =====================================================
 
-function normalizeTitle(
-    value
-) {
+const MOVIE_TITLE_VARIANTS = (() => {
+    let supplied = [];
 
-    return String(
-        value ||
-        ""
-    )
+    try {
+        const parsed = JSON.parse(
+            params.get("titles") || "[]"
+        );
+
+        if (Array.isArray(parsed)) {
+            supplied = parsed;
+        }
+    } catch (e) {}
+
+    return [
+        ...new Set(
+            [MOVIE_TITLE, ...supplied]
+                .map(value => String(value || "").trim())
+                .filter(Boolean)
+        )
+    ].slice(0, 8);
+})();
+
+function normalizeTitle(value) {
+    return String(value || "")
         .normalize("NFD")
-        .replace(
-            /[\\\\u0300-\\\\u036f]/g,
-            ""
-        )
+        .replace(/[\\u0300-\\u036f]/g, "")
+        .replace(/đ/g, "d")
         .toLowerCase()
-        .replace(
-            /[^a-z0-9]+/g,
-            " "
-        )
-        .replace(
-            /\\\\s+/g,
-            " "
-        )
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\\s+/g, " ")
         .trim();
-
 }
 
+function normalizeIdentityTitle(value) {
+    return normalizeTitle(value)
+        .replace(/\\b(?:19|20)[0-9]{2}\\b/g, " ")
+        .replace(/\\s+/g, " ")
+        .trim();
+}
 
 // =====================================================
-// SCORE NGUONC SEARCH RESULT
-// =====================================================
-// TITLE = tiêu chí chính.
-// YEAR  = tiêu chí ưu tiên, không phải điều kiện bắt buộc.
+// STRICT NGUONC IDENTITY MATCHING
 // =====================================================
 
-function scoreMovie(
-    item
-) {
+function scoreMovie(item) {
+    const targetTitles = [
+        ...new Set(
+            MOVIE_TITLE_VARIANTS
+                .map(normalizeIdentityTitle)
+                .filter(Boolean)
+        )
+    ];
 
-    const target =
-        normalizeTitle(
-            MOVIE_TITLE
-        );
+    const candidateRawTitles = [
+        item?.name,
+        item?.origin_name,
+        item?.original_name,
+        item?.title,
+        item?.english_name
+    ]
+        .map(value => String(value || "").trim())
+        .filter(Boolean);
 
-    const name =
-        normalizeTitle(
-            item?.name
-        );
-
-    const origin =
-        normalizeTitle(
-            item?.origin_name ||
-            item?.original_name
-        );
-
-    const itemYear =
-        Number(
-            item?.year ||
-            item?.release_year ||
-            item?.releaseYear ||
-            0
-        );
-
-    const rawName =
-        String(
-            item?.name ||
-            ""
-        ).trim();
-
-    let score = 0;
-
-    // =================================================
-    // TITLE MATCH
-    // =================================================
-
-    if (name === target) {
-        score += 1000;
-    }
-
-    if (origin === target) {
-        score += 1000;
-    }
+    const candidateTitles = [
+        ...new Set(
+            candidateRawTitles
+                .map(normalizeIdentityTitle)
+                .filter(Boolean)
+        )
+    ];
 
     if (
-        name.includes(target) &&
-        target.length >= 4
+        !targetTitles.length ||
+        !candidateTitles.length
     ) {
-        score += 300;
+        return -10000;
     }
 
-    if (
-        target.includes(name) &&
-        name.length >= 4
-    ) {
-        score += 250;
+    // Không chấp nhận chỉ khớp một phần tên.
+    const exactTitleMatch =
+        targetTitles.some(
+            target => candidateTitles.includes(target)
+        );
+
+    if (!exactTitleMatch) {
+        return -10000;
     }
 
-    if (
-        origin.includes(target) &&
-        target.length >= 4
-    ) {
-        score += 300;
-    }
+    // -------------------------------------------------
+    // YEAR VALIDATION
+    // -------------------------------------------------
 
-    if (
-        target.includes(origin) &&
-        origin.length >= 4
-    ) {
-        score += 250;
-    }
+    const apiYear = Number(
+        item?.year ||
+        item?.release_year ||
+        item?.releaseYear ||
+        0
+    );
 
-    // =================================================
-    // YEAR
-    // =================================================
-    // Đúng năm  → cộng điểm rất cao.
-    // Sai năm   → chỉ giảm nhẹ.
-    // Không có năm → không phạt.
-    //
-    // Như vậy:
-    // - Có bản đúng năm → ưu tiên bản đó.
-    // - Không có bản đúng năm → vẫn chọn được phim.
-    // =================================================
+    let nameYear = 0;
 
-    if (MOVIE_YEAR > 0) {
+    for (const rawTitle of candidateRawTitles) {
+        const match = rawTitle.match(
+            /(?:19|20)[0-9]{2}/
+        );
 
-        if (itemYear === MOVIE_YEAR) {
-
-            score += 5000;
-
-        } else if (itemYear > 0) {
-
-            score -= 500;
-
+        if (match) {
+            nameYear = Number(match[0]);
+            break;
         }
+    }
 
-        // -------------------------------------------------
-        // Kiểm tra năm nằm trong tên phim
-        // Ví dụ:
-        // Tây Du Ký Phần 1 (1996)
-        // -------------------------------------------------
+    const candidateYear =
+        apiYear || nameYear;
 
-        const yearMatch =
-            rawName.match(
-                /((19|20)[0-9]{2})/
-            );
+    // Có năm nhưng khác năm yêu cầu: loại thẳng.
+    if (
+        MOVIE_YEAR > 0 &&
+        candidateYear > 0 &&
+        candidateYear !== MOVIE_YEAR
+    ) {
+        return -10000;
+    }
 
-        if (yearMatch) {
+    // -------------------------------------------------
+    // MOVIE / SERIES TYPE VALIDATION
+    // -------------------------------------------------
 
-            const nameYear =
-                Number(
-                    yearMatch[0].replace(
-                        /[^0-9]/g,
-                        ""
-                    )
-                );
+    const candidateType = String(
+        item?.type ||
+        item?.movie_type ||
+        item?.movieType ||
+        item?.category ||
+        ""
+    ).toLowerCase();
 
-            console.log(
-                "[NGUONC CLIENT] NAME YEAR:",
-                rawName,
-                "=>",
-                nameYear
-            );
+    const candidateIsSeries =
+        /series|serial|phim[- ]?bo/.test(candidateType);
 
-            if (nameYear === MOVIE_YEAR) {
+    const candidateIsMovie =
+        /movie|single|phim[- ]?le/.test(candidateType);
 
-                score += 7000;
+    if (
+        STREAM_TYPE === "series" &&
+        candidateIsMovie
+    ) {
+        return -10000;
+    }
 
-            } else {
+    if (
+        STREAM_TYPE !== "series" &&
+        candidateIsSeries
+    ) {
+        return -10000;
+    }
 
-                score -= 500;
+    let score = 1000;
 
-            }
-        }
+    if (
+        MOVIE_YEAR > 0 &&
+        candidateYear === MOVIE_YEAR
+    ) {
+        score += 2000;
+    }
+
+    if (candidateIsSeries || candidateIsMovie) {
+        score += 100;
     }
 
     return score;
@@ -47980,6 +47971,14 @@ function findVideoUrlForEpisode(
                 "NguonC"
             ).trim();
 
+const serverSeasonMatch =
+    serverName.match(
+        /(?:season|mùa|phan|phần|s)\s*0*(\d+)/i
+    );
+
+const serverSeason =
+    Number(serverSeasonMatch?.[1] || 0);
+
         const items =
             server?.items ||
             server?.server_data ||
@@ -48015,17 +48014,68 @@ function findVideoUrlForEpisode(
             const episode =
                 items[index];
 
-            const episodeName =
-                String(
-                    episode?.name ||
-                    episode?.episode_name ||
-                    episode?.slug ||
-                    episode?.filename ||
-                    ""
-                ).trim();
+const episodeName =
+    String(
+        episode?.name ||
+        episode?.episode_name ||
+        episode?.slug ||
+        episode?.filename ||
+        ""
+    ).trim();
 
-            let detectedEpisode =
-                0;
+// Nhận dạng dạng S02E01.
+const structuredEpisode =
+    episodeName.match(
+        /\bS\s*0*(\d+)\s*E\s*0*(\d+)/i
+    );
+
+// Nhận dạng mùa ghi trong tên tập.
+const episodeSeasonMatch =
+    episodeName.match(
+        /(?:season|mùa|phan|phần)\s*0*(\d+)/i
+    );
+
+let detectedSeason =
+    structuredEpisode
+        ? Number(structuredEpisode[1])
+        : Number(
+            episodeSeasonMatch?.[1] ||
+            serverSeason ||
+            0
+        );
+
+// Nếu có thông tin mùa nhưng khác mùa yêu cầu,
+// tuyệt đối không lấy tập này.
+if (
+    Number(seasonNumber) > 0 &&
+    detectedSeason > 0 &&
+    detectedSeason !== Number(seasonNumber)
+) {
+    continue;
+}
+
+// Nếu yêu cầu mùa 2 trở lên nhưng không xác định
+// được mùa của tập, từ chối để tránh phát nhầm.
+if (
+    Number(seasonNumber) > 1 &&
+    detectedSeason === 0
+) {
+    console.warn(
+        "[NGUONC CLIENT] SEASON UNKNOWN — REJECT:",
+        {
+            requestedSeason: seasonNumber,
+            server: serverName,
+            episode: episodeName
+        }
+    );
+
+    continue;
+}
+
+let detectedEpisode =
+    structuredEpisode
+        ? Number(structuredEpisode[2])
+        : 0;
 
             // Ví dụ: "01"
             const directNumber =
@@ -48267,80 +48317,44 @@ function playM3U8(
 // =====================================================
 
 async function searchNguonC() {
-
     const keywords = [];
 
     function addKeyword(value) {
-
-        const keyword =
-            String(value || "").trim();
+        const keyword = String(value || "").trim();
 
         if (
             keyword &&
-            !keywords.includes(keyword)
+            normalizeTitle(keyword).length >= 3 &&
+            !keywords.some(
+                existing =>
+                    normalizeTitle(existing) ===
+                    normalizeTitle(keyword)
+            )
         ) {
             keywords.push(keyword);
         }
     }
 
-    // =================================================
-    // TỪ KHÓA GỐC
-    // =================================================
-
-    addKeyword(MOVIE_TITLE);
-
-    // =================================================
-    // BIẾN THỂ CHO JOURNEY TO THE WEST
-    // Không dùng normalizeTitle() ở đây.
-    // =================================================
-
-    const rawTitle =
-        String(
-            MOVIE_TITLE || ""
-        )
-            .trim()
-            .toLowerCase();
-
-    if (
-        rawTitle.includes(
-            "journey to the west"
-        )
-    ) {
-
-        addKeyword(
-            "Tây Du Ký"
-        );
-
-        addKeyword(
-            "Tây Du Ký Phần 1"
-        );
-
-        addKeyword(
-            "Tây Du Ký 1996"
-        );
+    // Tìm theo tên chính và các tên thay thế.
+    for (const title of MOVIE_TITLE_VARIANTS) {
+        addKeyword(title);
     }
+
+    // Giới hạn số truy vấn để tránh làm Client quá chậm.
+    const searchKeywords = keywords.slice(0, 5);
 
     console.log(
         "[NGUONC CLIENT] SEARCH KEYWORDS:",
-        keywords
+        searchKeywords
     );
 
     let allItems = [];
 
-    // =================================================
-    // CHẠY TỪNG TỪ KHÓA
-    // =================================================
-
-    for (
-        const keyword of keywords
-    ) {
-
+    for (const keyword of searchKeywords) {
         const searchUrl =
             API_BASE +
             "/films/search?keyword=" +
-            encodeURIComponent(
-                keyword
-            ) +
+            encodeURIComponent(keyword) +
             "&page=1";
 
         console.log(
@@ -48348,112 +48362,81 @@ async function searchNguonC() {
             keyword
         );
 
-        const response =
-            await fetch(
+        try {
+            const response = await fetch(
                 searchUrl,
                 {
                     method: "GET",
                     headers: {
-                        "Accept":
-                            "application/json"
+                        "Accept": "application/json"
                     },
                     cache: "no-store"
                 }
             );
 
-        if (!response.ok) {
+            if (!response.ok) {
+                console.warn(
+                    "[NGUONC CLIENT] SEARCH FAILED:",
+                    keyword,
+                    response.status
+                );
 
-            console.warn(
-                "[NGUONC CLIENT] SEARCH FAILED:",
+                continue;
+            }
+
+            const data = await response.json();
+
+            let items = [];
+
+            if (Array.isArray(data?.items)) {
+                items = data.items;
+            } else if (Array.isArray(data?.data)) {
+                items = data.data;
+            } else if (
+                Array.isArray(data?.data?.items)
+            ) {
+                items = data.data.items;
+            }
+
+            console.log(
+                "[NGUONC CLIENT] SEARCH RESULT:",
                 keyword,
-                response.status
+                items.length
             );
 
-            continue;
-        }
+            allItems = allItems.concat(items);
 
-        const data =
-            await response.json();
-
-        let items = [];
-
-        if (
-            Array.isArray(
-                data?.items
-            )
-        ) {
-
-            items =
-                data.items;
-
-        } else if (
-            Array.isArray(
-                data?.data
-            )
-        ) {
-
-            items =
-                data.data;
-
-        } else if (
-            Array.isArray(
-                data?.data?.items
-            )
-        ) {
-
-            items =
-                data.data.items;
-        }
-
-        console.log(
-            "[NGUONC CLIENT] SEARCH RESULT:",
-            keyword,
-            items.length
-        );
-
-        allItems =
-            allItems.concat(
-                items
+        } catch (error) {
+            console.warn(
+                "[NGUONC CLIENT] SEARCH ERROR:",
+                keyword,
+                error?.message || error
             );
+        }
     }
 
-    // =================================================
-    // LOẠI BỎ KẾT QUẢ TRÙNG
-    // =================================================
+    // -------------------------------------------------
+    // DEDUPLICATE
+    // -------------------------------------------------
 
-    const unique =
-        [];
+    const unique = [];
+    const seen = new Set();
 
-    const seen =
-        new Set();
-
-    for (
-        const item of allItems
-    ) {
-
-        const slug =
-            String(
-                item?.slug ||
-                ""
-            ).trim();
+    for (const item of allItems) {
+        const slug = String(
+            item?.slug || ""
+        ).trim();
 
         const key =
             slug ||
-            JSON.stringify(
-                item
-            );
+            JSON.stringify(item);
 
-        if (
-            seen.has(key)
-        ) {
+        if (seen.has(key)) {
             continue;
         }
 
         seen.add(key);
-
-        unique.push(
-            item
-        );
+        unique.push(item);
     }
 
     console.log(
@@ -48463,7 +48446,6 @@ async function searchNguonC() {
 
     return unique;
 }
-
 
 // =====================================================
 // LOAD DETAIL
@@ -48610,148 +48592,74 @@ async function startNguonC() {
         )
     );
 
-    // =====================================================
-// CHỌN PHIM NGUONC
 // =====================================================
-// Tên phim là tiêu chí chính.
-// Năm chỉ dùng để ưu tiên phiên bản đúng năm.
-// Không loại bỏ phim chỉ vì NguonC thiếu/khác year.
+// CHỌN PHIM NGUONC — STRICT IDENTITY
 // =====================================================
 
 let selectedEntry = null;
 let selectedDetail = null;
 
-// -----------------------------------------------------
-// 1. ƯU TIÊN KẾT QUẢ ĐÚNG NĂM
-// -----------------------------------------------------
+console.log(
+    "[NGUONC CLIENT] RANKED CANDIDATES:",
+    ranked.slice(0, 10).map(entry => ({
+        name: entry.item?.name,
+        origin_name:
+            entry.item?.origin_name ||
+            entry.item?.original_name,
+        year:
+            entry.item?.year ||
+            entry.item?.release_year ||
+            entry.item?.releaseYear,
+        type:
+            entry.item?.type ||
+            entry.item?.movie_type,
+        slug: entry.item?.slug,
+        score: entry.score
+    }))
+);
 
-if (MOVIE_YEAR > 0) {
+// Chỉ nhận ứng viên:
+// - Tên khớp chính xác với một trong các alias.
+// - Không mâu thuẫn năm.
+// - Không mâu thuẫn loại phim.
+// - Có slug hợp lệ.
 
-    selectedEntry =
-        ranked.find(function (entry) {
-
-            const item =
-                entry.item || {};
-
-            const itemYear =
-                Number(
-                    item?.year ||
-                    item?.release_year ||
-                    item?.releaseYear ||
-                    0
-                );
-
-            const rawName =
-                String(
-                    item?.name ||
-                    ""
-                ).trim();
-
-            const yearMatch =
-                rawName.match(
-                    /\((19|20)[0-9]{2}\)/
-                );
-
-            let nameYear = 0;
-
-            if (yearMatch) {
-                nameYear =
-                    Number(
-                        yearMatch[0].replace(
-                            /[^0-9]/g,
-                            ""
-                        )
-                    );
-            }
-
-            if (
-                itemYear === MOVIE_YEAR ||
-                nameYear === MOVIE_YEAR
-            ) {
-
-                console.log(
-                    "[NGUONC CLIENT] EXACT YEAR MATCH:",
-                    {
-                        name: rawName,
-                        apiYear: itemYear,
-                        nameYear: nameYear,
-                        targetYear: MOVIE_YEAR
-                    }
-                );
-
-                return true;
-            }
-
-            return false;
-        });
-
-    console.log(
-        "[NGUONC CLIENT] SELECTED BY YEAR:",
-        selectedEntry?.item
-            ? {
-                name: selectedEntry.item.name,
-                origin_name:
-                    selectedEntry.item.origin_name ||
-                    selectedEntry.item.original_name,
-                year:
-                    selectedEntry.item.year ||
-                    selectedEntry.item.release_year ||
-                    selectedEntry.item.releaseYear,
-                slug: selectedEntry.item.slug
-            }
-            : null
-    );
-}
-
-// -----------------------------------------------------
-// 2. KHÔNG CÓ BẢN ĐÚNG NĂM
-// -----------------------------------------------------
-// Không báo lỗi.
-// Dùng kết quả phù hợp nhất theo TITLE SCORE.
-// -----------------------------------------------------
+selectedEntry =
+    ranked.find(entry =>
+        entry.score >= 1000 &&
+        Boolean(entry.item?.slug)
+    ) || null;
 
 if (!selectedEntry) {
-
-    selectedEntry =
-        ranked.find(function (entry) {
-
-            const item =
-                entry.item || {};
-
-            return Boolean(
-                item?.slug
-            );
-
-        }) || null;
-
-    console.log(
-        "[NGUONC CLIENT] FALLBACK BY TITLE:",
-        selectedEntry?.item
-            ? {
-                name: selectedEntry.item.name,
-                origin_name:
-                    selectedEntry.item.origin_name ||
-                    selectedEntry.item.original_name,
-                year:
-                    selectedEntry.item.year ||
-                    selectedEntry.item.release_year ||
-                    selectedEntry.item.releaseYear,
-                slug: selectedEntry.item.slug
-            }
-            : null
+    console.warn(
+        "[NGUONC CLIENT] IDENTITY REJECTED:",
+        {
+            title: MOVIE_TITLE,
+            year: MOVIE_YEAR,
+            type: STREAM_TYPE
+        }
     );
-}
-
-// -----------------------------------------------------
-// 3. HOÀN TOÀN KHÔNG CÓ KẾT QUẢ
-// -----------------------------------------------------
-
-if (!selectedEntry) {
 
     throw new Error(
-        "NguonC có kết quả nhưng không tìm được phim phù hợp."
+        "Không tìm được phim có tên, năm và loại phim phù hợp trên NguonC. Đã từ chối chọn kết quả gần giống để tránh phát nhầm phim."
     );
 }
+
+console.log(
+    "[NGUONC CLIENT] IDENTITY ACCEPTED:",
+    {
+        name: selectedEntry.item?.name,
+        origin_name:
+            selectedEntry.item?.origin_name ||
+            selectedEntry.item?.original_name,
+        year:
+            selectedEntry.item?.year ||
+            selectedEntry.item?.release_year ||
+            selectedEntry.item?.releaseYear,
+        score: selectedEntry.score,
+        slug: selectedEntry.item?.slug
+    }
+);
 
 const selected =
     selectedEntry?.item ||
