@@ -48452,8 +48452,10 @@ async function searchNguonC() {
         addKeyword(title);
     }
 
-    // Giới hạn số truy vấn để tránh làm Client quá chậm.
-    const searchKeywords = keywords.slice(0, 6);
+// Tìm toàn bộ tên biến thể được xác minh.
+// Tối đa 12 alias đã được truyền từ MOVINA.
+// Không bỏ các tên tiếng Việt nằm ở cuối danh sách.
+const searchKeywords = keywords.slice(0, 12);
 
     console.log(
         "[NGUONC CLIENT] SEARCH KEYWORDS:",
