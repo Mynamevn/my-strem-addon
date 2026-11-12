@@ -47994,7 +47994,11 @@ function scoreMovie(item) {
         )
     ];
 
-    const candidateRawTitles = [
+    if (!targetTitles.length || !item) {
+        return -10000;
+    }
+
+    const rawTitles = [
         item?.name,
         item?.origin_name,
         item?.original_name,
@@ -48006,24 +48010,17 @@ function scoreMovie(item) {
 
     const candidateTitles = [
         ...new Set(
-            candidateRawTitles
+            rawTitles
                 .map(normalizeIdentityTitle)
                 .filter(Boolean)
         )
     ];
 
-    if (!targetTitles.length) {
-        return -10000;
-    }
-
-    // 1. Khớp chính xác như cách tìm ưu tiên của baseline.
     const exactTitleMatch =
         targetTitles.some(target =>
             candidateTitles.includes(target)
         );
 
-    // 2. Khớp chứa tên: xử lý trường hợp tên có thêm
-    //    phụ đề, tên mở rộng hoặc phần bổ sung.
     const containsTitleMatch =
         targetTitles.some(target =>
             target.length >= 5 &&
@@ -48036,49 +48033,37 @@ function scoreMovie(item) {
             )
         );
 
-    // -------------------------------------------------
-    // YEAR VALIDATION
-    // -------------------------------------------------
+    const matchedKeywords =
+        Array.isArray(item?.__movinaMatchedKeywords)
+            ? item.__movinaMatchedKeywords
+            : [];
 
-    const apiYear = Number(
+    const searchedByKnownAlias =
+        matchedKeywords.some(keyword =>
+            targetTitles.includes(
+                normalizeIdentityTitle(keyword)
+            )
+        );
+
+    let candidateYear = Number(
         item?.year ||
         item?.release_year ||
         item?.releaseYear ||
         0
     );
 
-    let nameYear = 0;
+    if (!candidateYear) {
+        for (const title of rawTitles) {
+            const match = title.match(
+                /(?:19|20)[0-9]{2}/
+            );
 
-    for (const rawTitle of candidateRawTitles) {
-        const match = rawTitle.match(
-            /(?:19|20)[0-9]{2}/
-        );
-
-        if (match) {
-            nameYear = Number(match[0]);
-            break;
+            if (match) {
+                candidateYear = Number(match[0]);
+                break;
+            }
         }
     }
-
-    const candidateYear =
-        apiYear || nameYear;
-
-    const yearMatches =
-        MOVIE_YEAR > 0 &&
-        candidateYear === MOVIE_YEAR;
-
-    // Có năm nhưng khác năm yêu cầu: loại.
-    if (
-        MOVIE_YEAR > 0 &&
-        candidateYear > 0 &&
-        candidateYear !== MOVIE_YEAR
-    ) {
-        return -10000;
-    }
-
-    // -------------------------------------------------
-    // MOVIE / SERIES TYPE VALIDATION
-    // -------------------------------------------------
 
     const candidateType = String(
         item?.type ||
@@ -48094,87 +48079,51 @@ function scoreMovie(item) {
     const candidateIsMovie =
         /movie|single|phim[- ]?le/.test(candidateType);
 
-    if (
-        STREAM_TYPE === "series" &&
-        candidateIsMovie
-    ) {
-        return -10000;
-    }
-
-    if (
-        STREAM_TYPE !== "series" &&
-        candidateIsSeries
-    ) {
-        return -10000;
-    }
-
-    const candidateTypeMatches =
-        STREAM_TYPE === "series"
-            ? candidateIsSeries
-            : candidateIsMovie;
-
-    // -------------------------------------------------
-    // RANKING
-    // -------------------------------------------------
-
+    // Không loại ứng viên tại Search API chỉ vì thiếu
+    // năm hoặc loại phim. Detail API sẽ xác minh sau.
     let score = 0;
 
-    // Ưu tiên cao nhất: tên trùng chính xác.
     if (exactTitleMatch) {
-        score = 1000;
-    }
-
-    // Ưu tiên tiếp theo: tên chứa nhau.
-    else if (containsTitleMatch) {
-        score = 1500;
-    }
-
-    // -------------------------------------------------
-    // BASELINE-STYLE SEARCH RESULT FALLBACK
-    // -------------------------------------------------
-    // NguonC có thể trả tên bản địa khác với tên IMDb.
-    // Chỉ cho phép dùng kết quả tìm kiếm khi:
-    // - Kết quả thực sự đến từ một từ khóa MOVINA đã gửi.
-    // - Năm khớp chính xác.
-    // - Loại phim khớp chính xác.
-    // Không lấy kết quả đầu tiên một cách mù quáng.
-
-    else {
-        const matchedKeywords =
-            Array.isArray(item?.__movinaMatchedKeywords)
-                ? item.__movinaMatchedKeywords
-                : [];
-
-        const searchedByKnownAlias =
-            matchedKeywords.some(keyword =>
-                targetTitles.includes(
-                    normalizeIdentityTitle(keyword)
-                )
-            );
-
-        if (
-            !searchedByKnownAlias ||
-            !yearMatches ||
-            !candidateTypeMatches
-        ) {
-            return -10000;
-        }
-
-        // Fallback có kiểm chứng năm và loại phim.
-        score = 1000;
-    }
-
-    if (yearMatches) {
+        score += 3000;
+    } else if (containsTitleMatch) {
         score += 2000;
+    } else if (searchedByKnownAlias) {
+        score += 1000;
+    } else {
+        return -10000;
     }
 
-    if (candidateTypeMatches) {
-        score += 100;
+    // Năm khớp: cộng điểm.
+    // Năm khác: trừ điểm mạnh, nhưng vẫn cho Detail
+    // cơ hội xác minh lại dữ liệu đầy đủ hơn.
+    if (MOVIE_YEAR > 0 && candidateYear > 0) {
+        if (candidateYear === MOVIE_YEAR) {
+            score += 500;
+        } else {
+            score -= 2500;
+        }
+    }
+
+    // Loại phim chỉ dùng để xếp hạng ở bước Search.
+    if (
+        STREAM_TYPE === "series" &&
+        candidateIsSeries
+    ) {
+        score += 200;
+    } else if (
+        STREAM_TYPE !== "series" &&
+        candidateIsMovie
+    ) {
+        score += 200;
+    } else if (
+        candidateIsSeries ||
+        candidateIsMovie
+    ) {
+        score -= 1500;
     }
 
     return score;
 }
-
 
 // =====================================================
 // SHOW ERROR
@@ -49059,7 +49008,7 @@ async function startNguonC() {
     );
 
 // =====================================================
-// CHỌN PHIM NGUONC — STRICT IDENTITY
+// CHỌN PHIM NGUONC — SEARCH + DETAIL IDENTITY
 // =====================================================
 
 let selectedEntry = null;
@@ -49067,7 +49016,7 @@ let selectedDetail = null;
 
 console.log(
     "[NGUONC CLIENT] RANKED CANDIDATES:",
-    ranked.slice(0, 10).map(entry => ({
+    ranked.slice(0, 15).map(entry => ({
         name: entry.item?.name,
         origin_name:
             entry.item?.origin_name ||
@@ -49079,53 +49028,338 @@ console.log(
         type:
             entry.item?.type ||
             entry.item?.movie_type,
+        matchedKeywords:
+            entry.item?.__movinaMatchedKeywords,
         slug: entry.item?.slug,
         score: entry.score
     }))
 );
 
-// Chỉ nhận ứng viên:
-// - Tên khớp chính xác với một trong các alias.
-// - Không mâu thuẫn năm.
-// - Không mâu thuẫn loại phim.
-// - Có slug hợp lệ.
+// -----------------------------------------------------
+// HÀM ĐỌC METADATA TỪ SEARCH VÀ DETAIL
+// -----------------------------------------------------
 
-selectedEntry =
-    ranked.find(entry =>
-        entry.score >= 1000 &&
+function getNguonCDetailMovie(detail) {
+    return (
+        detail?.movie ||
+        detail?.data?.movie ||
+        detail?.data?.item ||
+        detail?.data ||
+        detail?.item ||
+        detail ||
+        {}
+    );
+}
+
+function getNguonCIdentity(item, detail) {
+    const movie = getNguonCDetailMovie(detail);
+
+    const rawTitles = [
+        item?.name,
+        item?.origin_name,
+        item?.original_name,
+        item?.title,
+        item?.english_name,
+
+        movie?.name,
+        movie?.origin_name,
+        movie?.original_name,
+        movie?.title,
+        movie?.english_name
+    ]
+        .map(value => String(value || "").trim())
+        .filter(Boolean);
+
+    const normalizedTitles = [
+        ...new Set(
+            rawTitles
+                .map(normalizeIdentityTitle)
+                .filter(Boolean)
+        )
+    ];
+
+    let year = Number(
+        movie?.year ||
+        movie?.release_year ||
+        movie?.releaseYear ||
+        item?.year ||
+        item?.release_year ||
+        item?.releaseYear ||
+        0
+    );
+
+    if (!year) {
+        for (const title of rawTitles) {
+            const match = title.match(
+                /(?:19|20)[0-9]{2}/
+            );
+
+            if (match) {
+                year = Number(match[0]);
+                break;
+            }
+        }
+    }
+
+    const type = String(
+        movie?.type ||
+        movie?.movie_type ||
+        movie?.movieType ||
+        movie?.content_type ||
+        movie?.category ||
+        item?.type ||
+        item?.movie_type ||
+        item?.movieType ||
+        item?.content_type ||
+        item?.category ||
+        ""
+    ).toLowerCase();
+
+    return {
+        movie,
+        rawTitles,
+        normalizedTitles,
+        year,
+        type
+    };
+}
+
+// -----------------------------------------------------
+// KIỂM TRA TÊN PHIM
+// -----------------------------------------------------
+
+function nguoncHasTitleMatch(identity) {
+    const targets = MOVIE_TITLE_VARIANTS
+        .map(normalizeIdentityTitle)
+        .filter(Boolean);
+
+    return targets.some(target =>
+        identity.normalizedTitles.some(candidate =>
+            candidate === target ||
+            (
+                target.length >= 5 &&
+                candidate.length >= 5 &&
+                (
+                    candidate.includes(target) ||
+                    target.includes(candidate)
+                )
+            )
+        )
+    );
+}
+
+// -----------------------------------------------------
+// KIỂM TRA LOẠI PHIM
+// -----------------------------------------------------
+
+function nguoncHasTypeConflict(identity) {
+    const type = identity.type;
+
+    const isSeries =
+        /series|serial|phim[- ]?bo/.test(type);
+
+    const isMovie =
+        /movie|single|phim[- ]?le/.test(type);
+
+    if (
+        STREAM_TYPE === "series" &&
+        isMovie
+    ) {
+        return true;
+    }
+
+    if (
+        STREAM_TYPE !== "series" &&
+        isSeries
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+// -----------------------------------------------------
+// XÁC MINH ỨNG VIÊN BẰNG DETAIL API
+// -----------------------------------------------------
+
+const detailCandidates = ranked
+    .filter(entry =>
+        entry.score > -1000 &&
         Boolean(entry.item?.slug)
-    ) || null;
+    )
+    .slice(0, 12);
+
+console.log(
+    "[NGUONC CLIENT] DETAIL CANDIDATES:",
+    detailCandidates.length
+);
+
+for (const entry of detailCandidates) {
+    const item = entry.item;
+
+    try {
+        console.log(
+            "[NGUONC CLIENT] VERIFY DETAIL:",
+            {
+                name: item?.name,
+                slug: item?.slug,
+                score: entry.score
+            }
+        );
+
+        const detail = await loadDetail(item.slug);
+
+        const identity = getNguonCIdentity(
+            item,
+            detail
+        );
+
+        const titleMatches =
+            nguoncHasTitleMatch(identity);
+
+        const matchedKeywords =
+            Array.isArray(item?.__movinaMatchedKeywords)
+                ? item.__movinaMatchedKeywords
+                : [];
+
+        const searchedByKnownAlias =
+            matchedKeywords.some(keyword =>
+                MOVIE_TITLE_VARIANTS.some(title =>
+                    normalizeIdentityTitle(title) ===
+                    normalizeIdentityTitle(keyword)
+                )
+            );
+
+        const yearMatches =
+            MOVIE_YEAR > 0 &&
+            identity.year === MOVIE_YEAR;
+
+        const yearConflicts =
+            MOVIE_YEAR > 0 &&
+            identity.year > 0 &&
+            identity.year !== MOVIE_YEAR;
+
+        const typeConflicts =
+            nguoncHasTypeConflict(identity);
+
+        // Có tên khớp nhưng năm khác:
+        // từ chối để tránh phát nhầm bản phim khác.
+        if (yearConflicts) {
+            console.log(
+                "[NGUONC CLIENT] REJECT YEAR:",
+                {
+                    name: item?.name,
+                    expected: MOVIE_YEAR,
+                    actual: identity.year
+                }
+            );
+
+            continue;
+        }
+
+        if (typeConflicts) {
+            console.log(
+                "[NGUONC CLIENT] REJECT TYPE:",
+                {
+                    name: item?.name,
+                    expected: STREAM_TYPE,
+                    actual: identity.type
+                }
+            );
+
+            continue;
+        }
+
+        // Chấp nhận khi:
+        // 1. Tên Search hoặc Detail khớp alias.
+        // 2. Hoặc tìm được bằng alias đã biết và năm khớp.
+        //
+        // Nếu tên không khớp, bắt buộc phải có năm khớp.
+        // Không chọn kết quả gần giống một cách mù quáng.
+        const identityAccepted =
+            titleMatches ||
+            (
+                searchedByKnownAlias &&
+                yearMatches
+            );
+
+        if (!identityAccepted) {
+            console.log(
+                "[NGUONC CLIENT] REJECT IDENTITY:",
+                {
+                    name: item?.name,
+                    detailTitles: identity.rawTitles,
+                    matchedKeywords,
+                    year: identity.year
+                }
+            );
+
+            continue;
+        }
+
+        selectedEntry = entry;
+        selectedDetail = detail;
+
+        console.log(
+            "[NGUONC CLIENT] IDENTITY ACCEPTED:",
+            {
+                name: item?.name,
+                detailTitles: identity.rawTitles,
+                expectedYear: MOVIE_YEAR,
+                actualYear: identity.year,
+                yearMatches,
+                type: identity.type,
+                titleMatches,
+                searchedByKnownAlias,
+                slug: item?.slug
+            }
+        );
+
+        break;
+
+    } catch (error) {
+        console.warn(
+            "[NGUONC CLIENT] DETAIL VERIFY FAILED:",
+            item?.slug,
+            error?.message || error
+        );
+    }
+}
+
+// -----------------------------------------------------
+// KHÔNG TỰ Ý CHỌN PHIM NẾU KHÔNG XÁC MINH ĐƯỢC
+// -----------------------------------------------------
 
 if (!selectedEntry) {
     console.warn(
         "[NGUONC CLIENT] IDENTITY REJECTED:",
         {
             title: MOVIE_TITLE,
+            aliases: MOVIE_TITLE_VARIANTS,
             year: MOVIE_YEAR,
-            type: STREAM_TYPE
+            type: STREAM_TYPE,
+            checked: detailCandidates.length
         }
     );
 
     throw new Error(
-        "Không tìm được phim có tên, năm và loại phim phù hợp trên NguonC. Đã từ chối chọn kết quả gần giống để tránh phát nhầm phim."
+        "Đã tìm thấy kết quả trên NguonC nhưng không xác minh được đúng phim, năm hoặc loại phim. MOVINA đã từ chối chọn phim gần giống để tránh phát nhầm."
     );
 }
 
 console.log(
-    "[NGUONC CLIENT] IDENTITY ACCEPTED:",
+    "[NGUONC CLIENT] SELECTED VERIFIED:",
     {
         name: selectedEntry.item?.name,
         origin_name:
             selectedEntry.item?.origin_name ||
             selectedEntry.item?.original_name,
-        year:
-            selectedEntry.item?.year ||
-            selectedEntry.item?.release_year ||
-            selectedEntry.item?.releaseYear,
+        slug: selectedEntry.item?.slug,
         score: selectedEntry.score,
-        slug: selectedEntry.item?.slug
+        detailLoaded: Boolean(selectedDetail)
     }
 );
+
 
 const selected =
     selectedEntry?.item ||
