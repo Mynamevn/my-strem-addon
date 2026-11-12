@@ -22593,14 +22593,25 @@ async function kkphimGetMetadataTitleVariants(
             {
                 ?item skos:altLabel ?label .
             }
-            FILTER(
-                LANG(?label) IN (
-                    "en", "vi", "ja", "zh", "ko",
-                    "fr", "de", "es", "pt", "ru"
-                )
-            )
-        }
-        LIMIT 30
+FILTER(
+    LANG(?label) IN (
+        "en", "vi", "ja", "zh", "ko",
+        "fr", "de", "es", "pt", "ru"
+    )
+    && STRLEN(STR(?label)) >= 2
+)
+ORDER BY
+    IF(
+        LANG(?label) = "vi",
+        0,
+        IF(
+            LANG(?label) = "en",
+            1,
+            IF(LANG(?label) = "ja", 2, 3)
+        )
+    )
+    LCASE(STR(?label))
+LIMIT 40
     `;
 
     try {
@@ -22637,7 +22648,7 @@ async function kkphimGetMetadataTitleVariants(
                     kkphimNormalizeTitle(title)
                 )
             )
-        ].slice(0, 8);
+        ].slice(0, 12);
 
         KKPHIM_TITLE_VARIANT_CACHE.set(
             cacheKey,
@@ -45986,6 +45997,24 @@ const animehayPromise = (async () => {
       })
   );
 
+// =====================================================
+// NGUONC — IMDb UNIVERSAL TITLE ALIAS
+// =====================================================
+
+const nguoncMetadataTitleVariantsPromise =
+    kkphimGetMetadataTitleVariants(
+        movieName,
+        phimhdcsImdbIdForTitles,
+        movieYear
+    ).catch(error => {
+        console.log(
+            "[NGUONC] IMDb ALIAS ERROR:",
+            error?.message || error
+        );
+
+        return kkphimBuildBasicTitleVariants(movieName);
+    });
+
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
       Promise.resolve([]),
@@ -46182,6 +46211,74 @@ console.log(
 // Browser sẽ mở NguonC Client và tự tìm đúng phim/năm/tập.
 // =====================================================
 
+// =====================================================
+// NGUONC — BUILD VERIFIED TITLE VARIANTS
+// =====================================================
+
+const nguoncMetadataTitleVariants =
+    await nguoncMetadataTitleVariantsPromise;
+
+// Những tên đã được tạo từ chính tên ban đầu.
+const nguoncBasicTitleKeys = new Set(
+    kkphimBuildBasicTitleVariants(movieName)
+        .map(kkphimNormalizeTitle)
+);
+
+// Tách riêng các tên thay thế lấy từ Wikidata.
+const nguoncVerifiedAliases =
+    nguoncMetadataTitleVariants.filter(title =>
+        !nguoncBasicTitleKeys.has(
+            kkphimNormalizeTitle(title)
+        )
+    );
+
+// Ưu tiên:
+// 1. Tên phim đang mở.
+// 2. Alias được liên kết với IMDb.
+// 3. Tên từ metadata và cache hiện có.
+// 4. Các biến thể cơ bản còn lại.
+
+const nguoncTitleVariants = [];
+const nguoncSeenTitleKeys = new Set();
+
+for (const value of [
+    movieName,
+    ...nguoncVerifiedAliases,
+    ...phimhdcsTitleVariants,
+    ...nguoncMetadataTitleVariants
+]) {
+    const title = String(value || "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const key = kkphimNormalizeTitle(title);
+
+    if (
+        !key ||
+        key.length < 2 ||
+        nguoncSeenTitleKeys.has(key)
+    ) {
+        continue;
+    }
+
+    nguoncSeenTitleKeys.add(key);
+    nguoncTitleVariants.push(title);
+}
+
+console.log(
+    "[NGUONC] IMDb TITLE ALIASES:",
+    JSON.stringify({
+        imdbId: phimhdcsImdbIdForTitles,
+        title: movieName,
+        count: nguoncTitleVariants.length,
+        variants: nguoncTitleVariants
+    })
+);
+
+// =====================================================
+// NGUONC CLIENT URL
+// =====================================================
+
 const nguoncClientUrl =
     "https://my-strem-addon.vercel.app/nguonc-player" +
     "?title=" +
@@ -46189,7 +46286,7 @@ const nguoncClientUrl =
     "&titles=" +
     encodeURIComponent(
         JSON.stringify(
-            phimhdcsTitleVariants.slice(0, 6)
+            nguoncTitleVariants.slice(0, 12)
         )
     ) +
     "&year=" +
@@ -47624,7 +47721,7 @@ const MOVIE_TITLE_VARIANTS = (() => {
                 .map(value => String(value || "").trim())
                 .filter(Boolean)
         )
-    ].slice(0, 8);
+    ].slice(0, 12);
 })();
 
 function normalizeTitle(value) {
@@ -47633,7 +47730,7 @@ function normalizeTitle(value) {
         .replace(/[\\u0300-\\u036f]/g, "")
         .replace(/đ/g, "d")
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/[^\\p{L}\\p{N}]+/gu, " ")
         .replace(/\\s+/g, " ")
         .trim();
 }
@@ -48341,7 +48438,7 @@ async function searchNguonC() {
     }
 
     // Giới hạn số truy vấn để tránh làm Client quá chậm.
-    const searchKeywords = keywords.slice(0, 5);
+    const searchKeywords = keywords.slice(0, 6);
 
     console.log(
         "[NGUONC CLIENT] SEARCH KEYWORDS:",
