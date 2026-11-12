@@ -30619,12 +30619,19 @@ async function fetchAnimeHayExternalStreams(
         );
     }
 
+    // Giữ dấu ":" trong ID series để khớp route của AnimeHay addon.
+    // streamId đã được giới hạn bởi IMDb ID và số mùa/tập ở phía trên.
+    const safeStreamId =
+        type === "series"
+            ? streamId.replace(/[^a-zA-Z0-9:]/g, "")
+            : imdb;
+
     const endpoint =
         ANIMEHAY_EXTERNAL_ADDON +
         "/stream/" +
         type +
         "/" +
-        encodeURIComponent(streamId) +
+        safeStreamId +
         ".json";
 
     const startedAt = Date.now();
