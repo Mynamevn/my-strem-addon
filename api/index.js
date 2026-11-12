@@ -48080,7 +48080,21 @@ const serverSeason =
         const items =
             server?.items ||
             server?.server_data ||
+            server?.list ||
             [];
+
+        console.log(
+            "[NGUONC CLIENT] SERIES SERVER DATA:",
+            {
+                server: serverName,
+                itemsCount: Array.isArray(items)
+                    ? items.length
+                    : -1,
+                hasList: Array.isArray(server?.list),
+                hasItems: Array.isArray(server?.items),
+                hasServerData: Array.isArray(server?.server_data)
+            }
+        );
 
         if (
             !Array.isArray(
