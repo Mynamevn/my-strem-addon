@@ -1861,16 +1861,17 @@ async function movinaTrendingLoadIMDb(items) {
 
     const cacheKey = isSeries ? "series" : "movie";
 
-    function normalizeTitle(value) {
-        return String(value || "")
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/đ/g, "d")
-            .replace(/[^\p{L}\p{N}]+/gu, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-    }
+
+function normalizeTitle(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
 
     function ratingOf(title) {
         const rating = Number(
