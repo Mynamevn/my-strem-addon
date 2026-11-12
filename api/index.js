@@ -21860,7 +21860,7 @@ console.log(
 //
 // ============================================================
 
-async function fetchNguonC(movieName) {
+async function fetchNguonC(movieName, options = {}) {
 
     const streams = [];
 
@@ -21879,196 +21879,362 @@ async function fetchNguonC(movieName) {
             movieName
         );
 
+
         // =================================================
-        // 14.1. SEARCH API
+        // 14.1. SEARCH API — TÌM BẰNG NHIỀU TÊN ĐÃ XÁC MINH
         // =================================================
 
-        const searchUrl =
-            "https://phim.nguonc.com/api/films/search?keyword=" +
-            encodeURIComponent(
-                String(movieName || "").trim()
-            );
+        const normalizeTitle = function (value) {
+            return String(value || "")
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/đ/g, "d")
+                // Giữ chữ Unicode để không làm mất tên Trung,
+                // Nhật, Hàn và các ngôn ngữ không dùng Latin.
+                .replace(/[^\p{L}\p{N}]+/gu, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        };
+
+        const queryTitles = [
+            movieName,
+            ...(Array.isArray(options.titleVariants)
+                ? options.titleVariants
+                : [])
+        ]
+            .map(value => String(value || "").replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+            .filter((value, index, array) =>
+                array.findIndex(
+                    other =>
+                        normalizeTitle(other) === normalizeTitle(value)
+                ) === index
+            )
+            .slice(0, 8);
 
         console.log(
-            "[NGUONC] Search URL:",
-            searchUrl
+            "[NGUONC] SEARCH TITLE VARIANTS:",
+            JSON.stringify(queryTitles)
         );
 
-        const searchResponse =
-            await axios.get(
-                searchUrl,
-                {
-                    timeout: 15000,
-
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-
-                        "Accept":
-                            "application/json,text/plain,*/*",
-
-                        "Referer":
-                            "https://phim.nguonc.com/"
-                    }
-                }
-            );
-
-        console.log(
-            "[NGUONC] Search HTTP:",
-            searchResponse.status
-        );
-
-        const searchData =
-            searchResponse.data;
-
-        // =================================================
-        // 14.2. LẤY DANH SÁCH KẾT QUẢ
-        // =================================================
-
-        let candidates = [];
-
-        if (
-            Array.isArray(
-                searchData?.data
-            )
-        ) {
-
-            candidates =
-                searchData.data;
-
-        } else if (
-            Array.isArray(
-                searchData?.items
-            )
-        ) {
-
-            candidates =
-                searchData.items;
-
-        } else if (
-            Array.isArray(
-                searchData?.data?.items
-            )
-        ) {
-
-            candidates =
-                searchData.data.items;
-
+        if (queryTitles.length === 0) {
+            console.log("[NGUONC] No usable search title");
+            return streams;
         }
 
+        const searchResponses = await Promise.allSettled(
+            queryTitles.map(async queryTitle => {
+                const searchUrl =
+                    "https://phim.nguonc.com/api/films/search?keyword=" +
+                    encodeURIComponent(queryTitle);
+
+                console.log(
+                    "[NGUONC] Search URL:",
+                    searchUrl
+                );
+
+                return await axios.get(
+                    searchUrl,
+                    {
+                        timeout: 15000,
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            "Accept":
+                                "application/json,text/plain,*/*",
+                            "Referer":
+                                "https://phim.nguonc.com/"
+                        }
+                    }
+                );
+            })
+        );
+
+        const candidateMap = new Map();
+
+        for (const result of searchResponses) {
+            if (result.status !== "fulfilled") {
+                console.log(
+                    "[NGUONC] Search variant failed:",
+                    result.reason?.response?.status ||
+                    result.reason?.message ||
+                    result.reason
+                );
+                continue;
+            }
+
+            const searchResponse = result.value;
+
+            console.log(
+                "[NGUONC] Search HTTP:",
+                searchResponse.status
+            );
+
+            const searchData = searchResponse.data;
+            let items = [];
+
+            if (Array.isArray(searchData?.data)) {
+                items = searchData.data;
+            } else if (Array.isArray(searchData?.items)) {
+                items = searchData.items;
+            } else if (Array.isArray(searchData?.data?.items)) {
+                items = searchData.data.items;
+            }
+
+            for (const item of items) {
+                const slug = String(item?.slug || "").trim();
+                const itemName = String(
+                    item?.name ||
+                    item?.origin_name ||
+                    item?.original_name ||
+                    item?.title ||
+                    ""
+                ).trim();
+
+                const key =
+                    slug ||
+                    normalizeTitle(itemName);
+
+                if (key && !candidateMap.has(key)) {
+                    candidateMap.set(key, item);
+                }
+            }
+        }
+
+        const candidates = Array.from(candidateMap.values());
+
         console.log(
-            "[NGUONC] Search results:",
+            "[NGUONC] UNIQUE SEARCH RESULTS:",
             candidates.length
         );
 
-        if (
-            candidates.length === 0
-        ) {
-
-            console.log(
-                "[NGUONC] No search results"
-            );
-
+        if (candidates.length === 0) {
+            console.log("[NGUONC] No search results from all title variants");
             return streams;
-
         }
 
         // =================================================
-        // 14.3. NORMALIZE TITLE
+        // 14.2. XÁC MINH NĂM, LOẠI VÀ TÊN PHIM
         // =================================================
 
-        const normalizeTitle =
-            function (value) {
+        const targetTitles = queryTitles
+            .map(normalizeTitle)
+            .filter(Boolean);
 
-                return String(
-                    value || ""
-                )
-                    .toLowerCase()
-                    .normalize("NFD")
-                    .replace(
-                        /[\u0300-\u036f]/g,
-                        ""
-                    )
-                    .replace(
-                        /[^a-z0-9]+/g,
-                        " "
-                    )
-                    .replace(
-                        /\s+/g,
-                        " "
-                    )
-                    .trim();
+        const targetYear = Number(options.year) || 0;
+        const targetType = String(options.type || "").toLowerCase();
 
-            };
+        const targetIsSeries =
+            targetType === "series" ||
+            targetType.includes("series");
 
-        const wantedTitle =
-            normalizeTitle(
-                movieName
-            );
+        const targetIsMovie =
+            targetType === "movie" ||
+            targetType.includes("movie");
 
-        // =================================================
-        // 14.4. CHỌN PHIM
-        // =================================================
+        const getCandidateYear = item => {
+            const rawYear =
+                item?.year ||
+                item?.release_year ||
+                item?.releaseInfo ||
+                item?.released ||
+                "";
 
-        let selectedMovie =
-            null;
+            const match = String(rawYear).match(/\b(19|20)\d{2}\b/);
+            return match ? Number(match[0]) : 0;
+        };
 
-        // Exact normalized match
-        selectedMovie =
-            candidates.find(
-                function (item) {
+        const getCandidateType = item => {
+            return String(
+                item?.type ||
+                item?.movie_type ||
+                item?.content_type ||
+                item?.category ||
+                ""
+            ).toLowerCase();
+        };
 
-                    return (
-                        normalizeTitle(
-                            item?.name
-                        ) ===
-                        wantedTitle
-                    );
+        const candidateMatchesType = item => {
+            const candidateType = getCandidateType(item);
 
-                }
-            );
+            // Không có thông tin loại phim thì không tự suy đoán.
+            if (!candidateType) return true;
 
-        // Nếu không có exact match,
-        // thử title chứa nhau
-        if (
-            !selectedMovie
-        ) {
-
-            selectedMovie =
-                candidates.find(
-                    function (item) {
-
-                        const candidateTitle =
-                            normalizeTitle(
-                                item?.name
-                            );
-
-                        return (
-                            candidateTitle &&
-                            (
-                                candidateTitle.includes(
-                                    wantedTitle
-                                ) ||
-                                wantedTitle.includes(
-                                    candidateTitle
-                                )
-                            )
-                        );
-
-                    }
+            const saysSeries =
+                /series|tv|phim bo|truyen hinh|truyền hình/.test(
+                    candidateType
                 );
 
+            const saysMovie =
+                /movie|single|phim le|phim lẻ|dien anh|điện ảnh/.test(
+                    candidateType
+                );
+
+            if (targetIsSeries && saysMovie && !saysSeries) {
+                return false;
+            }
+
+            if (targetIsMovie && saysSeries && !saysMovie) {
+                return false;
+            }
+
+            return true;
+        };
+
+        const scoreCandidate = item => {
+            const candidateTitles = [
+                item?.name,
+                item?.origin_name,
+                item?.original_name,
+                item?.title
+            ]
+                .map(normalizeTitle)
+                .filter(Boolean);
+
+            if (candidateTitles.length === 0) return -1;
+
+            // Nếu NguonC có IMDb ID thì không nhận một ID khác.
+            const candidateImdb = String(
+                item?.imdb_id ||
+                item?.imdbId ||
+                item?.imdb ||
+                ""
+            ).trim();
+
+            const wantedImdb = String(options.imdbId || "").trim();
+
+            if (
+                wantedImdb &&
+                /^tt\d+$/i.test(candidateImdb) &&
+                candidateImdb.toLowerCase() !== wantedImdb.toLowerCase()
+            ) {
+                return -1;
+            }
+
+            // Nếu có năm ở cả hai phía, bắt buộc phải trùng năm.
+            const candidateYear = getCandidateYear(item);
+
+            if (
+                targetYear &&
+                candidateYear &&
+                candidateYear !== targetYear
+            ) {
+                return -1;
+            }
+
+            if (!candidateMatchesType(item)) {
+                return -1;
+            }
+
+            let bestScore = -1;
+
+            for (const candidateTitle of candidateTitles) {
+                for (const targetTitle of targetTitles) {
+                    if (candidateTitle === targetTitle) {
+                        bestScore = Math.max(bestScore, 100);
+                        continue;
+                    }
+
+                    // Chỉ chấp nhận chứa nhau khi tên đủ dài,
+                    // tránh khớp nhầm những tên quá ngắn.
+                    if (
+                        Math.min(
+                            candidateTitle.length,
+                            targetTitle.length
+                        ) >= 6 &&
+                        (
+                            candidateTitle.includes(targetTitle) ||
+                            targetTitle.includes(candidateTitle)
+                        )
+                    ) {
+                        bestScore = Math.max(bestScore, 80);
+                        continue;
+                    }
+
+                    const candidateWords = new Set(
+                        candidateTitle.split(" ").filter(Boolean)
+                    );
+
+                    const targetWords = new Set(
+                        targetTitle.split(" ").filter(Boolean)
+                    );
+
+                    if (
+                        candidateWords.size >= 2 &&
+                        targetWords.size >= 2
+                    ) {
+                        let overlap = 0;
+
+                        for (const word of targetWords) {
+                            if (candidateWords.has(word)) {
+                                overlap++;
+                            }
+                        }
+
+                        const similarity =
+                            overlap /
+                            Math.max(candidateWords.size, targetWords.size);
+
+                        if (similarity >= 0.8) {
+                            bestScore = Math.max(bestScore, 60);
+                        }
+                    }
+                }
+            }
+
+            return bestScore;
+        };
+
+        const rankedCandidates = candidates
+            .map(item => ({
+                item,
+                score: scoreCandidate(item),
+                year: getCandidateYear(item)
+            }))
+            .filter(entry => entry.score >= 0)
+            .sort((a, b) => {
+                if (b.score !== a.score) {
+                    return b.score - a.score;
+                }
+
+                // Khi cùng điểm, ưu tiên ứng viên có năm xác minh được.
+                if (targetYear) {
+                    const aYearMatch = a.year === targetYear ? 1 : 0;
+                    const bYearMatch = b.year === targetYear ? 1 : 0;
+
+                    return bYearMatch - aYearMatch;
+                }
+
+                return 0;
+            });
+
+        let selectedMovie =
+            rankedCandidates[0]?.item || null;
+
+        console.log(
+            "[NGUONC] MATCH DIAGNOSTICS:",
+            JSON.stringify({
+                targetTitle: movieName,
+                titleVariants: queryTitles,
+                targetYear,
+                targetType,
+                candidateCount: candidates.length,
+                acceptedCount: rankedCandidates.length,
+                selectedScore: rankedCandidates[0]?.score || 0,
+                selectedName: selectedMovie?.name || "",
+                selectedYear: selectedMovie?.year || ""
+            })
+        );
+
+        // Không còn lấy candidates[0] khi không xác minh được.
+        if (!selectedMovie) {
+            console.log(
+                "[NGUONC] REJECTED: không tìm được phim khớp tên/năm/loại."
+            );
+            return streams;
         }
 
-        // Cuối cùng dùng kết quả đầu tiên
-        if (
-            !selectedMovie
-        ) {
-
-            selectedMovie =
-                candidates[0];
-
-        }
 
         console.log(
             "[NGUONC] Selected:",
@@ -46017,7 +46183,79 @@ const nguoncMetadataTitleVariantsPromise =
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
-      Promise.resolve([]),
+
+      (async () => {
+          const nguoncImdbId =
+              rawId.startsWith("tt")
+                  ? rawId.split(":")[0]
+                  : "";
+
+          // Tên có sẵn từ metadata của MOVINA/Cinemeta.
+          const metadataTitles = [
+              resolvedMetadata?.name,
+              resolvedMetadata?.origin_name,
+              resolvedMetadata?.original_name,
+              resolvedMetadata?.originalName,
+              resolvedMetadata?.title,
+              resolvedMetadata?.aliases,
+              resolvedMetadata?.aka
+          ]
+              .flatMap(value =>
+                  Array.isArray(value) ? value : [value]
+              )
+              .filter(value =>
+                  typeof value === "string" && value.trim()
+              )
+              .map(value => value.trim());
+
+          // Dùng bộ tra tên đa ngôn ngữ theo IMDb/Wikidata
+          // đã có sẵn trong MOVINA.
+          let wikidataTitles = [];
+
+          try {
+              wikidataTitles =
+                  await kkphimGetMetadataTitleVariants(
+                      movieName,
+                      nguoncImdbId,
+                      movieYear
+                  );
+          } catch (error) {
+              console.log(
+                  "[NGUONC] TITLE VARIANT LOOKUP ERROR:",
+                  error?.message || error
+              );
+          }
+
+          const titleVariants = [
+              ...metadataTitles,
+              ...(Array.isArray(wikidataTitles)
+                  ? wikidataTitles
+                  : [])
+          ];
+
+          console.log(
+              "[NGUONC] IDENTITY INPUT:",
+              JSON.stringify({
+                  title: movieName,
+                  fallbackTitle: nguonCFallbackName,
+                  titleVariants,
+                  year: movieYear,
+                  type: streamType,
+                  imdbId: nguoncImdbId
+              })
+          );
+
+          return await fetchNguonC(
+              nguonCFallbackName,
+              {
+                  titleVariants,
+                  year: movieYear,
+                  type: streamType,
+                  imdbId: nguoncImdbId
+              }
+          );
+      })(),
+
 
       fetchVSMov(
           movieName,
