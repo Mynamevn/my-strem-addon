@@ -22844,6 +22844,313 @@ LIMIT 40
     }
 }
 
+
+/* ============================================================
+   [CORE-IDENTITY-001] MOVINA UNIVERSAL TITLE IDENTITY
+   [PROVIDERS: NGUONC]
+   ============================================================ */
+
+async function movinaBuildUniversalTitleIdentity(options = {}) {
+    const primaryTitle = String(
+        options.title || ""
+    ).trim();
+
+    const year = Number(options.year) || 0;
+
+    const type =
+        options.type === "series"
+            ? "series"
+            : "movie";
+
+    const metadata = options.metadata || {};
+    const cachedItem = options.cachedItem || {};
+
+    const flattenTitles = values => {
+        const result = [];
+
+        const add = value => {
+            if (!value) return;
+
+            if (Array.isArray(value)) {
+                value.forEach(add);
+                return;
+            }
+
+            if (typeof value === "object") {
+                add(
+                    value.name ||
+                    value.title ||
+                    value.value ||
+                    value.label
+                );
+                return;
+            }
+
+            if (typeof value === "string") {
+                const text = value.trim();
+
+                if (text) result.push(text);
+            }
+        };
+
+        values.forEach(add);
+
+        return result;
+    };
+
+    const sourceTitles = flattenTitles([
+        primaryTitle,
+
+        metadata.name,
+        metadata.title,
+        metadata.origin_name,
+        metadata.original_name,
+        metadata.originalName,
+        metadata.english_name,
+        metadata.title_en,
+        metadata.en_name,
+
+        metadata.aliases,
+        metadata.aka,
+        metadata.alternative_names,
+        metadata.alternative_titles,
+        metadata.other_names,
+        metadata.also_known_as,
+
+        cachedItem.name,
+        cachedItem.title,
+        cachedItem.origin_name,
+        cachedItem.original_name,
+        cachedItem.english_name,
+        cachedItem.aliases,
+        cachedItem.alternative_names
+    ]);
+
+    const source = {
+        ...cachedItem,
+        ...metadata,
+
+        name:
+            metadata.name ||
+            metadata.title ||
+            primaryTitle,
+
+        origin_name:
+            metadata.origin_name ||
+            metadata.original_name ||
+            cachedItem.origin_name ||
+            cachedItem.original_name ||
+            "",
+
+        year:
+            year ||
+            metadata.year ||
+            cachedItem.year ||
+            0,
+
+        aliases: sourceTitles,
+        alternative_names: sourceTitles
+    };
+
+    const normalize = value =>
+        kkphimNormalizeTitle(value);
+
+    const uniqueTitles = values => {
+        const seen = new Set();
+        const result = [];
+
+        for (const value of values) {
+            const title = String(value || "")
+                .replace(/\s+/g, " ")
+                .trim();
+
+            const key = normalize(title);
+
+            if (
+                !key ||
+                key.length < 2 ||
+                key.length > 200 ||
+                seen.has(key)
+            ) {
+                continue;
+            }
+
+            seen.add(key);
+            result.push(title);
+        }
+
+        return result;
+    };
+
+    let imdbId = "";
+
+    const possibleIds = [
+        options.imdbId,
+        metadata.id,
+        metadata.imdb_id,
+        metadata.imdbId,
+        metadata.imdb?.id,
+        cachedItem.imdb_id,
+        cachedItem.imdbId,
+        cachedItem.imdb?.id
+    ];
+
+    for (const value of possibleIds) {
+        const match = String(value || "")
+            .trim()
+            .match(/^tt\d+$/i);
+
+        if (match) {
+            imdbId = match[0].toLowerCase();
+            break;
+        }
+    }
+
+
+    // IMDb ID có sẵn cũng phải được xác minh với metadata.
+    if (imdbId) {
+        try {
+            imdbId = await movinaVerifyImdbIdentity(
+                source,
+                imdbId,
+                type
+            ) || "";
+        } catch (error) {
+            console.log(
+                "[MOVINA UNIVERSAL IDENTITY] IMDb VERIFY ERROR:",
+                error?.message || error
+            );
+
+            imdbId = "";
+        }
+    }
+
+    // Nếu thiếu IMDb ID, dùng cơ chế xác minh chung
+    // đã có của MOVINA. Không tự nhận ID chỉ từ tên gần giống.
+    if (!imdbId) {
+        try {
+            imdbId = await movinaResolveAndVerifyImdb(
+                source,
+                source,
+                type
+            );
+
+            imdbId = String(imdbId || "")
+                .trim()
+                .toLowerCase();
+
+        } catch (error) {
+            console.log(
+                "[MOVINA UNIVERSAL IDENTITY] IMDb RESOLVE ERROR:",
+                error?.message || error
+            );
+
+            imdbId = "";
+        }
+    }
+
+    if (!/^tt\d+$/i.test(imdbId)) {
+        imdbId = "";
+    }
+
+    let cinemetaTitles = [];
+
+    // Đọc metadata Cinemeta bằng IMDb đã xác minh.
+    if (imdbId) {
+        try {
+            const response = await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                    type +
+                    "/" +
+                    encodeURIComponent(imdbId) +
+                    ".json",
+                {
+                    timeout: 4500,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+            const meta = response.data?.meta || {};
+
+            cinemetaTitles = flattenTitles([
+                meta.name,
+                meta.title,
+                meta.original_name,
+                meta.originalName,
+                meta.english_name,
+                meta.aliases,
+                meta.aka,
+                meta.alternative_names,
+                meta.alternative_titles,
+                meta.other_names
+            ]);
+
+        } catch (error) {
+            console.log(
+                "[MOVINA UNIVERSAL IDENTITY] CINEMETA ERROR:",
+                imdbId,
+                error?.response?.status ||
+                    error?.message ||
+                    error
+            );
+        }
+    }
+
+    let wikidataTitles = [];
+
+    // Chỉ lấy alias Wikidata khi đã có IMDb ID.
+    if (imdbId) {
+        try {
+            wikidataTitles =
+                await kkphimGetMetadataTitleVariants(
+                    primaryTitle,
+                    imdbId,
+                    year
+                );
+        } catch (error) {
+            console.log(
+                "[MOVINA UNIVERSAL IDENTITY] WIKIDATA ERROR:",
+                error?.message || error
+            );
+        }
+    }
+
+    const basicVariants = sourceTitles.flatMap(title =>
+        kkphimBuildBasicTitleVariants(title)
+    );
+
+    const titles = uniqueTitles([
+        primaryTitle,
+        ...sourceTitles,
+        ...cinemetaTitles,
+        ...wikidataTitles,
+        ...basicVariants
+    ]).slice(0, 24);
+
+    console.log(
+        "[MOVINA UNIVERSAL TITLE IDENTITY]",
+        JSON.stringify({
+            primaryTitle,
+            year,
+            type,
+            imdbId: imdbId || null,
+            sourceTitleCount: sourceTitles.length,
+            cinemetaTitleCount: cinemetaTitles.length,
+            wikidataTitleCount: wikidataTitles.length,
+            finalTitleCount: titles.length,
+            titles
+        })
+    );
+
+    return {
+        imdbId,
+        titles
+    };
+}
+
 async function fetchKKPhim(
     movieName,
     movieYear = 0,
@@ -46164,99 +46471,50 @@ const animehayPromise = (async () => {
       })
   );
 
+
 // =====================================================
-// NGUONC — IMDb UNIVERSAL TITLE ALIAS
+// NGUONC — UNIVERSAL TITLE IDENTITY
 // =====================================================
 
-const nguoncMetadataTitleVariantsPromise =
-    kkphimGetMetadataTitleVariants(
-        movieName,
-        phimhdcsImdbIdForTitles,
-        movieYear
-    ).catch(error => {
-        console.log(
-            "[NGUONC] IMDb ALIAS ERROR:",
-            error?.message || error
-        );
-
-        return kkphimBuildBasicTitleVariants(movieName);
+const nguoncUniversalTitleIdentityPromise =
+    movinaBuildUniversalTitleIdentity({
+        title: movieName,
+        year: movieYear,
+        type: streamType,
+        imdbId: phimhdcsImdbIdForTitles,
+        metadata: resolvedMetadata,
+        cachedItem: phimhdcsCachedItem
     });
+
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
 
-      (async () => {
-          const nguoncImdbId =
-              rawId.startsWith("tt")
-                  ? rawId.split(":")[0]
-                  : "";
+      
+(async () => {
+    const identity =
+        await nguoncUniversalTitleIdentityPromise;
 
-          // Tên có sẵn từ metadata của MOVINA/Cinemeta.
-          const metadataTitles = [
-              resolvedMetadata?.name,
-              resolvedMetadata?.origin_name,
-              resolvedMetadata?.original_name,
-              resolvedMetadata?.originalName,
-              resolvedMetadata?.title,
-              resolvedMetadata?.aliases,
-              resolvedMetadata?.aka
-          ]
-              .flatMap(value =>
-                  Array.isArray(value) ? value : [value]
-              )
-              .filter(value =>
-                  typeof value === "string" && value.trim()
-              )
-              .map(value => value.trim());
+    console.log(
+        "[NGUONC] UNIVERSAL IDENTITY READY:",
+        JSON.stringify({
+            title: movieName,
+            imdbId: identity.imdbId || null,
+            titleCount: identity.titles.length,
+            titles: identity.titles
+        })
+    );
 
-          // Dùng bộ tra tên đa ngôn ngữ theo IMDb/Wikidata
-          // đã có sẵn trong MOVINA.
-          let wikidataTitles = [];
-
-          try {
-              wikidataTitles =
-                  await kkphimGetMetadataTitleVariants(
-                      movieName,
-                      nguoncImdbId,
-                      movieYear
-                  );
-          } catch (error) {
-              console.log(
-                  "[NGUONC] TITLE VARIANT LOOKUP ERROR:",
-                  error?.message || error
-              );
-          }
-
-          const titleVariants = [
-              ...metadataTitles,
-              ...(Array.isArray(wikidataTitles)
-                  ? wikidataTitles
-                  : [])
-          ];
-
-          console.log(
-              "[NGUONC] IDENTITY INPUT:",
-              JSON.stringify({
-                  title: movieName,
-                  fallbackTitle: nguonCFallbackName,
-                  titleVariants,
-                  year: movieYear,
-                  type: streamType,
-                  imdbId: nguoncImdbId
-              })
-          );
-
-          return await fetchNguonC(
-              nguonCFallbackName,
-              {
-                  titleVariants,
-                  year: movieYear,
-                  type: streamType,
-                  imdbId: nguoncImdbId
-              }
-          );
-      })(),
-
+    return await fetchNguonC(
+        nguonCFallbackName,
+        {
+            titleVariants: identity.titles,
+            year: movieYear,
+            type: streamType,
+            imdbId: identity.imdbId
+        }
+    );
+})(),
 
       fetchVSMov(
           movieName,
@@ -46450,69 +46708,28 @@ console.log(
 // Browser sẽ mở NguonC Client và tự tìm đúng phim/năm/tập.
 // =====================================================
 
+
 // =====================================================
-// NGUONC — BUILD VERIFIED TITLE VARIANTS
+// NGUONC — BUILD UNIVERSAL TITLE VARIANTS
 // =====================================================
 
-const nguoncMetadataTitleVariants =
-    await nguoncMetadataTitleVariantsPromise;
+const nguoncUniversalTitleIdentity =
+    await nguoncUniversalTitleIdentityPromise;
 
-// Những tên đã được tạo từ chính tên ban đầu.
-const nguoncBasicTitleKeys = new Set(
-    kkphimBuildBasicTitleVariants(movieName)
-        .map(kkphimNormalizeTitle)
-);
-
-// Tách riêng các tên thay thế lấy từ Wikidata.
-const nguoncVerifiedAliases =
-    nguoncMetadataTitleVariants.filter(title =>
-        !nguoncBasicTitleKeys.has(
-            kkphimNormalizeTitle(title)
-        )
-    );
-
-// Ưu tiên:
-// 1. Tên phim đang mở.
-// 2. Alias được liên kết với IMDb.
-// 3. Tên từ metadata và cache hiện có.
-// 4. Các biến thể cơ bản còn lại.
-
-const nguoncTitleVariants = [];
-const nguoncSeenTitleKeys = new Set();
-
-for (const value of [
-    movieName,
-    ...nguoncVerifiedAliases,
-    ...phimhdcsTitleVariants,
-    ...nguoncMetadataTitleVariants
-]) {
-    const title = String(value || "")
-        .replace(/\s+/g, " ")
-        .trim();
-
-    const key = kkphimNormalizeTitle(title);
-
-    if (
-        !key ||
-        key.length < 2 ||
-        nguoncSeenTitleKeys.has(key)
-    ) {
-        continue;
-    }
-
-    nguoncSeenTitleKeys.add(key);
-    nguoncTitleVariants.push(title);
-}
+const nguoncTitleVariants =
+    nguoncUniversalTitleIdentity.titles;
 
 console.log(
-    "[NGUONC] IMDb TITLE ALIASES:",
+    "[NGUONC] UNIVERSAL TITLE ALIASES:",
     JSON.stringify({
-        imdbId: phimhdcsImdbIdForTitles,
+        imdbId:
+            nguoncUniversalTitleIdentity.imdbId || null,
         title: movieName,
         count: nguoncTitleVariants.length,
         variants: nguoncTitleVariants
     })
 );
+
 
 // =====================================================
 // NGUONC CLIENT URL
@@ -47970,7 +48187,7 @@ const MOVIE_TITLE_VARIANTS = (() => {
                 .map(value => String(value || "").trim())
                 .filter(Boolean)
         )
-    ].slice(0, 12);
+    ].slice(0, 24);
 })();
 
 function normalizeTitle(value) {
@@ -48715,7 +48932,7 @@ async function searchNguonC() {
     }
 
     // Giữ giới hạn 12 từ khóa đã thiết lập.
-    const searchKeywords = keywords.slice(0, 12);
+    const searchKeywords = keywords.slice(0, 20);
 
     console.log(
         "[NGUONC CLIENT] SEARCH KEYWORDS:",
