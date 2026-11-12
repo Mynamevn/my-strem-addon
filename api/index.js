@@ -49270,18 +49270,41 @@ for (const entry of detailCandidates) {
             continue;
         }
 
-        // Chấp nhận khi:
-        // 1. Tên Search hoặc Detail khớp alias.
-        // 2. Hoặc tìm được bằng alias đã biết và năm khớp.
-        //
-        // Nếu tên không khớp, bắt buộc phải có năm khớp.
-        // Không chọn kết quả gần giống một cách mù quáng.
-        const identityAccepted =
-            titleMatches ||
-            (
-                searchedByKnownAlias &&
-                yearMatches
-            );
+// -----------------------------------------------------
+// XÁC NHẬN DANH TÍNH PHIM — MULTILINGUAL SEARCH
+// -----------------------------------------------------
+
+// Nếu tên phim khớp một alias đã biết:
+// chấp nhận khi không có năm hoặc loại phim mâu thuẫn.
+//
+// Nếu tên hiển thị khác alias:
+// vẫn chấp nhận khi NguonC đã trả kết quả từ
+// một từ khóa alias hợp lệ.
+//
+// Không bắt buộc Detail API phải có trường year/type.
+// Chỉ từ chối khi dữ liệu thực tế mâu thuẫn rõ ràng.
+
+const identityAccepted =
+    titleMatches ||
+    searchedByKnownAlias;
+
+console.log(
+    "[NGUONC CLIENT] IDENTITY CHECK:",
+    {
+        searchName: item?.name,
+        detailTitles: identity.rawTitles,
+        matchedKeywords,
+        searchedByKnownAlias,
+        titleMatches,
+        expectedYear: MOVIE_YEAR,
+        actualYear: identity.year,
+        yearMatches,
+        yearConflicts,
+        type: identity.type,
+        typeConflicts,
+        accepted: identityAccepted
+    }
+);
 
         if (!identityAccepted) {
             console.log(
