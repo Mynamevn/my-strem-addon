@@ -47746,6 +47746,7 @@ function normalizeIdentityTitle(value) {
 // STRICT NGUONC IDENTITY MATCHING
 // =====================================================
 
+
 function scoreMovie(item) {
     const targetTitles = [
         ...new Set(
@@ -47773,22 +47774,29 @@ function scoreMovie(item) {
         )
     ];
 
-    if (
-        !targetTitles.length ||
-        !candidateTitles.length
-    ) {
+    if (!targetTitles.length) {
         return -10000;
     }
 
-    // Không chấp nhận chỉ khớp một phần tên.
+    // 1. Khớp chính xác như cách tìm ưu tiên của baseline.
     const exactTitleMatch =
-        targetTitles.some(
-            target => candidateTitles.includes(target)
+        targetTitles.some(target =>
+            candidateTitles.includes(target)
         );
 
-    if (!exactTitleMatch) {
-        return -10000;
-    }
+    // 2. Khớp chứa tên: xử lý trường hợp tên có thêm
+    //    phụ đề, tên mở rộng hoặc phần bổ sung.
+    const containsTitleMatch =
+        targetTitles.some(target =>
+            target.length >= 5 &&
+            candidateTitles.some(candidate =>
+                candidate.length >= 5 &&
+                (
+                    candidate.includes(target) ||
+                    target.includes(candidate)
+                )
+            )
+        );
 
     // -------------------------------------------------
     // YEAR VALIDATION
@@ -47817,7 +47825,11 @@ function scoreMovie(item) {
     const candidateYear =
         apiYear || nameYear;
 
-    // Có năm nhưng khác năm yêu cầu: loại thẳng.
+    const yearMatches =
+        MOVIE_YEAR > 0 &&
+        candidateYear === MOVIE_YEAR;
+
+    // Có năm nhưng khác năm yêu cầu: loại.
     if (
         MOVIE_YEAR > 0 &&
         candidateYear > 0 &&
@@ -47858,16 +47870,67 @@ function scoreMovie(item) {
         return -10000;
     }
 
-    let score = 1000;
+    const candidateTypeMatches =
+        STREAM_TYPE === "series"
+            ? candidateIsSeries
+            : candidateIsMovie;
 
-    if (
-        MOVIE_YEAR > 0 &&
-        candidateYear === MOVIE_YEAR
-    ) {
+    // -------------------------------------------------
+    // RANKING
+    // -------------------------------------------------
+
+    let score = 0;
+
+    // Ưu tiên cao nhất: tên trùng chính xác.
+    if (exactTitleMatch) {
+        score = 1000;
+    }
+
+    // Ưu tiên tiếp theo: tên chứa nhau.
+    else if (containsTitleMatch) {
+        score = 1500;
+    }
+
+    // -------------------------------------------------
+    // BASELINE-STYLE SEARCH RESULT FALLBACK
+    // -------------------------------------------------
+    // NguonC có thể trả tên bản địa khác với tên IMDb.
+    // Chỉ cho phép dùng kết quả tìm kiếm khi:
+    // - Kết quả thực sự đến từ một từ khóa MOVINA đã gửi.
+    // - Năm khớp chính xác.
+    // - Loại phim khớp chính xác.
+    // Không lấy kết quả đầu tiên một cách mù quáng.
+
+    else {
+        const matchedKeywords =
+            Array.isArray(item?.__movinaMatchedKeywords)
+                ? item.__movinaMatchedKeywords
+                : [];
+
+        const searchedByKnownAlias =
+            matchedKeywords.some(keyword =>
+                targetTitles.includes(
+                    normalizeIdentityTitle(keyword)
+                )
+            );
+
+        if (
+            !searchedByKnownAlias ||
+            !yearMatches ||
+            !candidateTypeMatches
+        ) {
+            return -10000;
+        }
+
+        // Fallback có kiểm chứng năm và loại phim.
+        score = 1000;
+    }
+
+    if (yearMatches) {
         score += 2000;
     }
 
-    if (candidateIsSeries || candidateIsMovie) {
+    if (candidateTypeMatches) {
         score += 100;
     }
 
@@ -48428,6 +48491,7 @@ function playM3U8(
 // SEARCH
 // =====================================================
 
+
 async function searchNguonC() {
     const keywords = [];
 
@@ -48447,22 +48511,20 @@ async function searchNguonC() {
         }
     }
 
-    // Tìm theo tên chính và các tên thay thế.
+    // Tìm theo tên chính và toàn bộ alias đã xác minh.
     for (const title of MOVIE_TITLE_VARIANTS) {
         addKeyword(title);
     }
 
-// Tìm toàn bộ tên biến thể được xác minh.
-// Tối đa 12 alias đã được truyền từ MOVINA.
-// Không bỏ các tên tiếng Việt nằm ở cuối danh sách.
-const searchKeywords = keywords.slice(0, 12);
+    // Giữ giới hạn 12 từ khóa đã thiết lập.
+    const searchKeywords = keywords.slice(0, 12);
 
     console.log(
         "[NGUONC CLIENT] SEARCH KEYWORDS:",
         searchKeywords
     );
 
-    let allItems = [];
+    const allItems = [];
 
     for (const keyword of searchKeywords) {
         const searchUrl =
@@ -48518,7 +48580,20 @@ const searchKeywords = keywords.slice(0, 12);
                 items.length
             );
 
-            allItems = allItems.concat(items);
+            // Lưu lại từ khóa đã tìm ra từng kết quả.
+            // Nhờ vậy có thể kiểm chứng kết quả fallback.
+            for (const item of items) {
+                if (!item || typeof item !== "object") {
+                    continue;
+                }
+
+                allItems.push({
+                    ...item,
+                    __movinaMatchedKeywords: [
+                        keyword
+                    ]
+                });
+            }
 
         } catch (error) {
             console.warn(
@@ -48530,11 +48605,11 @@ const searchKeywords = keywords.slice(0, 12);
     }
 
     // -------------------------------------------------
-    // DEDUPLICATE
+    // DEDUPLICATE + MERGE SEARCH PROVENANCE
     // -------------------------------------------------
 
     const unique = [];
-    const seen = new Set();
+    const byKey = new Map();
 
     for (const item of allItems) {
         const slug = String(
@@ -48545,12 +48620,31 @@ const searchKeywords = keywords.slice(0, 12);
             slug ||
             JSON.stringify(item);
 
-        if (seen.has(key)) {
+        const existing = byKey.get(key);
+
+        if (existing) {
+            const mergedKeywords = [
+                ...new Set([
+                    ...(existing.__movinaMatchedKeywords || []),
+                    ...(item.__movinaMatchedKeywords || [])
+                ])
+            ];
+
+            existing.__movinaMatchedKeywords =
+                mergedKeywords;
+
             continue;
         }
 
-        seen.add(key);
-        unique.push(item);
+        const storedItem = {
+            ...item,
+            __movinaMatchedKeywords: [
+                ...(item.__movinaMatchedKeywords || [])
+            ]
+        };
+
+        byKey.set(key, storedItem);
+        unique.push(storedItem);
     }
 
     console.log(
@@ -48558,8 +48652,28 @@ const searchKeywords = keywords.slice(0, 12);
         unique.length
     );
 
+    console.log(
+        "[NGUONC CLIENT] SEARCH PROVENANCE:",
+        unique.map(item => ({
+            name: item?.name,
+            origin_name:
+                item?.origin_name ||
+                item?.original_name,
+            year:
+                item?.year ||
+                item?.release_year ||
+                item?.releaseYear,
+            type:
+                item?.type ||
+                item?.movie_type,
+            matchedKeywords:
+                item?.__movinaMatchedKeywords
+        }))
+    );
+
     return unique;
 }
+
 
 // =====================================================
 // LOAD DETAIL
