@@ -30545,6 +30545,224 @@ async function animeHayGetAniListTitleVariants(
     }
 }
 
+
+// ============================================================
+// [PRV-ANIMEHAY.EXT] [PROVIDERS: ANIMEHAY]
+// EXTERNAL STREMIO ADDON STREAM BRIDGE
+// ============================================================
+
+const ANIMEHAY_EXTERNAL_ADDON =
+    "https://animehay.q-1208.fun";
+
+const ANIMEHAY_EXTERNAL_CACHE =
+    new Map();
+
+const ANIMEHAY_EXTERNAL_CACHE_TTL =
+    2 * 60 * 1000;
+
+async function fetchAnimeHayExternalStreams(
+    imdbId = "",
+    streamType = "movie",
+    seasonNumber = 0,
+    episodeNumber = 0
+) {
+    const imdb = String(imdbId || "")
+        .trim()
+        .match(/^tt\d+$/i)?.[0];
+
+    if (!imdb) {
+        console.log(
+            "[ANIMEHAY EXT] SKIP: IMDb ID unavailable"
+        );
+        return [];
+    }
+
+    const type =
+        streamType === "series"
+            ? "series"
+            : "movie";
+
+    let streamId = imdb;
+
+    if (type === "series") {
+        const season = Math.max(
+            0,
+            Number.parseInt(seasonNumber, 10) || 0
+        );
+
+        const episode = Math.max(
+            1,
+            Number.parseInt(episodeNumber, 10) || 1
+        );
+
+        streamId =
+            `${imdb}:${season}:${episode}`;
+    }
+
+    const cacheKey =
+        `${type}:${streamId}`;
+
+    const cached =
+        ANIMEHAY_EXTERNAL_CACHE.get(cacheKey);
+
+    if (
+        cached &&
+        cached.expiresAt > Date.now()
+    ) {
+        console.log(
+            "[ANIMEHAY EXT] CACHE HIT:",
+            cacheKey
+        );
+
+        return cached.streams.map(
+            stream => ({ ...stream })
+        );
+    }
+
+    const endpoint =
+        ANIMEHAY_EXTERNAL_ADDON +
+        "/stream/" +
+        type +
+        "/" +
+        encodeURIComponent(streamId) +
+        ".json";
+
+    const startedAt = Date.now();
+
+    try {
+        console.log(
+            "[ANIMEHAY EXT] REQUEST:",
+            endpoint
+        );
+
+        const response = await axios.get(
+            endpoint,
+            {
+                timeout: 4500,
+                maxRedirects: 4,
+                responseType: "json",
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0",
+                    "Accept":
+                        "application/json"
+                }
+            }
+        );
+
+        const rawStreams =
+            Array.isArray(response.data?.streams)
+                ? response.data.streams
+                : [];
+
+        const seen = new Set();
+
+        const normalized = [];
+
+        for (const item of rawStreams) {
+            const url = String(
+                item?.url || ""
+            ).trim();
+
+            if (!url) continue;
+
+            let parsed;
+
+            try {
+                parsed = new URL(url);
+            } catch (_) {
+                continue;
+            }
+
+            if (parsed.protocol !== "https:") {
+                continue;
+            }
+
+            if (seen.has(url)) {
+                continue;
+            }
+
+            seen.add(url);
+
+            normalized.push({
+                provider: "animehay",
+                providerName: "AnimeHay",
+                source: "animehay-addon",
+
+                name:
+                    "▶️ [AnimeHay Addon] " +
+                    String(
+                        item.name ||
+                        "Direct"
+                    ).trim(),
+
+                title:
+                    String(
+                        item.title ||
+                        "AnimeHay Direct"
+                    ).trim(),
+
+                url,
+
+                type: "hls",
+
+                resolver: "passthrough",
+
+                behaviorHints: {
+                    ...(item.behaviorHints || {}),
+                    notWebReady:
+                        item.behaviorHints?.notWebReady === true
+                }
+            });
+        }
+
+        const streams =
+            normalizedStreamsToStremio(
+                normalized
+            );
+
+        ANIMEHAY_EXTERNAL_CACHE.set(
+            cacheKey,
+            {
+                expiresAt:
+                    Date.now() +
+                    ANIMEHAY_EXTERNAL_CACHE_TTL,
+
+                streams
+            }
+        );
+
+        console.log(
+            "[ANIMEHAY EXT] COMPLETE:",
+            JSON.stringify({
+                id: streamId,
+                received: rawStreams.length,
+                valid: streams.length,
+                elapsedMs:
+                    Date.now() - startedAt
+            })
+        );
+
+        return streams;
+
+    } catch (error) {
+        console.log(
+            "[ANIMEHAY EXT] REQUEST ERROR:",
+            JSON.stringify({
+                id: streamId,
+                status:
+                    error?.response?.status || null,
+                code:
+                    error?.code || null,
+                message:
+                    error?.message || String(error)
+            })
+        );
+
+        return [];
+    }
+}
+
 async function fetchAnimeHay(
     movieName,
     movieYear = 0,
@@ -45508,34 +45726,134 @@ const animeProvidersEnabled =
       })
   );
 
-  // AnimeHay: chỉ khởi chạy khi điều kiện cho phép.
-  const animehayPromise = (async () => {
-      if (!animeProvidersEnabled) {
-          console.log(
-              "[ANIMEHAY] SKIPPED: metadata không cho thấy nội dung anime/hoạt hình."
-          );
-          return [];
-      }
 
-      try {
-          return await fetchAnimeHay(
-              movieName,
-              movieYear,
-              seasonNumber,
-              episodeNumber,
-              streamType,
-              rawId.startsWith("tt")
-                  ? rawId.split(":")[0]
-                  : ""
-          );
-      } catch (e) {
-          console.error(
-              "[ANIMEHAY] FETCH ERROR:",
-              e?.message || e
-          );
-          return [];
-      }
-  })();
+// =====================================================
+// ANIMEHAY — LEGACY + EXTERNAL ADDON
+// Chạy song song, không ảnh hưởng provider khác.
+// =====================================================
+
+const animehayPromise = (async () => {
+    if (!animeProvidersEnabled) {
+        console.log(
+            "[ANIMEHAY] SKIPPED: metadata không cho thấy anime."
+        );
+
+        return [];
+    }
+
+    let legacyTimer = null;
+
+    try {
+        const legacyPromise = Promise.race([
+            fetchAnimeHay(
+                movieName,
+                movieYear,
+                seasonNumber,
+                episodeNumber,
+                streamType,
+                rawId.startsWith("tt")
+                    ? rawId.split(":")[0]
+                    : ""
+            ),
+
+            new Promise(resolve => {
+                legacyTimer = setTimeout(
+                    () => resolve([]),
+                    6500
+                );
+            })
+        ]);
+
+        const externalPromise =
+            fetchAnimeHayExternalStreams(
+                rawId.startsWith("tt")
+                    ? rawId.split(":")[0]
+                    : "",
+                streamType,
+                seasonNumber,
+                episodeNumber
+            );
+
+        const [
+            legacyResult,
+            externalResult
+        ] = await Promise.all([
+            legacyPromise.catch(error => {
+                console.log(
+                    "[ANIMEHAY] LEGACY ERROR:",
+                    error?.message || error
+                );
+
+                return [];
+            }),
+
+            externalPromise.catch(error => {
+                console.log(
+                    "[ANIMEHAY EXT] ERROR:",
+                    error?.message || error
+                );
+
+                return [];
+            })
+        ]);
+
+        const legacy = Array.isArray(legacyResult)
+            ? legacyResult
+            : [];
+
+        const external = Array.isArray(externalResult)
+            ? externalResult
+            : [];
+
+        // Giữ nguyên các stream cũ.
+        // Chỉ loại bỏ URL trùng hoàn toàn.
+        const seen = new Set();
+
+        const combined = [];
+
+        for (const stream of [
+            ...legacy,
+            ...external
+        ]) {
+            const url = String(
+                stream?.url ||
+                stream?.externalUrl ||
+                ""
+            ).trim();
+
+            if (!url || seen.has(url)) {
+                continue;
+            }
+
+            seen.add(url);
+            combined.push(stream);
+        }
+
+        console.log(
+            "[ANIMEHAY] COMBINED RESULT:",
+            JSON.stringify({
+                legacy: legacy.length,
+                external: external.length,
+                final: combined.length
+            })
+        );
+
+        return combined;
+
+    } catch (error) {
+        console.error(
+            "[ANIMEHAY] COMBINED ERROR:",
+            error?.message || error
+        );
+
+        return [];
+
+    } finally {
+        if (legacyTimer) {
+            clearTimeout(legacyTimer);
+        }
+    }
+})();
 
   
   // =====================================================
