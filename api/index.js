@@ -49085,13 +49085,7 @@ function getNguonCDetailMovie(detail) {
 function getNguonCIdentity(item, detail) {
     const movie = getNguonCDetailMovie(detail);
 
-    const rawTitles = [
-        item?.name,
-        item?.origin_name,
-        item?.original_name,
-        item?.title,
-        item?.english_name,
-
+    const detailTitles = [
         movie?.name,
         movie?.origin_name,
         movie?.original_name,
@@ -49101,6 +49095,23 @@ function getNguonCIdentity(item, detail) {
         .map(value => String(value || "").trim())
         .filter(Boolean);
 
+    const searchTitles = [
+        item?.name,
+        item?.origin_name,
+        item?.original_name,
+        item?.title,
+        item?.english_name
+    ]
+        .map(value => String(value || "").trim())
+        .filter(Boolean);
+
+    const rawTitles = [
+        ...new Set([
+            ...searchTitles,
+            ...detailTitles
+        ])
+    ];
+
     const normalizedTitles = [
         ...new Set(
             rawTitles
@@ -49109,51 +49120,50 @@ function getNguonCIdentity(item, detail) {
         )
     ];
 
-const rawYear =
-    movie?.year ||
-    movie?.release_year ||
-    movie?.releaseYear ||
-    item?.year ||
-    item?.release_year ||
-    item?.releaseYear ||
-    "";
+    // Chỉ lấy năm từ DETAIL.
+    // Không lấy năm Search để tránh dữ liệu Search
+    // làm sai lệch kết quả xác minh.
+    const rawYear =
+        movie?.year ??
+        movie?.release_year ??
+        movie?.releaseYear ??
+        "";
 
-let year = Number(rawYear);
+    let year = Number(rawYear);
 
-if (!Number.isFinite(year) || year <= 0) {
-    const match = String(rawYear).match(
-        /(?:19|20)[0-9]{2}/
-    );
-
-    year = match
-        ? Number(match[0])
-        : 0;
-}
-
-if (!year) {
-    for (const title of rawTitles) {
-        const match = title.match(
+    if (!Number.isFinite(year) || year <= 0) {
+        const match = String(rawYear).match(
             /(?:19|20)[0-9]{2}/
         );
 
-        if (match) {
-            year = Number(match[0]);
-            break;
+        year = match
+            ? Number(match[0])
+            : 0;
+    }
+
+    // Nếu Detail không có trường năm,
+    // thử đọc năm từ tên do chính Detail trả về.
+    if (!year) {
+        for (const title of detailTitles) {
+            const match = title.match(
+                /(?:19|20)[0-9]{2}/
+            );
+
+            if (match) {
+                year = Number(match[0]);
+                break;
+            }
         }
     }
-}
 
+    // Giữ thông tin loại phim để ghi log,
+    // không dùng nó làm điều kiện từ chối.
     const type = String(
         movie?.type ||
         movie?.movie_type ||
         movie?.movieType ||
         movie?.content_type ||
         movie?.category ||
-        item?.type ||
-        item?.movie_type ||
-        item?.movieType ||
-        item?.content_type ||
-        item?.category ||
         ""
     ).toLowerCase();
 
@@ -49273,40 +49283,37 @@ for (const entry of detailCandidates) {
                 )
             );
 
-        const yearMatches =
+        
+        // Chấp nhận sai lệch năm tối đa 1 năm.
+        // Chỉ xác minh khi Detail thực sự có năm.
+        const yearDifference =
             MOVIE_YEAR > 0 &&
-            identity.year === MOVIE_YEAR;
+            identity.year > 0
+                ? Math.abs(identity.year - MOVIE_YEAR)
+                : null;
+
+        const yearMatches =
+            yearDifference !== null &&
+            yearDifference <= 1;
 
         const yearConflicts =
-            MOVIE_YEAR > 0 &&
-            identity.year > 0 &&
-            identity.year !== MOVIE_YEAR;
+            yearDifference !== null &&
+            yearDifference > 1;
 
+        // Không loại ứng viên vì loại phim.
+        // Chỉ ghi nhận để theo dõi trong log.
         const typeConflicts =
             nguoncHasTypeConflict(identity);
 
-        // Có tên khớp nhưng năm khác:
-        // từ chối để tránh phát nhầm bản phim khác.
         if (yearConflicts) {
             console.log(
                 "[NGUONC CLIENT] REJECT YEAR:",
                 {
                     name: item?.name,
                     expected: MOVIE_YEAR,
-                    actual: identity.year
-                }
-            );
-
-            continue;
-        }
-
-        if (typeConflicts) {
-            console.log(
-                "[NGUONC CLIENT] REJECT TYPE:",
-                {
-                    name: item?.name,
-                    expected: STREAM_TYPE,
-                    actual: identity.type
+                    actual: identity.year,
+                    difference: yearDifference,
+                    allowedDifference: 1
                 }
             );
 
