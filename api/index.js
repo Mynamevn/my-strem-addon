@@ -23289,20 +23289,45 @@ if (imdbId) {
             meta.other_names
         ]);
 
-        const rawMetaYear =
-            meta.year ||
-            meta.releaseInfo ||
-            meta.released ||
-            meta.release_date ||
-            "";
+        
+// Ưu tiên ngày phát hành thực tế.
+// meta.year chỉ là phương án dự phòng.
+const rawReleaseDate =
+    meta.released ||
+    meta.release_date ||
+    meta.releaseInfo ||
+    "";
 
-        const metaYearMatch = String(rawMetaYear).match(
-            /\b(?:19|20)\d{2}\b/
-        );
+const releaseDateMatch = String(rawReleaseDate).match(
+    /\b(?:19|20)\d{2}\b/
+);
 
-        cinemetaYear = metaYearMatch
+const rawMetaYear = String(meta.year || "");
+
+const metaYearMatch = rawMetaYear.match(
+    /\b(?:19|20)\d{2}\b/
+);
+
+cinemetaYear = releaseDateMatch
+    ? Number(releaseDateMatch[0])
+    : (
+        metaYearMatch
             ? Number(metaYearMatch[0])
-            : 0;
+            : 0
+    );
+
+console.log(
+    "[MOVINA UNIVERSAL IDENTITY] CINEMETA YEAR:",
+    JSON.stringify({
+        imdbId,
+        released: meta.released || null,
+        release_date: meta.release_date || null,
+        releaseInfo: meta.releaseInfo || null,
+        metaYear: meta.year || null,
+        selectedIdentityYear: cinemetaYear || year || 0
+    })
+);
+
 
     } catch (error) {
         console.log(
@@ -50635,11 +50660,21 @@ if (yearConflicts || typeConflicts) {
     continue;
 }
 
-// Tên phim phải khớp một tên đã biết,
-// hoặc NguonC phải trả kết quả từ một alias hợp lệ.
+
+// Phim lẻ:
+// Bắt buộc tên trang Detail phải khớp tên
+// hoặc một bí danh đã xác minh.
+//
+// Phim bộ:
+// Giữ cơ chế bí danh cũ để bảo toàn
+// khả năng tìm kiếm Naruto, Slime và các series.
 const identityAccepted =
     titleMatches ||
-    searchedByKnownAlias;
+    (
+        STREAM_TYPE === "series" &&
+        searchedByKnownAlias
+    );
+
 
 console.log(
     "[NGUONC CLIENT] IDENTITY CHECK:",
