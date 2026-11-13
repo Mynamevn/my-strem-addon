@@ -35409,7 +35409,8 @@ async function scrapePhimLongTieng(
         // CHỈ PROXY CÁC SERVER PHIMLONGTIENG
         // =================================================
 
-        const is1PhimHost =
+
+const is1PhimHost =
     /^(?:www\.)?1phim\d+\.com$/i.test(streamHost);
 
 const is8PhimHost =
@@ -35424,51 +35425,84 @@ const isCloudbetaHost =
 const isCbPlayHost =
     /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(streamHost);
 
+// CDN được CloudStream PhimLongTieng hỗ trợ.
+const isByteTransformHost =
+    isPltByteTransformUrl(streamUrl.href);
+
 const allowedHost =
     is1PhimHost ||
     is8PhimHost ||
     isRophimHost ||
     isCloudbetaHost ||
-    isCbPlayHost;
+    isCbPlayHost ||
+    isByteTransformHost;
 
-        if (!allowedHost) {
+if (!allowedHost) {
 
-            console.log(
-                "[PHIMLONGTIENG] Host không nằm trong proxy:",
-                streamHost
-            );
+    console.log(
+        "[PHIMLONGTIENG] Host không nằm trong proxy:",
+        streamHost
+    );
 
-            return;
+    return;
 
-        }
+}
 
-        // =================================================
-        // REFERER THEO HOST
-        // =================================================
 
-        let streamReferer;
+// =================================================
+// REFERER THEO HOST
+// =================================================
 
-        if (isCbPlayHost) {
+let streamReferer;
 
-            streamReferer =
-                "https://play.cbplay.live/";
+if (isCbPlayHost) {
 
-        } else if (
+    streamReferer =
+        streamHost.endsWith(".live")
+            ? "https://play.cbplay.live/"
+            : "https://play.cbplay.cc/";
+
+} else if (
     is1PhimHost ||
     is8PhimHost ||
     isRophimHost ||
     isCloudbetaHost
 ) {
-    streamReferer = streamUrl.origin + "/";
+
+    streamReferer =
+        streamUrl.origin + "/";
+
+} else if (isByteTransformHost) {
+
+    streamReferer =
+        referer || streamUrl.origin + "/";
+
 }
 
-        // =================================================
-        // TẠO URL PROXY VERCEL
-        // =================================================
 
-        const proxyUrl =
-            "https://my-strem-addon.vercel.app/phimlongtieng/hls?url=" +
-            encodeURIComponent(url);
+// =================================================
+// GIỮ REFERER GỐC KHI ĐƯA QUA PROXY
+// =================================================
+
+const effectiveReferer =
+    isCbPlayHost
+        ? streamReferer
+        : (
+            referer ||
+            streamReferer ||
+            streamUrl.origin + "/"
+        );
+
+
+// =================================================
+// TẠO URL PROXY VERCEL
+// =================================================
+
+const proxyUrl =
+    "https://my-strem-addon.vercel.app/phimlongtieng/hls?url=" +
+    encodeURIComponent(url) +
+    "&referer=" +
+    encodeURIComponent(effectiveReferer);
 
         // =================================================
         // LOG
@@ -55565,24 +55599,118 @@ app.get(
     }
 );
 
+
 // ============================================================
-// [PX-004] [PROVIDERS: PHIMLONGTIENG] HLS VIDEO INTERCEPTOR
+// [PX-004.00] [PROVIDERS: PHIMLONGTIENG]
+// ORIGINAL CLOUDSTREAM BYTE ALIGNMENT
 //
-// Android Provider:
-//     M3U8
-//       ↓
-//     VideoInterceptor
-//       ↓
-//     upstream server
+// Port chính xác InterceptorUtilKt.skipByteError()
 //
-// Vercel:
-//     Stremio
-//       ↓
-//     /phimlongtieng/hls
-//       ↓
-//     upstream M3U8 / segment
+// MPEG-TS packet: 188 bytes
+// Sync byte: 0x47
 //
+// Chỉ áp dụng cho CDN mà Smali chỉ định.
+// Không ảnh hưởng provider khác.
 // ============================================================
+
+function isPltByteTransformUrl(value) {
+
+    try {
+
+        const parsed =
+            value instanceof URL
+                ? value
+                : new URL(String(value || ""));
+
+        const host =
+            parsed.hostname.toLowerCase();
+
+        const isIbyteImg =
+            host === "ibyteimg.com" ||
+            host.endsWith(".ibyteimg.com");
+
+        const isTikTokCdn =
+            host.includes("tiktokcdn.");
+
+        const isTickTokCdn =
+            host === "cdn-ticktok.com" ||
+            host.endsWith(".cdn-ticktok.com");
+
+        const isCloudbetaSegment =
+            (
+                host === "cloudbeta.win" ||
+                host.endsWith(".cloudbeta.win")
+            ) &&
+            /segment/i.test(parsed.href);
+
+        return (
+            isIbyteImg ||
+            isTikTokCdn ||
+            isTickTokCdn ||
+            isCloudbetaSegment
+        );
+
+    } catch (_) {
+
+        return false;
+
+    }
+
+}
+
+
+// ============================================================
+// PORT: InterceptorUtilKt.skipByteError()
+// ============================================================
+
+function phimLongTiengSkipByteError(input) {
+
+    const bytes =
+        Buffer.isBuffer(input)
+            ? input
+            : Buffer.from(input || []);
+
+    const TS_PACKET_SIZE = 188;
+    const TS_SYNC_BYTE = 0x47;
+
+    let skipIndex = -1;
+
+    for (
+        let i = 0;
+        i + TS_PACKET_SIZE < bytes.length;
+        i++
+    ) {
+
+        if (
+            bytes[i] === TS_SYNC_BYTE &&
+            bytes[i + TS_PACKET_SIZE] === TS_SYNC_BYTE
+        ) {
+
+            skipIndex = i;
+
+            break;
+
+        }
+
+    }
+
+    const modifiedBytes =
+        skipIndex > 0
+            ? bytes.subarray(skipIndex)
+            : bytes;
+
+    return {
+
+        buffer: modifiedBytes,
+
+        offset: skipIndex,
+
+        syncFound: skipIndex >= 0
+
+    };
+
+}
+
 
 // ============================================================
 // [PX-004.01] [PROVIDERS: PHIMLONGTIENG] HLS HEAD CHECK
@@ -55672,7 +55800,7 @@ app.get(
             // Tránh biến endpoint này thành open proxy.
             // =================================================
 
-            const is1PhimHost =
+const is1PhimHost =
     /^(?:www\.)?1phim\d+\.com$/i.test(hostname);
 
 const is8PhimHost =
@@ -55687,12 +55815,17 @@ const isCloudbetaHost =
 const isCbPlayHost =
     /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(hostname);
 
+// Nhận diện CDN cần byte alignment.
+const isByteTransformRequest =
+    isPltByteTransformUrl(targetUrl.href);
+
 const allowedHost =
     is1PhimHost ||
     is8PhimHost ||
     isRophimHost ||
     isCloudbetaHost ||
-    isCbPlayHost;
+    isCbPlayHost ||
+    isByteTransformRequest;
 
             if (!allowedHost) {
 
@@ -55712,16 +55845,44 @@ const allowedHost =
 
             let referer;
 
-            if (isCbPlayHost) {
+if (isCbPlayHost) {
 
-                referer = hostname.endsWith(".live")
-                    ? "https://play.cbplay.live/"
-                    : "https://play.cbplay.cc/";
+    referer =
+        hostname.endsWith(".live")
+            ? "https://play.cbplay.live/"
+            : "https://play.cbplay.cc/";
 
-            } else {
+} else {
 
-                referer = targetUrl.origin + "/";
-            }
+    // Giữ Referer gốc do provider cung cấp.
+    try {
+
+        const suppliedReferer =
+            new URL(
+                String(req.query?.referer || "").trim()
+            );
+
+        if (
+            suppliedReferer.protocol === "https:" &&
+            !suppliedReferer.username &&
+            !suppliedReferer.password
+        ) {
+
+            referer =
+                suppliedReferer.href;
+
+        }
+
+    } catch (_) {}
+
+    if (!referer) {
+
+        referer =
+            targetUrl.origin + "/";
+
+    }
+
+}
 
             // =================================================
             // USER AGENT
@@ -55771,7 +55932,8 @@ const isPlaylistRequest =
 
 if (
     req.headers.range &&
-    !isPlaylistRequest
+    !isPlaylistRequest &&
+    !isByteTransformRequest
 ) {
 
     requestHeaders.Range =
@@ -55962,12 +56124,13 @@ if (isM3U8) {
                             absolute.hostname
                                 .toLowerCase();
 
-                        const childAllowed =
+ const childAllowed =
     /^(?:www\.)?1phim\d+\.com$/i.test(childHost) ||
     /^www\.8phim1\.com$/i.test(childHost) ||
     /^player\.rophim12\.com$/i.test(childHost) ||
     /^api\.cloudbeta\.win$/i.test(childHost) ||
-    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost);
+    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost) ||
+    isPltByteTransformUrl(absolute.href);
 
                         if (
                             !childAllowed
@@ -55976,12 +56139,12 @@ if (isM3U8) {
                             return absolute.href;
                         }
 
-                        return (
-                            "/phimlongtieng/hls?url=" +
-                            encodeURIComponent(
-                                absolute.href
-                            )
-                        );
+return (
+    "/phimlongtieng/hls?url=" +
+    encodeURIComponent(absolute.href) +
+    "&referer=" +
+    encodeURIComponent(referer)
+);
 
                     } catch (_) {
 
@@ -56083,109 +56246,203 @@ res.status(
                 );
             }
 
-            // =================================================
-            // VIDEO / TS / BINARY
-            //
-            // Ví dụ:
-            //
-            // .ts
-            // .aac
-            // .mp4
-            // key.bin
-            //
-            // Không rewrite.
-            // Chỉ relay binary về Stremio.
-            // =================================================
 
-            const buffer =
-                Buffer.from(
-                    await upstream.arrayBuffer()
-                );
+// ============================================================
+// VIDEO / TS / BINARY
+//
+// PLT:
+// CDN response
+//      ↓
+// skipByteError()
+//      ↓
+// MPEG-TS alignment
+//      ↓
+// TV / VLC
+//
+// Các provider khác không sử dụng block này.
+// ============================================================
 
-            // =================================================
-            // COPY MỘT SỐ RESPONSE HEADERS
-            // =================================================
+const sourceBuffer =
+    Buffer.from(
+        await upstream.arrayBuffer()
+    );
 
-            const responseContentType =
-                upstream.headers.get(
-                    "content-type"
-                );
+let outputBuffer =
+    sourceBuffer;
 
-            if (
-                responseContentType
-            ) {
 
-                res.setHeader(
-                    "Content-Type",
-                    responseContentType
-                );
+// ============================================================
+// PHIMLONGTIENG ORIGINAL BYTE TRANSFORM
+// ============================================================
+
+if (isByteTransformRequest) {
+
+    const aligned =
+        phimLongTiengSkipByteError(
+            sourceBuffer
+        );
+
+    console.log(
+        "[PLT BYTE TRANSFORM] ALIGN:",
+        {
+            host: hostname,
+
+            inputBytes:
+                sourceBuffer.length,
+
+            outputBytes:
+                aligned.buffer.length,
+
+            offset:
+                aligned.offset,
+
+            syncFound:
+                aligned.syncFound,
+
+            firstByte:
+                aligned.buffer.length
+                    ? aligned.buffer[0]
+                    : null
+        }
+    );
+
+    if (aligned.syncFound) {
+
+        outputBuffer =
+            aligned.buffer;
+
+        // Đã xác định được MPEG-TS.
+        // Không giữ MIME image của CDN.
+        res.status(200);
+
+        res.setHeader(
+            "Content-Type",
+            "video/mp2t"
+        );
+
+        res.setHeader(
+            "Content-Length",
+            outputBuffer.length
+        );
+
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
+
+        res.setHeader(
+            "Access-Control-Allow-Origin",
+            "*"
+        );
+
+        res.setHeader(
+            "Access-Control-Allow-Headers",
+            "*"
+        );
+
+        console.log(
+            "[PLT BYTE TRANSFORM] MPEG-TS READY:",
+            {
+                bytes: outputBuffer.length,
+                removedPrefix: aligned.offset,
+                mime: "video/mp2t"
             }
+        );
 
-            const contentLength =
-                upstream.headers.get(
-                    "content-length"
-                );
+        return res.send(
+            outputBuffer
+        );
 
-            if (
-                contentLength
-            ) {
+    }
 
-                res.setHeader(
-                    "Content-Length",
-                    contentLength
-                );
-            }
+    console.log(
+        "[PLT BYTE TRANSFORM] NO TS SYNC FOUND - KEEP ORIGINAL"
+    );
 
-            const contentRange =
-                upstream.headers.get(
-                    "content-range"
-                );
+}
 
-            if (
-                contentRange
-            ) {
 
-                res.setHeader(
-                    "Content-Range",
-                    contentRange
-                );
-            }
+// ============================================================
+// NORMAL BINARY RESPONSE
+//
+// Giữ nguyên cách relay đối với các nguồn khác.
+// ============================================================
 
-            const acceptRanges =
-                upstream.headers.get(
-                    "accept-ranges"
-                );
+const responseContentType =
+    upstream.headers.get(
+        "content-type"
+    );
 
-            if (
-                acceptRanges
-            ) {
+if (responseContentType) {
 
-                res.setHeader(
-                    "Accept-Ranges",
-                    acceptRanges
-                );
-            }
+    res.setHeader(
+        "Content-Type",
+        responseContentType
+    );
 
-            res.setHeader(
-                "Cache-Control",
-                "no-store"
-            );
+}
 
-            res.setHeader(
-                "Access-Control-Allow-Origin",
-                "*"
-            );
+const contentLength =
+    upstream.headers.get(
+        "content-length"
+    );
 
-            res.setHeader(
-                "Access-Control-Allow-Headers",
-                "*"
-            );
+if (contentLength) {
 
-            return res
-                .status(
-                    upstream.status
-                )
-                .send(buffer);
+    res.setHeader(
+        "Content-Length",
+        contentLength
+    );
+
+}
+
+const contentRange =
+    upstream.headers.get(
+        "content-range"
+    );
+
+if (contentRange) {
+
+    res.setHeader(
+        "Content-Range",
+        contentRange
+    );
+
+}
+
+const acceptRanges =
+    upstream.headers.get(
+        "accept-ranges"
+    );
+
+if (acceptRanges) {
+
+    res.setHeader(
+        "Accept-Ranges",
+        acceptRanges
+    );
+
+}
+
+res.setHeader(
+    "Cache-Control",
+    "no-store"
+);
+
+res.setHeader(
+    "Access-Control-Allow-Origin",
+    "*"
+);
+
+res.setHeader(
+    "Access-Control-Allow-Headers",
+    "*"
+);
+
+return res
+    .status(upstream.status)
+    .send(outputBuffer);
+
 
         } catch (e) {
 
