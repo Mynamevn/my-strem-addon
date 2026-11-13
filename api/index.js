@@ -8914,10 +8914,12 @@ function movinaIdentityTitles(
 }
 
 
+
 function movinaIdentityMatches(
     source,
     candidate,
-    type
+    type,
+    options = {}
 ) {
     if (!candidate) {
         return false;
@@ -8937,7 +8939,10 @@ function movinaIdentityMatches(
             .trim()
             .toLowerCase();
 
-    if (candidateType) {
+    if (
+        candidateType &&
+        options.ignoreTypeMismatch !== true
+    ) {
         const allowed =
             type === "series"
                 ? ["series", "tv", "tvshow", "tvshows"]
@@ -8959,6 +8964,7 @@ function movinaIdentityMatches(
             candidateTitles.includes(title)
         );
 
+    // Tên vẫn phải có bằng chứng khớp.
     if (!titleMatched) {
         return false;
     }
@@ -8969,15 +8975,6 @@ function movinaIdentityMatches(
     const candidateYear =
         movinaIdentityGetYear(candidate);
 
-    /*
-     * Với series có hậu tố mùa:
-     * Năm PhimAPI có thể là năm phát hành mùa phim,
-     * trong khi Cinemeta dùng năm bắt đầu của series.
-     *
-     * Chỉ bỏ kiểm tra năm trong trường hợp này.
-     * Tên gốc sau khi bỏ hậu tố mùa vẫn phải khớp.
-     */
-
     const hasSeasonSuffix =
         type === "series" &&
         [
@@ -8986,10 +8983,19 @@ function movinaIdentityMatches(
             source?.original_name
         ].some(movinaIdentityHasSeasonSuffix);
 
-    if (sourceYear && !hasSeasonSuffix) {
-        if (
-            !candidateYear ||
-            candidateYear !== sourceYear
+    if (sourceYear > 0 && !hasSeasonSuffix) {
+        const yearTolerance = Math.max(
+            0,
+            Number(options.yearTolerance) || 0
+        );
+
+        if (candidateYear <= 0) {
+            if (options.allowMissingYear !== true) {
+                return false;
+            }
+        } else if (
+            Math.abs(candidateYear - sourceYear) >
+            yearTolerance
         ) {
             return false;
         }
@@ -8997,6 +9003,7 @@ function movinaIdentityMatches(
 
     return true;
 }
+
 
 // Cập nhật các Catalog đã được cache.
 // Không thay đổi poster, tên hoặc thứ tự phim.
@@ -9172,12 +9179,13 @@ async function movinaVerifyImdbIdentity(
             ""
     };
 
-    let identityMatched =
-        movinaIdentityMatches(
-            source,
-            candidate,
-            type
-        );
+let identityMatched =
+    movinaIdentityMatches(
+        source,
+        candidate,
+        type,
+        options
+    );
 
     /*
      * TMDB đã xác nhận chính xác tên + năm + loại phim
@@ -9202,9 +9210,12 @@ async function movinaVerifyImdbIdentity(
                 ? ["series", "tv", "tvshow", "tvshows"]
                 : ["movie", "film"];
 
-        const typeMatched =
-    Boolean(candidateType) &&
-    allowedTypes.includes(candidateType);
+const typeMatched =
+    options.ignoreTypeMismatch === true ||
+    (
+        Boolean(candidateType) &&
+        allowedTypes.includes(candidateType)
+    );
 
         const sourceYear =
             movinaIdentityGetYear(source);
@@ -9212,10 +9223,18 @@ async function movinaVerifyImdbIdentity(
         const candidateYear =
             movinaIdentityGetYear(candidate);
 
-        const yearMatched =
+const yearTolerance = Math.max(
+    0,
+    Number(options.yearTolerance) || 0
+);
+
+const yearMatched =
     sourceYear > 0 &&
-    candidateYear > 0 &&
-    candidateYear === sourceYear;
+    (
+        candidateYear > 0
+            ? Math.abs(candidateYear - sourceYear) <= yearTolerance
+            : options.allowMissingYear === true
+    );
 
         identityMatched =
             typeMatched &&
@@ -9256,7 +9275,8 @@ async function movinaVerifyImdbIdentity(
 async function movinaResolveAndVerifyImdb(
     item,
     detail,
-    type
+    type,
+    options = {}
 ) {
     const source = {
         ...item,
@@ -9301,12 +9321,13 @@ async function movinaResolveAndVerifyImdb(
             continue;
         }
 
-        const verified =
-            await movinaVerifyImdbIdentity(
-                source,
-                possibleId,
-                type
-            );
+const verified =
+    await movinaVerifyImdbIdentity(
+        source,
+        possibleId,
+        type,
+        options
+    );
 
         if (verified) {
             return verified;
@@ -9446,13 +9467,14 @@ async function movinaResolveAndVerifyImdb(
     const matched = new Map();
 
     for (const candidate of results.flat()) {
-        if (
-            !movinaIdentityMatches(
-                source,
-                candidate,
-                type
-            )
-        ) {
+if (
+    !movinaIdentityMatches(
+        source,
+        candidate,
+        type,
+        options
+    )
+) {
             continue;
         }
 
@@ -9462,32 +9484,183 @@ async function movinaResolveAndVerifyImdb(
         );
     }
 
-    if (matched.size === 1) {
-        const candidate =
-            matched.values().next().value;
 
+    // ========================================================
+    // CINEMETA CANDIDATE RANKING
+    // Không từ chối chỉ vì có nhiều kết quả.
+    // Chỉ chọn khi có một ứng viên thắng rõ ràng.
+    // ========================================================
+
+    const sourcePrimary =
+        movinaIdentityNormalizeTitle(
+            source.name || source.title
+        );
+
+    const sourceOriginal =
+        movinaIdentityNormalizeTitle(
+            source.origin_name ||
+            source.original_name ||
+            ""
+        );
+
+    const sourceYear =
+        movinaIdentityGetYear(source);
+
+    const rankedIdentityCandidates = [
+        ...matched.values()
+    ]
+        .map(candidate => {
+            const candidatePrimary =
+                movinaIdentityNormalizeTitle(
+                    candidate.name ||
+                    candidate.title ||
+                    ""
+                );
+
+            const candidateOriginal =
+                movinaIdentityNormalizeTitle(
+                    candidate.origin_name ||
+                    candidate.original_name ||
+                    candidate.original_title ||
+                    ""
+                );
+
+            const candidateYear =
+                movinaIdentityGetYear(candidate);
+
+            const candidateType =
+                String(candidate.type || "")
+                    .trim()
+                    .toLowerCase();
+
+            let score = 500;
+
+            if (
+                sourcePrimary &&
+                candidatePrimary === sourcePrimary
+            ) {
+                score += 1000;
+            }
+
+            if (
+                sourceOriginal &&
+                candidateOriginal === sourceOriginal
+            ) {
+                score += 900;
+            }
+
+            if (
+                sourcePrimary &&
+                candidateOriginal === sourcePrimary
+            ) {
+                score += 800;
+            }
+
+            if (
+                sourceOriginal &&
+                candidatePrimary === sourceOriginal
+            ) {
+                score += 750;
+            }
+
+            if (sourceYear > 0 && candidateYear > 0) {
+                const difference =
+                    Math.abs(candidateYear - sourceYear);
+
+                if (difference === 0) {
+                    score += 300;
+                } else if (difference === 1) {
+                    score += 150;
+                }
+            }
+
+            const expectedTypes =
+                type === "series"
+                    ? ["series", "tv", "tvshow", "tvshows"]
+                    : ["movie", "film"];
+
+            if (expectedTypes.includes(candidateType)) {
+                score += 50;
+            }
+
+            return {
+                candidate,
+                score,
+                candidateYear,
+                candidatePrimary,
+                candidateOriginal
+            };
+        })
+        .sort((a, b) => b.score - a.score);
+
+    const bestIdentity =
+        rankedIdentityCandidates[0] || null;
+
+    const secondIdentity =
+        rankedIdentityCandidates[1] || null;
+
+    const hasUniqueBest =
+        Boolean(bestIdentity) &&
+        (
+            !secondIdentity ||
+            bestIdentity.score - secondIdentity.score >= 100
+        );
+
+    console.log(
+        "[MOVINA IMDb CANDIDATE RANKING]",
+        JSON.stringify({
+            title: source.name,
+            year: sourceYear,
+            type,
+            candidates: rankedIdentityCandidates.map(entry => ({
+                id: entry.candidate.id,
+                title: entry.candidate.name || "",
+                originalTitle:
+                    entry.candidate.original_name ||
+                    entry.candidate.original_title ||
+                    "",
+                year: entry.candidateYear,
+                score: entry.score
+            })),
+            selected:
+                hasUniqueBest
+                    ? bestIdentity.candidate.id
+                    : null
+        })
+    );
+
+    if (hasUniqueBest) {
         const verified =
             await movinaVerifyImdbIdentity(
                 source,
-                candidate.id,
-                type
+                bestIdentity.candidate.id,
+                type,
+                options
             );
 
         if (verified) {
+            console.log(
+                "[MOVINA IMDb RANKED IDENTITY PASS]",
+                JSON.stringify({
+                    title: source.name,
+                    imdbId: verified,
+                    score: bestIdentity.score
+                })
+            );
+
             return verified;
         }
-
-    } else {
+    } else if (rankedIdentityCandidates.length) {
         console.log(
-            "[MOVINA IMDb SEARCH SAFE FAIL]",
+            "[MOVINA IMDb RANKED IDENTITY AMBIGUOUS]",
             JSON.stringify({
                 title: source.name,
-                year: source.year,
-                candidates: matched.size,
-                type
+                candidateCount:
+                    rankedIdentityCandidates.length
             })
         );
     }
+
 
     // ========================================================
     // 3. TMDB FALLBACK — CHỈ CHẠY KHI CINEMETA THẤT BẠI
@@ -9631,6 +9804,7 @@ function movinaTmdbCandidateMatchesTitle(row) {
     );
 }
 
+
 function movinaTmdbCandidateMatchesYear(row) {
     const rawDate = String(
         type === "series"
@@ -9641,11 +9815,24 @@ function movinaTmdbCandidateMatchesYear(row) {
     const rowYear =
         Number(rawDate.slice(0, 4)) || 0;
 
+    if (!sourceYear) {
+        return false;
+    }
+
+    if (!rowYear) {
+        return options.allowMissingYear === true;
+    }
+
+    const tolerance = Math.max(
+        0,
+        Number(options.yearTolerance) || 0
+    );
+
     return (
-        sourceYear > 0 &&
-        rowYear === sourceYear
+        Math.abs(rowYear - sourceYear) <= tolerance
     );
 }
+
 
 function movinaTmdbCandidateValid(row) {
     const tmdbId = Number(row?.id);
@@ -10506,15 +10693,16 @@ if (tmdbCandidates.size !== 1) {
     // 3.4. XÁC MINH LẠI BẰNG CINEMETA
     // --------------------------------------------------------
 
-    const verified =
-        await movinaVerifyImdbIdentity(
-            source,
-            tmdbImdbId,
-            type,
-            {
-                trustedTmdbMatch: true
-            }
-        );
+const verified =
+    await movinaVerifyImdbIdentity(
+        source,
+        tmdbImdbId,
+        type,
+        {
+            ...options,
+            trustedTmdbMatch: true
+        }
+    );
 
     if (!verified) {
         return "";
@@ -23010,11 +23198,16 @@ async function movinaBuildUniversalTitleIdentity(options = {}) {
     // IMDb ID có sẵn cũng phải được xác minh với metadata.
     if (imdbId) {
         try {
-            imdbId = await movinaVerifyImdbIdentity(
-                source,
-                imdbId,
-                type
-            ) || "";
+imdbId = await movinaVerifyImdbIdentity(
+    source,
+    imdbId,
+    type,
+    {
+        yearTolerance: 1,
+        allowMissingYear: true,
+        ignoreTypeMismatch: true
+    }
+) || "";
         } catch (error) {
             console.log(
                 "[MOVINA UNIVERSAL IDENTITY] IMDb VERIFY ERROR:",
@@ -23029,11 +23222,16 @@ async function movinaBuildUniversalTitleIdentity(options = {}) {
     // đã có của MOVINA. Không tự nhận ID chỉ từ tên gần giống.
     if (!imdbId) {
         try {
-            imdbId = await movinaResolveAndVerifyImdb(
-                source,
-                source,
-                type
-            );
+imdbId = await movinaResolveAndVerifyImdb(
+    source,
+    source,
+    type,
+    {
+        yearTolerance: 1,
+        allowMissingYear: true,
+        ignoreTypeMismatch: true
+    }
+);
 
             imdbId = String(imdbId || "")
                 .trim()
