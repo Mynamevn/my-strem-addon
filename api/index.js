@@ -46960,6 +46960,86 @@ console.log(
 // NGUONC CLIENT URL
 // =====================================================
 
+// =====================================================
+// NGUONC — SEASON YEAR RESOLUTION
+// Lấy năm phát hành từ tập đầu tiên của mùa đang mở.
+// Nếu không có dữ liệu thì dùng năm gốc của series.
+// =====================================================
+
+const nguoncSeasonYear = (() => {
+    if (
+        streamType !== "series" ||
+        !Number.isInteger(Number(seasonNumber)) ||
+        Number(seasonNumber) < 1
+    ) {
+        return 0;
+    }
+
+    const videos = Array.isArray(resolvedMetadata?.videos)
+        ? resolvedMetadata.videos
+        : [];
+
+    const seasonVideos = videos
+        .map(video => {
+            const videoId = String(video?.id || "");
+
+            const idMatch = videoId.match(
+                /^tt\d+:(\d+):(\d+)$/i
+            );
+
+            const videoSeason = Number(
+                video?.season ?? idMatch?.[1] ?? 0
+            );
+
+            const videoEpisode = Number(
+                video?.episode ?? idMatch?.[2] ?? 999999
+            );
+
+            const rawRelease =
+                video?.released ||
+                video?.releaseInfo ||
+                video?.release_date ||
+                video?.firstAired ||
+                video?.aired ||
+                video?.year ||
+                "";
+
+            const yearMatch = String(rawRelease).match(
+                /\b(?:19|20)\d{2}\b/
+            );
+
+            return {
+                season: videoSeason,
+                episode: videoEpisode,
+                year: yearMatch ? Number(yearMatch[0]) : 0
+            };
+        })
+        .filter(video =>
+            video.season === Number(seasonNumber) &&
+            video.episode > 0
+        )
+        .sort((a, b) => a.episode - b.episode);
+
+    const firstDatedEpisode = seasonVideos.find(
+        video => video.year > 0
+    );
+
+    return firstDatedEpisode?.year || 0;
+})();
+
+console.log(
+    "[NGUONC] SEASON YEAR RESOLVED:",
+    JSON.stringify({
+        title: movieName,
+        season: seasonNumber,
+        originalYear: movieYear,
+        seasonYear: nguoncSeasonYear,
+        expectedYear: nguoncSeasonYear || movieYear
+    })
+);
+
+const nguoncExpectedYear =
+    nguoncSeasonYear || movieYear;
 
 const nguoncClientUrl =
     "https://my-strem-addon.vercel.app/nguonc-player" +
@@ -46967,6 +47047,8 @@ const nguoncClientUrl =
     encodeURIComponent(movieName) +
     "&year=" +
     encodeURIComponent(movieYear || 0) +
+    "&seasonYear=" +
+    encodeURIComponent(nguoncSeasonYear || 0) +
     "&type=" +
     encodeURIComponent(streamType || "movie") +
     "&season=" +
@@ -46981,7 +47063,6 @@ const nguoncClientUrl =
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
     );
-
 
 const nguoncClientStream = {
 
@@ -48350,6 +48431,7 @@ const MOVIE_YEAR = (() => {
 })();
 
 
+
 const STREAM_TYPE =
     params.get("type") ||
     "movie";
@@ -48365,6 +48447,35 @@ const EPISODE_NUMBER =
         params.get("episode") ||
         0
     );
+
+const SEASON_YEAR = (() => {
+    const rawYear = String(
+        params.get("seasonYear") || ""
+    );
+
+    const match = rawYear.match(
+        /(?:19|20)[0-9]{2}/
+    );
+
+    return match
+        ? Number(match[0])
+        : 0;
+})();
+
+const EXPECTED_CONTENT_YEAR =
+    STREAM_TYPE === "series" && SEASON_YEAR > 0
+        ? SEASON_YEAR
+        : MOVIE_YEAR;
+
+console.log(
+    "[NGUONC CLIENT] EXPECTED YEAR:",
+    {
+        originalYear: MOVIE_YEAR,
+        seasonYear: SEASON_YEAR,
+        expectedYear: EXPECTED_CONTENT_YEAR,
+        season: SEASON_NUMBER
+    }
+);
 
 const API_BASE =
     "https://phim.nguonc.com/api";
@@ -48585,18 +48696,19 @@ function scoreMovie(item) {
         return -10000;
     }
 
-    if (MOVIE_YEAR > 0 && candidateYear > 0) {
-        const difference =
-            Math.abs(candidateYear - MOVIE_YEAR);
 
-        if (difference === 0) {
-            score += 500;
-        } else if (difference === 1) {
-            score += 150;
-        } else {
-            score -= 300;
-        }
+if (EXPECTED_CONTENT_YEAR > 0 && candidateYear > 0) {
+    const difference =
+        Math.abs(candidateYear - EXPECTED_CONTENT_YEAR);
+
+    if (difference === 0) {
+        score += 500;
+    } else if (difference === 1) {
+        score += 150;
+    } else {
+        score -= 300;
     }
+}
 
     if (
         STREAM_TYPE === "series" &&
@@ -49303,31 +49415,40 @@ async function searchNguonC() {
         )
     ];
 
-    if (requestedSeason > 1) {
 
-        // Tên có mùa được ưu tiên trước tên chung.
-        for (const title of searchTitles.slice(0, 4)) {
+if (requestedSeason > 1) {
+    // Tên mùa + năm mùa được ưu tiên cao nhất.
+    for (const title of searchTitles.slice(0, 4)) {
 
+        if (EXPECTED_CONTENT_YEAR > 0) {
             addKeyword(
-                title + " Season " + requestedSeason
-            );
-
-            addKeyword(
-                title + " " +
-                getSeasonOrdinal(requestedSeason) +
-                " Season"
-            );
-
-            addKeyword(
-                title + " Phần " + requestedSeason
-            );
-
-            addKeyword(
-                title + " S" + requestedSeason
+                title +
+                " Season " +
+                requestedSeason +
+                " " +
+                EXPECTED_CONTENT_YEAR
             );
         }
 
+        addKeyword(
+            title + " Season " + requestedSeason
+        );
+
+        addKeyword(
+            title + " " +
+            getSeasonOrdinal(requestedSeason) +
+            " Season"
+        );
+
+        addKeyword(
+            title + " Phần " + requestedSeason
+        );
+
+        addKeyword(
+            title + " S" + requestedSeason
+        );
     }
+}
 
     // Sau từ khóa mùa mới tìm tên phim chung.
     addKeyword(MOVIE_TITLE);
@@ -49337,7 +49458,7 @@ async function searchNguonC() {
     }
 
     // Tìm theo năm nếu có.
-    if (MOVIE_YEAR > 0) {
+    if (EXPECTED_CONTENT_YEAR > 0) {
 
         addKeyword(
             MOVIE_TITLE + " " + MOVIE_YEAR
@@ -50103,23 +50224,24 @@ console.log(
         const titleMatches =
             nguoncHasTitleMatch(identity);
 
-        const searchedByKnownAlias =
-            matchedKeywords.some(keyword =>
-                MOVIE_TITLE_VARIANTS.some(title =>
-                    normalizeIdentityTitle(title) ===
-                    normalizeIdentityTitle(keyword)
-                )
-            );
+
+const searchedByKnownAlias =
+    matchedKeywords.some(keyword =>
+        MOVIE_TITLE_VARIANTS.some(title =>
+            normalizeNguonCSeriesTitle(title) ===
+            normalizeNguonCSeriesTitle(keyword)
+        )
+    );
 
 
 const yearMatches =
-    MOVIE_YEAR > 0 &&
+    EXPECTED_CONTENT_YEAR > 0 &&
     identity.year > 0 &&
-    identity.year === MOVIE_YEAR;
+    identity.year === EXPECTED_CONTENT_YEAR;
 
 const yearDifference =
-    MOVIE_YEAR > 0 && identity.year > 0
-        ? Math.abs(identity.year - MOVIE_YEAR)
+    EXPECTED_CONTENT_YEAR > 0 && identity.year > 0
+        ? Math.abs(identity.year - EXPECTED_CONTENT_YEAR)
         : null;
 
 // Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
@@ -50127,6 +50249,7 @@ const yearDifference =
 const yearConflicts =
     yearDifference !== null &&
     yearDifference >= 2;
+
 
 // Không dùng loại movie/series để loại ứng viên.
 // NguonC có thể phân loại khác với metadata MOVINA.
@@ -50308,12 +50431,16 @@ if (!selectedEntry) {
                 }
             }
 
-            const yearAccepted =
-                MOVIE_YEAR <= 0 ||
-                (
-                    fallbackYear > 0 &&
-                    Math.abs(fallbackYear - MOVIE_YEAR) <= 1
-                );
+
+const yearAccepted =
+    EXPECTED_CONTENT_YEAR <= 0 ||
+    (
+        fallbackYear > 0 &&
+        Math.abs(
+            fallbackYear - EXPECTED_CONTENT_YEAR
+        ) <= 1
+    );
+
 
             // Không nhận phim khác loại nếu Detail khai báo rõ.
             const typeAccepted =
@@ -50357,7 +50484,7 @@ if (!selectedEntry) {
                     slug,
                     detailTitles: identity.rawTitles,
                     exactTitleMatch,
-                    expectedYear: MOVIE_YEAR,
+                    expectedYear: EXPECTED_CONTENT_YEAR,
                     actualYear: fallbackYear,
                     yearAccepted,
                     type: identity.type,
