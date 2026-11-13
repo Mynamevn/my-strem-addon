@@ -15161,29 +15161,44 @@ const authoritativeCinemetaYearEnd =
         ? cinemetaYearMatches[cinemetaYearMatches.length - 1]
         : authoritativeCinemetaYear;
 
+
 const isCompatiblePhimApiCandidate = candidate => {
 
     if (!authoritativeCinemetaYear) {
         return true;
     }
 
-    const candidateYear =
-        Number(
-            candidate?.year ||
-            candidate?.release_year ||
-            candidate?.releaseYear ||
-            0
+    // Đọc năm từ PhimAPI.
+    // Nếu có dạng 2004–2005 hoặc 2004-2005,
+    // chỉ lấy năm đầu tiên.
+    const rawCandidateYear =
+        candidate?.year ||
+        candidate?.release_year ||
+        candidate?.releaseYear ||
+        "";
+
+    const candidateYearMatch =
+        String(rawCandidateYear).match(
+            /(?:19|20)\d{2}/
         );
+
+    const candidateYear =
+        candidateYearMatch
+            ? Number(candidateYearMatch[0])
+            : 0;
 
     if (!candidateYear) {
         return false;
     }
 
+    // Chấp nhận chênh lệch tối đa 1 năm.
     return (
-        candidateYear >= authoritativeCinemetaYear &&
-        candidateYear <= authoritativeCinemetaYearEnd
+        Math.abs(
+            candidateYear - authoritativeCinemetaYear
+        ) <= 1
     );
 };
+
 
 const identitySafeItems =
     Array.isArray(items)
