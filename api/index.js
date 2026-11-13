@@ -48670,7 +48670,11 @@ const detailSeasonMatch = detailTitles
     );
 
 const detailSeason =
-    Number(detailSeasonMatch?.[1] || 0);
+    Number(
+        detail?.__movinaSeasonHint ||
+        detailSeasonMatch?.[1] ||
+        0
+    );
 
 console.log(
     "[NGUONC CLIENT] DETAIL SEASON CONTEXT:",
@@ -49766,12 +49770,76 @@ function nguoncHasTypeConflict(identity) {
 // XÁC MINH ỨNG VIÊN BẰNG DETAIL API
 // -----------------------------------------------------
 
+
+function getNguonCSeasonHint(values) {
+    const text = values
+        .map(value => String(value || ""))
+        .join(" ");
+
+    const match = text.match(
+        /(?:\bseason|\bmùa|\bphan|\bphần|\bpart|\bs)[\s._-]*0*(\d+)/i
+    );
+
+    return Number(match?.[1] || 0);
+}
+
+const requestedSeason =
+    Number(SEASON_NUMBER) || 0;
+
 const detailCandidates = ranked
     .filter(entry =>
         entry.score > -1000 &&
         Boolean(entry.item?.slug)
     )
-    .slice(0, 12);
+    .slice(0, 12)
+    .map(entry => {
+        const item = entry.item;
+
+        const seasonHint = getNguonCSeasonHint([
+            item?.name,
+            item?.origin_name,
+            item?.original_name,
+            item?.title,
+            item?.english_name,
+            item?.slug
+        ]);
+
+        let seasonPriority = 0;
+
+        if (requestedSeason > 1) {
+            if (seasonHint === requestedSeason) {
+                seasonPriority = 100000;
+            } else if (
+                seasonHint > 0 &&
+                seasonHint !== requestedSeason
+            ) {
+                seasonPriority = -100000;
+            }
+        }
+
+        return {
+            ...entry,
+            seasonHint,
+            seasonPriority
+        };
+    })
+    .sort((a, b) =>
+        (b.seasonPriority - a.seasonPriority) ||
+        (b.score - a.score)
+    );
+
+console.log(
+    "[NGUONC CLIENT] SEASON-AWARE CANDIDATES:",
+    detailCandidates.map(entry => ({
+        name: entry.item?.name,
+        slug: entry.item?.slug,
+        requestedSeason,
+        detectedSeason: entry.seasonHint,
+        score: entry.score,
+        seasonPriority: entry.seasonPriority
+    }))
+);
+
 
 console.log(
     "[NGUONC CLIENT] DETAIL CANDIDATES:",
@@ -49797,6 +49865,40 @@ for (const entry of detailCandidates) {
             item,
             detail
         );
+
+
+const detailSeasonHint = getNguonCSeasonHint([
+    item?.name,
+    item?.origin_name,
+    item?.original_name,
+    item?.title,
+    item?.english_name,
+    item?.slug,
+    ...identity.rawTitles
+]);
+
+if (
+    requestedSeason > 1 &&
+    detailSeasonHint > 0 &&
+    detailSeasonHint !== requestedSeason
+) {
+    console.warn(
+        "[NGUONC CLIENT] REJECT WRONG SEASON DETAIL:",
+        {
+            name: item?.name,
+            slug: item?.slug,
+            requestedSeason,
+            detectedSeason: detailSeasonHint
+        }
+    );
+
+    continue;
+}
+
+// Lưu thông tin mùa để hàm tìm tập sử dụng
+// ngay cả khi API Detail không ghi mùa trong tên tập.
+detail.__movinaSeasonHint =
+    detailSeasonHint || 0;
 
         const titleMatches =
             nguoncHasTitleMatch(identity);
