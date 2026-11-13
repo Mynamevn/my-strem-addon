@@ -47032,32 +47032,7 @@ const nguoncUniversalTitleIdentityPromise =
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
-
-      
-(async () => {
-    const identity =
-        await nguoncUniversalTitleIdentityPromise;
-
-    console.log(
-        "[NGUONC] UNIVERSAL IDENTITY READY:",
-        JSON.stringify({
-            title: movieName,
-            imdbId: identity.imdbId || null,
-            titleCount: identity.titles.length,
-            titles: identity.titles
-        })
-    );
-
-    return await fetchNguonC(
-        nguonCFallbackName,
-        {
-            titleVariants: identity.titles,
-            year: movieYear,
-            type: streamType,
-            imdbId: identity.imdbId
-        }
-    );
-})(),
+Promise.resolve([]),
 
       fetchVSMov(
           movieName,
@@ -47333,8 +47308,12 @@ const nguoncClientUrl =
     encodeURIComponent(streamType || "movie") +
     "&season=" +
     encodeURIComponent(seasonNumber || 0) +
-    "&episode=" +
+        "&episode=" +
     encodeURIComponent(episodeNumber || 0) +
+    "&imdbId=" +
+    encodeURIComponent(
+        nguoncUniversalTitleIdentity.imdbId || ""
+    ) +
     "&titles=" +
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
@@ -49536,112 +49515,157 @@ async function searchNguonC() {
 
     function addKeyword(value) {
         const keyword = String(value || "").trim();
+        const normalized = normalizeTitle(keyword);
 
         if (
             keyword &&
-            normalizeTitle(keyword).length >= 3 &&
+            normalized.length >= 3 &&
             !keywords.some(
                 existing =>
-                    normalizeTitle(existing) ===
-                    normalizeTitle(keyword)
+                    normalizeTitle(existing) === normalized
             )
         ) {
             keywords.push(keyword);
         }
     }
 
-    // Tìm theo tên chính và toàn bộ alias đã xác minh.
+    // Dùng toàn bộ tên phim và alias được Vercel chuyển sang.
     for (const title of MOVIE_TITLE_VARIANTS) {
         addKeyword(title);
     }
 
-    // Giữ giới hạn 12 từ khóa đã thiết lập.
-    const searchKeywords = keywords.slice(0, 20);
+    const searchKeywords = keywords.slice(0, 24);
 
     console.log(
         "[NGUONC CLIENT] SEARCH KEYWORDS:",
         searchKeywords
     );
 
-    const allItems = [];
+    const resultsByKeyword = new Array(searchKeywords.length);
+    let nextIndex = 0;
 
-    for (const keyword of searchKeywords) {
-        const searchUrl =
-            API_BASE +
-            "/films/search?keyword=" +
-            encodeURIComponent(keyword) +
-            "&page=1";
+    // Giới hạn số request đồng thời để tránh gửi dồn dập.
+    const WORKER_COUNT = Math.min(4, searchKeywords.length);
+    const REQUEST_TIMEOUT_MS = 6000;
 
-        console.log(
-            "[NGUONC CLIENT] SEARCH:",
-            keyword
-        );
+    async function searchWorker(workerId) {
+        while (true) {
+            const index = nextIndex++;
 
-        try {
-            const response = await fetch(
-                searchUrl,
-                {
-                    method: "GET",
-                    headers: {
-                        "Accept": "application/json"
-                    },
-                    cache: "no-store"
-                }
+            if (index >= searchKeywords.length) {
+                return;
+            }
+
+            const keyword = searchKeywords[index];
+
+            const searchUrl =
+                API_BASE +
+                "/films/search?keyword=" +
+                encodeURIComponent(keyword) +
+                "&page=1";
+
+            const controller = new AbortController();
+
+            const timeoutId = setTimeout(
+                () => controller.abort(),
+                REQUEST_TIMEOUT_MS
             );
 
-            if (!response.ok) {
-                console.warn(
-                    "[NGUONC CLIENT] SEARCH FAILED:",
-                    keyword,
-                    response.status
+            try {
+                console.log(
+                    "[NGUONC CLIENT] SEARCH:",
+                    {
+                        worker: workerId,
+                        index,
+                        keyword
+                    }
                 );
 
-                continue;
-            }
+                const response = await fetch(
+                    searchUrl,
+                    {
+                        method: "GET",
+                        headers: {
+                            "Accept": "application/json"
+                        },
+                        cache: "no-store",
+                        signal: controller.signal
+                    }
+                );
 
-            const data = await response.json();
+                if (!response.ok) {
+                    console.warn(
+                        "[NGUONC CLIENT] SEARCH FAILED:",
+                        keyword,
+                        response.status
+                    );
 
-            let items = [];
-
-            if (Array.isArray(data?.items)) {
-                items = data.items;
-            } else if (Array.isArray(data?.data)) {
-                items = data.data;
-            } else if (
-                Array.isArray(data?.data?.items)
-            ) {
-                items = data.data.items;
-            }
-
-            console.log(
-                "[NGUONC CLIENT] SEARCH RESULT:",
-                keyword,
-                items.length
-            );
-
-            // Lưu lại từ khóa đã tìm ra từng kết quả.
-            // Nhờ vậy có thể kiểm chứng kết quả fallback.
-            for (const item of items) {
-                if (!item || typeof item !== "object") {
+                    resultsByKeyword[index] = [];
                     continue;
                 }
 
-                allItems.push({
-                    ...item,
-                    __movinaMatchedKeywords: [
-                        keyword
-                    ]
-                });
-            }
+                const data = await response.json();
 
-        } catch (error) {
-            console.warn(
-                "[NGUONC CLIENT] SEARCH ERROR:",
-                keyword,
-                error?.message || error
-            );
+                let items = [];
+
+                if (Array.isArray(data?.items)) {
+                    items = data.items;
+                } else if (Array.isArray(data?.data)) {
+                    items = data.data;
+                } else if (
+                    Array.isArray(data?.data?.items)
+                ) {
+                    items = data.data.items;
+                }
+
+                console.log(
+                    "[NGUONC CLIENT] SEARCH RESULT:",
+                    keyword,
+                    items.length
+                );
+
+                resultsByKeyword[index] = items
+                    .filter(
+                        item =>
+                            item &&
+                            typeof item === "object"
+                    )
+                    .map(item => ({
+                        ...item,
+                        __movinaMatchedKeywords: [keyword]
+                    }));
+
+            } catch (error) {
+                const timedOut =
+                    error?.name === "AbortError";
+
+                console.warn(
+                    timedOut
+                        ? "[NGUONC CLIENT] SEARCH TIMEOUT:"
+                        : "[NGUONC CLIENT] SEARCH ERROR:",
+                    keyword,
+                    error?.message || error
+                );
+
+                resultsByKeyword[index] = [];
+
+            } finally {
+                clearTimeout(timeoutId);
+            }
         }
     }
+
+    await Promise.all(
+        Array.from(
+            { length: WORKER_COUNT },
+            (_, index) => searchWorker(index + 1)
+        )
+    );
+
+    // Ghép kết quả theo thứ tự từ khóa ban đầu.
+    const allItems = resultsByKeyword.flatMap(
+        items => Array.isArray(items) ? items : []
+    );
 
     // -------------------------------------------------
     // DEDUPLICATE + MERGE SEARCH PROVENANCE
@@ -49662,15 +49686,12 @@ async function searchNguonC() {
         const existing = byKey.get(key);
 
         if (existing) {
-            const mergedKeywords = [
+            existing.__movinaMatchedKeywords = [
                 ...new Set([
                     ...(existing.__movinaMatchedKeywords || []),
                     ...(item.__movinaMatchedKeywords || [])
                 ])
             ];
-
-            existing.__movinaMatchedKeywords =
-                mergedKeywords;
 
             continue;
         }
@@ -49712,7 +49733,6 @@ async function searchNguonC() {
 
     return unique;
 }
-
 
 // =====================================================
 // LOAD DETAIL
