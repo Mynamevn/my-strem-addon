@@ -50582,11 +50582,9 @@ if (yearConflicts || typeConflicts) {
 
 // Tên phim phải khớp một tên đã biết,
 // hoặc NguonC phải trả kết quả từ một alias hợp lệ.
-// Chỉ chấp nhận khi tên trong Detail thực sự khớp
-// ít nhất một tên/alias đã được MOVINA xác minh.
-// Việc tìm thấy qua alias chỉ giúp đưa ứng viên vào vòng kiểm tra,
-// không phải bằng chứng rằng ứng viên là đúng phim.
-const identityAccepted = titleMatches;
+const identityAccepted =
+    titleMatches ||
+    searchedByKnownAlias;
 
 console.log(
     "[NGUONC CLIENT] IDENTITY CHECK:",
