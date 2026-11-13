@@ -23033,6 +23033,106 @@ LIMIT 40
 }
 
 
+/* =====================================================
+   MOVINA — ORIGINAL RELEASE YEAR FROM WIKIDATA
+   Tra bằng IMDb ID đã xác minh.
+   Lấy năm phát hành sớm nhất của tác phẩm.
+   ===================================================== */
+
+const MOVINA_WIKIDATA_ORIGINAL_YEAR_CACHE = new Map();
+
+async function movinaGetWikidataOriginalReleaseYear(imdbId) {
+    const id = String(imdbId || "")
+        .trim()
+        .toLowerCase();
+
+    if (!/^tt\d+$/i.test(id)) {
+        return 0;
+    }
+
+    if (MOVINA_WIKIDATA_ORIGINAL_YEAR_CACHE.has(id)) {
+        return MOVINA_WIKIDATA_ORIGINAL_YEAR_CACHE.get(id);
+    }
+
+    const query = `
+        SELECT ?date WHERE {
+            ?item wdt:P345 "${id}" .
+            ?item wdt:P577 ?date .
+        }
+        ORDER BY ASC(?date)
+        LIMIT 20
+    `;
+
+    try {
+        const response = await axios.get(
+            "https://query.wikidata.org/sparql",
+            {
+                params: {
+                    query,
+                    format: "json"
+                },
+                timeout: 5000,
+                headers: {
+                    "User-Agent": "MOVINA/1.0",
+                    "Accept": "application/sparql-results+json"
+                }
+            }
+        );
+
+        const rows =
+            response.data?.results?.bindings || [];
+
+        const years = rows
+            .map(row => {
+                const value = String(
+                    row?.date?.value || ""
+                );
+
+                const match = value.match(
+                    /\b(?:19|20)\d{2}\b/
+                );
+
+                return match ? Number(match[0]) : 0;
+            })
+            .filter(year =>
+                year >= 1900 && year <= 2100
+            );
+
+        const originalYear = years.length
+            ? Math.min(...years)
+            : 0;
+
+        MOVINA_WIKIDATA_ORIGINAL_YEAR_CACHE.set(
+            id,
+            originalYear
+        );
+
+        console.log(
+            "[MOVINA WIKIDATA ORIGINAL YEAR]:",
+            JSON.stringify({
+                imdbId: id,
+                datesFound: years.length,
+                years,
+                originalYear
+            })
+        );
+
+        return originalYear;
+
+    } catch (error) {
+        console.log(
+            "[MOVINA WIKIDATA ORIGINAL YEAR ERROR]:",
+            {
+                imdbId: id,
+                status: error?.response?.status || 0,
+                message: error?.message || String(error)
+            }
+        );
+
+        return 0;
+    }
+}
+
 /* ============================================================
    [CORE-IDENTITY-001] MOVINA UNIVERSAL TITLE IDENTITY
    [PROVIDERS: NGUONC]
@@ -23340,6 +23440,16 @@ console.log(
     }
 }
 
+
+let wikidataOriginalReleaseYear = 0;
+
+// Chỉ dùng năm phát hành gốc Wikidata cho phim lẻ.
+// Không thay đổi năm series hoặc năm mùa.
+if (imdbId && type === "movie") {
+    wikidataOriginalReleaseYear =
+        await movinaGetWikidataOriginalReleaseYear(imdbId);
+}
+
     let wikidataTitles = [];
 
     // Chỉ lấy alias Wikidata khi đã có IMDb ID.
@@ -23442,11 +23552,19 @@ return {
     imdbId,
     titles,
 
-    // Năm Cinemeta từ IMDb đã xác minh.
-    // Nếu Cinemeta không có năm thì giữ năm nguồn hiện tại.
+    // Phim lẻ: Wikidata → Cinemeta → MOVINA.
+    // Phim bộ: giữ nguyên năm MOVINA.
     identityYear:
-        cinemetaYear || year || 0
+        type === "movie"
+            ? (
+                wikidataOriginalReleaseYear ||
+                cinemetaYear ||
+                year ||
+                0
+            )
+            : (year || 0)
 };
+
 
 }
 
@@ -50611,7 +50729,6 @@ const searchedByKnownAlias =
         )
     );
 
-
 const yearMatches =
     EXPECTED_CONTENT_YEAR > 0 &&
     identity.year > 0 &&
@@ -50629,7 +50746,6 @@ const identityExpectedYear =
                 : MOVIE_YEAR
         )
         : EXPECTED_CONTENT_YEAR;
-
 
 const yearDifference =
     identityExpectedYear > 0 && identity.year > 0
