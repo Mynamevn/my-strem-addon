@@ -46933,6 +46933,48 @@ console.log(
 // NGUONC CLIENT URL
 // =====================================================
 
+// =====================================================
+// NGUONC — PRESERVE METADATA YEAR RANGE
+// =====================================================
+
+const nguoncYearRangeSources = [
+    resolvedMetadata?.releaseInfo,
+    resolvedMetadata?.released,
+    resolvedMetadata?.year,
+    resolvedMetadata?.first_air_date,
+    resolvedMetadata?.release_date,
+    resolvedMetadata?.year_range
+]
+    .map(value => String(value || "").trim())
+    .filter(Boolean);
+
+const nguoncYearRangeRaw =
+    nguoncYearRangeSources.find(value =>
+        /(?:19|20)\d{2}\s*[-–—]\s*(?:(?:19|20)\d{2})?/.test(value)
+    ) ||
+    nguoncYearRangeSources.find(value =>
+        /(?:19|20)\d{2}/.test(value)
+    ) ||
+    String(movieYear || "");
+
+const nguoncYearNumbers =
+    nguoncYearRangeRaw.match(/(?:19|20)\d{2}/g) || [];
+
+const nguoncYearRange =
+    nguoncYearNumbers.length >= 2
+        ? nguoncYearNumbers[0] + "-" + nguoncYearNumbers[1]
+        : nguoncYearNumbers.length === 1
+            ? nguoncYearNumbers[0] +
+                (/[–—-]\s*$/.test(nguoncYearRangeRaw) ? "-" : "")
+            : String(movieYear || "");
+
+console.log(
+    "[NGUONC CLIENT] SOURCE YEAR RANGE:",
+    {
+        raw: nguoncYearRangeRaw,
+        normalized: nguoncYearRange
+    }
+);
 
 const nguoncClientUrl =
     "https://my-strem-addon.vercel.app/nguonc-player" +
@@ -46940,16 +46982,14 @@ const nguoncClientUrl =
     encodeURIComponent(movieName) +
     "&year=" +
     encodeURIComponent(movieYear || 0) +
+    "&yearRange=" +
+    encodeURIComponent(nguoncYearRange) +
     "&type=" +
     encodeURIComponent(streamType || "movie") +
     "&season=" +
     encodeURIComponent(seasonNumber || 0) +
     "&episode=" +
     encodeURIComponent(episodeNumber || 0) +
-    "&imdbId=" +
-    encodeURIComponent(
-        nguoncUniversalTitleIdentity.imdbId || ""
-    ) +
     "&titles=" +
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
@@ -48313,20 +48353,41 @@ const MOVIE_IMDB_ID =
 const HAS_TRUSTED_IMDB_ID =
     /^tt\d+$/.test(MOVIE_IMDB_ID);
 
-const MOVIE_YEAR = (() => {
+const MOVIE_YEAR_RANGE = (() => {
     const rawYear = String(
-        params.get("year") || ""
+        params.get("yearRange") ||
+        params.get("year") ||
+        ""
     );
 
-    const match = rawYear.match(
-        /(?:19|20)[0-9]{2}/
-    );
+    const years =
+        rawYear.match(/(?:19|20)\\d{2}/g) || [];
 
-    return match
-        ? Number(match[0])
-        : 0;
+    const start =
+        Number(years[0]) || 0;
+
+    const end =
+        Number(years[1]) || start;
+
+    return {
+        raw: rawYear,
+        start,
+        end
+    };
 })();
 
+const MOVIE_YEAR =
+    MOVIE_YEAR_RANGE.start;
+
+const MOVIE_YEAR_MIN =
+    MOVIE_YEAR > 0
+        ? MOVIE_YEAR_RANGE.start - 1
+        : 0;
+
+const MOVIE_YEAR_MAX =
+    MOVIE_YEAR > 0
+        ? MOVIE_YEAR_RANGE.end + 1
+        : 0;
 
 const STREAM_TYPE =
     params.get("type") ||
@@ -48537,21 +48598,21 @@ function scoreMovie(item) {
         return -10000;
     }
 
-    // Năm chỉ dùng để xếp hạng.
-    // Quyết định chấp nhận hay từ chối sẽ được thực hiện
-    // sau khi tải Detail.
-    if (MOVIE_YEAR > 0 && candidateYear > 0) {
-        const difference =
-            Math.abs(candidateYear - MOVIE_YEAR);
-
-        if (difference === 0) {
-            score += 500;
-        } else if (difference === 1) {
-            score += 150;
-        } else {
-            score -= 300;
-        }
+// Năm được so sánh với toàn bộ khoảng phát hành.
+// Khoảng năm đã bao gồm dung sai một năm ở hai đầu.
+if (
+    MOVIE_YEAR_MIN > 0 &&
+    candidateYear > 0
+) {
+    if (
+        candidateYear >= MOVIE_YEAR_MIN &&
+        candidateYear <= MOVIE_YEAR_MAX
+    ) {
+        score += 500;
+    } else {
+        score -= 300;
     }
+}
 
     // Loại phim chỉ dùng để cộng điểm khi khớp.
     // Không loại ứng viên chỉ vì Search API ghi sai loại.
@@ -49680,18 +49741,21 @@ for (const entry of detailCandidates) {
 const yearMatches =
     MOVIE_YEAR > 0 &&
     identity.year > 0 &&
-    identity.year === MOVIE_YEAR;
+    identity.year >= MOVIE_YEAR_MIN &&
+    identity.year <= MOVIE_YEAR_MAX;
 
 const yearDifference =
     MOVIE_YEAR > 0 && identity.year > 0
         ? Math.abs(identity.year - MOVIE_YEAR)
         : null;
 
-// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
-// Thiếu năm ở Detail không phải lý do để từ chối.
+const yearMatches =
+    yearDifference !== null &&
+    yearDifference <= 1;
+
 const yearConflicts =
     yearDifference !== null &&
-    yearDifference >= 2;
+    yearDifference > 1;
 
 // Không dùng loại movie/series để loại ứng viên.
 // NguonC có thể phân loại khác với metadata MOVINA.
@@ -49702,7 +49766,11 @@ if (yearConflicts) {
         "[NGUONC CLIENT] REJECT YEAR:",
         {
             name: item?.name,
-            expected: MOVIE_YEAR,
+            expected: MOVIE_YEAR_RANGE,
+allowedRange: [
+    MOVIE_YEAR_MIN,
+    MOVIE_YEAR_MAX
+],
             actual: identity.year,
             difference: yearDifference
         }
@@ -49729,7 +49797,11 @@ console.log(
         matchedKeywords,
         searchedByKnownAlias,
         titleMatches,
-        expectedYear: MOVIE_YEAR,
+        expectedYearRange: MOVIE_YEAR_RANGE,
+allowedYearRange: [
+    MOVIE_YEAR_MIN,
+    MOVIE_YEAR_MAX
+],
         actualYear: identity.year,
         yearDifference,
         yearMatches,
@@ -49762,7 +49834,7 @@ if (!identityAccepted) {
             {
                 name: item?.name,
                 detailTitles: identity.rawTitles,
-                expectedYear: MOVIE_YEAR,
+               expectedYearRange: MOVIE_YEAR_RANGE,
                 actualYear: identity.year,
                 yearMatches,
                 type: identity.type,
