@@ -49483,18 +49483,18 @@ async function startNguonC() {
         "Đang tìm: " +
         MOVIE_TITLE;
 
-    const items =
-        await searchNguonC();
+const items =
+    await searchNguonC();
 
-    if (
-        !items.length
-    ) {
-
-        throw new Error(
-            "NguonC không trả về kết quả."
-        );
-
-    }
+if (!items.length) {
+    console.warn(
+        "[NGUONC CLIENT] SEARCH EMPTY — TRY SLUG FALLBACK:",
+        {
+            title: MOVIE_TITLE,
+            aliases: MOVIE_TITLE_VARIANTS
+        }
+    );
+}
 
     const ranked =
         items
@@ -49882,6 +49882,200 @@ if (!identityAccepted) {
         );
     }
 }
+
+
+// -----------------------------------------------------
+// GENERIC SOURCE-SPECIFIC SLUG FALLBACK
+// Tạo ứng viên slug từ title và các alias.
+// Chỉ chạy sau khi Search + Detail thông thường thất bại.
+// Không chấp nhận chỉ dựa trên slug.
+// -----------------------------------------------------
+
+if (!selectedEntry) {
+
+    const fallbackSlugCandidates = [
+        ...new Set(
+            MOVIE_TITLE_VARIANTS
+                .map(title =>
+                    normalizeIdentityTitle(title)
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")
+                        .replace(/^-+|-+$/g, "")
+                )
+                .filter(slug =>
+                    slug.length >= 3 &&
+                    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
+                )
+        )
+    ].slice(0, 6);
+
+    const alreadyCheckedSlugs = new Set(
+        detailCandidates.map(entry =>
+            String(entry.item?.slug || "").trim()
+        )
+    );
+
+    console.log(
+        "[NGUONC CLIENT] GENERATED SLUG FALLBACKS:",
+        fallbackSlugCandidates
+    );
+
+    for (const slug of fallbackSlugCandidates) {
+
+        if (
+            selectedEntry ||
+            alreadyCheckedSlugs.has(slug)
+        ) {
+            continue;
+        }
+
+        try {
+            console.log(
+                "[NGUONC CLIENT] FALLBACK DETAIL:",
+                slug
+            );
+
+            const detail = await loadDetail(slug);
+
+            const identity = getNguonCIdentity(
+                { slug },
+                detail
+            );
+
+            // Chỉ cho phép tên trong Detail khớp chính xác
+            // với một tên/alias MOVINA đã cung cấp.
+            const targetTitles = MOVIE_TITLE_VARIANTS
+                .map(normalizeIdentityTitle)
+                .filter(Boolean);
+
+            const exactTitleMatch =
+                identity.normalizedTitles.some(candidate =>
+                    targetTitles.includes(candidate)
+                );
+
+            // Đọc năm kể cả khi NguonC ghi dạng 2004–2005.
+            const fallbackMovie =
+                getNguonCDetailMovie(detail);
+
+            const yearFields = [
+                fallbackMovie?.year,
+                fallbackMovie?.release_year,
+                fallbackMovie?.releaseYear,
+                ...identity.rawTitles
+            ];
+
+            let fallbackYear = 0;
+
+            for (const value of yearFields) {
+                const match = String(value || "").match(
+                    /(?:19|20)[0-9]{2}/
+                );
+
+                if (match) {
+                    fallbackYear = Number(match[0]);
+                    break;
+                }
+            }
+
+            const yearAccepted =
+                MOVIE_YEAR <= 0 ||
+                (
+                    fallbackYear > 0 &&
+                    Math.abs(fallbackYear - MOVIE_YEAR) <= 1
+                );
+
+            // Không nhận phim khác loại nếu Detail khai báo rõ.
+            const typeAccepted =
+                !nguoncHasTypeConflict(identity);
+
+            // Với phim bộ, Detail phải thực sự có danh sách tập.
+            const fallbackEpisodes =
+                fallbackMovie?.episodes ||
+                detail?.episodes ||
+                detail?.data?.episodes ||
+                [];
+
+            const hasEpisodeList =
+                Array.isArray(fallbackEpisodes) &&
+                fallbackEpisodes.some(server => {
+                    const serverItems =
+                        server?.items ||
+                        server?.server_data ||
+                        server?.list ||
+                        [];
+
+                    return (
+                        Array.isArray(serverItems) &&
+                        serverItems.length > 0
+                    );
+                });
+
+            const episodeStructureAccepted =
+                STREAM_TYPE !== "series" ||
+                hasEpisodeList;
+
+            const accepted =
+                exactTitleMatch &&
+                yearAccepted &&
+                typeAccepted &&
+                episodeStructureAccepted;
+
+            console.log(
+                "[NGUONC CLIENT] SLUG FALLBACK CHECK:",
+                {
+                    slug,
+                    detailTitles: identity.rawTitles,
+                    exactTitleMatch,
+                    expectedYear: MOVIE_YEAR,
+                    actualYear: fallbackYear,
+                    yearAccepted,
+                    type: identity.type,
+                    typeAccepted,
+                    hasEpisodeList,
+                    accepted
+                }
+            );
+
+            if (!accepted) {
+                continue;
+            }
+
+            selectedEntry = {
+                item: {
+                    slug,
+                    name:
+                        fallbackMovie?.name ||
+                        fallbackMovie?.origin_name ||
+                        identity.rawTitles[0] ||
+                        slug,
+                    __movinaSlugFallback: true
+                },
+                score: 2500
+            };
+
+            selectedDetail = detail;
+
+            console.log(
+                "[NGUONC CLIENT] SLUG FALLBACK ACCEPTED:",
+                {
+                    slug,
+                    title: identity.rawTitles,
+                    year: fallbackYear
+                }
+            );
+
+            break;
+
+        } catch (error) {
+            console.warn(
+                "[NGUONC CLIENT] SLUG FALLBACK FAILED:",
+                slug,
+                error?.message || error
+            );
+        }
+    }
+}
+
 
 // -----------------------------------------------------
 // KHÔNG TỰ Ý CHỌN PHIM NẾU KHÔNG XÁC MINH ĐƯỢC
