@@ -46946,6 +46946,10 @@ const nguoncClientUrl =
     encodeURIComponent(seasonNumber || 0) +
     "&episode=" +
     encodeURIComponent(episodeNumber || 0) +
+    "&imdbId=" +
+    encodeURIComponent(
+        nguoncUniversalTitleIdentity.imdbId || ""
+    ) +
     "&titles=" +
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
@@ -48301,6 +48305,13 @@ const params =
 const MOVIE_TITLE =
     \`${safeTitle}\`;
 
+const MOVIE_IMDB_ID =
+    String(
+        params.get("imdbId") || ""
+    ).trim();
+
+const HAS_TRUSTED_IMDB_ID =
+    /^tt\d+$/.test(MOVIE_IMDB_ID);
 
 const MOVIE_YEAR = (() => {
     const rawYear = String(
@@ -48511,8 +48522,17 @@ function scoreMovie(item) {
         score += 3000;
     } else if (containsTitleMatch) {
         score += 2000;
+
     } else if (searchedByKnownAlias) {
         score += 1000;
+    } else if (
+        HAS_TRUSTED_IMDB_ID &&
+        Array.isArray(item?.__movinaMatchedKeywords) &&
+        item.__movinaMatchedKeywords.length > 0
+    ) {
+        // Có IMDb ID: cho phép thử kết quả do NguonC
+        // trả về từ các truy vấn tên phim đã gửi.
+        score += 500;
     } else {
         return -10000;
     }
@@ -49695,7 +49715,11 @@ if (yearConflicts) {
 // hoặc NguonC phải trả kết quả từ một alias hợp lệ.
 const identityAccepted =
     titleMatches ||
-    searchedByKnownAlias;
+    searchedByKnownAlias ||
+    (
+        HAS_TRUSTED_IMDB_ID &&
+        matchedKeywords.length > 0
+    );
 
 console.log(
     "[NGUONC CLIENT] IDENTITY CHECK:",
