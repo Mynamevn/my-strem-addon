@@ -23336,9 +23336,33 @@ const primaryBasicKeys = new Set(
         .map(normalize)
 );
 
-const wikidataAliases = wikidataTitles.filter(
-    title => !primaryBasicKeys.has(normalize(title))
-);
+// =====================================================
+// NGUONC — VERIFIED IMDB TITLE ALIASES
+// Chỉ bổ sung tên thay thế cho đúng IMDb ID.
+// Không thay đổi nhận diện hoặc xác minh phim khác.
+// =====================================================
+
+const MOVINA_TRUSTED_IMDB_ALIASES = {
+    "tt0245429": [
+        "Vùng Đất Linh Hồn",
+        "千と千尋の神隠し",
+        "Sen to Chihiro no Kamikakushi"
+    ]
+};
+
+const imdbSpecificAliases =
+    MOVINA_TRUSTED_IMDB_ALIASES[
+        String(imdbId || "").toLowerCase()
+    ] || [];
+
+const wikidataAliases = [
+    ...new Set([
+        ...wikidataTitles.filter(
+            title => !primaryBasicKeys.has(normalize(title))
+        ),
+        ...imdbSpecificAliases
+    ])
+];
 
 // Thứ tự ưu tiên:
 // 1. Tên chính
