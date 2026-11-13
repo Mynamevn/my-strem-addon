@@ -9503,8 +9503,8 @@ if (
             ""
         );
 
-    const sourceYear =
-        movinaIdentityGetYear(source);
+const rankingSourceYear =
+    movinaIdentityGetYear(source);
 
     const rankedIdentityCandidates = [
         ...matched.values()
@@ -9563,9 +9563,9 @@ if (
                 score += 750;
             }
 
-            if (sourceYear > 0 && candidateYear > 0) {
-                const difference =
-                    Math.abs(candidateYear - sourceYear);
+if (rankingSourceYear > 0 && candidateYear > 0) {
+    const difference =
+        Math.abs(candidateYear - rankingSourceYear);
 
                 if (difference === 0) {
                     score += 300;
@@ -9610,7 +9610,7 @@ if (
         "[MOVINA IMDb CANDIDATE RANKING]",
         JSON.stringify({
             title: source.name,
-            year: sourceYear,
+            year: rankingSourceYear,
             type,
             candidates: rankedIdentityCandidates.map(entry => ({
                 id: entry.candidate.id,
