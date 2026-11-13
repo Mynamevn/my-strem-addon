@@ -49179,20 +49179,22 @@ async function searchNguonC() {
         addKeyword(title);
     }
 
+
     // Lượt 3: thêm năm vào tên chính và alias.
-    // Ví dụ: Journey to the West 1996,
-    // Tây Du Ký 1996, Monster 2004.
+    // Dùng phép nối chuỗi để tránh xung đột
+    // với template literal HTML phía server.
     if (MOVIE_YEAR > 0) {
         addKeyword(
-            `${MOVIE_TITLE} ${MOVIE_YEAR}`
+            MOVIE_TITLE + " " + MOVIE_YEAR
         );
 
         for (const title of multilingualTitles.slice(0, 2)) {
             addKeyword(
-                `${title} ${MOVIE_YEAR}`
+                title + " " + MOVIE_YEAR
             );
         }
     }
+
 
     // Lượt 4: các alias còn lại.
     for (const title of otherTitles) {
