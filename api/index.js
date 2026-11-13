@@ -47027,6 +47027,78 @@ const nguoncSeasonYear = (() => {
     return firstDatedEpisode?.year || 0;
 })();
 
+// =====================================================
+// NGUONC — BUILD SEASON EPISODE COUNTS
+// Dùng để ánh xạ tập mùa sang thứ tự tập toàn series.
+// Chỉ chấp nhận mùa có số tập liên tục từ 1.
+// =====================================================
+
+const nguoncSeasonEpisodeCounts = (() => {
+    if (streamType !== "series") {
+        return {};
+    }
+
+    const videos = Array.isArray(resolvedMetadata?.videos)
+        ? resolvedMetadata.videos
+        : [];
+
+    const seasonEpisodes = new Map();
+
+    for (const video of videos) {
+        const videoId = String(video?.id || "");
+
+        const idMatch = videoId.match(
+            /^tt\d+:(\d+):(\d+)$/i
+        );
+
+        const season = Number(
+            video?.season ?? idMatch?.[1] ?? 0
+        );
+
+        const episode = Number(
+            video?.episode ?? idMatch?.[2] ?? 0
+        );
+
+        if (
+            !Number.isInteger(season) ||
+            season < 1 ||
+            !Number.isInteger(episode) ||
+            episode < 1
+        ) {
+            continue;
+        }
+
+        if (!seasonEpisodes.has(season)) {
+            seasonEpisodes.set(season, new Set());
+        }
+
+        seasonEpisodes.get(season).add(episode);
+    }
+
+    const result = {};
+
+    for (const [season, episodeSet] of seasonEpisodes) {
+        const numbers = [...episodeSet].sort(
+            (a, b) => a - b
+        );
+
+        const isContiguous = numbers.every(
+            (episode, index) => episode === index + 1
+        );
+
+        if (isContiguous && numbers.length > 0) {
+            result[String(season)] = numbers.length;
+        }
+    }
+
+    return result;
+})();
+
+console.log(
+    "[NGUONC] SEASON EPISODE COUNTS:",
+    JSON.stringify(nguoncSeasonEpisodeCounts)
+);
+
 console.log(
     "[NGUONC] SEASON YEAR RESOLVED:",
     JSON.stringify({
@@ -47062,6 +47134,10 @@ const nguoncClientUrl =
     "&titles=" +
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
+    ) +
+    "&seasonCounts=" +
+    encodeURIComponent(
+        JSON.stringify(nguoncSeasonEpisodeCounts)
     );
 
 const nguoncClientStream = {
@@ -48467,6 +48543,89 @@ const EXPECTED_CONTENT_YEAR =
         ? SEASON_YEAR
         : MOVIE_YEAR;
 
+// =====================================================
+// NGUONC — READ SEASON EPISODE COUNTS
+// =====================================================
+
+const SEASON_EPISODE_COUNTS = (() => {
+    try {
+        const parsed = JSON.parse(
+            params.get("seasonCounts") || "{}"
+        );
+
+        if (
+            !parsed ||
+            typeof parsed !== "object" ||
+            Array.isArray(parsed)
+        ) {
+            return {};
+        }
+
+        const result = {};
+
+        for (const [season, count] of Object.entries(parsed)) {
+            const seasonNumber = Number(season);
+            const episodeCount = Number(count);
+
+            if (
+                Number.isInteger(seasonNumber) &&
+                seasonNumber >= 1 &&
+                Number.isInteger(episodeCount) &&
+                episodeCount > 0
+            ) {
+                result[String(seasonNumber)] = episodeCount;
+            }
+        }
+
+        return result;
+
+    } catch (e) {
+        console.warn(
+            "[NGUONC CLIENT] INVALID SEASON COUNTS:",
+            e
+        );
+
+        return {};
+    }
+})();
+
+function getNguonCGlobalEpisode(season, episode) {
+    const requestedSeason = Number(season);
+    const requestedEpisode = Number(episode);
+
+    if (
+        !Number.isInteger(requestedSeason) ||
+        requestedSeason < 1 ||
+        !Number.isInteger(requestedEpisode) ||
+        requestedEpisode < 1
+    ) {
+        return 0;
+    }
+
+    let totalEpisodesBefore = 0;
+
+    for (
+        let currentSeason = 1;
+        currentSeason < requestedSeason;
+        currentSeason++
+    ) {
+        const count =
+            SEASON_EPISODE_COUNTS[String(currentSeason)];
+
+        // Thiếu dữ liệu một mùa thì không được đoán.
+        if (
+            !Number.isInteger(count) ||
+            count < 1
+        ) {
+            return 0;
+        }
+
+        totalEpisodesBefore += count;
+    }
+
+    return totalEpisodesBefore + requestedEpisode;
+}
+
 console.log(
     "[NGUONC CLIENT] EXPECTED YEAR:",
     {
@@ -48930,6 +49089,22 @@ const items =
             episodeNumber
         ) || 1;
 
+const globalTargetEpisode =
+    getNguonCGlobalEpisode(
+        seasonNumber,
+        targetEpisode
+    );
+
+console.log(
+    "[NGUONC CLIENT] GLOBAL EPISODE TARGET:",
+    {
+        season: seasonNumber,
+        episode: targetEpisode,
+        globalEpisode: globalTargetEpisode,
+        seasonCounts: SEASON_EPISODE_COUNTS
+    }
+);
+
     console.log(
         "[NGUONC CLIENT] TARGET:",
         {
@@ -49060,22 +49235,36 @@ if (
     continue;
 }
 
-// Nếu yêu cầu mùa 2 trở lên nhưng không xác định
-// được mùa của tập, từ chối để tránh phát nhầm.
+// Nếu NguonC không ghi mùa:
+// dùng vị trí tập toàn series từ metadata Stremio.
+let matchedByGlobalPosition = false;
+
 if (
     Number(seasonNumber) > 1 &&
     detectedSeason === 0
 ) {
-    console.warn(
-        "[NGUONC CLIENT] SEASON UNKNOWN — REJECT:",
-        {
-            requestedSeason: seasonNumber,
-            server: serverName,
-            episode: episodeName
-        }
-    );
+    const globalPosition = index + 1;
 
-    continue;
+    if (
+        globalTargetEpisode > 0 &&
+        globalPosition === globalTargetEpisode
+    ) {
+        matchedByGlobalPosition = true;
+
+        console.log(
+            "[NGUONC CLIENT] GLOBAL EPISODE MATCH:",
+            {
+                server: serverName,
+                requestedSeason: seasonNumber,
+                requestedEpisode: targetEpisode,
+                globalPosition,
+                episodeName
+            }
+        );
+
+    } else {
+        continue;
+    }
 }
 
 let detectedEpisode =
@@ -49135,14 +49324,17 @@ let detectedEpisode =
             // DÙNG VỊ TRÍ TRONG DANH SÁCH
             // =================================================
 
-            if (
-                !detectedEpisode
-            ) {
+if (
+    !detectedEpisode
+) {
+    detectedEpisode = index + 1;
+}
 
-                detectedEpisode =
-                    index + 1;
-
-            }
+// Nếu đã xác minh bằng vị trí toàn series,
+// chuyển về số tập cục bộ của mùa đang yêu cầu.
+if (matchedByGlobalPosition) {
+    detectedEpisode = targetEpisode;
+}
 
             console.log(
                 "[NGUONC CLIENT] CHECK EPISODE:",
