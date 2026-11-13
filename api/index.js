@@ -48666,7 +48666,7 @@ const detailTitles = [
 const detailSeasonMatch = detailTitles
     .join(" ")
     .match(
-        /(?:season|mùa|phan|phần|part)\s*0*(\d+)/i
+        /(?:\bseason\b|\bmua\b|\bphan\b|\bpart\b)\s*[\[(._-]*\s*0*(\d+)\b/i
     );
 
 const detailSeason =
@@ -48817,11 +48817,15 @@ const items =
 
 const serverSeasonMatch =
     serverName.match(
-        /(?:season|mùa|phan|phần|s)\s*0*(\d+)/i
+        /(?:\bseason\b|\bmua\b|\bphan\b|\bpart\b)\s*[\[(._-]*\s*0*(\d+)\b|\bS\s*0*(\d+)\b/i
     );
 
 const serverSeason =
-    Number(serverSeasonMatch?.[1] || 0);
+    Number(
+        serverSeasonMatch?.[1] ||
+        serverSeasonMatch?.[2] ||
+        0
+    );
 
         const items =
             server?.items ||
@@ -48890,18 +48894,19 @@ const structuredEpisode =
 // Nhận dạng mùa ghi trong tên tập.
 const episodeSeasonMatch =
     episodeName.match(
-        /(?:season|mùa|phan|phần)\s*0*(\d+)/i
+        /(?:\bseason\b|\bmua\b|\bphan\b|\bpart\b)\s*[\[(._-]*\s*0*(\d+)\b|\bS\s*0*(\d+)\b/i
     );
 
 let detectedSeason =
     structuredEpisode
         ? Number(structuredEpisode[1])
         : Number(
-            episodeSeasonMatch?.[1] ||
-            serverSeason ||
-            detailSeason ||
-            0
-        );
+    episodeSeasonMatch?.[1] ||
+    episodeSeasonMatch?.[2] ||
+    serverSeason ||
+    detailSeason ||
+    0
+);
 
 // Nếu có thông tin mùa nhưng khác mùa yêu cầu,
 // tuyệt đối không lấy tập này.
@@ -49215,19 +49220,95 @@ async function searchNguonC() {
         title => !/[^\\x00-\\x7F]/.test(title)
     );
 
-    // Lượt 1: tên chính.
+    // -------------------------------------------------
+    // [NGUONC-SEASON-SEARCH-01]
+    // TÌM KIẾM THEO MÙA — ƯU TIÊN MÙA ĐƯỢC YÊU CẦU
+    // -------------------------------------------------
+
+    const requestedSeason =
+        STREAM_TYPE === "series"
+            ? Number(SEASON_NUMBER) || 0
+            : 0;
+
+    function removeSeasonLabel(value) {
+        return String(value || "")
+            .replace(
+                /\(\s*(?:season|mùa|phần|phan|part)\s*0*\d+\s*\)/gi,
+                " "
+            )
+            .replace(
+                /\b(?:season|mùa|phần|phan|part)\s*0*\d+\b/gi,
+                " "
+            )
+            .replace(
+                /\bS\s*0*\d+\b/gi,
+                " "
+            )
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function getSeasonOrdinal(number) {
+        const lastTwo = number % 100;
+
+        if (lastTwo >= 11 && lastTwo <= 13) {
+            return number + "th";
+        }
+
+        switch (number % 10) {
+            case 1: return number + "st";
+            case 2: return number + "nd";
+            case 3: return number + "rd";
+            default: return number + "th";
+        }
+    }
+
+    const searchTitles = [
+        ...new Set(
+            variantTitles
+                .map(removeSeasonLabel)
+                .filter(title =>
+                    normalizeTitle(title).length >= 3
+                )
+        )
+    ];
+
+    if (requestedSeason > 1) {
+
+        // Tên có mùa được ưu tiên trước tên chung.
+        for (const title of searchTitles.slice(0, 4)) {
+
+            addKeyword(
+                title + " Season " + requestedSeason
+            );
+
+            addKeyword(
+                title + " " +
+                getSeasonOrdinal(requestedSeason) +
+                " Season"
+            );
+
+            addKeyword(
+                title + " Phần " + requestedSeason
+            );
+
+            addKeyword(
+                title + " S" + requestedSeason
+            );
+        }
+
+    }
+
+    // Sau từ khóa mùa mới tìm tên phim chung.
     addKeyword(MOVIE_TITLE);
 
-    // Lượt 2: tối đa hai alias đa ngôn ngữ ưu tiên.
     for (const title of multilingualTitles.slice(0, 2)) {
         addKeyword(title);
     }
 
-
-    // Lượt 3: thêm năm vào tên chính và alias.
-    // Dùng phép nối chuỗi để tránh xung đột
-    // với template literal HTML phía server.
+    // Tìm theo năm nếu có.
     if (MOVIE_YEAR > 0) {
+
         addKeyword(
             MOVIE_TITLE + " " + MOVIE_YEAR
         );
@@ -49237,16 +49318,26 @@ async function searchNguonC() {
                 title + " " + MOVIE_YEAR
             );
         }
+
     }
 
-
-    // Lượt 4: các alias còn lại.
+    // Các alias còn lại.
     for (const title of otherTitles) {
         addKeyword(title);
     }
 
-    // Giới hạn 8 từ khóa để tránh tìm quá nhiều.
+    // Giữ giới hạn cũ để không tăng số request.
     const searchKeywords = keywords.slice(0, 8);
+
+    console.log(
+        "[NGUONC CLIENT] SEASON SEARCH KEYWORDS:",
+        {
+            requestedSeason,
+            originalTitles: variantTitles,
+            cleanedTitles: searchTitles,
+            keywords: searchKeywords
+        }
+    );
 
     console.log(
         "[NGUONC CLIENT] SOURCE-AWARE SEARCH:",
@@ -49771,16 +49862,51 @@ function nguoncHasTypeConflict(identity) {
 // -----------------------------------------------------
 
 
+// -----------------------------------------------------
+// [NGUONC-SEASON-SEARCH-02]
+// NHẬN DIỆN MÙA TỪ NHIỀU CÁCH VIẾT
+// -----------------------------------------------------
+
 function getNguonCSeasonHint(values) {
+
     const text = values
         .map(value => String(value || ""))
-        .join(" ");
+        .join(" ")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d");
 
-    const match = text.match(
-        /(?:\bseason|\bmùa|\bphan|\bphần|\bpart|\bs)[\s._-]*0*(\d+)/i
-    );
+    const patterns = [
 
-    return Number(match?.[1] || 0);
+        // Season 2, Phần 2, Phan 2, Mùa 2, Part 2
+        /(?:\bseason\b|\bmua\b|\bphan\b|\bpart\b)\s*[\[(._-]*\s*0*(\d+)\b/i,
+
+        // S2, S02
+        /\bS\s*0*(\d+)\b/i,
+
+        // 2nd Season, 3rd Season, 4th Season
+        /\b0*(\d+)(?:st|nd|rd|th)\s+season\b/i,
+
+        // 2期, 3期...
+        /\b0*(\d+)\s*期/i
+
+    ];
+
+    for (const pattern of patterns) {
+
+        const match = text.match(pattern);
+
+        if (match) {
+            const season = Number(match[1]);
+
+            if (season > 0 && season < 100) {
+                return season;
+            }
+        }
+
+    }
+
+    return 0;
 }
 
 const requestedSeason =
@@ -49793,9 +49919,10 @@ const detailCandidates = ranked
     )
     .slice(0, 12)
     .map(entry => {
+
         const item = entry.item;
 
-        const seasonHint = getNguonCSeasonHint([
+        const itemSeason = getNguonCSeasonHint([
             item?.name,
             item?.origin_name,
             item?.original_name,
@@ -49804,24 +49931,39 @@ const detailCandidates = ranked
             item?.slug
         ]);
 
+        // Mùa có thể được nhận diện từ chính từ khóa
+        // đã tạo ra kết quả tìm kiếm.
+        const keywordSeason = getNguonCSeasonHint(
+            item?.__movinaMatchedKeywords || []
+        );
+
+        const seasonHint =
+            itemSeason || keywordSeason;
+
         let seasonPriority = 0;
 
         if (requestedSeason > 1) {
+
             if (seasonHint === requestedSeason) {
                 seasonPriority = 100000;
+
             } else if (
                 seasonHint > 0 &&
                 seasonHint !== requestedSeason
             ) {
                 seasonPriority = -100000;
             }
+
         }
 
         return {
             ...entry,
             seasonHint,
+            itemSeason,
+            keywordSeason,
             seasonPriority
         };
+
     })
     .sort((a, b) =>
         (b.seasonPriority - a.seasonPriority) ||
@@ -49834,6 +49976,8 @@ console.log(
         name: entry.item?.name,
         slug: entry.item?.slug,
         requestedSeason,
+        itemSeason: entry.itemSeason,
+        keywordSeason: entry.keywordSeason,
         detectedSeason: entry.seasonHint,
         score: entry.score,
         seasonPriority: entry.seasonPriority
@@ -49867,6 +50011,11 @@ for (const entry of detailCandidates) {
         );
 
 
+const matchedKeywords =
+    Array.isArray(item?.__movinaMatchedKeywords)
+        ? item.__movinaMatchedKeywords
+        : [];
+
 const detailSeasonHint = getNguonCSeasonHint([
     item?.name,
     item?.origin_name,
@@ -49877,10 +50026,23 @@ const detailSeasonHint = getNguonCSeasonHint([
     ...identity.rawTitles
 ]);
 
+const keywordSeasonHint =
+    getNguonCSeasonHint(matchedKeywords);
+
+// Chỉ kế thừa mùa từ từ khóa nếu từ khóa đó
+// thực sự được tạo cho mùa đang yêu cầu.
+const verifiedKeywordSeason =
+    keywordSeasonHint === requestedSeason
+        ? keywordSeasonHint
+        : 0;
+
+const resolvedDetailSeason =
+    detailSeasonHint || verifiedKeywordSeason;
+
 if (
     requestedSeason > 1 &&
-    detailSeasonHint > 0 &&
-    detailSeasonHint !== requestedSeason
+    resolvedDetailSeason > 0 &&
+    resolvedDetailSeason !== requestedSeason
 ) {
     console.warn(
         "[NGUONC CLIENT] REJECT WRONG SEASON DETAIL:",
@@ -49888,25 +50050,31 @@ if (
             name: item?.name,
             slug: item?.slug,
             requestedSeason,
-            detectedSeason: detailSeasonHint
+            detailSeasonHint,
+            keywordSeasonHint
         }
     );
 
     continue;
 }
 
-// Lưu thông tin mùa để hàm tìm tập sử dụng
-// ngay cả khi API Detail không ghi mùa trong tên tập.
+// Lưu mùa đã xác định để các tập không ghi mùa
+// có thể kế thừa thông tin từ trang Detail.
 detail.__movinaSeasonHint =
-    detailSeasonHint || 0;
+    resolvedDetailSeason || 0;
+
+console.log(
+    "[NGUONC CLIENT] DETAIL SEASON RESOLVED:",
+    {
+        requestedSeason,
+        detailSeasonHint,
+        keywordSeasonHint,
+        resolvedDetailSeason
+    }
+);
 
         const titleMatches =
             nguoncHasTitleMatch(identity);
-
-        const matchedKeywords =
-            Array.isArray(item?.__movinaMatchedKeywords)
-                ? item.__movinaMatchedKeywords
-                : [];
 
         const searchedByKnownAlias =
             matchedKeywords.some(keyword =>
