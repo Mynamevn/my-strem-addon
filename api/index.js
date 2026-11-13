@@ -48467,36 +48467,13 @@ const EXPECTED_CONTENT_YEAR =
         ? SEASON_YEAR
         : MOVIE_YEAR;
 
-// [NGUONC-SEASON-YEAR-IDENTITY-01]
-// Tách năm dùng để tìm kiếm khỏi năm dùng để xác minh Detail.
-//
-// Search / Ranking:
-// - Phim bộ: ưu tiên năm bắt đầu mùa đang mở.
-// - Phim lẻ: dùng năm phát hành phim.
-//
-// Detail Identity:
-// - Phim bộ: dùng năm phát hành của toàn series.
-// - Nếu thiếu năm series, mới fallback về năm mùa.
-// - Phim lẻ: dùng năm phát hành phim.
-const DETAIL_IDENTITY_YEAR =
-    STREAM_TYPE === "series"
-        ? (
-            MOVIE_YEAR > 0
-                ? MOVIE_YEAR
-                : EXPECTED_CONTENT_YEAR
-        )
-        : EXPECTED_CONTENT_YEAR;
-
 console.log(
-    "[NGUONC CLIENT] YEAR POLICY:",
+    "[NGUONC CLIENT] EXPECTED YEAR:",
     {
-        title: MOVIE_TITLE,
         originalYear: MOVIE_YEAR,
         seasonYear: SEASON_YEAR,
-        searchExpectedYear: EXPECTED_CONTENT_YEAR,
-        detailIdentityYear: DETAIL_IDENTITY_YEAR,
-        season: SEASON_NUMBER,
-        episode: EPISODE_NUMBER
+        expectedYear: EXPECTED_CONTENT_YEAR,
+        season: SEASON_NUMBER
     }
 );
 
@@ -50257,41 +50234,22 @@ const searchedByKnownAlias =
     );
 
 
-// Năm dùng để xác minh danh tính trang Detail.
-// Phim bộ so với năm phát hành của toàn series,
-// không so với năm bắt đầu của mùa đang mở.
 const yearMatches =
-    DETAIL_IDENTITY_YEAR > 0 &&
+    EXPECTED_CONTENT_YEAR > 0 &&
     identity.year > 0 &&
-    identity.year === DETAIL_IDENTITY_YEAR;
+    identity.year === EXPECTED_CONTENT_YEAR;
 
 const yearDifference =
-    DETAIL_IDENTITY_YEAR > 0 && identity.year > 0
-        ? Math.abs(
-            identity.year - DETAIL_IDENTITY_YEAR
-        )
+    EXPECTED_CONTENT_YEAR > 0 && identity.year > 0
+        ? Math.abs(identity.year - EXPECTED_CONTENT_YEAR)
         : null;
 
-// Chỉ từ chối khi năm Detail lệch từ 2 năm trở lên.
-// Nếu Detail không có năm thì không tự động loại.
+// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
+// Thiếu năm ở Detail không phải lý do để từ chối.
 const yearConflicts =
     yearDifference !== null &&
     yearDifference >= 2;
 
-if (yearConflicts) {
-    console.log(
-        "[NGUONC CLIENT] REJECT YEAR:",
-        {
-            name: item?.name,
-            expectedYear: DETAIL_IDENTITY_YEAR,
-            searchExpectedYear: EXPECTED_CONTENT_YEAR,
-            actualYear: identity.year,
-            difference: yearDifference
-        }
-    );
-
-    continue;
-}
 
 // Không dùng loại movie/series để loại ứng viên.
 // NguonC có thể phân loại khác với metadata MOVINA.
@@ -50325,8 +50283,7 @@ console.log(
         matchedKeywords,
         searchedByKnownAlias,
         titleMatches,
-        expectedYear: DETAIL_IDENTITY_YEAR,
-searchExpectedYear: EXPECTED_CONTENT_YEAR,
+        expectedYear: MOVIE_YEAR,
         actualYear: identity.year,
         yearDifference,
         yearMatches,
@@ -50359,8 +50316,7 @@ if (!identityAccepted) {
             {
                 name: item?.name,
                 detailTitles: identity.rawTitles,
-                expectedYear: DETAIL_IDENTITY_YEAR,
-searchExpectedYear: EXPECTED_CONTENT_YEAR,
+                expectedYear: MOVIE_YEAR,
                 actualYear: identity.year,
                 yearMatches,
                 type: identity.type,
@@ -50477,11 +50433,11 @@ if (!selectedEntry) {
 
 
 const yearAccepted =
-    DETAIL_IDENTITY_YEAR <= 0 ||
+    EXPECTED_CONTENT_YEAR <= 0 ||
     (
         fallbackYear > 0 &&
         Math.abs(
-            fallbackYear - DETAIL_IDENTITY_YEAR
+            fallbackYear - EXPECTED_CONTENT_YEAR
         ) <= 1
     );
 
@@ -50528,8 +50484,7 @@ const yearAccepted =
                     slug,
                     detailTitles: identity.rawTitles,
                     exactTitleMatch,
-                    expectedYear: DETAIL_IDENTITY_YEAR,
-searchExpectedYear: EXPECTED_CONTENT_YEAR,
+                    expectedYear: EXPECTED_CONTENT_YEAR,
                     actualYear: fallbackYear,
                     yearAccepted,
                     type: identity.type,
