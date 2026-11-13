@@ -15706,6 +15706,23 @@ for (const group of detailEpisodeGroups) {
                 ""
             ).trim();
 
+// Không coi FULL là một tập phim bộ.
+if (
+    /^(?:full|full movie|movie|phim lẻ)$/i.test(
+        episodeName
+    )
+) {
+    console.warn(
+        "[NGUONC CLIENT] SKIP FULL ITEM:",
+        {
+            server: serverName,
+            episode: episodeName
+        }
+    );
+
+    continue;
+}
+
         const match = episodeName.match(
             /(?:tập|tap|episode|ep\.?|part|phần)\s*0*(\d+)/i
         );
@@ -47027,6 +47044,72 @@ const nguoncSeasonYear = (() => {
     return firstDatedEpisode?.year || 0;
 })();
 
+// [NGUONC-SEASON-EPISODE-COUNTS-01]
+// Đếm số tập thực tế theo từng mùa từ Cinemeta metadata.
+// Chỉ chấp nhận mùa có thứ tự tập liên tục từ 1.
+const nguoncSeasonEpisodeCounts = (() => {
+    if (streamType !== "series") {
+        return [];
+    }
+
+    const videos = Array.isArray(resolvedMetadata?.videos)
+        ? resolvedMetadata.videos
+        : [];
+
+    const seasonMap = new Map();
+
+    for (const video of videos) {
+        const videoId = String(video?.id || "");
+
+        const idMatch = videoId.match(
+            /^tt\d+:(\d+):(\d+)$/i
+        );
+
+        const videoSeason = Number(
+            video?.season ?? idMatch?.[1] ?? 0
+        );
+
+        const videoEpisode = Number(
+            video?.episode ?? idMatch?.[2] ?? 0
+        );
+
+        // Bỏ specials thuộc season 0.
+        if (
+            videoSeason < 1 ||
+            videoEpisode < 1
+        ) {
+            continue;
+        }
+
+        if (!seasonMap.has(videoSeason)) {
+            seasonMap.set(videoSeason, new Set());
+        }
+
+        seasonMap.get(videoSeason).add(videoEpisode);
+    }
+
+    return [...seasonMap.entries()]
+        .map(([season, episodeSet]) => {
+            const numbers = [...episodeSet]
+                .sort((a, b) => a - b);
+
+            const contiguous =
+                numbers.length > 0 &&
+                numbers.every(
+                    (number, index) =>
+                        number === index + 1
+                );
+
+            return {
+                season,
+                count: contiguous
+                    ? numbers.length
+                    : 0
+            };
+        })
+        .sort((a, b) => a.season - b.season);
+})();
+
 console.log(
     "[NGUONC] SEASON YEAR RESOLVED:",
     JSON.stringify({
@@ -47054,8 +47137,12 @@ const nguoncClientUrl =
     "&season=" +
     encodeURIComponent(seasonNumber || 0) +
     "&episode=" +
-    encodeURIComponent(episodeNumber || 0) +
-    "&imdb=" +
+encodeURIComponent(episodeNumber || 0) +
+"&seasonCounts=" +
+encodeURIComponent(
+    JSON.stringify(nguoncSeasonEpisodeCounts)
+) +
+"&imdb=" +
     encodeURIComponent(
         nguoncUniversalTitleIdentity.imdbId || ""
     ) +
@@ -48448,6 +48535,36 @@ const EPISODE_NUMBER =
         0
     );
 
+// [NGUONC-SEASON-EPISODE-COUNTS-02]
+const SEASON_EPISODE_COUNTS = (() => {
+    try {
+        const parsed = JSON.parse(
+            params.get("seasonCounts") || "[]"
+        );
+
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+
+        return parsed
+            .map(item => ({
+                season: Number(item?.season) || 0,
+                count: Number(item?.count) || 0
+            }))
+            .filter(item =>
+                item.season > 0 &&
+                item.count > 0
+            );
+    } catch (e) {
+        console.warn(
+            "[NGUONC CLIENT] SEASON COUNTS PARSE ERROR:",
+            e?.message || e
+        );
+
+        return [];
+    }
+})();
+
 const SEASON_YEAR = (() => {
     const rawYear = String(
         params.get("seasonYear") || ""
@@ -48467,35 +48584,13 @@ const EXPECTED_CONTENT_YEAR =
         ? SEASON_YEAR
         : MOVIE_YEAR;
 
-// [NGUONC-SEASON-YEAR-IDENTITY-02]
-// Tách năm tìm kiếm khỏi năm xác minh danh tính.
-//
-// Tìm kiếm:
-// - Phim bộ: ưu tiên năm của mùa đang mở.
-// - Phim lẻ: dùng năm phim.
-//
-// Xác minh Detail:
-// - Phim bộ: ưu tiên năm phát hành toàn series.
-// - Nếu thiếu năm series: fallback về năm mùa.
-// - Phim lẻ: dùng năm phim.
-const DETAIL_IDENTITY_YEAR =
-    STREAM_TYPE === "series"
-        ? (
-            MOVIE_YEAR > 0
-                ? MOVIE_YEAR
-                : EXPECTED_CONTENT_YEAR
-        )
-        : EXPECTED_CONTENT_YEAR;
-
 console.log(
-    "[NGUONC CLIENT] YEAR POLICY:",
+    "[NGUONC CLIENT] EXPECTED YEAR:",
     {
         originalYear: MOVIE_YEAR,
         seasonYear: SEASON_YEAR,
-        searchExpectedYear: EXPECTED_CONTENT_YEAR,
-        detailIdentityYear: DETAIL_IDENTITY_YEAR,
-        season: SEASON_NUMBER,
-        episode: EPISODE_NUMBER
+        expectedYear: EXPECTED_CONTENT_YEAR,
+        season: SEASON_NUMBER
     }
 );
 
@@ -48833,12 +48928,26 @@ const detailSeasonMatch = detailTitles
         /(?:\bseason\b|\bmua\b|\bphan\b|\bpart\b)\s*[\[(._-]*\s*0*(\d+)\b/i
     );
 
+const detailSeasonSource =
+    String(
+        detail?.__movinaSeasonHintSource || "detail"
+    );
+
 const detailSeason =
     Number(
-        detail?.__movinaSeasonHint ||
-        detailSeasonMatch?.[1] ||
-        0
+        detailSeasonSource === "keyword"
+            ? detailSeasonMatch?.[1] || 0
+            : (
+                detail?.__movinaSeasonHint ||
+                detailSeasonMatch?.[1] ||
+                0
+            )
     );
+
+const keywordSeasonHint =
+    detailSeasonSource === "keyword"
+        ? Number(detail?.__movinaSeasonHint) || 0
+        : 0;
 
 console.log(
     "[NGUONC CLIENT] DETAIL SEASON CONTEXT:",
@@ -48951,6 +49060,89 @@ const items =
         Number(
             episodeNumber
         ) || 1;
+
+// [NGUONC-GLOBAL-EPISODE-MAPPING-01]
+// Tính vị trí tập toàn series từ số tập của các mùa trước.
+const seasonEpisodeCountMap = new Map(
+    SEASON_EPISODE_COUNTS.map(item => [
+        item.season,
+        item.count
+    ])
+);
+
+const requestedSeasonValue =
+    Number(seasonNumber) || 0;
+
+let metadataGlobalEpisode = targetEpisode;
+let metadataTotalEpisodes = 0;
+let metadataGlobalOrderAvailable = false;
+
+const requestedSeasonEpisodeCount =
+    seasonEpisodeCountMap.get(requestedSeasonValue) || 0;
+
+if (requestedSeasonValue > 1) {
+    const allSeasons = [
+        ...seasonEpisodeCountMap.keys()
+    ];
+
+    const maxMetadataSeason = allSeasons.length
+        ? Math.max(...allSeasons)
+        : 0;
+
+    let metadataComplete =
+        maxMetadataSeason >= requestedSeasonValue;
+
+    let episodeOffset = 0;
+    let totalEpisodes = 0;
+
+    // Chỉ tính khi mọi mùa từ 1 đến mùa cuối
+    // đều có số tập liên tục trong metadata.
+    for (
+        let currentSeason = 1;
+        currentSeason <= maxMetadataSeason;
+        currentSeason++
+    ) {
+        const count =
+            seasonEpisodeCountMap.get(currentSeason) || 0;
+
+        if (count <= 0) {
+            metadataComplete = false;
+            break;
+        }
+
+        totalEpisodes += count;
+
+        if (currentSeason < requestedSeasonValue) {
+            episodeOffset += count;
+        }
+    }
+
+    if (
+        metadataComplete &&
+        targetEpisode <= requestedSeasonEpisodeCount
+    ) {
+        metadataGlobalEpisode =
+            episodeOffset + targetEpisode;
+
+        metadataTotalEpisodes =
+            totalEpisodes;
+
+        metadataGlobalOrderAvailable = true;
+    }
+}
+
+console.log(
+    "[NGUONC CLIENT] METADATA EPISODE MAPPING:",
+    {
+        requestedSeason: requestedSeasonValue,
+        requestedEpisode: targetEpisode,
+        requestedSeasonEpisodeCount,
+        metadataGlobalEpisode,
+        metadataTotalEpisodes,
+        metadataGlobalOrderAvailable,
+        seasonCounts: SEASON_EPISODE_COUNTS
+    }
+);
 
     console.log(
         "[NGUONC CLIENT] TARGET:",
@@ -49082,18 +49274,47 @@ if (
     continue;
 }
 
-// Nếu yêu cầu mùa 2 trở lên nhưng không xác định
-// được mùa của tập, từ chối để tránh phát nhầm.
+// [NGUONC-SEASON-RESOLUTION-03]
+// Nếu không có season marker, chỉ chấp nhận:
+// 1. Danh sách riêng một mùa có số tập khớp metadata.
+// 2. Danh sách toàn series có tổng số tập khớp metadata.
+let serverUsesKeywordSeasonOrder = false;
+
 if (
     Number(seasonNumber) > 1 &&
-    detectedSeason === 0
+    detectedSeason === 0 &&
+    keywordSeasonHint === Number(seasonNumber) &&
+    items.length === requestedSeasonEpisodeCount &&
+    requestedSeasonEpisodeCount > 0
+) {
+    detectedSeason = Number(seasonNumber);
+    serverUsesKeywordSeasonOrder = true;
+}
+
+const serverUsesGlobalSeasonOrder =
+    Number(seasonNumber) > 1 &&
+    detectedSeason === 0 &&
+    serverSeason === 0 &&
+    detailSeason === 0 &&
+    metadataGlobalOrderAvailable &&
+    items.length === metadataTotalEpisodes;
+
+if (
+    Number(seasonNumber) > 1 &&
+    detectedSeason === 0 &&
+    !serverUsesGlobalSeasonOrder
 ) {
     console.warn(
         "[NGUONC CLIENT] SEASON UNKNOWN — REJECT:",
         {
             requestedSeason: seasonNumber,
             server: serverName,
-            episode: episodeName
+            episode: episodeName,
+            itemsCount: items.length,
+            metadataTotalEpisodes,
+            metadataGlobalEpisode,
+            requestedSeasonEpisodeCount,
+            serverUsesKeywordSeasonOrder
         }
     );
 
@@ -49157,14 +49378,19 @@ let detectedEpisode =
             // DÙNG VỊ TRÍ TRONG DANH SÁCH
             // =================================================
 
-            if (
-                !detectedEpisode
-            ) {
+// Nếu danh sách là toàn series và đã khớp tổng số tập
+// với metadata, sử dụng thứ tự tuyệt đối trong danh sách.
+if (serverUsesGlobalSeasonOrder) {
+    detectedEpisode = index + 1;
 
-                detectedEpisode =
-                    index + 1;
+} else if (!detectedEpisode) {
+    detectedEpisode = index + 1;
+}
 
-            }
+const episodeTarget =
+    serverUsesGlobalSeasonOrder
+        ? metadataGlobalEpisode
+        : targetEpisode;
 
             console.log(
                 "[NGUONC CLIENT] CHECK EPISODE:",
@@ -49179,14 +49405,18 @@ let detectedEpisode =
                         detectedEpisode,
 
                     target:
-                        targetEpisode
+    episodeTarget,
+
+globalOrder:
+    serverUsesGlobalSeasonOrder
+
                 }
             );
 
             if (
-                detectedEpisode !==
-                targetEpisode
-            ) {
+    detectedEpisode !==
+    episodeTarget
+) {
 
                 continue;
 
@@ -49953,19 +50183,43 @@ function getNguonCIdentity(item, detail) {
         }
     }
 
-    const type = String(
-        movie?.type ||
-        movie?.movie_type ||
-        movie?.movieType ||
-        movie?.content_type ||
-        movie?.category ||
-        item?.type ||
-        item?.movie_type ||
-        item?.movieType ||
-        item?.content_type ||
-        item?.category ||
-        ""
-    ).toLowerCase();
+    const typeValues = [
+    movie?.type,
+    movie?.movie_type,
+    movie?.movieType,
+    movie?.content_type,
+    movie?.category,
+
+    item?.type,
+    item?.movie_type,
+    item?.movieType,
+    item?.content_type,
+    item?.category
+];
+
+const type = typeValues
+    .map(value => {
+        if (
+            value === null ||
+            value === undefined ||
+            value === ""
+        ) {
+            return "";
+        }
+
+        if (typeof value === "object") {
+            try {
+                return JSON.stringify(value);
+            } catch (e) {
+                return "";
+            }
+        }
+
+        return String(value);
+    })
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 
     return {
         movie,
@@ -50009,29 +50263,69 @@ function nguoncHasTitleMatch(identity) {
 // -----------------------------------------------------
 
 function nguoncHasTypeConflict(identity) {
-    const type = identity.type;
+    const typeText = [
+        identity?.type,
+        identity?.movie?.type,
+        identity?.movie?.movie_type,
+        identity?.movie?.movieType,
+        identity?.movie?.content_type,
+        identity?.movie?.category
+    ]
+        .map(value => {
+            if (!value) return "";
+
+            if (typeof value === "object") {
+                try {
+                    return JSON.stringify(value);
+                } catch (e) {
+                    return "";
+                }
+            }
+
+            return String(value);
+        })
+        .join(" ")
+        .toLowerCase();
+
+    const titleText = (
+        identity?.rawTitles || []
+    ).join(" ").toLowerCase();
 
     const isSeries =
-        /series|serial|phim[- ]?bo/.test(type);
+        /series|serial|phim[\s_-]*bo|tv[\s_-]*show/i
+            .test(typeText);
 
     const isMovie =
-        /movie|single|phim[- ]?le/.test(type);
+        /movie|single|phim[\s_-]*le|feature[\s_-]*film/i
+            .test(typeText);
 
-    if (
-        STREAM_TYPE === "series" &&
-        isMovie
-    ) {
-        return true;
+    // Nhận diện những phim điện ảnh có tên thể hiện rõ
+    // hậu tố Movie 1, The Movie, Phim lẻ...
+    const explicitMovieTitle =
+        /(?:\bmovie\b\s*(?:#|no\.?\s*)?\d+|\bthe\s+movie\b|\bfeature\s+film\b|phim\s*lẻ|phim\s*điện\s*ảnh)/i
+            .test(titleText);
+
+    const explicitSeriesTitle =
+        /(?:\btv\s*series\b|\bseries\b|\bserial\b|phim\s*bộ)/i
+            .test(titleText);
+
+    if (STREAM_TYPE === "series") {
+        return (
+            isMovie ||
+            (
+                explicitMovieTitle &&
+                !explicitSeriesTitle
+            )
+        );
     }
 
-    if (
-        STREAM_TYPE !== "series" &&
-        isSeries
-    ) {
-        return true;
-    }
-
-    return false;
+    return (
+        isSeries ||
+        (
+            explicitSeriesTitle &&
+            !explicitMovieTitle
+        )
+    );
 }
 
 // -----------------------------------------------------
@@ -50233,6 +50527,13 @@ if (
 detail.__movinaSeasonHint =
     resolvedDetailSeason || 0;
 
+detail.__movinaSeasonHintSource =
+    detailSeasonHint > 0
+        ? "detail"
+        : verifiedKeywordSeason > 0
+            ? "keyword"
+            : "none";
+
 console.log(
     "[NGUONC CLIENT] DETAIL SEASON RESOLVED:",
     {
@@ -50256,99 +50557,80 @@ const searchedByKnownAlias =
     );
 
 
-// [NGUONC-IDENTITY-VERIFY-02]
-// Xác minh năm phát hành của nội dung,
-// không dùng năm mùa để kết luận danh tính series.
-
 const yearMatches =
-    DETAIL_IDENTITY_YEAR > 0 &&
+    EXPECTED_CONTENT_YEAR > 0 &&
     identity.year > 0 &&
-    identity.year === DETAIL_IDENTITY_YEAR;
+    identity.year === EXPECTED_CONTENT_YEAR;
 
 const yearDifference =
-    DETAIL_IDENTITY_YEAR > 0 && identity.year > 0
-        ? Math.abs(
-            identity.year - DETAIL_IDENTITY_YEAR
-        )
+    EXPECTED_CONTENT_YEAR > 0 && identity.year > 0
+        ? Math.abs(identity.year - EXPECTED_CONTENT_YEAR)
         : null;
 
-// Chỉ từ chối khi Detail có năm và lệch từ 2 năm.
-// Không có năm Detail thì không tự động loại.
+// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
+// Thiếu năm ở Detail không phải lý do để từ chối.
 const yearConflicts =
     yearDifference !== null &&
     yearDifference >= 2;
 
-// Kiểm tra loại nội dung thực sự.
-// Không cho phép phim điện ảnh thay thế phim bộ.
+
+// [NGUONC-TYPE-VERIFY-01]
+// Bắt buộc kiểm tra loại nội dung trước khi chấp nhận alias.
 const typeConflicts =
     nguoncHasTypeConflict(identity);
 
-// Nếu NguonC không cung cấp type rõ ràng,
-// kiểm tra thêm tên và tiêu đề của Detail.
-const detailTitleText = [
-    ...identity.rawTitles
-].join(" ").toLowerCase();
-
-const explicitMovieTitle =
-    /(?:^|[\s:–-])movie(?:$|[\s:–-]|\d)|phim\s*lẻ|phim\s*điện\s*ảnh/i
-        .test(detailTitleText);
-
-const explicitSeriesTitle =
-    /(?:^|[\s:–-])(?:series|serial|tv\s*series)(?:$|[\s:–-])|phim\s*bộ/i
-        .test(detailTitleText);
-
-const contentTypeConflicts =
-    typeConflicts ||
-    (
-        STREAM_TYPE === "series" &&
-        explicitMovieTitle &&
-        !explicitSeriesTitle
-    ) ||
-    (
-        STREAM_TYPE !== "series" &&
-        explicitSeriesTitle
-    );
-
-console.log(
-    "[NGUONC CLIENT] IDENTITY POLICY:",
-    {
-        searchName: item?.name,
-        originalYear: MOVIE_YEAR,
-        seasonYear: SEASON_YEAR,
-        expectedDetailYear: DETAIL_IDENTITY_YEAR,
-        actualYear: identity.year,
-        yearDifference,
-        yearMatches,
-        yearConflicts,
-        type: identity.type,
-        typeConflicts,
-        explicitMovieTitle,
-        explicitSeriesTitle,
-        contentTypeConflicts
-    }
-);
-
-if (yearConflicts || contentTypeConflicts) {
+if (yearConflicts || typeConflicts) {
     console.warn(
-        "[NGUONC CLIENT] REJECT CONTENT:",
+        "[NGUONC CLIENT] REJECT CONTENT TYPE/YEAR:",
         {
             name: item?.name,
-            expectedYear: DETAIL_IDENTITY_YEAR,
-            actualYear: identity.year,
+            type: identity.type,
             yearConflicts,
-            contentTypeConflicts,
-            type: identity.type
+            typeConflicts,
+            expectedYear: EXPECTED_CONTENT_YEAR,
+            actualYear: identity.year
+        }
+    );
+
+    continue;
+}
+    console.log(
+        "[NGUONC CLIENT] REJECT YEAR:",
+        {
+            name: item?.name,
+            expected: MOVIE_YEAR,
+            actual: identity.year,
+            difference: yearDifference
         }
     );
 
     continue;
 }
 
-// Tên phải khớp một tên đã biết
-// hoặc kết quả phải đến từ alias hợp lệ.
+// Tên phim phải khớp một tên đã biết,
+// hoặc NguonC phải trả kết quả từ một alias hợp lệ.
 const identityAccepted =
     titleMatches ||
     searchedByKnownAlias;
+
+console.log(
+    "[NGUONC CLIENT] IDENTITY CHECK:",
+    {
+        searchName: item?.name,
+        detailTitles: identity.rawTitles,
+        matchedKeywords,
+        searchedByKnownAlias,
+        titleMatches,
+        expectedYear: MOVIE_YEAR,
+        actualYear: identity.year,
+        yearDifference,
+        yearMatches,
+        yearConflicts,
+        type: identity.type,
+        typeConflicts,
+        accepted: identityAccepted
+    }
+);
 
 if (!identityAccepted) {
             console.log(
@@ -50489,11 +50771,11 @@ if (!selectedEntry) {
 
 
 const yearAccepted =
-    DETAIL_IDENTITY_YEAR <= 0 ||
+    EXPECTED_CONTENT_YEAR <= 0 ||
     (
         fallbackYear > 0 &&
         Math.abs(
-            fallbackYear - DETAIL_IDENTITY_YEAR
+            fallbackYear - EXPECTED_CONTENT_YEAR
         ) <= 1
     );
 
@@ -50540,8 +50822,7 @@ const yearAccepted =
                     slug,
                     detailTitles: identity.rawTitles,
                     exactTitleMatch,
-                    expectedYear: DETAIL_IDENTITY_YEAR,
-searchExpectedYear: EXPECTED_CONTENT_YEAR,
+                    expectedYear: EXPECTED_CONTENT_YEAR,
                     actualYear: fallbackYear,
                     yearAccepted,
                     type: identity.type,
