@@ -48467,13 +48467,35 @@ const EXPECTED_CONTENT_YEAR =
         ? SEASON_YEAR
         : MOVIE_YEAR;
 
+// [NGUONC-SEASON-YEAR-IDENTITY-02]
+// Tách năm tìm kiếm khỏi năm xác minh danh tính.
+//
+// Tìm kiếm:
+// - Phim bộ: ưu tiên năm của mùa đang mở.
+// - Phim lẻ: dùng năm phim.
+//
+// Xác minh Detail:
+// - Phim bộ: ưu tiên năm phát hành toàn series.
+// - Nếu thiếu năm series: fallback về năm mùa.
+// - Phim lẻ: dùng năm phim.
+const DETAIL_IDENTITY_YEAR =
+    STREAM_TYPE === "series"
+        ? (
+            MOVIE_YEAR > 0
+                ? MOVIE_YEAR
+                : EXPECTED_CONTENT_YEAR
+        )
+        : EXPECTED_CONTENT_YEAR;
+
 console.log(
-    "[NGUONC CLIENT] EXPECTED YEAR:",
+    "[NGUONC CLIENT] YEAR POLICY:",
     {
         originalYear: MOVIE_YEAR,
         seasonYear: SEASON_YEAR,
-        expectedYear: EXPECTED_CONTENT_YEAR,
-        season: SEASON_NUMBER
+        searchExpectedYear: EXPECTED_CONTENT_YEAR,
+        detailIdentityYear: DETAIL_IDENTITY_YEAR,
+        season: SEASON_NUMBER,
+        episode: EPISODE_NUMBER
     }
 );
 
@@ -50234,65 +50256,99 @@ const searchedByKnownAlias =
     );
 
 
+// [NGUONC-IDENTITY-VERIFY-02]
+// Xác minh năm phát hành của nội dung,
+// không dùng năm mùa để kết luận danh tính series.
+
 const yearMatches =
-    EXPECTED_CONTENT_YEAR > 0 &&
+    DETAIL_IDENTITY_YEAR > 0 &&
     identity.year > 0 &&
-    identity.year === EXPECTED_CONTENT_YEAR;
+    identity.year === DETAIL_IDENTITY_YEAR;
 
 const yearDifference =
-    EXPECTED_CONTENT_YEAR > 0 && identity.year > 0
-        ? Math.abs(identity.year - EXPECTED_CONTENT_YEAR)
+    DETAIL_IDENTITY_YEAR > 0 && identity.year > 0
+        ? Math.abs(
+            identity.year - DETAIL_IDENTITY_YEAR
+        )
         : null;
 
-// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
-// Thiếu năm ở Detail không phải lý do để từ chối.
+// Chỉ từ chối khi Detail có năm và lệch từ 2 năm.
+// Không có năm Detail thì không tự động loại.
 const yearConflicts =
     yearDifference !== null &&
     yearDifference >= 2;
 
+// Kiểm tra loại nội dung thực sự.
+// Không cho phép phim điện ảnh thay thế phim bộ.
+const typeConflicts =
+    nguoncHasTypeConflict(identity);
 
-// Không dùng loại movie/series để loại ứng viên.
-// NguonC có thể phân loại khác với metadata MOVINA.
-const typeConflicts = false;
+// Nếu NguonC không cung cấp type rõ ràng,
+// kiểm tra thêm tên và tiêu đề của Detail.
+const detailTitleText = [
+    ...identity.rawTitles
+].join(" ").toLowerCase();
 
-if (yearConflicts) {
-    console.log(
-        "[NGUONC CLIENT] REJECT YEAR:",
-        {
-            name: item?.name,
-            expected: MOVIE_YEAR,
-            actual: identity.year,
-            difference: yearDifference
-        }
+const explicitMovieTitle =
+    /(?:^|[\s:–-])movie(?:$|[\s:–-]|\d)|phim\s*lẻ|phim\s*điện\s*ảnh/i
+        .test(detailTitleText);
+
+const explicitSeriesTitle =
+    /(?:^|[\s:–-])(?:series|serial|tv\s*series)(?:$|[\s:–-])|phim\s*bộ/i
+        .test(detailTitleText);
+
+const contentTypeConflicts =
+    typeConflicts ||
+    (
+        STREAM_TYPE === "series" &&
+        explicitMovieTitle &&
+        !explicitSeriesTitle
+    ) ||
+    (
+        STREAM_TYPE !== "series" &&
+        explicitSeriesTitle
     );
 
-    continue;
-}
-
-// Tên phim phải khớp một tên đã biết,
-// hoặc NguonC phải trả kết quả từ một alias hợp lệ.
-const identityAccepted =
-    titleMatches ||
-    searchedByKnownAlias;
-
 console.log(
-    "[NGUONC CLIENT] IDENTITY CHECK:",
+    "[NGUONC CLIENT] IDENTITY POLICY:",
     {
         searchName: item?.name,
-        detailTitles: identity.rawTitles,
-        matchedKeywords,
-        searchedByKnownAlias,
-        titleMatches,
-        expectedYear: MOVIE_YEAR,
+        originalYear: MOVIE_YEAR,
+        seasonYear: SEASON_YEAR,
+        expectedDetailYear: DETAIL_IDENTITY_YEAR,
         actualYear: identity.year,
         yearDifference,
         yearMatches,
         yearConflicts,
         type: identity.type,
         typeConflicts,
-        accepted: identityAccepted
+        explicitMovieTitle,
+        explicitSeriesTitle,
+        contentTypeConflicts
     }
 );
+
+if (yearConflicts || contentTypeConflicts) {
+    console.warn(
+        "[NGUONC CLIENT] REJECT CONTENT:",
+        {
+            name: item?.name,
+            expectedYear: DETAIL_IDENTITY_YEAR,
+            actualYear: identity.year,
+            yearConflicts,
+            contentTypeConflicts,
+            type: identity.type
+        }
+    );
+
+    continue;
+}
+
+// Tên phải khớp một tên đã biết
+// hoặc kết quả phải đến từ alias hợp lệ.
+const identityAccepted =
+    titleMatches ||
+    searchedByKnownAlias;
 
 if (!identityAccepted) {
             console.log(
@@ -50433,11 +50489,11 @@ if (!selectedEntry) {
 
 
 const yearAccepted =
-    EXPECTED_CONTENT_YEAR <= 0 ||
+    DETAIL_IDENTITY_YEAR <= 0 ||
     (
         fallbackYear > 0 &&
         Math.abs(
-            fallbackYear - EXPECTED_CONTENT_YEAR
+            fallbackYear - DETAIL_IDENTITY_YEAR
         ) <= 1
     );
 
@@ -50484,7 +50540,8 @@ const yearAccepted =
                     slug,
                     detailTitles: identity.rawTitles,
                     exactTitleMatch,
-                    expectedYear: EXPECTED_CONTENT_YEAR,
+                    expectedYear: DETAIL_IDENTITY_YEAR,
+searchExpectedYear: EXPECTED_CONTENT_YEAR,
                     actualYear: fallbackYear,
                     yearAccepted,
                     type: identity.type,
