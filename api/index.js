@@ -48439,6 +48439,30 @@ function normalizeIdentityTitle(value) {
         .trim();
 }
 
+// [NGUONC-SEASON-IDENTITY-01]
+// So sánh danh tính series mà không phụ thuộc hậu tố mùa.
+function normalizeNguonCSeriesTitle(value) {
+    return normalizeIdentityTitle(value)
+        .replace(
+            /\\b(?:season|mua|phan|part)\\s*0*\\d+\\b/g,
+            " "
+        )
+        .replace(
+            /\\bS\\s*0*\\d+\\b/g,
+            " "
+        )
+        .replace(
+            /\\b0*\\d+(?:st|nd|rd|th)\\s+season\\b/g,
+            " "
+        )
+        .replace(
+            /\\b0*\\d+\\s*期/g,
+            " "
+        )
+        .replace(/\\s+/g, " ")
+        .trim();
+}
+
 // =====================================================
 // STRICT NGUONC IDENTITY MATCHING
 // =====================================================
@@ -48448,7 +48472,7 @@ function scoreMovie(item) {
     const targetTitles = [
         ...new Set(
             MOVIE_TITLE_VARIANTS
-                .map(normalizeIdentityTitle)
+                .map(normalizeNguonCSeriesTitle)
                 .filter(Boolean)
         )
     ];
@@ -48470,7 +48494,7 @@ function scoreMovie(item) {
     const candidateTitles = [
         ...new Set(
             rawTitles
-                .map(normalizeIdentityTitle)
+                .map(normalizeNguonCSeriesTitle)
                 .filter(Boolean)
         )
     ];
@@ -48498,11 +48522,22 @@ function scoreMovie(item) {
             : [];
 
     const searchedByKnownAlias =
-        matchedKeywords.some(keyword =>
-            targetTitles.includes(
-                normalizeIdentityTitle(keyword)
-            )
-        );
+        matchedKeywords.some(keyword => {
+            const normalizedKeyword =
+                normalizeNguonCSeriesTitle(keyword);
+
+            return targetTitles.some(target =>
+                target === normalizedKeyword ||
+                (
+                    target.length >= 5 &&
+                    normalizedKeyword.length >= 5 &&
+                    (
+                        target.includes(normalizedKeyword) ||
+                        normalizedKeyword.includes(target)
+                    )
+                )
+            );
+        });
 
     let candidateYear = 0;
 
@@ -48550,9 +48585,6 @@ function scoreMovie(item) {
         return -10000;
     }
 
-    // Năm chỉ dùng để xếp hạng.
-    // Quyết định chấp nhận hay từ chối sẽ được thực hiện
-    // sau khi tải Detail.
     if (MOVIE_YEAR > 0 && candidateYear > 0) {
         const difference =
             Math.abs(candidateYear - MOVIE_YEAR);
@@ -48566,8 +48598,6 @@ function scoreMovie(item) {
         }
     }
 
-    // Loại phim chỉ dùng để cộng điểm khi khớp.
-    // Không loại ứng viên chỉ vì Search API ghi sai loại.
     if (
         STREAM_TYPE === "series" &&
         candidateIsSeries
@@ -49809,11 +49839,15 @@ function getNguonCIdentity(item, detail) {
 
 function nguoncHasTitleMatch(identity) {
     const targets = MOVIE_TITLE_VARIANTS
-        .map(normalizeIdentityTitle)
+        .map(normalizeNguonCSeriesTitle)
+        .filter(Boolean);
+
+    const candidates = (identity.rawTitles || [])
+        .map(normalizeNguonCSeriesTitle)
         .filter(Boolean);
 
     return targets.some(target =>
-        identity.normalizedTitles.some(candidate =>
+        candidates.some(candidate =>
             candidate === target ||
             (
                 target.length >= 5 &&
@@ -49868,42 +49902,30 @@ function nguoncHasTypeConflict(identity) {
 // -----------------------------------------------------
 
 function getNguonCSeasonHint(values) {
-
-    const text = values
-        .map(value => String(value || ""))
-        .join(" ")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/đ/g, "d");
-
     const patterns = [
-
-        // Season 2, Phần 2, Phan 2, Mùa 2, Part 2
-        /(?:\bseason\b|\bmua\b|\bphan\b|\bpart\b)\s*[\[(._-]*\s*0*(\d+)\b/i,
-
-        // S2, S02
-        /\bS\s*0*(\d+)\b/i,
-
-        // 2nd Season, 3rd Season, 4th Season
-        /\b0*(\d+)(?:st|nd|rd|th)\s+season\b/i,
-
-        // 2期, 3期...
-        /\b0*(\d+)\s*期/i
-
+        /(?:\\bseason\\b|\\bmua\\b|\\bphan\\b|\\bpart\\b)\\s*[\\[(._-]*\\s*0*(\\d+)\\b/i,
+        /\\bS\\s*0*(\\d+)\\b/i,
+        /\\b0*(\\d+)(?:st|nd|rd|th)\\s+season\\b/i,
+        /\\b0*(\\d+)\\s*期/i
     ];
 
-    for (const pattern of patterns) {
+    for (const value of values || []) {
+        const text = String(value || "")
+            .normalize("NFD")
+            .replace(/[\\u0300-\\u036f]/g, "")
+            .replace(/đ/g, "d");
 
-        const match = text.match(pattern);
+        for (const pattern of patterns) {
+            const match = text.match(pattern);
 
-        if (match) {
-            const season = Number(match[1]);
+            if (match) {
+                const season = Number(match[1]);
 
-            if (season > 0 && season < 100) {
-                return season;
+                if (season > 0 && season < 100) {
+                    return season;
+                }
             }
         }
-
     }
 
     return 0;
@@ -50023,7 +50045,12 @@ const detailSeasonHint = getNguonCSeasonHint([
     item?.title,
     item?.english_name,
     item?.slug,
-    ...identity.rawTitles
+
+    identity.movie?.name,
+    identity.movie?.origin_name,
+    identity.movie?.original_name,
+    identity.movie?.title,
+    identity.movie?.english_name
 ]);
 
 const keywordSeasonHint =
