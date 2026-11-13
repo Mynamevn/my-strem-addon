@@ -23316,17 +23316,39 @@ imdbId = await movinaResolveAndVerifyImdb(
         }
     }
 
-    const basicVariants = sourceTitles.flatMap(title =>
-        kkphimBuildBasicTitleVariants(title)
-    );
+// Ưu tiên tên có giá trị nhận diện cao:
+// 1. Tên chính và tên gốc từ metadata
+// 2. Tên Cinemeta
+// 3. Tên đa ngôn ngữ từ Wikidata
+// 4. Các alias khác và biến thể tự sinh
 
-    const titles = uniqueTitles([
-        primaryTitle,
-        ...sourceTitles,
-        ...cinemetaTitles,
-        ...wikidataTitles,
-        ...basicVariants
-    ]).slice(0, 24);
+const preferredSourceTitles = [
+    primaryTitle,
+
+    metadata.name,
+    metadata.title,
+    metadata.origin_name,
+    metadata.original_name,
+    metadata.english_name,
+
+    cachedItem.name,
+    cachedItem.title,
+    cachedItem.origin_name,
+    cachedItem.original_name,
+    cachedItem.english_name
+];
+
+const basicVariants = sourceTitles.flatMap(title =>
+    kkphimBuildBasicTitleVariants(title)
+);
+
+const titles = uniqueTitles([
+    ...preferredSourceTitles,
+    ...cinemetaTitles,
+    ...wikidataTitles,
+    ...sourceTitles,
+    ...basicVariants
+]).slice(0, 24);
 
     console.log(
         "[MOVINA UNIVERSAL TITLE IDENTITY]",
@@ -49504,28 +49526,43 @@ function getNguonCIdentity(item, detail) {
         )
     ];
 
-    let year = Number(
-        movie?.year ||
-        movie?.release_year ||
-        movie?.releaseYear ||
-        item?.year ||
-        item?.release_year ||
-        item?.releaseYear ||
-        0
+let year = 0;
+
+// Ưu tiên năm trong trường dữ liệu của NguonC.
+// Nếu dữ liệu có dạng 1996-1998 thì chỉ lấy 1996.
+const yearFields = [
+    movie?.year,
+    movie?.release_year,
+    movie?.releaseYear,
+    item?.year,
+    item?.release_year,
+    item?.releaseYear
+];
+
+for (const value of yearFields) {
+    const match = String(value || "").match(
+        /(?:19|20)[0-9]{2}/
     );
 
-    if (!year) {
-        for (const title of rawTitles) {
-            const match = title.match(
-                /(?:19|20)[0-9]{2}/
-            );
+    if (match) {
+        year = Number(match[0]);
+        break;
+    }
+}
 
-            if (match) {
-                year = Number(match[0]);
-                break;
-            }
+// Chỉ dùng năm trong tên phim nếu dữ liệu năm không có.
+if (!year) {
+    for (const title of rawTitles) {
+        const match = title.match(
+            /(?:19|20)[0-9]{2}/
+        );
+
+        if (match) {
+            year = Number(match[0]);
+            break;
         }
     }
+}
 
     const type = String(
         movie?.type ||
