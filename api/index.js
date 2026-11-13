@@ -49929,28 +49929,66 @@ function getNguonCIdentity(item, detail) {
                 break;
             }
         }
-    }
+    }    const rawTypeValues = [
+        movie?.type,
+        movie?.movie_type,
+        movie?.movieType,
+        movie?.content_type,
+        movie?.category,
+        movie?.kind,
 
-    const type = String(
-        movie?.type ||
-        movie?.movie_type ||
-        movie?.movieType ||
-        movie?.content_type ||
-        movie?.category ||
-        item?.type ||
-        item?.movie_type ||
-        item?.movieType ||
-        item?.content_type ||
-        item?.category ||
-        ""
-    ).toLowerCase();
+        item?.type,
+        item?.movie_type,
+        item?.movieType,
+        item?.content_type,
+        item?.category,
+        item?.kind
+    ];
+
+    const typeValues = rawTypeValues.flatMap(value => {
+        if (value === null || value === undefined) {
+            return [];
+        }
+
+        if (
+            typeof value === "string" ||
+            typeof value === "number"
+        ) {
+            return [String(value)];
+        }
+
+        if (Array.isArray(value)) {
+            return value
+                .filter(v =>
+                    typeof v === "string" ||
+                    typeof v === "number"
+                )
+                .map(String);
+        }
+
+        if (typeof value === "object") {
+            return Object.values(value)
+                .filter(v =>
+                    typeof v === "string" ||
+                    typeof v === "number"
+                )
+                .map(String);
+        }
+
+        return [];
+    })
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean);
+
+    const type = typeValues.join(" ");
 
     return {
         movie,
         rawTitles,
         normalizedTitles,
         year,
-        type
+                type,
+        typeValues
     };
 }
 
@@ -49987,26 +50025,42 @@ function nguoncHasTitleMatch(identity) {
 // -----------------------------------------------------
 
 function nguoncHasTypeConflict(identity) {
-    const type = identity.type;
+    const normalizeTypeText = value =>
+        String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d");
+
+    const typeText = normalizeTypeText([
+        identity?.type,
+        ...(identity?.typeValues || [])
+    ].join(" "));
+
+    const titleText = normalizeTypeText(
+        (identity?.rawTitles || []).join(" ")
+    );
 
     const isSeries =
-        /series|serial|phim[- ]?bo/.test(type);
+        /\b(series|serial|tv series|phim bo|truyen hinh)\b/
+            .test(typeText);
 
     const isMovie =
-        /movie|single|phim[- ]?le/.test(type);
+        /\b(movie|single|feature film|theatrical film|phim le|phim dien anh)\b/
+            .test(typeText);
 
-    if (
-        STREAM_TYPE === "series" &&
-        isMovie
-    ) {
-        return true;
+    // Nhận diện phim lẻ ngay trong tên ứng viên.
+    // Ví dụ: Naruto Movie 1.
+    const explicitMovieTitle =
+        /\b(movie|feature film|theatrical film)\b/.test(titleText) ||
+        /\b(phim le|phim dien anh)\b/.test(titleText);
+
+    if (STREAM_TYPE === "series") {
+        return isMovie || explicitMovieTitle;
     }
 
-    if (
-        STREAM_TYPE !== "series" &&
-        isSeries
-    ) {
-        return true;
+    if (STREAM_TYPE === "movie") {
+        return isSeries;
     }
 
     return false;
@@ -50239,30 +50293,37 @@ const yearMatches =
     identity.year > 0 &&
     identity.year === EXPECTED_CONTENT_YEAR;
 
+// Trang Detail có ghi rõ mùa thì dùng năm của mùa.
+// Trang Detail là trang series gốc thì dùng năm phát hành
+// ban đầu của series, không dùng năm của mùa đang xem.
+const identityExpectedYear =
+    detailSeasonHint > 0
+        ? EXPECTED_CONTENT_YEAR
+        : MOVIE_YEAR;
+
 const yearDifference =
-    EXPECTED_CONTENT_YEAR > 0 && identity.year > 0
-        ? Math.abs(identity.year - EXPECTED_CONTENT_YEAR)
+    identityExpectedYear > 0 && identity.year > 0
+        ? Math.abs(identity.year - identityExpectedYear)
         : null;
 
-// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
-// Thiếu năm ở Detail không phải lý do để từ chối.
 const yearConflicts =
     yearDifference !== null &&
     yearDifference >= 2;
 
+const typeConflicts =
+    nguoncHasTypeConflict(identity);
 
-// Không dùng loại movie/series để loại ứng viên.
-// NguonC có thể phân loại khác với metadata MOVINA.
-const typeConflicts = false;
-
-if (yearConflicts) {
+if (yearConflicts || typeConflicts) {
     console.log(
-        "[NGUONC CLIENT] REJECT YEAR:",
+        "[NGUONC CLIENT] REJECT IDENTITY CONFLICT:",
         {
             name: item?.name,
-            expected: MOVIE_YEAR,
-            actual: identity.year,
-            difference: yearDifference
+            expectedYear: identityExpectedYear,
+            actualYear: identity.year,
+            yearDifference,
+            type: identity.type,
+            typeValues: identity.typeValues,
+            typeConflicts
         }
     );
 
