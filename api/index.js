@@ -15161,44 +15161,29 @@ const authoritativeCinemetaYearEnd =
         ? cinemetaYearMatches[cinemetaYearMatches.length - 1]
         : authoritativeCinemetaYear;
 
-
 const isCompatiblePhimApiCandidate = candidate => {
 
     if (!authoritativeCinemetaYear) {
         return true;
     }
 
-    // Đọc năm từ PhimAPI.
-    // Nếu có dạng 2004–2005 hoặc 2004-2005,
-    // chỉ lấy năm đầu tiên.
-    const rawCandidateYear =
-        candidate?.year ||
-        candidate?.release_year ||
-        candidate?.releaseYear ||
-        "";
-
-    const candidateYearMatch =
-        String(rawCandidateYear).match(
-            /(?:19|20)\d{2}/
-        );
-
     const candidateYear =
-        candidateYearMatch
-            ? Number(candidateYearMatch[0])
-            : 0;
+        Number(
+            candidate?.year ||
+            candidate?.release_year ||
+            candidate?.releaseYear ||
+            0
+        );
 
     if (!candidateYear) {
         return false;
     }
 
-    // Chấp nhận chênh lệch tối đa 1 năm.
     return (
-        Math.abs(
-            candidateYear - authoritativeCinemetaYear
-        ) <= 1
+        candidateYear >= authoritativeCinemetaYear &&
+        candidateYear <= authoritativeCinemetaYearEnd
     );
 };
-
 
 const identitySafeItems =
     Array.isArray(items)
@@ -49637,32 +49622,16 @@ function getNguonCIdentity(item, detail) {
         )
     ];
 
+    let year = Number(
+        movie?.year ||
+        movie?.release_year ||
+        movie?.releaseYear ||
+        item?.year ||
+        item?.release_year ||
+        item?.releaseYear ||
+        0
+    );
 
-    // Đọc năm từ Detail hoặc Search.
-    // Hỗ trợ cả năm đơn và năm dạng khoảng: 2004–2005.
-    let year = 0;
-
-    const yearValues = [
-        movie?.year,
-        movie?.release_year,
-        movie?.releaseYear,
-        item?.year,
-        item?.release_year,
-        item?.releaseYear
-    ];
-
-    for (const value of yearValues) {
-        const match = String(value || "").match(
-            /(?:19|20)[0-9]{2}/
-        );
-
-        if (match) {
-            year = Number(match[0]);
-            break;
-        }
-    }
-
-    // Nếu metadata không có năm, thử đọc năm trong tên phim.
     if (!year) {
         for (const title of rawTitles) {
             const match = title.match(
@@ -49675,7 +49644,6 @@ function getNguonCIdentity(item, detail) {
             }
         }
     }
-
 
     const type = String(
         movie?.type ||
@@ -49798,69 +49766,54 @@ for (const entry of detailCandidates) {
                 ? item.__movinaMatchedKeywords
                 : [];
 
-
         const searchedByKnownAlias =
-            matchedKeywords.some(keyword => {
-                const keywordText = String(keyword || "").trim();
-
-                // Tên tìm kiếm có thể được tự ghép thêm năm.
-                // Bỏ năm đó trước khi đối chiếu với alias gốc.
-                const keywordWithoutYear =
-                    MOVIE_YEAR > 0
-                        ? keywordText.replace(
-                            String(MOVIE_YEAR),
-                            ""
-                        ).trim()
-                        : keywordText;
-
-                const normalizedKeyword =
-                    normalizeIdentityTitle(keywordText);
-
-                const normalizedKeywordBase =
-                    normalizeIdentityTitle(keywordWithoutYear);
-
-                return MOVIE_TITLE_VARIANTS.some(title => {
-                    const normalizedAlias =
-                        normalizeIdentityTitle(title);
-
-                    return (
-                        normalizedAlias === normalizedKeyword ||
-                        normalizedAlias === normalizedKeywordBase
-                    );
-                });
-            });
-
-        const yearMatches =
-            MOVIE_YEAR > 0 &&
-            identity.year > 0 &&
-            identity.year === MOVIE_YEAR;
-
-        const yearDifference =
-            MOVIE_YEAR > 0 && identity.year > 0
-                ? Math.abs(identity.year - MOVIE_YEAR)
-                : null;
-
-        // Chấp nhận sai lệch tối đa một năm.
-        const yearCompatible =
-            yearDifference !== null &&
-            yearDifference <= 1;
-
-        // Không từ chối khi năm chênh từ hai năm trở lên.
-        const yearConflicts =
-            yearDifference !== null &&
-            yearDifference >= 2;
-
-        // Giữ nguyên nguyên tắc:
-        // - Tên Detail khớp alias đã biết: có thể chấp nhận.
-        // - Nếu chỉ khớp thông qua từ khóa tìm kiếm,
-        //   bắt buộc năm cũng phải phù hợp.
-        const identityAccepted =
-            titleMatches ||
-            (
-                searchedByKnownAlias &&
-                yearCompatible
+            matchedKeywords.some(keyword =>
+                MOVIE_TITLE_VARIANTS.some(title =>
+                    normalizeIdentityTitle(title) ===
+                    normalizeIdentityTitle(keyword)
+                )
             );
 
+
+const yearMatches =
+    MOVIE_YEAR > 0 &&
+    identity.year > 0 &&
+    identity.year === MOVIE_YEAR;
+
+const yearDifference =
+    MOVIE_YEAR > 0 && identity.year > 0
+        ? Math.abs(identity.year - MOVIE_YEAR)
+        : null;
+
+// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
+// Thiếu năm ở Detail không phải lý do để từ chối.
+const yearConflicts =
+    yearDifference !== null &&
+    yearDifference >= 2;
+
+// Không dùng loại movie/series để loại ứng viên.
+// NguonC có thể phân loại khác với metadata MOVINA.
+const typeConflicts = false;
+
+if (yearConflicts) {
+    console.log(
+        "[NGUONC CLIENT] REJECT YEAR:",
+        {
+            name: item?.name,
+            expected: MOVIE_YEAR,
+            actual: identity.year,
+            difference: yearDifference
+        }
+    );
+
+    continue;
+}
+
+// Tên phim phải khớp một tên đã biết,
+// hoặc NguonC phải trả kết quả từ một alias hợp lệ.
+const identityAccepted =
+    titleMatches ||
+    searchedByKnownAlias;
 
 console.log(
     "[NGUONC CLIENT] IDENTITY CHECK:",
