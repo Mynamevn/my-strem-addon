@@ -23251,51 +23251,69 @@ imdbId = await movinaResolveAndVerifyImdb(
         imdbId = "";
     }
 
-    let cinemetaTitles = [];
+    
+let cinemetaTitles = [];
+let cinemetaYear = 0;
 
-    // Đọc metadata Cinemeta bằng IMDb đã xác minh.
-    if (imdbId) {
-        try {
-            const response = await axios.get(
-                "https://v3-cinemeta.strem.io/meta/" +
-                    type +
-                    "/" +
-                    encodeURIComponent(imdbId) +
-                    ".json",
-                {
-                    timeout: 4500,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json"
-                    }
+// Đọc metadata Cinemeta bằng IMDb đã xác minh.
+// Lấy cả năm phát hành gốc để NguonC Client đối chiếu.
+if (imdbId) {
+    try {
+        const response = await axios.get(
+            "https://v3-cinemeta.strem.io/meta/" +
+                type +
+                "/" +
+                encodeURIComponent(imdbId) +
+                ".json",
+            {
+                timeout: 4500,
+                headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json"
                 }
-            );
+            }
+        );
 
-            const meta = response.data?.meta || {};
+        const meta = response.data?.meta || {};
 
-            cinemetaTitles = flattenTitles([
-                meta.name,
-                meta.title,
-                meta.original_name,
-                meta.originalName,
-                meta.english_name,
-                meta.aliases,
-                meta.aka,
-                meta.alternative_names,
-                meta.alternative_titles,
-                meta.other_names
-            ]);
+        cinemetaTitles = flattenTitles([
+            meta.name,
+            meta.title,
+            meta.original_name,
+            meta.originalName,
+            meta.english_name,
+            meta.aliases,
+            meta.aka,
+            meta.alternative_names,
+            meta.alternative_titles,
+            meta.other_names
+        ]);
 
-        } catch (error) {
-            console.log(
-                "[MOVINA UNIVERSAL IDENTITY] CINEMETA ERROR:",
-                imdbId,
-                error?.response?.status ||
-                    error?.message ||
-                    error
-            );
-        }
+        const rawMetaYear =
+            meta.year ||
+            meta.releaseInfo ||
+            meta.released ||
+            meta.release_date ||
+            "";
+
+        const metaYearMatch = String(rawMetaYear).match(
+            /\b(?:19|20)\d{2}\b/
+        );
+
+        cinemetaYear = metaYearMatch
+            ? Number(metaYearMatch[0])
+            : 0;
+
+    } catch (error) {
+        console.log(
+            "[MOVINA UNIVERSAL IDENTITY] CINEMETA ERROR:",
+            imdbId,
+            error?.response?.status ||
+                error?.message ||
+                error
+        );
     }
+}
 
     let wikidataTitles = [];
 
@@ -23394,10 +23412,17 @@ const titles = uniqueTitles([
         })
     );
 
-    return {
-        imdbId,
-        titles
-    };
+    
+return {
+    imdbId,
+    titles,
+
+    // Năm Cinemeta từ IMDb đã xác minh.
+    // Nếu Cinemeta không có năm thì giữ năm nguồn hiện tại.
+    identityYear:
+        cinemetaYear || year || 0
+};
+
 }
 
 async function fetchKKPhim(
@@ -47185,11 +47210,17 @@ const nguoncClientUrl =
     encodeURIComponent(seasonNumber || 0) +
     "&episode=" +
     encodeURIComponent(episodeNumber || 0) +
-    "&imdb=" +
-    encodeURIComponent(
-        nguoncUniversalTitleIdentity.imdbId || ""
-    ) +
-    "&titles=" +
+    
+"&imdb=" +
+encodeURIComponent(
+    nguoncUniversalTitleIdentity.imdbId || ""
+) +
+"&identityYear=" +
+encodeURIComponent(
+    nguoncUniversalTitleIdentity.identityYear || movieYear || 0
+) +
+"&titles=" +
+
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
     ) +
@@ -48596,10 +48627,28 @@ const SEASON_YEAR = (() => {
         : 0;
 })();
 
+
+const IDENTITY_YEAR = (() => {
+    const rawYear = String(
+        params.get("identityYear") || ""
+    );
+
+    const match = rawYear.match(
+        /(?:19|20)[0-9]{2}/
+    );
+
+    return match
+        ? Number(match[0])
+        : 0;
+})();
+
+// Series vẫn ưu tiên năm mùa như logic hiện tại.
+// Phim lẻ ưu tiên năm Cinemeta đã xác minh.
 const EXPECTED_CONTENT_YEAR =
     STREAM_TYPE === "series" && SEASON_YEAR > 0
         ? SEASON_YEAR
-        : MOVIE_YEAR;
+        : (IDENTITY_YEAR || MOVIE_YEAR);
+
 
 // =====================================================
 // NGUONC — READ SEASON EPISODE COUNTS
@@ -49707,20 +49756,20 @@ if (requestedSeason > 1) {
         addKeyword(title);
     }
 
-    // Tìm theo năm nếu có.
-    if (EXPECTED_CONTENT_YEAR > 0) {
+    
+// Tìm theo năm phát hành đã xác minh nếu có.
+if (EXPECTED_CONTENT_YEAR > 0) {
+    addKeyword(
+        MOVIE_TITLE + " " + EXPECTED_CONTENT_YEAR
+    );
 
+    for (const title of multilingualTitles.slice(0, 2)) {
         addKeyword(
-            MOVIE_TITLE + " " + MOVIE_YEAR
+            title + " " + EXPECTED_CONTENT_YEAR
         );
-
-        for (const title of multilingualTitles.slice(0, 2)) {
-            addKeyword(
-                title + " " + MOVIE_YEAR
-            );
-        }
-
     }
+}
+
 
     // Các alias còn lại.
     for (const title of otherTitles) {
@@ -50546,10 +50595,16 @@ const yearMatches =
 // Trang Detail có ghi rõ mùa thì dùng năm của mùa.
 // Trang Detail là trang series gốc thì dùng năm phát hành
 // ban đầu của series, không dùng năm của mùa đang xem.
+
 const identityExpectedYear =
-    detailSeasonHint > 0
-        ? EXPECTED_CONTENT_YEAR
-        : MOVIE_YEAR;
+    STREAM_TYPE === "series"
+        ? (
+            detailSeasonHint > 0
+                ? EXPECTED_CONTENT_YEAR
+                : MOVIE_YEAR
+        )
+        : EXPECTED_CONTENT_YEAR;
+
 
 const yearDifference =
     identityExpectedYear > 0 && identity.year > 0
