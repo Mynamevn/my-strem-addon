@@ -46973,6 +46973,10 @@ const nguoncClientUrl =
     encodeURIComponent(seasonNumber || 0) +
     "&episode=" +
     encodeURIComponent(episodeNumber || 0) +
+    "&imdb=" +
+    encodeURIComponent(
+        nguoncUniversalTitleIdentity.imdbId || ""
+    ) +
     "&titles=" +
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
@@ -48328,6 +48332,8 @@ const params =
 const MOVIE_TITLE =
     \`${safeTitle}\`;
 
+const MOVIE_IMDB_ID =
+    String(params.get("imdb") || "").trim();
 
 const MOVIE_YEAR = (() => {
     const rawYear = String(
