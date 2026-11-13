@@ -22100,7 +22100,7 @@ async function fetchNguonC(movieName, options = {}) {
                         normalizeTitle(other) === normalizeTitle(value)
                 ) === index
             )
-            .slice(0, 12);
+            .slice(0, 8);
 
         console.log(
             "[NGUONC] SEARCH TITLE VARIANTS:",
@@ -22914,268 +22914,62 @@ function kkphimBuildBasicTitleVariants(title) {
     return variants.slice(0, 5);
 }
 
-
 async function kkphimGetMetadataTitleVariants(
     title,
     imdbId = "",
-    movieYear = 0,
-    mediaType = "movie"
+    movieYear = 0
 ) {
-    const basic =
-        kkphimBuildBasicTitleVariants(title);
+    const basic = kkphimBuildBasicTitleVariants(title);
+    const id = String(imdbId || "").trim();
 
-    const id =
-        String(imdbId || "").trim().toLowerCase();
-
-    if (!/^tt\d+$/.test(id)) {
+    if (!id || !/^tt\d+$/i.test(id)) {
         return basic;
     }
 
-    const cacheKey = id;
-    const cacheTtl = 12 * 60 * 60 * 1000;
+    const cacheKey = id.toLowerCase();
 
-    // Chỉ sử dụng cache còn hạn và có alias thực sự.
-    const cachedEntry =
-        KKPHIM_TITLE_VARIANT_CACHE.get(cacheKey);
-
-    if (
-        cachedEntry &&
-        cachedEntry.expiresAt > Date.now() &&
-        Array.isArray(cachedEntry.titles) &&
-        cachedEntry.titles.length > 0
-    ) {
+    if (KKPHIM_TITLE_VARIANT_CACHE.has(cacheKey)) {
         return [
             ...new Set([
                 ...basic,
-                ...cachedEntry.titles
+                ...KKPHIM_TITLE_VARIANT_CACHE.get(cacheKey)
             ])
         ].slice(0, 24);
     }
 
-    // Xóa cache cũ, cache hết hạn hoặc cache rỗng.
-    if (cachedEntry) {
-        KKPHIM_TITLE_VARIANT_CACHE.delete(cacheKey);
-    }
-
-    const expectedMedia =
-        mediaType === "series" ? "tv" : "movie";
-
-    const tmdbApiKey =
-        String(process.env.TMDB_API_KEY || "").trim();
-
-    const tmdbToken =
-        String(
-            process.env.TMDB_READ_ACCESS_TOKEN || ""
-        ).trim();
-
-    const tmdbHeaders = {
-        Accept: "application/json",
-        "User-Agent": "MOVINA/1.0",
-        ...(tmdbToken
-            ? {
-                Authorization: "Bearer " + tmdbToken
-            }
-            : {})
-    };
-
-    const tmdbParams =
-        !tmdbToken && tmdbApiKey
-            ? { api_key: tmdbApiKey }
-            : {};
-
-    const addTitle = (target, value) => {
-        const text = String(value || "")
-            .replace(/\s+/g, " ")
-            .trim();
-
-        if (
-            text.length >= 2 &&
-            text.length <= 200
-        ) {
-            target.push(text);
-        }
-    };
-
-    // =====================================================
-    // A. TMDB — TRA TRỰC TIẾP BẰNG IMDb ID
-    // =====================================================
-
-    const fetchTmdbTitles = async () => {
-        if (!tmdbApiKey && !tmdbToken) {
-            console.log(
-                "[MOVINA TITLE IDENTITY] TMDB SKIP: NO API CREDENTIAL"
-            );
-
-            return [];
-        }
-
-        const resultTitles = [];
-
-        const findResponse = await axios.get(
-            "https://api.themoviedb.org/3/find/" +
-                encodeURIComponent(id),
+    const variants = [];
+    const query = `
+        SELECT DISTINCT ?label WHERE {
+            ?item wdt:P345 "${id}" .
             {
-                params: {
-                    ...tmdbParams,
-                    external_source: "imdb_id"
-                },
-                headers: tmdbHeaders,
-                timeout: 4500
+                ?item rdfs:label ?label .
             }
-        );
-
-        const movieRows =
-            Array.isArray(findResponse.data?.movie_results)
-                ? findResponse.data.movie_results
-                : [];
-
-        const tvRows =
-            Array.isArray(findResponse.data?.tv_results)
-                ? findResponse.data.tv_results
-                : [];
-
-        const allRecords = [
-            ...movieRows.map(item => ({
-                ...item,
-                __mediaType: "movie"
-            })),
-
-            ...tvRows.map(item => ({
-                ...item,
-                __mediaType: "tv"
-            }))
-        ];
-
-        // Ưu tiên đúng loại nội dung.
-        // Nếu không có kết quả thì dùng kết quả còn lại.
-        const preferredRecords =
-            allRecords.filter(
-                item => item.__mediaType === expectedMedia
-            );
-
-        const selectedRecords = (
-            preferredRecords.length
-                ? preferredRecords
-                : allRecords
-        ).slice(0, 2);
-
-        for (const record of selectedRecords) {
-            addTitle(resultTitles, record.title);
-            addTitle(resultTitles, record.name);
-            addTitle(resultTitles, record.original_title);
-            addTitle(resultTitles, record.original_name);
-
-            const endpoint =
-                record.__mediaType === "tv"
-                    ? "tv"
-                    : "movie";
-
-            const baseUrl =
-                "https://api.themoviedb.org/3/" +
-                endpoint +
-                "/" +
-                encodeURIComponent(record.id);
-
-            const detailResults = await Promise.allSettled([
-                axios.get(
-                    baseUrl + "/alternative_titles",
-                    {
-                        params: tmdbParams,
-                        headers: tmdbHeaders,
-                        timeout: 4500
-                    }
-                ),
-
-                axios.get(
-                    baseUrl + "/translations",
-                    {
-                        params: tmdbParams,
-                        headers: tmdbHeaders,
-                        timeout: 4500
-                    }
-                )
-            ]);
-
-            // Tên thay thế theo quốc gia/ngôn ngữ.
-            if (detailResults[0].status === "fulfilled") {
-                const data =
-                    detailResults[0].value.data || {};
-
-                const rows =
-                    Array.isArray(data.titles)
-                        ? data.titles
-                        : Array.isArray(data.results)
-                            ? data.results
-                            : [];
-
-                for (const row of rows) {
-                    addTitle(resultTitles, row.title);
-                    addTitle(resultTitles, row.name);
-                }
+            UNION
+            {
+                ?item skos:altLabel ?label .
             }
+FILTER(
+    LANG(?label) IN (
+        "en", "vi", "ja", "zh", "ko",
+        "fr", "de", "es", "pt", "ru"
+    )
+    && STRLEN(STR(?label)) >= 2
+)
+ORDER BY
+    IF(
+        LANG(?label) = "vi",
+        0,
+        IF(
+            LANG(?label) = "en",
+            1,
+            IF(LANG(?label) = "ja", 2, 3)
+        )
+    )
+    LCASE(STR(?label))
+LIMIT 40
+    `;
 
-            // Tên trong các bản dịch TMDB.
-            if (detailResults[1].status === "fulfilled") {
-                const rows =
-                    detailResults[1].value.data?.translations || [];
-
-                for (const row of rows) {
-                    addTitle(
-                        resultTitles,
-                        row.data?.title
-                    );
-
-                    addTitle(
-                        resultTitles,
-                        row.data?.name
-                    );
-                }
-            }
-        }
-
-        return resultTitles;
-    };
-
-    // =====================================================
-    // B. WIKIDATA — TÊN GỐC VÀ ALIAS ĐA NGÔN NGỮ
-    // =====================================================
-
-    const fetchWikidataTitles = async () => {
-        const query = `
-            SELECT DISTINCT ?label WHERE {
-                ?item wdt:P345 "${id}" .
-
-                {
-                    ?item rdfs:label ?label .
-                }
-                UNION
-                {
-                    ?item skos:altLabel ?label .
-                }
-
-                FILTER(
-                    LANG(?label) IN (
-                        "en", "vi", "zh", "ja", "ko",
-                        "th", "fr", "de", "es", "pt",
-                        "ru", "it", "nl", "id"
-                    )
-                    && STRLEN(STR(?label)) >= 2
-                )
-            }
-
-            ORDER BY
-                IF(LANG(?label) = "vi", 0,
-                    IF(LANG(?label) = "en", 1,
-                        IF(LANG(?label) = "zh", 2,
-                            IF(LANG(?label) = "ja", 3, 4)
-                        )
-                    )
-                )
-                LCASE(STR(?label))
-
-            LIMIT 80
-        `;
-
+    try {
         const response = await axios.get(
             "https://query.wikidata.org/sparql",
             {
@@ -23183,10 +22977,10 @@ async function kkphimGetMetadataTitleVariants(
                     query,
                     format: "json"
                 },
-                timeout: 4500,
+                timeout: 4000,
                 headers: {
                     "User-Agent": "MOVINA/1.0",
-                    Accept: "application/sparql-results+json"
+                    "Accept": "application/sparql-results+json"
                 }
             }
         );
@@ -23194,125 +22988,50 @@ async function kkphimGetMetadataTitleVariants(
         const rows =
             response.data?.results?.bindings || [];
 
-        return rows
-            .map(row => row?.label?.value)
-            .filter(value =>
-                typeof value === "string" &&
-                value.trim()
-            );
-    };
+        for (const row of rows) {
+            const label = row?.label?.value;
 
-    // =====================================================
-    // C. CHẠY HAI NGUỒN SONG SONG
-    // =====================================================
-
-    const [
-        tmdbResult,
-        wikidataResult
-    ] = await Promise.allSettled([
-        fetchTmdbTitles(),
-        fetchWikidataTitles()
-    ]);
-
-    const tmdbTitles =
-        tmdbResult.status === "fulfilled"
-            ? tmdbResult.value
-            : [];
-
-    const wikidataTitles =
-        wikidataResult.status === "fulfilled"
-            ? wikidataResult.value
-            : [];
-
-    if (tmdbResult.status === "rejected") {
-        console.log(
-            "[MOVINA TITLE IDENTITY] TMDB ERROR:",
-            tmdbResult.reason?.response?.status ||
-                tmdbResult.reason?.message ||
-                tmdbResult.reason
-        );
-    }
-
-    if (wikidataResult.status === "rejected") {
-        console.log(
-            "[MOVINA TITLE IDENTITY] WIKIDATA ERROR:",
-            wikidataResult.reason?.response?.status ||
-                wikidataResult.reason?.message ||
-                wikidataResult.reason
-        );
-    }
-
-    // =====================================================
-    // D. GỘP, CHUẨN HÓA VÀ LOẠI TÊN TRÙNG
-    // =====================================================
-
-    const seen = new Set([
-        kkphimNormalizeTitle(title)
-    ]);
-
-    const uniqueExternalTitles = [];
-
-    for (const value of [
-        ...tmdbTitles,
-        ...wikidataTitles
-    ]) {
-        const text = String(value || "")
-            .replace(/\s+/g, " ")
-            .trim();
-
-        const key =
-            kkphimNormalizeTitle(text);
-
-        if (
-            !key ||
-            key.length < 2 ||
-            key.length > 200 ||
-            seen.has(key)
-        ) {
-            continue;
+            if (typeof label === "string" && label.trim()) {
+                variants.push(label.trim());
+            }
         }
 
-        seen.add(key);
-        uniqueExternalTitles.push(text);
+        const uniqueVariants = [
+            ...new Set(
+                variants.filter(value =>
+                    kkphimNormalizeTitle(value) !==
+                    kkphimNormalizeTitle(title)
+                )
+            )
+        ].slice(0, 12);
 
-        if (uniqueExternalTitles.length >= 40) {
-            break;
-        }
-    }
-
-    // Chỉ cache khi thực sự tìm được tên thay thế.
-    // Không cache kết quả rỗng hoặc lỗi.
-    if (uniqueExternalTitles.length > 0) {
         KKPHIM_TITLE_VARIANT_CACHE.set(
             cacheKey,
-            {
-                titles: uniqueExternalTitles,
-                expiresAt: Date.now() + cacheTtl
-            }
+            uniqueVariants
         );
-    }
 
-    console.log(
-        "[MOVINA TITLE IDENTITY SOURCES]",
-        JSON.stringify({
+        console.log("[KKPHIM] METADATA TITLE VARIANTS:", {
             imdbId: id,
             year: Number(movieYear) || 0,
-            mediaType: expectedMedia,
-            tmdbCount: tmdbTitles.length,
-            wikidataCount: wikidataTitles.length,
-            mergedCount: uniqueExternalTitles.length,
-            cacheSaved: uniqueExternalTitles.length > 0,
-            titles: uniqueExternalTitles
-        })
-    );
+            count: uniqueVariants.length,
+            variants: uniqueVariants
+        });
 
-    return [
-        ...new Set([
-            ...basic,
-            ...uniqueExternalTitles
-        ])
-    ].slice(0, 24);
+        return [
+            ...new Set([...basic, ...uniqueVariants])
+        ].slice(0, 12);
+
+    } catch (error) {
+        console.log("[KKPHIM] METADATA ALIAS LOOKUP ERROR:", {
+            imdbId: id,
+            status: error?.response?.status || 0,
+            message: error?.message || String(error)
+        });
+
+        return basic;
+    }
 }
+
 
 /* ============================================================
    [CORE-IDENTITY-001] MOVINA UNIVERSAL TITLE IDENTITY
@@ -23345,19 +23064,15 @@ async function movinaBuildUniversalTitleIdentity(options = {}) {
                 return;
             }
 
-if (typeof value === "object") {
-    add(value.name);
-    add(value.title);
-    add(value.original_name);
-    add(value.original_title);
-    add(value.english_name);
-    add(value.title_en);
-    add(value.name_en);
-    add(value.value);
-    add(value.label);
-    add(value.text);
-    return;
-}
+            if (typeof value === "object") {
+                add(
+                    value.name ||
+                    value.title ||
+                    value.value ||
+                    value.label
+                );
+                return;
+            }
 
             if (typeof value === "string") {
                 const text = value.trim();
@@ -23371,68 +23086,33 @@ if (typeof value === "object") {
         return result;
     };
 
-const sourceTitles = flattenTitles([
-    primaryTitle,
+    const sourceTitles = flattenTitles([
+        primaryTitle,
 
-    // Tên chính và tên gốc.
-    metadata.name,
-    metadata.title,
-    metadata.origin_name,
-    metadata.original_name,
-    metadata.original_title,
-    metadata.originalName,
-    metadata.originalTitle,
+        metadata.name,
+        metadata.title,
+        metadata.origin_name,
+        metadata.original_name,
+        metadata.originalName,
+        metadata.english_name,
+        metadata.title_en,
+        metadata.en_name,
 
-    // Tên theo ngôn ngữ.
-    metadata.english_name,
-    metadata.englishName,
-    metadata.title_en,
-    metadata.name_en,
-    metadata.title_vi,
-    metadata.name_vi,
-    metadata.japanese_name,
-    metadata.romaji_name,
-    metadata.chinese_name,
-    metadata.korean_name,
+        metadata.aliases,
+        metadata.aka,
+        metadata.alternative_names,
+        metadata.alternative_titles,
+        metadata.other_names,
+        metadata.also_known_as,
 
-    // Alias và tên thay thế.
-    metadata.aliases,
-    metadata.aka,
-    metadata.alternative_names,
-    metadata.alternativeNames,
-    metadata.alternative_titles,
-    metadata.alternativeTitles,
-    metadata.other_names,
-    metadata.otherNames,
-    metadata.also_known_as,
-    metadata.alsoKnownAs,
-    metadata.aka_titles,
-    metadata.titles,
-
-    // Cache đã có.
-    cachedItem.name,
-    cachedItem.title,
-    cachedItem.origin_name,
-    cachedItem.original_name,
-    cachedItem.original_title,
-    cachedItem.english_name,
-    cachedItem.englishName,
-    cachedItem.title_en,
-    cachedItem.name_en,
-    cachedItem.japanese_name,
-    cachedItem.romaji_name,
-    cachedItem.chinese_name,
-    cachedItem.aliases,
-    cachedItem.aka,
-    cachedItem.alternative_names,
-    cachedItem.alternativeNames,
-    cachedItem.alternative_titles,
-    cachedItem.alternativeTitles,
-    cachedItem.other_names,
-    cachedItem.otherNames,
-    cachedItem.also_known_as,
-    cachedItem.titles
-]);
+        cachedItem.name,
+        cachedItem.title,
+        cachedItem.origin_name,
+        cachedItem.original_name,
+        cachedItem.english_name,
+        cachedItem.aliases,
+        cachedItem.alternative_names
+    ]);
 
     const source = {
         ...cachedItem,
@@ -23571,106 +23251,82 @@ imdbId = await movinaResolveAndVerifyImdb(
         imdbId = "";
     }
 
+    let cinemetaTitles = [];
 
-let cinemetaTitles = [];
-
-// =====================================================
-// A. CINEMETA — TÊN VÀ ALIAS TỪ IMDb ID
-// =====================================================
-
-if (imdbId) {
-    try {
-        const response = await axios.get(
-            "https://v3-cinemeta.strem.io/meta/" +
-                type +
-                "/" +
-                encodeURIComponent(imdbId) +
-                ".json",
-            {
-                timeout: 4500,
-                headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    Accept: "application/json"
+    // Đọc metadata Cinemeta bằng IMDb đã xác minh.
+    if (imdbId) {
+        try {
+            const response = await axios.get(
+                "https://v3-cinemeta.strem.io/meta/" +
+                    type +
+                    "/" +
+                    encodeURIComponent(imdbId) +
+                    ".json",
+                {
+                    timeout: 4500,
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json"
+                    }
                 }
-            }
-        );
-
-        const meta = response.data?.meta || {};
-
-        cinemetaTitles = flattenTitles([
-            meta.name,
-            meta.title,
-            meta.original_name,
-            meta.original_title,
-            meta.originalName,
-            meta.originalTitle,
-            meta.english_name,
-            meta.englishName,
-            meta.title_en,
-            meta.name_en,
-            meta.aliases,
-            meta.aka,
-            meta.alternative_names,
-            meta.alternativeNames,
-            meta.alternative_titles,
-            meta.alternativeTitles,
-            meta.other_names,
-            meta.otherNames,
-            meta.also_known_as,
-            meta.titles
-        ]);
-
-    } catch (error) {
-        console.log(
-            "[MOVINA UNIVERSAL IDENTITY] CINEMETA ERROR:",
-            imdbId,
-            error?.response?.status ||
-                error?.message ||
-                error
-        );
-    }
-}
-
-// =====================================================
-// B. TMDB + WIKIDATA — ALIAS ĐA NGÔN NGỮ
-// =====================================================
-
-let externalTitles = [];
-
-if (imdbId) {
-    try {
-        externalTitles =
-            await kkphimGetMetadataTitleVariants(
-                primaryTitle,
-                imdbId,
-                year,
-                type
             );
 
-    } catch (error) {
-        console.log(
-            "[MOVINA UNIVERSAL IDENTITY] EXTERNAL TITLE ERROR:",
-            error?.message || error
-        );
+            const meta = response.data?.meta || {};
+
+            cinemetaTitles = flattenTitles([
+                meta.name,
+                meta.title,
+                meta.original_name,
+                meta.originalName,
+                meta.english_name,
+                meta.aliases,
+                meta.aka,
+                meta.alternative_names,
+                meta.alternative_titles,
+                meta.other_names
+            ]);
+
+        } catch (error) {
+            console.log(
+                "[MOVINA UNIVERSAL IDENTITY] CINEMETA ERROR:",
+                imdbId,
+                error?.response?.status ||
+                    error?.message ||
+                    error
+            );
+        }
     }
-}
 
-// =====================================================
-// C. GỘP TẤT CẢ TÊN PHIM
-// =====================================================
+    let wikidataTitles = [];
 
-const basicVariants = sourceTitles.flatMap(title =>
-    kkphimBuildBasicTitleVariants(title)
-);
+    // Chỉ lấy alias Wikidata khi đã có IMDb ID.
+    if (imdbId) {
+        try {
+            wikidataTitles =
+                await kkphimGetMetadataTitleVariants(
+                    primaryTitle,
+                    imdbId,
+                    year
+                );
+        } catch (error) {
+            console.log(
+                "[MOVINA UNIVERSAL IDENTITY] WIKIDATA ERROR:",
+                error?.message || error
+            );
+        }
+    }
 
-const titles = uniqueTitles([
-    primaryTitle,
-    ...sourceTitles,
-    ...cinemetaTitles,
-    ...externalTitles,
-    ...basicVariants
-]).slice(0, 24);
+    const basicVariants = sourceTitles.flatMap(title =>
+        kkphimBuildBasicTitleVariants(title)
+    );
 
+    const titles = uniqueTitles([
+        primaryTitle,
+        ...sourceTitles,
+        ...cinemetaTitles,
+        ...wikidataTitles,
+        ...basicVariants
+    ]).slice(0, 24);
 
     console.log(
         "[MOVINA UNIVERSAL TITLE IDENTITY]",
@@ -23681,7 +23337,7 @@ const titles = uniqueTitles([
             imdbId: imdbId || null,
             sourceTitleCount: sourceTitles.length,
             cinemetaTitleCount: cinemetaTitles.length,
-            externalTitleCount: externalTitles.length,
+            wikidataTitleCount: wikidataTitles.length,
             finalTitleCount: titles.length,
             titles
         })
@@ -24252,13 +23908,12 @@ if (!hasYearTitleCandidate) {
         "[KKPHIM] NO YEAR + TITLE CANDIDATE; TRY METADATA ALIASES"
     );
 
-const metadataTerms =
-    await kkphimGetMetadataTitleVariants(
-        movieName,
-        imdbId,
-        movieYear,
-        streamType
-    );
+    const metadataTerms =
+        await kkphimGetMetadataTitleVariants(
+            movieName,
+            imdbId,
+            movieYear
+        );
 
     const basicKeys = new Set(
         kkphimBuildBasicTitleVariants(movieName)
@@ -47032,7 +46687,32 @@ const nguoncUniversalTitleIdentityPromise =
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
-Promise.resolve([]),
+
+      
+(async () => {
+    const identity =
+        await nguoncUniversalTitleIdentityPromise;
+
+    console.log(
+        "[NGUONC] UNIVERSAL IDENTITY READY:",
+        JSON.stringify({
+            title: movieName,
+            imdbId: identity.imdbId || null,
+            titleCount: identity.titles.length,
+            titles: identity.titles
+        })
+    );
+
+    return await fetchNguonC(
+        nguonCFallbackName,
+        {
+            titleVariants: identity.titles,
+            year: movieYear,
+            type: streamType,
+            imdbId: identity.imdbId
+        }
+    );
+})(),
 
       fetchVSMov(
           movieName,
@@ -47253,48 +46933,6 @@ console.log(
 // NGUONC CLIENT URL
 // =====================================================
 
-// =====================================================
-// NGUONC — PRESERVE METADATA YEAR RANGE
-// =====================================================
-
-const nguoncYearRangeSources = [
-    resolvedMetadata?.releaseInfo,
-    resolvedMetadata?.released,
-    resolvedMetadata?.year,
-    resolvedMetadata?.first_air_date,
-    resolvedMetadata?.release_date,
-    resolvedMetadata?.year_range
-]
-    .map(value => String(value || "").trim())
-    .filter(Boolean);
-
-const nguoncYearRangeRaw =
-    nguoncYearRangeSources.find(value =>
-        /(?:19|20)\d{2}\s*[-–—]\s*(?:(?:19|20)\d{2})?/.test(value)
-    ) ||
-    nguoncYearRangeSources.find(value =>
-        /(?:19|20)\d{2}/.test(value)
-    ) ||
-    String(movieYear || "");
-
-const nguoncYearNumbers =
-    nguoncYearRangeRaw.match(/(?:19|20)\d{2}/g) || [];
-
-const nguoncYearRange =
-    nguoncYearNumbers.length >= 2
-        ? nguoncYearNumbers[0] + "-" + nguoncYearNumbers[1]
-        : nguoncYearNumbers.length === 1
-            ? nguoncYearNumbers[0] +
-                (/[–—-]\s*$/.test(nguoncYearRangeRaw) ? "-" : "")
-            : String(movieYear || "");
-
-console.log(
-    "[NGUONC CLIENT] SOURCE YEAR RANGE:",
-    {
-        raw: nguoncYearRangeRaw,
-        normalized: nguoncYearRange
-    }
-);
 
 const nguoncClientUrl =
     "https://my-strem-addon.vercel.app/nguonc-player" +
@@ -47302,18 +46940,12 @@ const nguoncClientUrl =
     encodeURIComponent(movieName) +
     "&year=" +
     encodeURIComponent(movieYear || 0) +
-    "&yearRange=" +
-    encodeURIComponent(nguoncYearRange) +
     "&type=" +
     encodeURIComponent(streamType || "movie") +
     "&season=" +
     encodeURIComponent(seasonNumber || 0) +
-        "&episode=" +
+    "&episode=" +
     encodeURIComponent(episodeNumber || 0) +
-    "&imdbId=" +
-    encodeURIComponent(
-        nguoncUniversalTitleIdentity.imdbId || ""
-    ) +
     "&titles=" +
     encodeURIComponent(
         JSON.stringify(nguoncTitleVariants)
@@ -48669,49 +48301,21 @@ const params =
 const MOVIE_TITLE =
     \`${safeTitle}\`;
 
-const MOVIE_IMDB_ID =
-    String(
-        params.get("imdbId") || ""
-    ).trim();
 
-const HAS_TRUSTED_IMDB_ID =
-    /^tt\d+$/.test(MOVIE_IMDB_ID);
-
-const MOVIE_YEAR_RANGE = (() => {
+const MOVIE_YEAR = (() => {
     const rawYear = String(
-        params.get("yearRange") ||
-        params.get("year") ||
-        ""
+        params.get("year") || ""
     );
 
-    const years =
-        rawYear.match(/(?:19|20)\\d{2}/g) || [];
+    const match = rawYear.match(
+        /(?:19|20)[0-9]{2}/
+    );
 
-    const start =
-        Number(years[0]) || 0;
-
-    const end =
-        Number(years[1]) || start;
-
-    return {
-        raw: rawYear,
-        start,
-        end
-    };
+    return match
+        ? Number(match[0])
+        : 0;
 })();
 
-const MOVIE_YEAR =
-    MOVIE_YEAR_RANGE.start;
-
-const MOVIE_YEAR_MIN =
-    MOVIE_YEAR > 0
-        ? MOVIE_YEAR_RANGE.start - 1
-        : 0;
-
-const MOVIE_YEAR_MAX =
-    MOVIE_YEAR > 0
-        ? MOVIE_YEAR_RANGE.end + 1
-        : 0;
 
 const STREAM_TYPE =
     params.get("type") ||
@@ -48907,36 +48511,27 @@ function scoreMovie(item) {
         score += 3000;
     } else if (containsTitleMatch) {
         score += 2000;
-
     } else if (searchedByKnownAlias) {
         score += 1000;
-    } else if (
-        HAS_TRUSTED_IMDB_ID &&
-        Array.isArray(item?.__movinaMatchedKeywords) &&
-        item.__movinaMatchedKeywords.length > 0
-    ) {
-        // Có IMDb ID: cho phép thử kết quả do NguonC
-        // trả về từ các truy vấn tên phim đã gửi.
-        score += 500;
     } else {
         return -10000;
     }
 
-// Năm được so sánh với toàn bộ khoảng phát hành.
-// Khoảng năm đã bao gồm dung sai một năm ở hai đầu.
-if (
-    MOVIE_YEAR_MIN > 0 &&
-    candidateYear > 0
-) {
-    if (
-        candidateYear >= MOVIE_YEAR_MIN &&
-        candidateYear <= MOVIE_YEAR_MAX
-    ) {
-        score += 500;
-    } else {
-        score -= 300;
+    // Năm chỉ dùng để xếp hạng.
+    // Quyết định chấp nhận hay từ chối sẽ được thực hiện
+    // sau khi tải Detail.
+    if (MOVIE_YEAR > 0 && candidateYear > 0) {
+        const difference =
+            Math.abs(candidateYear - MOVIE_YEAR);
+
+        if (difference === 0) {
+            score += 500;
+        } else if (difference === 1) {
+            score += 150;
+        } else {
+            score -= 300;
+        }
     }
-}
 
     // Loại phim chỉ dùng để cộng điểm khi khớp.
     // Không loại ứng viên chỉ vì Search API ghi sai loại.
@@ -49515,157 +49110,112 @@ async function searchNguonC() {
 
     function addKeyword(value) {
         const keyword = String(value || "").trim();
-        const normalized = normalizeTitle(keyword);
 
         if (
             keyword &&
-            normalized.length >= 3 &&
+            normalizeTitle(keyword).length >= 3 &&
             !keywords.some(
                 existing =>
-                    normalizeTitle(existing) === normalized
+                    normalizeTitle(existing) ===
+                    normalizeTitle(keyword)
             )
         ) {
             keywords.push(keyword);
         }
     }
 
-    // Dùng toàn bộ tên phim và alias được Vercel chuyển sang.
+    // Tìm theo tên chính và toàn bộ alias đã xác minh.
     for (const title of MOVIE_TITLE_VARIANTS) {
         addKeyword(title);
     }
 
-    const searchKeywords = keywords.slice(0, 24);
+    // Giữ giới hạn 12 từ khóa đã thiết lập.
+    const searchKeywords = keywords.slice(0, 20);
 
     console.log(
         "[NGUONC CLIENT] SEARCH KEYWORDS:",
         searchKeywords
     );
 
-    const resultsByKeyword = new Array(searchKeywords.length);
-    let nextIndex = 0;
+    const allItems = [];
 
-    // Giới hạn số request đồng thời để tránh gửi dồn dập.
-    const WORKER_COUNT = Math.min(4, searchKeywords.length);
-    const REQUEST_TIMEOUT_MS = 6000;
+    for (const keyword of searchKeywords) {
+        const searchUrl =
+            API_BASE +
+            "/films/search?keyword=" +
+            encodeURIComponent(keyword) +
+            "&page=1";
 
-    async function searchWorker(workerId) {
-        while (true) {
-            const index = nextIndex++;
+        console.log(
+            "[NGUONC CLIENT] SEARCH:",
+            keyword
+        );
 
-            if (index >= searchKeywords.length) {
-                return;
-            }
-
-            const keyword = searchKeywords[index];
-
-            const searchUrl =
-                API_BASE +
-                "/films/search?keyword=" +
-                encodeURIComponent(keyword) +
-                "&page=1";
-
-            const controller = new AbortController();
-
-            const timeoutId = setTimeout(
-                () => controller.abort(),
-                REQUEST_TIMEOUT_MS
+        try {
+            const response = await fetch(
+                searchUrl,
+                {
+                    method: "GET",
+                    headers: {
+                        "Accept": "application/json"
+                    },
+                    cache: "no-store"
+                }
             );
 
-            try {
-                console.log(
-                    "[NGUONC CLIENT] SEARCH:",
-                    {
-                        worker: workerId,
-                        index,
-                        keyword
-                    }
+            if (!response.ok) {
+                console.warn(
+                    "[NGUONC CLIENT] SEARCH FAILED:",
+                    keyword,
+                    response.status
                 );
 
-                const response = await fetch(
-                    searchUrl,
-                    {
-                        method: "GET",
-                        headers: {
-                            "Accept": "application/json"
-                        },
-                        cache: "no-store",
-                        signal: controller.signal
-                    }
-                );
+                continue;
+            }
 
-                if (!response.ok) {
-                    console.warn(
-                        "[NGUONC CLIENT] SEARCH FAILED:",
-                        keyword,
-                        response.status
-                    );
+            const data = await response.json();
 
-                    resultsByKeyword[index] = [];
+            let items = [];
+
+            if (Array.isArray(data?.items)) {
+                items = data.items;
+            } else if (Array.isArray(data?.data)) {
+                items = data.data;
+            } else if (
+                Array.isArray(data?.data?.items)
+            ) {
+                items = data.data.items;
+            }
+
+            console.log(
+                "[NGUONC CLIENT] SEARCH RESULT:",
+                keyword,
+                items.length
+            );
+
+            // Lưu lại từ khóa đã tìm ra từng kết quả.
+            // Nhờ vậy có thể kiểm chứng kết quả fallback.
+            for (const item of items) {
+                if (!item || typeof item !== "object") {
                     continue;
                 }
 
-                const data = await response.json();
-
-                let items = [];
-
-                if (Array.isArray(data?.items)) {
-                    items = data.items;
-                } else if (Array.isArray(data?.data)) {
-                    items = data.data;
-                } else if (
-                    Array.isArray(data?.data?.items)
-                ) {
-                    items = data.data.items;
-                }
-
-                console.log(
-                    "[NGUONC CLIENT] SEARCH RESULT:",
-                    keyword,
-                    items.length
-                );
-
-                resultsByKeyword[index] = items
-                    .filter(
-                        item =>
-                            item &&
-                            typeof item === "object"
-                    )
-                    .map(item => ({
-                        ...item,
-                        __movinaMatchedKeywords: [keyword]
-                    }));
-
-            } catch (error) {
-                const timedOut =
-                    error?.name === "AbortError";
-
-                console.warn(
-                    timedOut
-                        ? "[NGUONC CLIENT] SEARCH TIMEOUT:"
-                        : "[NGUONC CLIENT] SEARCH ERROR:",
-                    keyword,
-                    error?.message || error
-                );
-
-                resultsByKeyword[index] = [];
-
-            } finally {
-                clearTimeout(timeoutId);
+                allItems.push({
+                    ...item,
+                    __movinaMatchedKeywords: [
+                        keyword
+                    ]
+                });
             }
+
+        } catch (error) {
+            console.warn(
+                "[NGUONC CLIENT] SEARCH ERROR:",
+                keyword,
+                error?.message || error
+            );
         }
     }
-
-    await Promise.all(
-        Array.from(
-            { length: WORKER_COUNT },
-            (_, index) => searchWorker(index + 1)
-        )
-    );
-
-    // Ghép kết quả theo thứ tự từ khóa ban đầu.
-    const allItems = resultsByKeyword.flatMap(
-        items => Array.isArray(items) ? items : []
-    );
 
     // -------------------------------------------------
     // DEDUPLICATE + MERGE SEARCH PROVENANCE
@@ -49686,12 +49236,15 @@ async function searchNguonC() {
         const existing = byKey.get(key);
 
         if (existing) {
-            existing.__movinaMatchedKeywords = [
+            const mergedKeywords = [
                 ...new Set([
                     ...(existing.__movinaMatchedKeywords || []),
                     ...(item.__movinaMatchedKeywords || [])
                 ])
             ];
+
+            existing.__movinaMatchedKeywords =
+                mergedKeywords;
 
             continue;
         }
@@ -49733,6 +49286,7 @@ async function searchNguonC() {
 
     return unique;
 }
+
 
 // =====================================================
 // LOAD DETAIL
@@ -50106,21 +49660,18 @@ for (const entry of detailCandidates) {
 const yearMatches =
     MOVIE_YEAR > 0 &&
     identity.year > 0 &&
-    identity.year >= MOVIE_YEAR_MIN &&
-    identity.year <= MOVIE_YEAR_MAX;
+    identity.year === MOVIE_YEAR;
 
 const yearDifference =
     MOVIE_YEAR > 0 && identity.year > 0
         ? Math.abs(identity.year - MOVIE_YEAR)
         : null;
 
-const yearMatches =
-    yearDifference !== null &&
-    yearDifference <= 1;
-
+// Chỉ từ chối khi chênh lệch từ 2 năm trở lên.
+// Thiếu năm ở Detail không phải lý do để từ chối.
 const yearConflicts =
     yearDifference !== null &&
-    yearDifference > 1;
+    yearDifference >= 2;
 
 // Không dùng loại movie/series để loại ứng viên.
 // NguonC có thể phân loại khác với metadata MOVINA.
@@ -50131,11 +49682,7 @@ if (yearConflicts) {
         "[NGUONC CLIENT] REJECT YEAR:",
         {
             name: item?.name,
-            expected: MOVIE_YEAR_RANGE,
-allowedRange: [
-    MOVIE_YEAR_MIN,
-    MOVIE_YEAR_MAX
-],
+            expected: MOVIE_YEAR,
             actual: identity.year,
             difference: yearDifference
         }
@@ -50148,11 +49695,7 @@ allowedRange: [
 // hoặc NguonC phải trả kết quả từ một alias hợp lệ.
 const identityAccepted =
     titleMatches ||
-    searchedByKnownAlias ||
-    (
-        HAS_TRUSTED_IMDB_ID &&
-        matchedKeywords.length > 0
-    );
+    searchedByKnownAlias;
 
 console.log(
     "[NGUONC CLIENT] IDENTITY CHECK:",
@@ -50162,11 +49705,7 @@ console.log(
         matchedKeywords,
         searchedByKnownAlias,
         titleMatches,
-        expectedYearRange: MOVIE_YEAR_RANGE,
-allowedYearRange: [
-    MOVIE_YEAR_MIN,
-    MOVIE_YEAR_MAX
-],
+        expectedYear: MOVIE_YEAR,
         actualYear: identity.year,
         yearDifference,
         yearMatches,
@@ -50199,7 +49738,7 @@ if (!identityAccepted) {
             {
                 name: item?.name,
                 detailTitles: identity.rawTitles,
-               expectedYearRange: MOVIE_YEAR_RANGE,
+                expectedYear: MOVIE_YEAR,
                 actualYear: identity.year,
                 yearMatches,
                 type: identity.type,
