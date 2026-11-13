@@ -23316,17 +23316,44 @@ imdbId = await movinaResolveAndVerifyImdb(
         }
     }
 
-    const basicVariants = sourceTitles.flatMap(title =>
-        kkphimBuildBasicTitleVariants(title)
-    );
 
-    const titles = uniqueTitles([
-        primaryTitle,
-        ...sourceTitles,
-        ...cinemetaTitles,
-        ...wikidataTitles,
-        ...basicVariants
-    ]).slice(0, 24);
+// Tạo biến thể cơ bản từ tên chính và một số tên nguồn.
+// Không để biến thể tự sinh chiếm chỗ alias đa ngôn ngữ.
+const basicVariants = [
+    ...kkphimBuildBasicTitleVariants(primaryTitle),
+
+    ...sourceTitles
+        .slice(0, 4)
+        .flatMap(title =>
+            kkphimBuildBasicTitleVariants(title)
+        )
+];
+
+// Wikidata trả về cả biến thể cơ bản của tên gốc.
+// Tách chúng ra để ưu tiên các alias ngôn ngữ thực sự.
+const primaryBasicKeys = new Set(
+    kkphimBuildBasicTitleVariants(primaryTitle)
+        .map(normalize)
+);
+
+const wikidataAliases = wikidataTitles.filter(
+    title => !primaryBasicKeys.has(normalize(title))
+);
+
+// Thứ tự ưu tiên:
+// 1. Tên chính
+// 2. Tên Cinemeta
+// 3. Alias đa ngôn ngữ từ Wikidata
+// 4. Alias trong metadata và cache
+// 5. Biến thể tự sinh
+const titles = uniqueTitles([
+    primaryTitle,
+    ...cinemetaTitles,
+    ...wikidataAliases,
+    ...sourceTitles,
+    ...basicVariants
+]).slice(0, 24);
+
 
     console.log(
         "[MOVINA UNIVERSAL TITLE IDENTITY]",
@@ -49106,6 +49133,7 @@ function playM3U8(
 
 
 async function searchNguonC() {
+
     const keywords = [];
 
     function addKeyword(value) {
@@ -49124,98 +49152,186 @@ async function searchNguonC() {
         }
     }
 
-    // Tìm theo tên chính và toàn bộ alias đã xác minh.
-    for (const title of MOVIE_TITLE_VARIANTS) {
+    // Tập hợp các alias đã được MOVINA xác minh.
+    const variantTitles = [
+        ...new Set(
+            MOVIE_TITLE_VARIANTS
+                .map(value => String(value || "").trim())
+                .filter(Boolean)
+        )
+    ];
+
+    // Ưu tiên tên chính, sau đó là tên có ký tự
+    // thuộc các hệ chữ khác nhau như Việt, Nhật, Trung.
+    const multilingualTitles = variantTitles.filter(
+        title => /[^\\x00-\\x7F]/.test(title)
+    );
+
+    const otherTitles = variantTitles.filter(
+        title => !/[^\\x00-\\x7F]/.test(title)
+    );
+
+    // Lượt 1: tên chính.
+    addKeyword(MOVIE_TITLE);
+
+    // Lượt 2: tối đa hai alias đa ngôn ngữ ưu tiên.
+    for (const title of multilingualTitles.slice(0, 2)) {
         addKeyword(title);
     }
 
-    // Giữ giới hạn 12 từ khóa đã thiết lập.
-    const searchKeywords = keywords.slice(0, 20);
+    // Lượt 3: thêm năm vào tên chính và alias.
+    // Ví dụ: Journey to the West 1996,
+    // Tây Du Ký 1996, Monster 2004.
+    if (MOVIE_YEAR > 0) {
+        addKeyword(
+            `${MOVIE_TITLE} ${MOVIE_YEAR}`
+        );
+
+        for (const title of multilingualTitles.slice(0, 2)) {
+            addKeyword(
+                `${title} ${MOVIE_YEAR}`
+            );
+        }
+    }
+
+    // Lượt 4: các alias còn lại.
+    for (const title of otherTitles) {
+        addKeyword(title);
+    }
+
+    // Giới hạn 8 từ khóa để tránh tìm quá nhiều.
+    const searchKeywords = keywords.slice(0, 8);
 
     console.log(
-        "[NGUONC CLIENT] SEARCH KEYWORDS:",
-        searchKeywords
+        "[NGUONC CLIENT] SOURCE-AWARE SEARCH:",
+        {
+            title: MOVIE_TITLE,
+            year: MOVIE_YEAR,
+            variants: variantTitles.length,
+            multilingual: multilingualTitles.slice(0, 2),
+            keywords: searchKeywords
+        }
     );
 
     const allItems = [];
 
-    for (const keyword of searchKeywords) {
-        const searchUrl =
-            API_BASE +
-            "/films/search?keyword=" +
-            encodeURIComponent(keyword) +
-            "&page=1";
+    // Tìm song song tối đa 3 yêu cầu.
+    // Giới hạn thời gian mỗi yêu cầu để không bị chờ vô hạn.
+    let nextKeywordIndex = 0;
 
-        console.log(
-            "[NGUONC CLIENT] SEARCH:",
-            keyword
-        );
+    async function searchWorker() {
+        while (nextKeywordIndex < searchKeywords.length) {
+            const keyword =
+                searchKeywords[nextKeywordIndex++];
 
-        try {
-            const response = await fetch(
-                searchUrl,
-                {
-                    method: "GET",
-                    headers: {
-                        "Accept": "application/json"
-                    },
-                    cache: "no-store"
-                }
-            );
+            const searchUrl =
+                API_BASE +
+                "/films/search?keyword=" +
+                encodeURIComponent(keyword) +
+                "&page=1";
 
-            if (!response.ok) {
-                console.warn(
-                    "[NGUONC CLIENT] SEARCH FAILED:",
-                    keyword,
-                    response.status
+            let timeoutHandle = null;
+
+            try {
+                console.log(
+                    "[NGUONC CLIENT] SEARCH:",
+                    keyword
                 );
 
-                continue;
-            }
+                const timeoutPromise = new Promise(resolve => {
+                    timeoutHandle = setTimeout(
+                        () => resolve(null),
+                        7000
+                    );
+                });
 
-            const data = await response.json();
+                const response = await Promise.race([
+                    fetch(
+                        searchUrl,
+                        {
+                            method: "GET",
+                            headers: {
+                                "Accept": "application/json"
+                            },
+                            cache: "no-store"
+                        }
+                    ),
+                    timeoutPromise
+                ]);
 
-            let items = [];
+                if (!response) {
+                    throw new Error("Search timeout 7s");
+                }
 
-            if (Array.isArray(data?.items)) {
-                items = data.items;
-            } else if (Array.isArray(data?.data)) {
-                items = data.data;
-            } else if (
-                Array.isArray(data?.data?.items)
-            ) {
-                items = data.data.items;
-            }
+                if (!response.ok) {
+                    console.warn(
+                        "[NGUONC CLIENT] SEARCH FAILED:",
+                        keyword,
+                        response.status
+                    );
 
-            console.log(
-                "[NGUONC CLIENT] SEARCH RESULT:",
-                keyword,
-                items.length
-            );
-
-            // Lưu lại từ khóa đã tìm ra từng kết quả.
-            // Nhờ vậy có thể kiểm chứng kết quả fallback.
-            for (const item of items) {
-                if (!item || typeof item !== "object") {
                     continue;
                 }
 
-                allItems.push({
-                    ...item,
-                    __movinaMatchedKeywords: [
-                        keyword
-                    ]
-                });
-            }
+                const data = await response.json();
 
-        } catch (error) {
-            console.warn(
-                "[NGUONC CLIENT] SEARCH ERROR:",
-                keyword,
-                error?.message || error
-            );
+                let items = [];
+
+                if (Array.isArray(data?.items)) {
+                    items = data.items;
+                } else if (Array.isArray(data?.data)) {
+                    items = data.data;
+                } else if (
+                    Array.isArray(data?.data?.items)
+                ) {
+                    items = data.data.items;
+                }
+
+                console.log(
+                    "[NGUONC CLIENT] SEARCH RESULT:",
+                    keyword,
+                    items.length
+                );
+
+                for (const item of items) {
+                    if (!item || typeof item !== "object") {
+                        continue;
+                    }
+
+                    allItems.push({
+                        ...item,
+                        __movinaMatchedKeywords: [
+                            keyword
+                        ]
+                    });
+                }
+
+            } catch (error) {
+                console.warn(
+                    "[NGUONC CLIENT] SEARCH ERROR:",
+                    keyword,
+                    error?.message || error
+                );
+
+            } finally {
+                if (timeoutHandle) {
+                    clearTimeout(timeoutHandle);
+                }
+            }
         }
     }
+
+    const workerCount = Math.min(
+        3,
+        searchKeywords.length
+    );
+
+    await Promise.all(
+        Array.from(
+            { length: workerCount },
+            () => searchWorker()
+        )
+    );
 
     // -------------------------------------------------
     // DEDUPLICATE + MERGE SEARCH PROVENANCE
