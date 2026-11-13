@@ -48647,6 +48647,39 @@ function findVideoUrlForEpisode(
         detail?.data?.episodes ||
         [];
 
+// -------------------------------------------------
+// INFER SEASON FROM DETAIL TITLE
+// Một số nguồn đăng mỗi mùa thành một Detail riêng.
+// Khi ấy tên tập chỉ là "Tập 1", không có S04E01.
+// -------------------------------------------------
+
+const detailTitles = [
+    movie?.name,
+    movie?.origin_name,
+    movie?.original_name,
+    movie?.title,
+    movie?.english_name
+]
+    .map(value => String(value || "").trim())
+    .filter(Boolean);
+
+const detailSeasonMatch = detailTitles
+    .join(" ")
+    .match(
+        /(?:season|mùa|phan|phần|part)\s*0*(\d+)/i
+    );
+
+const detailSeason =
+    Number(detailSeasonMatch?.[1] || 0);
+
+console.log(
+    "[NGUONC CLIENT] DETAIL SEASON CONTEXT:",
+    {
+        detailTitles,
+        detailSeason
+    }
+);
+
     if (
         !Array.isArray(
             episodes
@@ -48862,6 +48895,7 @@ let detectedSeason =
         : Number(
             episodeSeasonMatch?.[1] ||
             serverSeason ||
+            detailSeason ||
             0
         );
 
