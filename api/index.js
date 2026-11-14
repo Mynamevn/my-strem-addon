@@ -27533,36 +27533,6 @@ const normalizedSlug =
                 continue;
             }
 
-            const serverSeasonNumber =
-                Number(
-                    episodeServer?.season ||
-                    episodeServer?.season_number ||
-                    episodeServer?.seasonNumber ||
-                    0
-                ) || 0;
-
-            const serverSeasonStatus =
-                movinaCheckProviderSeason(
-                    providerContext,
-                    [
-                        serverName,
-                        serverSeasonNumber
-                            ? `Season ${serverSeasonNumber}`
-                            : ""
-                    ]
-                );
-
-            if (serverSeasonStatus === "mismatch") {
-                console.log(
-                    "[VSMOV] SKIP WRONG SEASON SERVER:",
-                    serverName,
-                    "| requested:",
-                    seasonNumber
-                );
-
-                continue;
-            }
-
             const serverData =
                 Array.isArray(
                     episodeServer?.server_data
