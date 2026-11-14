@@ -23586,6 +23586,351 @@ return {
 
 }
 
+
+/* ============================================================
+   [CORE-IDENTITY-002] MOVINA UNIVERSAL PROVIDER CONTEXT
+   [PROVIDERS: ALL VOD]
+   Dùng chung identity, season, episode và season-year.
+   Không thay đổi resolver hoặc stream extraction.
+   ============================================================ */
+
+function movinaNormalizeIdentityTitle(value) {
+    return String(value || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+// Chỉ loại dấu mùa khỏi tên nền để so sánh danh tính series.
+// Không dùng alias để suy đoán mùa.
+function movinaGetBaseSeriesTitle(value) {
+    return String(value || "")
+        .replace(
+            /\b(?:season|series|mùa|phan|phần|part|cour)\s*[-_.:#]*\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/gi,
+            " "
+        )
+        .replace(
+            /\bS\s*0*(\d{1,2})\b/gi,
+            " "
+        )
+        .replace(
+            /\b第\s*\d+\s*期\b/g,
+            " "
+        )
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+// Chỉ nhận mùa khi có dấu hiệu mùa rõ ràng.
+// Số tập đơn lẻ không được xem là số mùa.
+function movinaDetectExplicitSeason(value) {
+    const text = String(value || "");
+
+    const patterns = [
+        /\bseason\s*[-_.:#]*\s*0*(\d{1,2})\b/i,
+        /\bseries\s*[-_.:#]*\s*0*(\d{1,2})\b/i,
+        /\bmùa\s*[-_.:#]*\s*0*(\d{1,2})\b/i,
+        /\bphần\s*[-_.:#]*\s*0*(\d{1,2})\b/i,
+        /\bpart\s*[-_.:#]*\s*0*(\d{1,2})\b/i,
+        /\bS\s*0*(\d{1,2})\b/i,
+        /\b0*(\d{1,2})(?:st|nd|rd|th)\s+season\b/i,
+        /第\s*0*(\d{1,2})\s*期/
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+
+        if (match) {
+            const season = Number(match[1]) || 0;
+
+            if (season >= 1 && season <= 99) {
+                return season;
+            }
+        }
+    }
+
+    return 0;
+}
+
+function movinaBuildSeasonKeywords(title, seasonNumber) {
+    const baseTitle = String(title || "").trim();
+    const season = Number(seasonNumber) || 0;
+
+    if (!baseTitle || season < 1) {
+        return [];
+    }
+
+    const ordinalWords = {
+        1: "first",
+        2: "second",
+        3: "third",
+        4: "fourth",
+        5: "fifth",
+        6: "sixth",
+        7: "seventh",
+        8: "eighth",
+        9: "ninth",
+        10: "tenth"
+    };
+
+    const variants = [
+        `${baseTitle} Season ${season}`,
+        `${baseTitle} season ${season}`,
+        `${baseTitle} S${String(season).padStart(2, "0")}`,
+        `${baseTitle} S${season}`,
+        `${baseTitle} Phần ${season}`,
+        `${baseTitle} Mùa ${season}`
+    ];
+
+    if (ordinalWords[season]) {
+        variants.push(
+            `${baseTitle} ${ordinalWords[season]} season`
+        );
+    }
+
+    const seen = new Set();
+
+    return variants.filter(value => {
+        const key = movinaNormalizeIdentityTitle(value);
+
+        if (!key || seen.has(key)) {
+            return false;
+        }
+
+        seen.add(key);
+        return true;
+    }).slice(0, 8);
+}
+
+function movinaBuildUniversalProviderContext(options = {}) {
+    const identity = options.identity || {};
+    const metadata = options.metadata || {};
+
+    const type =
+        options.type === "series"
+            ? "series"
+            : "movie";
+
+    const seasonNumber =
+        Math.max(0, Number(options.seasonNumber) || 0);
+
+    const episodeNumber =
+        Math.max(0, Number(options.episodeNumber) || 0);
+
+    const primaryTitle =
+        String(options.title || "").trim();
+
+    const titles = Array.from(
+        new Set([
+            primaryTitle,
+            ...(Array.isArray(identity.titles)
+                ? identity.titles
+                : [])
+        ]
+            .map(value => String(value || "").trim())
+            .filter(Boolean))
+    ).slice(0, 24);
+
+    const baseTitles = Array.from(
+        new Set(
+            titles
+                .map(movinaGetBaseSeriesTitle)
+                .filter(Boolean)
+        )
+    );
+
+    const videos = Array.isArray(metadata.videos)
+        ? metadata.videos
+        : [];
+
+    const seasonMap = new Map();
+
+    for (const video of videos) {
+        const season = Number(video?.season) || 0;
+        const episode = Number(video?.episode) || 0;
+
+        if (season < 1 || episode < 1) {
+            continue;
+        }
+
+        if (!seasonMap.has(season)) {
+            seasonMap.set(season, {
+                episodes: new Set(),
+                years: []
+            });
+        }
+
+        const entry = seasonMap.get(season);
+        entry.episodes.add(episode);
+
+        const released = String(
+            video?.released ||
+            video?.releaseDate ||
+            ""
+        );
+
+        const yearMatch = released.match(
+            /\b(?:19|20)\d{2}\b/
+        );
+
+        if (yearMatch) {
+            entry.years.push(Number(yearMatch[0]));
+        }
+    }
+
+    const seasonCounts = {};
+
+    for (const [season, entry] of seasonMap.entries()) {
+        seasonCounts[season] = entry.episodes.size;
+    }
+
+    const requestedSeasonInfo =
+        seasonMap.get(seasonNumber);
+
+    const seasonYear =
+        requestedSeasonInfo?.years?.length
+            ? Math.min(...requestedSeasonInfo.years)
+            : 0;
+
+    // Chỉ tính global episode khi metadata có đủ số tập
+    // của TẤT CẢ mùa đứng trước mùa đang yêu cầu.
+    let globalEpisode = 0;
+    let globalEpisodeVerified = false;
+
+    if (
+        type === "series" &&
+        seasonNumber > 0 &&
+        episodeNumber > 0
+    ) {
+        let totalPreviousEpisodes = 0;
+        let complete = true;
+
+        for (let season = 1; season < seasonNumber; season++) {
+            const count = Number(seasonCounts[season]) || 0;
+
+            if (count < 1) {
+                complete = false;
+                break;
+            }
+
+            totalPreviousEpisodes += count;
+        }
+
+        if (complete) {
+            globalEpisode =
+                totalPreviousEpisodes + episodeNumber;
+
+            globalEpisodeVerified = true;
+        }
+    }
+
+    const seasonKeywords =
+        type === "series"
+            ? movinaBuildSeasonKeywords(
+                primaryTitle,
+                seasonNumber
+            )
+            : [];
+
+    const context = {
+        imdbId: String(identity.imdbId || "").trim(),
+        titles,
+        baseTitles,
+
+        primaryTitle,
+        normalizedPrimaryTitle:
+            movinaNormalizeIdentityTitle(primaryTitle),
+
+        type,
+
+        identityYear:
+            Number(identity.identityYear) ||
+            Number(options.year) ||
+            0,
+
+        seasonNumber,
+        episodeNumber,
+
+        seasonYear,
+        expectedYear:
+            type === "series"
+                ? (seasonYear || Number(options.year) || 0)
+                : (
+                    Number(identity.identityYear) ||
+                    Number(options.year) ||
+                    0
+                ),
+
+        seasonCounts,
+        globalEpisode,
+        globalEpisodeVerified,
+
+        seasonKeywords
+    };
+
+    console.log(
+        "[MOVINA UNIVERSAL PROVIDER CONTEXT]",
+        JSON.stringify({
+            imdbId: context.imdbId || null,
+            type: context.type,
+            titleCount: context.titles.length,
+            seasonNumber: context.seasonNumber,
+            episodeNumber: context.episodeNumber,
+            seasonYear: context.seasonYear || null,
+            expectedYear: context.expectedYear || null,
+            seasonCounts: context.seasonCounts,
+            globalEpisode:
+                context.globalEpisodeVerified
+                    ? context.globalEpisode
+                    : null,
+            seasonKeywords: context.seasonKeywords
+        })
+    );
+
+    return context;
+}
+
+// Kiểm tra mùa độc lập với việc so khớp tên phim.
+// Nếu nguồn ghi rõ mùa khác, ứng viên bị loại.
+// Nếu nguồn không ghi mùa, trả về unknown — không tự nhận là đúng.
+function movinaCheckProviderSeason(context, values = []) {
+    if (
+        !context ||
+        context.type !== "series" ||
+        !context.seasonNumber
+    ) {
+        return "not_applicable";
+    }
+
+    const texts = Array.isArray(values)
+        ? values
+        : [values];
+
+    let detectedSeason = 0;
+
+    for (const value of texts) {
+        detectedSeason =
+            movinaDetectExplicitSeason(value);
+
+        if (detectedSeason) {
+            break;
+        }
+    }
+
+    if (!detectedSeason) {
+        return "unknown";
+    }
+
+    return detectedSeason === context.seasonNumber
+        ? "match"
+        : "mismatch";
+}
+
+
 async function fetchKKPhim(
     movieName,
     movieYear = 0,
