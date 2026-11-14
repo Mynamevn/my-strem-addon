@@ -23776,13 +23776,13 @@ function movinaBuildUniversalProviderContext(options = {}) {
         const yearMatch = released.match(
             /\b(?:19|20)\d{2}\b/
         );
-
         if (yearMatch) {
             entry.episodeYears.set(
                 episode,
                 Number(yearMatch[0])
             );
         }
+    } // ĐÓNG vòng lặp for (const video of videos)
 
     const seasonCounts = {};
     for (const [season, entry] of seasonMap.entries()) {
