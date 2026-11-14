@@ -13955,33 +13955,26 @@ if (
     }
 }
 
-
 // ========================================================
-// [STREMIO-012.05] UNIVERSAL IMDb IDENTITY COMPLETION
-// [PROVIDERS: MOVINA]
-// 
-// - Áp dụng cho toàn bộ catalog VOD.
-// - Bao gồm cả kết quả Search.
-// - Không chặn catalog foreground.
-// - Tái sử dụng resolver, verification và cache hiện có.
-// - Không thay đổi poster, tên phim hoặc thứ tự.
+// [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
 // ========================================================
 
-const MOVINA_UNIVERSAL_IMDB_CATALOGS = [
-    "pa_movies_trending",
-    "pa_series_trending",
-    "pa_tvb",
-    "pa_daily",
-    "pa_animation_new"
-];
+// Chỉ áp dụng cho 5 catalog VOD đã bật enrichment.
+// Không áp dụng cho Search MOVINA và IPTV.
 
 if (
-    MOVINA_UNIVERSAL_IMDB_CATALOGS.includes(args.id) &&
-    Array.isArray(items) &&
-    items.length > 0
+    enableCinemetaPreview &&
+    !searchQuery &&
+    [
+        "pa_movies_trending",
+        "pa_series_trending",
+        "pa_tvb",
+        "pa_daily",
+        "pa_animation_new"
+    ].includes(args.id)
 ) {
     const resolveBackgroundType = item => {
-
+        // Catalog có type cố định.
         if (
             forcedType === "movie" ||
             forcedType === "series"
@@ -13989,21 +13982,11 @@ if (
             return forcedType;
         }
 
+        // Catalog hỗn hợp: xác định riêng từng phim.
         return isSeriesItem(item)
             ? "series"
             : "movie";
     };
-
-    console.log(
-        "[MOVINA UNIVERSAL IMDb] BACKGROUND SCHEDULE:",
-        JSON.stringify({
-            catalog: args.id,
-            searchQuery: searchQuery || null,
-            items: items.length,
-            mode: "background",
-            identityResolver: "movinaResolveAndVerifyImdb"
-        })
-    );
 
     movinaSchedulePreviewCompletion(
         items,
@@ -14011,7 +13994,6 @@ if (
         resolveBackgroundType
     );
 }
-
 
 return {
     metas,
@@ -41229,216 +41211,6 @@ function isPhimHDCSUrl(value) {
 
         }
 
-
-// ====================================================
-// [PHIMHDCS-IDENTITY-SEARCH-V2]
-// MULTI-ALIAS SEARCH
-// Tìm tên Việt, tên Anh, tên gốc và tên thay thế.
-// Ưu tiên filmhdc.com trước phimhdcss.com.
-// ====================================================
-
-const phimhdcsSearchKeywords = [
-    ...new Set(
-        finalRequestedTitleVariants
-            .map(value =>
-                String(value || "")
-                    .replace(/\s+/g, " ")
-                    .trim()
-            )
-            .filter(value => value.length >= 3)
-    )
-]
-    .filter(value =>
-        normalizeTitle(value) !==
-        normalizeTitle(movieName)
-    )
-    .slice(0, 8);
-
-console.log(
-    "[PHIMHDCS] MULTI-ALIAS SEARCH START:",
-    JSON.stringify({
-        primary: movieName,
-        aliases: phimhdcsSearchKeywords,
-        year: movieYear,
-        imdbId: normalizedPhimhdcsImdbId || null
-    })
-);
-
-const phimhdcsAliasTasks = [];
-
-for (const domain of PHIMHDCS_DOMAINS) {
-    for (const keyword of phimhdcsSearchKeywords) {
-        phimhdcsAliasTasks.push({
-            domain,
-            keyword
-        });
-    }
-}
-
-let phimhdcsAliasTaskIndex = 0;
-
-async function phimhdcsAliasSearchWorker() {
-    while (
-        phimhdcsAliasTaskIndex <
-        phimhdcsAliasTasks.length
-    ) {
-        const task =
-            phimhdcsAliasTasks[
-                phimhdcsAliasTaskIndex++
-            ];
-
-        const searchUrl =
-            task.domain +
-            "/?search=" +
-            encodeURIComponent(task.keyword)
-                .replace(/%20/g, "+");
-
-        try {
-            const response = await axios.get(
-                searchUrl,
-                {
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                    },
-                    timeout: 8000,
-                    maxRedirects: 5
-                }
-            );
-
-            const resolvedUrl =
-                response.request?.res?.responseUrl ||
-                searchUrl;
-
-            const searchOrigin =
-                new URL(resolvedUrl).origin;
-
-            const $aliasSearch =
-                cheerio.load(
-                    String(response.data || "")
-                );
-
-            let added = 0;
-
-            function addAliasCandidate(href, title) {
-                const cleanTitle =
-                    String(title || "")
-                        .replace(/\s+/g, " ")
-                        .trim();
-
-                if (!href || !cleanTitle) return;
-
-                let absoluteUrl = "";
-
-                try {
-                    absoluteUrl =
-                        new URL(
-                            href,
-                            searchOrigin
-                        ).href;
-                } catch (e) {
-                    return;
-                }
-
-                if (!isPhimHDCSUrl(absoluteUrl)) {
-                    return;
-                }
-
-                const exists = candidates.some(
-                    item => item.url === absoluteUrl
-                );
-
-                if (exists) return;
-
-                candidates.push({
-                    url: absoluteUrl,
-                    title: cleanTitle,
-                    year: extractYear(cleanTitle),
-                    matchedKeyword: task.keyword
-                });
-
-                added++;
-            }
-
-            $aliasSearch(
-                "li.item a[href]"
-            ).each(function () {
-                const node =
-                    $aliasSearch(this);
-
-                addAliasCandidate(
-                    node.attr("href"),
-                    node.attr("title") ||
-                    node.text()
-                );
-            });
-
-            if (added === 0) {
-                $aliasSearch("li.item").each(
-                    function () {
-                        const node =
-                            $aliasSearch(this);
-
-                        const anchor =
-                            node.find("a[href]").first();
-
-                        addAliasCandidate(
-                            anchor.attr("href"),
-                            anchor.attr("title") ||
-                            anchor.text()
-                        );
-                    }
-                );
-            }
-
-            console.log(
-                "[PHIMHDCS] ALIAS SEARCH COMPLETE:",
-                JSON.stringify({
-                    keyword: task.keyword,
-                    domain: task.domain,
-                    status: response.status,
-                    added
-                })
-            );
-
-        } catch (error) {
-            console.log(
-                "[PHIMHDCS] ALIAS SEARCH ERROR:",
-                JSON.stringify({
-                    keyword: task.keyword,
-                    domain: task.domain,
-                    status:
-                        error?.response?.status || 0,
-                    message:
-                        error?.message || String(error)
-                })
-            );
-        }
-    }
-}
-
-await Promise.all(
-    Array.from(
-        {
-            length: Math.min(
-                3,
-                phimhdcsAliasTasks.length
-            )
-        },
-        () => phimhdcsAliasSearchWorker()
-    )
-);
-
-console.log(
-    "[PHIMHDCS] MULTI-ALIAS SEARCH COMPLETE:",
-    JSON.stringify({
-        keywords: phimhdcsSearchKeywords.length,
-        candidates: candidates.length
-    })
-);
-
         // ====================================================
         // LOẠI BỎ URL TRÙNG
         // ====================================================
@@ -41880,108 +41652,6 @@ console.log(
                 continue;
             }
 
-
-// ====================================================
-// [PHIMHDCS-IDENTITY-GUARD-V2]
-// STRICT YEAR + INSTALLMENT VALIDATION
-// Ngăn chọn nhầm sequel / phần phim khác.
-// ====================================================
-
-function phimhdcsExtractInstallment(value) {
-    const normalized =
-        normalizeAliasTitle(value);
-
-    if (!normalized) return 0;
-
-    const namedPart = normalized.match(
-        /\b(?:part|pt|phan|volume|vol|chapter|book)\s*(\d+)\b/i
-    );
-
-    if (namedPart) {
-        return Number(namedPart[1]) || 0;
-    }
-
-    // Phần phim ghi số ở cuối tên.
-    const numericSuffix = normalized.match(
-        /\b(\d+)$/
-    );
-
-    return numericSuffix
-        ? Number(numericSuffix[1]) || 0
-        : 0;
-}
-
-const requestedInstallments = [
-    ...new Set(
-        finalRequestedTitleVariants
-            .map(phimhdcsExtractInstallment)
-            .filter(value => value > 0)
-    )
-];
-
-const candidateInstallment =
-    phimhdcsExtractInstallment(
-        candidate.title
-    );
-
-const installmentMismatch =
-    requestedInstallments.length > 0
-        ? (
-            candidateInstallment !==
-            requestedInstallments[0]
-        )
-        : candidateInstallment > 0;
-
-if (installmentMismatch) {
-    console.log(
-        "[PHIMHDCS] CANDIDATE REJECTED — WRONG INSTALLMENT:",
-        JSON.stringify({
-            requestedTitle: movieName,
-            requestedInstallments,
-            candidateTitle: candidate.title,
-            candidateInstallment,
-            url: candidate.url
-        })
-    );
-
-    continue;
-}
-
-// Năm phát hành là điều kiện loại trừ,
-// không chỉ là điểm cộng/trừ.
-if (
-    Number(movieYear) > 0 &&
-    Number(detail.year) > 0 &&
-    Math.abs(
-        Number(detail.year) -
-        Number(movieYear)
-    ) > 1
-) {
-    console.log(
-        "[PHIMHDCS] CANDIDATE REJECTED — WRONG YEAR:",
-        JSON.stringify({
-            requestedTitle: movieName,
-            requestedYear: movieYear,
-            candidateTitle: candidate.title,
-            candidateYear: detail.year,
-            url: candidate.url
-        })
-    );
-
-    continue;
-}
-
-console.log(
-    "[PHIMHDCS] CANDIDATE IDENTITY GUARD PASS:",
-    JSON.stringify({
-        requestedTitle: movieName,
-        requestedYear: movieYear,
-        candidateTitle: candidate.title,
-        candidateYear: detail.year,
-        installment: candidateInstallment
-    })
-);
-
             let score =
                 titleScore;
 
@@ -42060,19 +41730,6 @@ selectedDetailUrl =
             "|",
             selectedMovie.url
         );
-
-// Đồng bộ domain theo trang Detail đã xác minh.
-// Giữ nguyên domain thực tế cho các URL episode.
-try {
-    const selectedOrigin =
-        new URL(selectedDetailUrl).origin;
-
-    if (
-        isPhimHDCSUrl(selectedOrigin + "/")
-    ) {
-        BASE_URL = selectedOrigin;
-    }
-} catch (e) {}
 
         // ====================================================
         // 4. REUSE VERIFIED DETAIL PAGE
@@ -47318,34 +46975,15 @@ const nguoncUniversalTitleIdentityPromise =
           streamType
       ),
 
-      
-(async () => {
-    const identity =
-        await nguoncUniversalTitleIdentityPromise;
-
-    console.log(
-        "[PHIMHDCS] UNIVERSAL IDENTITY READY:",
-        JSON.stringify({
-            title: movieName,
-            imdbId: identity.imdbId || null,
-            year: movieYear,
-            type: streamType,
-            titleCount: identity.titles.length,
-            titles: identity.titles
-        })
-    );
-
-    return await scrapePhimHDCS(
-        movieName,
-        movieYear,
-        seasonNumber,
-        episodeNumber,
-        streamType,
-        identity.titles,
-        identity.imdbId || phimhdcsImdbIdForTitles
-    );
-})()
-
+      scrapePhimHDCS(
+          movieName,
+          movieYear,
+          seasonNumber,
+          episodeNumber,
+          streamType,
+          phimhdcsTitleVariants,
+          phimhdcsImdbIdForTitles
+      )
 
   ]);
 
