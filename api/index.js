@@ -23760,7 +23760,7 @@ function movinaBuildUniversalProviderContext(options = {}) {
         if (!seasonMap.has(season)) {
             seasonMap.set(season, {
                 episodes: new Set(),
-                years: []
+                episodeYears: new Map()
             });
         }
 
@@ -23778,23 +23778,40 @@ function movinaBuildUniversalProviderContext(options = {}) {
         );
 
         if (yearMatch) {
-            entry.years.push(Number(yearMatch[0]));
+            entry.episodeYears.set(
+                episode,
+                Number(yearMatch[0])
+            );
         }
-    }
 
     const seasonCounts = {};
-
     for (const [season, entry] of seasonMap.entries()) {
-        seasonCounts[season] = entry.episodes.size;
+        const episodeNumbers =
+            Array.from(entry.episodes).sort(
+                (a, b) => a - b
+            );
+
+        const isContiguous =
+            episodeNumbers.length > 0 &&
+            episodeNumbers.every(
+                (episode, index) =>
+                    episode === index + 1
+            );
+
+        // 0 có nghĩa là không đủ dữ liệu để tính
+        // global episode một cách an toàn.
+        seasonCounts[season] =
+            isContiguous
+                ? episodeNumbers.length
+                : 0;
     }
 
     const requestedSeasonInfo =
         seasonMap.get(seasonNumber);
-
     const seasonYear =
-        requestedSeasonInfo?.years?.length
-            ? Math.min(...requestedSeasonInfo.years)
-            : 0;
+        Number(
+            requestedSeasonInfo?.episodeYears?.get(1)
+        ) || 0;
 
     // Chỉ tính global episode khi metadata có đủ số tập
     // của TẤT CẢ mùa đứng trước mùa đang yêu cầu.
@@ -26581,7 +26598,8 @@ async function fetchVSMov(
     movieYear = 0,
     seasonNumber = 0,
     episodeNumber = 0,
-    streamType = "movie"
+    streamType = "movie",
+    providerContext = null
 ) {
 
     // =====================================================
@@ -26903,19 +26921,53 @@ const toStremioStream = stream => {
         const titleVariants = [];
 
         const addVariant = value => {
-
-            const text =
-                String(value || "").trim();
+            const text = String(value || "").trim();
 
             if (
                 text &&
-                !titleVariants.includes(text)
+                !titleVariants.some(
+                    existing =>
+                        movinaNormalizeIdentityTitle(existing) ===
+                        movinaNormalizeIdentityTitle(text)
+                )
             ) {
                 titleVariants.push(text);
             }
         };
 
+        // Tên chính luôn được ưu tiên.
         addVariant(movieName);
+
+        // Alias đã được xác minh từ identity chung.
+        for (
+            const title of
+            (providerContext?.titles || []).slice(0, 4)
+        ) {
+            addVariant(title);
+        }
+
+        // Từ khóa mùa tách biệt với alias tên phim.
+        // Giới hạn hai truy vấn mùa để tránh tăng độ trễ.
+        if (streamType === "series") {
+            for (
+                const keyword of
+                (providerContext?.seasonKeywords || []).slice(0, 2)
+            ) {
+                addVariant(keyword);
+            }
+        }
+
+        console.log(
+            "[VSMOV] UNIVERSAL CONTEXT:",
+            JSON.stringify({
+                imdbId: providerContext?.imdbId || null,
+                titleCount: providerContext?.titles?.length || 0,
+                season: seasonNumber,
+                seasonYear: providerContext?.seasonYear || 0,
+                expectedYear: providerContext?.expectedYear || 0,
+                searchVariants: titleVariants
+            })
+        );
 
         console.log(
             "[VSMOV] Title variants:",
@@ -27047,6 +27099,30 @@ const toStremioStream = stream => {
                 .split(" ")
                 .filter(Boolean);
 
+        const identityInputTitles = Array.from(
+            new Set(
+                [
+                    movieName,
+                    ...(providerContext?.titles || [])
+                ]
+                    .map(value => cleanTitle(value))
+                    .filter(value => value.length >= 2)
+            )
+        ).slice(0, 8);
+
+        const expectedCandidateYear =
+            streamType === "series"
+                ? (
+                    Number(providerContext?.seasonYear) ||
+                    Number(movieYear) ||
+                    0
+                )
+                : (
+                    Number(providerContext?.expectedYear) ||
+                    Number(movieYear) ||
+                    0
+                );
+
         // =====================================================
         // [PRV-VSMOV.11] [PROVIDERS: VSMOV] CANDIDATE RANKING
         // =====================================================
@@ -27076,12 +27152,63 @@ const toStremioStream = stream => {
                         cleanTitle(name);
 
                     const normalizedOrigin =
-                        cleanTitle(originName);
+                        cleanTitle(originName);                    
 
-                    const normalizedSlug =
+const normalizedSlug =
                         cleanTitle(itemSlug);
 
+                    const candidateSeasonStatus =
+                        movinaCheckProviderSeason(
+                            providerContext,
+                            [
+                                name,
+                                originName,
+                                itemSlug
+                            ]
+                        );
+
                     let score = 0;
+
+                    // So khớp với các tên đã được xác minh.
+                    // Không để alias tự quyết định mùa.
+                    let aliasScore = 0;
+
+                    for (
+                        const identityTitle of identityInputTitles
+                    ) {
+                        if (
+                            normalizedName === identityTitle
+                        ) {
+                            aliasScore = Math.max(
+                                aliasScore,
+                                850
+                            );
+                        }
+
+                        if (
+                            normalizedOrigin === identityTitle
+                        ) {
+                            aliasScore = Math.max(
+                                aliasScore,
+                                825
+                            );
+                        }
+
+                        if (
+                            normalizedName.includes(identityTitle) ||
+                            normalizedOrigin.includes(identityTitle)
+                        ) {
+                            aliasScore = Math.max(
+                                aliasScore,
+                                300
+                            );
+                        }
+                    }
+
+                    score += aliasScore;
+
+                    // Mùa ghi rõ nhưng khác mùa yêu cầu:
+                    // loại ở bước chọn, không chỉ trừ điểm.
 
                     if (
                         normalizedName ===
@@ -27152,28 +27279,26 @@ const toStremioStream = stream => {
                             item?.releaseYear ||
                             0
                         ) || 0;
-
                     if (
-                        movieYear &&
+                        expectedCandidateYear &&
                         itemYear
                     ) {
-
                         if (
                             itemYear ===
-                            Number(movieYear)
+                            Number(expectedCandidateYear)
                         ) {
                             score += 1000;
                         } else {
                             score -= 700;
                         }
                     }
-
                     return {
                         item,
                         score,
                         itemYear,
                         normalizedName,
-                        normalizedOrigin
+                        normalizedOrigin,
+                        seasonStatus: candidateSeasonStatus
                     };
 
                 })
@@ -27206,51 +27331,68 @@ const toStremioStream = stream => {
         // [PRV-VSMOV.12] [PROVIDERS: VSMOV] CANDIDATE SELECTION
         // =====================================================
 
+
+        const selectableRanked =
+            ranked.filter(row =>
+                row.seasonStatus !== "mismatch"
+            );
+
+        const rejectedSeasonCandidates =
+            ranked.filter(row =>
+                row.seasonStatus === "mismatch"
+            );
+
+        if (rejectedSeasonCandidates.length) {
+            console.log(
+                "[VSMOV] REJECTED WRONG SEASON CANDIDATES:",
+                rejectedSeasonCandidates.map(row => ({
+                    name: row.item?.name || "",
+                    originName: row.item?.origin_name || "",
+                    year: row.itemYear
+                }))
+            );
+        }
+
         let selected = null;
 
-        if (movieYear) {
-
+        if (expectedCandidateYear) {
             const yearMatches =
-                ranked.filter(
+                selectableRanked.filter(
                     row =>
-                        Number(
-                            row.itemYear
-                        ) ===
-                        Number(movieYear)
+                        Number(row.itemYear) ===
+                        Number(expectedCandidateYear)
                 );
 
             console.log(
-                "[VSMOV] Year matches:",
+                "[VSMOV] Expected year:",
+                expectedCandidateYear,
+                "| Year matches:",
                 yearMatches.length
             );
 
             if (yearMatches.length) {
-
-                selected =
-                    yearMatches[0];
-
-            } else {
-
-                console.log(
-                    "[VSMOV] NO EXACT YEAR MATCH:",
-                    movieYear
-                );
+                selected = yearMatches[0];
             }
         }
 
         if (
             !selected &&
-            !movieYear
+            !expectedCandidateYear
         ) {
-
             selected =
-                ranked[0] || null;
+                selectableRanked[0] || null;
         }
 
         if (!selected) {
-
             console.log(
-                "[VSMOV] REFUSING MISMATCHED VERSION"
+                "[VSMOV] REFUSING MISMATCHED VERSION OR SEASON",
+                JSON.stringify({
+                    requestedSeason: seasonNumber,
+                    expectedYear: expectedCandidateYear,
+                    candidates: ranked.length,
+                    rejectedSeasonCandidates:
+                        rejectedSeasonCandidates.length
+                })
             );
 
             return streams;
@@ -27361,6 +27503,66 @@ const toStremioStream = stream => {
                     )
                     .trim();
 
+            const serverSeasonNumber =
+                Number(
+                    episodeServer?.season ||
+                    episodeServer?.season_number ||
+                    episodeServer?.seasonNumber ||
+                    0
+                ) || 0;
+
+            const serverSeasonStatus =
+                movinaCheckProviderSeason(
+                    providerContext,
+                    [
+                        serverName,
+                        serverSeasonNumber
+                            ? `Season ${serverSeasonNumber}`
+                            : ""
+                    ]
+                );
+
+            if (serverSeasonStatus === "mismatch") {
+                console.log(
+                    "[VSMOV] SKIP WRONG SEASON SERVER:",
+                    serverName,
+                    "| requested:",
+                    seasonNumber
+                );
+
+                continue;
+            }
+
+            const serverSeasonNumber =
+                Number(
+                    episodeServer?.season ||
+                    episodeServer?.season_number ||
+                    episodeServer?.seasonNumber ||
+                    0
+                ) || 0;
+
+            const serverSeasonStatus =
+                movinaCheckProviderSeason(
+                    providerContext,
+                    [
+                        serverName,
+                        serverSeasonNumber
+                            ? `Season ${serverSeasonNumber}`
+                            : ""
+                    ]
+                );
+
+            if (serverSeasonStatus === "mismatch") {
+                console.log(
+                    "[VSMOV] SKIP WRONG SEASON SERVER:",
+                    serverName,
+                    "| requested:",
+                    seasonNumber
+                );
+
+                continue;
+            }
+
             const serverData =
                 Array.isArray(
                     episodeServer?.server_data
@@ -27386,10 +27588,47 @@ const toStremioStream = stream => {
                 streamType ===
                 "series"
             ) {
+                let targetEpisode =
+                    Number(episodeNumber) || 1;
 
-                const targetEpisode =
-                    Number(episodeNumber) ||
-                    1;
+                // Server ghi rõ đúng mùa:
+                // dùng số tập trong mùa đó.
+                if (serverSeasonStatus === "match") {
+                    targetEpisode =
+                        Number(episodeNumber) || 1;
+                }
+
+                // Server không ghi mùa:
+                // chỉ dùng số tập toàn series khi metadata
+                // đã xác minh đầy đủ số tập các mùa trước.
+                else if (
+                    Number(seasonNumber) > 1 &&
+                    providerContext?.globalEpisodeVerified
+                ) {
+                    targetEpisode =
+                        Number(providerContext.globalEpisode);
+                }
+
+                // Không có bằng chứng mùa và cũng không có
+                // global episode đã xác minh: từ chối đoán.
+                else if (
+                    Number(seasonNumber) > 1 &&
+                    serverSeasonStatus === "unknown"
+                ) {
+                    console.log(
+                        "[VSMOV] REJECT UNKNOWN SEASON SERVER:",
+                        JSON.stringify({
+                            serverName,
+                            requestedSeason: seasonNumber,
+                            globalEpisodeVerified:
+                                Boolean(
+                                    providerContext?.globalEpisodeVerified
+                                )
+                        })
+                    );
+
+                    continue;
+                }
 
                 const matchedEpisode =
                     serverData.find(
@@ -27402,6 +27641,18 @@ const toStremioStream = stream => {
                                     ep?.slug ||
                                     ""
                                 ).trim();
+
+                            const episodeSeasonStatus =
+                                movinaCheckProviderSeason(
+                                    providerContext,
+                                    [episodeName]
+                                );
+
+                            if (
+                                episodeSeasonStatus === "mismatch"
+                            ) {
+                                return false;
+                            }
 
                             let detectedEpisode =
                                 0;
@@ -47653,15 +47904,30 @@ const nguoncUniversalTitleIdentityPromise =
             imdbId: identity.imdbId
         }
     );
-})(),
+})(),(async () => {
+    const identity =
+        await nguoncUniversalTitleIdentityPromise;
 
-      fetchVSMov(
-          movieName,
-          movieYear,
-          seasonNumber,
-          episodeNumber,
-          streamType
-      ),
+    const providerContext =
+        movinaBuildUniversalProviderContext({
+            identity,
+            metadata: resolvedMetadata,
+            title: movieName,
+            year: movieYear,
+            type: streamType,
+            seasonNumber,
+            episodeNumber
+        });
+
+    return await fetchVSMov(
+        movieName,
+        movieYear,
+        seasonNumber,
+        episodeNumber,
+        streamType,
+        providerContext
+    );
+})(),
 
       
 (async () => {
