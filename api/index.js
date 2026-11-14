@@ -13955,26 +13955,33 @@ if (
     }
 }
 
+
 // ========================================================
-// [STREMIO-012.05] BACKGROUND PREVIEW COMPLETION
+// [STREMIO-012.05] UNIVERSAL IMDb IDENTITY COMPLETION
+// [PROVIDERS: MOVINA]
+// 
+// - Áp dụng cho toàn bộ catalog VOD.
+// - Bao gồm cả kết quả Search.
+// - Không chặn catalog foreground.
+// - Tái sử dụng resolver, verification và cache hiện có.
+// - Không thay đổi poster, tên phim hoặc thứ tự.
 // ========================================================
 
-// Chỉ áp dụng cho 5 catalog VOD đã bật enrichment.
-// Không áp dụng cho Search MOVINA và IPTV.
+const MOVINA_UNIVERSAL_IMDB_CATALOGS = [
+    "pa_movies_trending",
+    "pa_series_trending",
+    "pa_tvb",
+    "pa_daily",
+    "pa_animation_new"
+];
 
 if (
-    enableCinemetaPreview &&
-    !searchQuery &&
-    [
-        "pa_movies_trending",
-        "pa_series_trending",
-        "pa_tvb",
-        "pa_daily",
-        "pa_animation_new"
-    ].includes(args.id)
+    MOVINA_UNIVERSAL_IMDB_CATALOGS.includes(args.id) &&
+    Array.isArray(items) &&
+    items.length > 0
 ) {
     const resolveBackgroundType = item => {
-        // Catalog có type cố định.
+
         if (
             forcedType === "movie" ||
             forcedType === "series"
@@ -13982,11 +13989,21 @@ if (
             return forcedType;
         }
 
-        // Catalog hỗn hợp: xác định riêng từng phim.
         return isSeriesItem(item)
             ? "series"
             : "movie";
     };
+
+    console.log(
+        "[MOVINA UNIVERSAL IMDb] BACKGROUND SCHEDULE:",
+        JSON.stringify({
+            catalog: args.id,
+            searchQuery: searchQuery || null,
+            items: items.length,
+            mode: "background",
+            identityResolver: "movinaResolveAndVerifyImdb"
+        })
+    );
 
     movinaSchedulePreviewCompletion(
         items,
@@ -13994,6 +14011,7 @@ if (
         resolveBackgroundType
     );
 }
+
 
 return {
     metas,
