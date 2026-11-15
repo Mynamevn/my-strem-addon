@@ -23663,6 +23663,98 @@ function movinaGetSeasonMatchStatus(values, requestedSeason) {
         : "mismatch";
 }
 
+// ============================================================
+// [CORE-021.01] [PROVIDERS: KKPHIM]
+// VERIFIED GLOBAL EPISODE FROM STREMIO METADATA
+// ============================================================
+
+function movinaBuildKKPhimSeasonContext(
+    metadata,
+    seasonNumber,
+    episodeNumber
+) {
+    const season = Number(seasonNumber) || 0;
+    const episode = Number(episodeNumber) || 1;
+
+    const videos = Array.isArray(metadata?.videos)
+        ? metadata.videos
+        : [];
+
+    if (season < 1 || episode < 1 || !videos.length) {
+        return {
+            verified: false,
+            globalEpisode: 0,
+            previousSeasonCounts: {}
+        };
+    }
+
+    const seasonEpisodes = new Map();
+
+    for (const video of videos) {
+        const s = Number(video?.season) || 0;
+        const e = Number(video?.episode) || 0;
+
+        if (s < 1 || e < 1 || s > season) {
+            continue;
+        }
+
+        if (!seasonEpisodes.has(s)) {
+            seasonEpisodes.set(s, new Set());
+        }
+
+        seasonEpisodes.get(s).add(e);
+    }
+
+    const previousSeasonCounts = {};
+    let globalEpisode = episode;
+
+    for (let s = 1; s < season; s++) {
+        const episodes = seasonEpisodes.get(s);
+
+        if (!episodes || !episodes.size) {
+            return {
+                verified: false,
+                globalEpisode: 0,
+                previousSeasonCounts
+            };
+        }
+
+        const sorted = [...episodes].sort((a, b) => a - b);
+        const maxEpisode = sorted[sorted.length - 1];
+
+        // Chỉ chấp nhận danh sách liên tục từ tập 1.
+        if (
+            maxEpisode !== sorted.length ||
+            sorted.some((value, index) => value !== index + 1)
+        ) {
+            return {
+                verified: false,
+                globalEpisode: 0,
+                previousSeasonCounts
+            };
+        }
+
+        previousSeasonCounts[s] = maxEpisode;
+        globalEpisode += maxEpisode;
+    }
+
+    console.log(
+        "[KKPHIM] VERIFIED GLOBAL EPISODE:",
+        {
+            season,
+            episode,
+            globalEpisode,
+            previousSeasonCounts
+        }
+    );
+
+    return {
+        verified: true,
+        globalEpisode,
+        previousSeasonCounts
+    };
+}
+
 async function fetchKKPhim(
     movieName,
     movieYear = 0,
@@ -23670,8 +23762,11 @@ async function fetchKKPhim(
     episodeNumber = 0,
     streamType = "movie",
     imdbId = "",
-    titleVariants = []
-) {
+    titleVariants = [],
+    seasonContext = null
+)
+
+ {
 
     const streams = [];
 
@@ -24590,16 +24685,73 @@ if (
         movie = seasonMatches[0].item;
 
     } else {
-        console.warn(
-            "[KKPHIM] NO EXPLICIT SEASON MATCH - REFUSING WRONG SEASON",
-            {
-                requestedSeason: seasonNumber,
-                movieName
-            }
-        );
+        // Chấp nhận ứng viên UNKNOWN nếu tên và năm khớp.
+        // Việc xác minh mùa sẽ được thực hiện ở trang chi tiết.
 
-        return streams;
+        const normalizedRequested =
+            kkphimNormalizeTitle(movieName);
+
+        const verifiedUnknown = seasonUnknown.filter(candidate => {
+            const item = candidate.item || {};
+
+            const candidateTitles = [
+                item?.name,
+                item?.origin_name,
+                item?.original_name
+            ]
+                .filter(Boolean)
+                .map(kkphimNormalizeTitle);
+
+            const exactTitleMatch =
+                candidateTitles.includes(normalizedRequested);
+
+            const candidateYear =
+                Number(item?.year) || 0;
+
+            const yearMatches =
+                !movieYear ||
+                !candidateYear ||
+                candidateYear === Number(movieYear);
+
+            const candidateType =
+                String(item?.type || "").toLowerCase();
+
+            const typeMatches =
+                candidateType === "series";
+
+            return (
+                exactTitleMatch &&
+                yearMatches &&
+                typeMatches
+            );
+        });
+
+        if (verifiedUnknown.length > 0) {
+            movie = verifiedUnknown[0].item;
+
+            console.log(
+                "[KKPHIM] UNKNOWN SEASON ACCEPTED FOR DETAIL VERIFICATION:",
+                {
+                    name: movie?.name,
+                    year: movie?.year,
+                    slug: movie?.slug,
+                    requestedSeason: seasonNumber
+                }
+            );
+
+        } else {
+            console.warn(
+                "[KKPHIM] NO SAFE SEASON CANDIDATE",
+                {
+                    requestedSeason: seasonNumber,
+                    movieName
+                }
+            );
+
+            return streams;
+        }
     }
+
 
 } else if (
     streamType === "series" &&
@@ -24893,58 +25045,131 @@ const episodes =
                 // E. SERIES → CHỈ LẤY EPISODE ĐƯỢC YÊU CẦU
                 // =================================================
 
-                const targetEpisode =
-                    Number(
-                        episodeNumber
-                    ) || 1;
+               const targetEpisode =
+    Number(episodeNumber) || 1;
 
-                const matchedEpisode =
-                    serverData.find(
-                        (
-                            ep,
-                            episodeIndex
-                        ) => {
+const detailSeason =
+    movinaDetectSeasonNumber([
+        movieData?.name,
+        movieData?.origin_name,
+        movieData?.original_name,
+        movieData?.title
+    ]);
 
-                            const episodeName =
-                                String(
-                                    ep?.name ||
-                                    ep?.slug ||
-                                    ""
-                                ).trim();
+const serverSeason =
+    movinaDetectSeasonNumber([
+        serverName
+    ]);
 
-                            // ---------------------------------
-                            // Ưu tiên đọc số tập từ tên
-                            // ---------------------------------
+const explicitSeason =
+    serverSeason || detailSeason;
 
-                            const match =
-                                episodeName.match(
-                                    /(?:tập|tap|episode|ep\.?|part|phần)\s*0*(\d+)/i
-                                );
+let globalTargetEpisode = 0;
 
-                            if (
-                                match
-                            ) {
+if (
+    streamType === "series" &&
+    Number(seasonNumber) > 1 &&
+    !explicitSeason
+) {
+    if (
+        seasonContext?.verified === true &&
+        Number(seasonContext?.globalEpisode) > 0
+    ) {
+        globalTargetEpisode =
+            Number(seasonContext.globalEpisode);
 
-                                return (
-                                    Number(
-                                        match[1]
-                                    ) ===
-                                    targetEpisode
-                                );
+    } else {
+        console.warn(
+            "[KKPHIM] GLOBAL EPISODE NOT VERIFIED - REFUSING WRONG EPISODE",
+            {
+                movieName,
+                seasonNumber,
+                episodeNumber
+            }
+        );
 
-                            }
+        return;
+    }
+}
 
-                            // ---------------------------------
-                            // Fallback theo vị trí mảng
-                            // ---------------------------------
+console.log(
+    "[KKPHIM] DETAIL SEASON VERIFICATION:",
+    {
+        movie: movieData?.name,
+        requestedSeason: seasonNumber,
+        detailSeason,
+        serverSeason,
+        explicitSeason,
+        targetEpisode,
+        globalTargetEpisode
+    }
+);
 
-                            return (
-                                episodeIndex + 1
-                            ) ===
-                            targetEpisode;
+const matchedEpisode =
+    serverData.find((ep, episodeIndex) => {
 
-                        }
-                    );
+        const episodeName = String(
+            ep?.name ||
+            ep?.slug ||
+            ep?.filename ||
+            ""
+        ).trim();
+
+        const structured =
+            episodeName.match(
+                /\bS\s*0*(\d+)\s*E\s*0*(\d+)/i
+            );
+
+        if (structured) {
+            return (
+                Number(structured[1]) === Number(seasonNumber) &&
+                Number(structured[2]) === targetEpisode
+            );
+        }
+
+        const episodeSeason =
+            movinaDetectSeasonNumber([
+                episodeName
+            ]);
+
+        if (
+            episodeSeason > 0 &&
+            episodeSeason !== Number(seasonNumber)
+        ) {
+            return false;
+        }
+
+        const effectiveSeason =
+            episodeSeason ||
+            explicitSeason;
+
+        const numberMatch =
+            episodeName.match(
+                /(?:tập|tap|episode|ep\.?|part)\s*0*(\d+)/i
+            ) ||
+            episodeName.match(/^\s*0*(\d+)\s*$/);
+
+        const detectedEpisode = numberMatch
+            ? Number(numberMatch[1])
+            : episodeIndex + 1;
+
+        // Trang chi tiết hoặc server đã xác định mùa.
+        if (effectiveSeason > 0) {
+            return (
+                effectiveSeason === Number(seasonNumber) &&
+                detectedEpisode === targetEpisode
+            );
+        }
+
+        // Danh sách tập liên tục toàn series.
+        if (Number(seasonNumber) > 1) {
+            return (
+                detectedEpisode === globalTargetEpisode
+            );
+        }
+
+        return detectedEpisode === targetEpisode;
+    });
 
                 if (
                     !matchedEpisode
@@ -47093,17 +47318,25 @@ const kkphimPromise = (async () => {
             })
         );
 
-        return await fetchKKPhim(
-            movieName,
-            movieYear,
-            seasonNumber,
-            episodeNumber,
-            streamType,
-            rawId.startsWith("tt")
-                ? rawId.split(":")[0]
-                : "",
-            kkphimTitleVariants
-        );
+        const kkphimSeasonContext =
+    movinaBuildKKPhimSeasonContext(
+        resolvedMetadata,
+        seasonNumber,
+        episodeNumber
+    );
+
+return await fetchKKPhim(
+    movieName,
+    movieYear,
+    seasonNumber,
+    episodeNumber,
+    streamType,
+    rawId.startsWith("tt")
+        ? rawId.split(":")[0]
+        : "",
+    kkphimTitleVariants,
+    kkphimSeasonContext
+);
 
     } catch (e) {
         console.log(
