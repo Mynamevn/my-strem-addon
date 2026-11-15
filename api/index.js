@@ -24714,10 +24714,17 @@ if (
                 candidateYear === Number(movieYear);
 
             const candidateType =
-                String(item?.type || "").toLowerCase();
+    String(item?.type || "")
+        .toLowerCase()
+        .trim();
 
-            const typeMatches =
-                candidateType === "series";
+const typeMatches = [
+    "series",
+    "hoathinh",
+    "hoat-hinh",
+    "hoat_hinh",
+    "anime"
+].includes(candidateType);
 
             return (
                 exactTitleMatch &&
