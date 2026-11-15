@@ -23586,6 +23586,83 @@ return {
 
 }
 
+// ============================================================
+// [CORE-021] [PROVIDERS: KKPHIM, VSMOV]
+// SEASON SEARCH AND CANDIDATE IDENTITY
+// ============================================================
+
+function movinaBuildSeasonSearchVariants(title, seasonNumber) {
+    const base = String(title || "").trim();
+    const season = Number(seasonNumber) || 0;
+
+    if (!base || season < 1) {
+        return [];
+    }
+
+    const padded = String(season).padStart(2, "0");
+
+    return [
+        `${base} Phần ${season}`,
+        `${base} phần ${season}`,
+        `${base} Mùa ${season}`,
+        `${base} Season ${season}`,
+        `${base} S${padded}`,
+        `${base} S${season}`,
+        `${base} Season ${padded}`
+    ];
+}
+
+
+function movinaDetectSeasonNumber(values = []) {
+    const text = (Array.isArray(values) ? values : [values])
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d");
+
+    const patterns = [
+        /\bseason[\s._-]*0*(\d{1,2})\b/i,
+        /\bph[aâ]n[\s._-]*0*(\d{1,2})\b/i,
+        /\bmu[aù][\s._-]*0*(\d{1,2})\b/i,
+        /\bs[\s._-]*0*(\d{1,2})\b/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+
+        if (match) {
+            const season = Number(match[1]) || 0;
+
+            if (season >= 1 && season <= 50) {
+                return season;
+            }
+        }
+    }
+
+    return 0;
+}
+
+
+function movinaGetSeasonMatchStatus(values, requestedSeason) {
+    const target = Number(requestedSeason) || 0;
+
+    if (target < 1) {
+        return "not_applicable";
+    }
+
+    const detected = movinaDetectSeasonNumber(values);
+
+    if (!detected) {
+        return "unknown";
+    }
+
+    return detected === target
+        ? "match"
+        : "mismatch";
+}
+
 async function fetchKKPhim(
     movieName,
     movieYear = 0,
@@ -23635,8 +23712,13 @@ let movie = null;
 
 let imdbEpisodes = null;
 
+
 if (
-    imdbId
+    imdbId &&
+    !(
+        streamType === "series" &&
+        Number(seasonNumber) > 0
+    )
 ) {
 
     const imdbUrl =
@@ -23792,7 +23874,11 @@ if (
 if (
     !movie &&
     imdbId &&
-    movieYear
+    movieYear &&
+    !(
+        streamType === "series" &&
+        Number(seasonNumber) > 0
+    )
 ) {
 
     const yearUrl =
@@ -23998,12 +24084,39 @@ const suppliedTitleVariants = [
     )
 ];
 
+
+const requestedSeasonTerms =
+    streamType === "series" && Number(seasonNumber) > 0
+        ? [
+            ...movinaBuildSeasonSearchVariants(
+                movieName,
+                seasonNumber
+            ),
+            ...suppliedTitleVariants.flatMap(title =>
+                movinaBuildSeasonSearchVariants(
+                    title,
+                    seasonNumber
+                )
+            )
+        ]
+        : [];
+
 let uniqueSearchTerms = [
     ...new Set([
+        ...requestedSeasonTerms,
         ...kkphimBuildBasicTitleVariants(movieName),
         ...suppliedTitleVariants
     ])
-].slice(0, 12);
+].slice(0, 20);
+
+console.log(
+    "[KKPHIM] SEASON-AWARE SEARCH TERMS:",
+    JSON.stringify({
+        requestedSeason: seasonNumber,
+        seasonTerms: requestedSeasonTerms,
+        searchTerms: uniqueSearchTerms
+    })
+);
 
 console.log(
     "[KKPHIM] MOVINA TITLE VARIANTS:",
@@ -24345,16 +24458,38 @@ console.log(
             score -= 1500;
         }
 
-        if (streamType === "series" && type === "series") {
-            score += 500;
-        }
+        
+if (streamType === "series" && type === "series") {
+    score += 500;
+}
 
-        return {
-            item,
-            score,
-            index,
-            titleMatched
-        };
+const seasonStatus =
+    streamType === "series" && Number(seasonNumber) > 0
+        ? movinaGetSeasonMatchStatus(
+            [
+                item?.name,
+                item?.origin_name,
+                item?.original_name,
+                item?.slug
+            ],
+            seasonNumber
+        )
+        : "not_applicable";
+
+if (seasonStatus === "match") {
+    score += 10000;
+} else if (seasonStatus === "mismatch") {
+    score -= 10000;
+}
+
+return {
+    item,
+    score,
+    index,
+    titleMatched,
+    seasonStatus
+};
+
     }).filter(candidate => {
         // Không bao giờ chọn phim chỉ vì trùng năm.
         if (!candidate.titleMatched) {
@@ -24415,76 +24550,79 @@ console.log(
             )
     );
 
-    // =================================================
-    // 15.4 CHỌN PHIM THEO TITLE + YEAR
-    // =================================================
+    
+// =================================================
+// 15.4 SEASON-AWARE CANDIDATE SELECTION
+// =================================================
 
-    if (
-        streamType === "series" &&
-        movieYear
-    ) {
+if (
+    streamType === "series" &&
+    Number(seasonNumber) > 0
+) {
+    const seasonMatches = ranked.filter(
+        candidate =>
+            candidate.seasonStatus === "match"
+    );
 
-        const yearMatched =
-            ranked.filter(
-                candidate =>
-                    Number(
-                        candidate?.item?.year
-                    ) === Number(
-                        movieYear
-                    )
-            );
+    const seasonUnknown = ranked.filter(
+        candidate =>
+            candidate.seasonStatus === "unknown"
+    );
 
-        console.log(
-            "[KKPHIM] Year matched candidates:",
-            yearMatched.map(
-                x => ({
-                    name:
-                        x.item?.name,
+    console.log(
+        "[KKPHIM] SEASON CANDIDATES:",
+        JSON.stringify({
+            requestedSeason: seasonNumber,
+            exactSeasonMatches: seasonMatches.map(x => ({
+                name: x.item?.name,
+                year: x.item?.year,
+                slug: x.item?.slug
+            })),
+            unknownSeasonCandidates: seasonUnknown.map(x => ({
+                name: x.item?.name,
+                year: x.item?.year,
+                slug: x.item?.slug
+            }))
+        })
+    );
 
-                    origin_name:
-                        x.item?.origin_name,
-
-                    year:
-                        x.item?.year,
-
-                    type:
-                        x.item?.type,
-
-                    score:
-                        x.score
-                })
-            )
-        );
-
-        if (
-            yearMatched.length
-        ) {
-
-            movie =
-                yearMatched[0]?.item;
-
-        } else {
-
-            console.log(
-                "[KKPHIM] NO EXACT YEAR MATCH:",
-                movieYear
-            );
-
-            console.log(
-                "[KKPHIM] Refusing mismatched version."
-            );
-
-            return streams;
-
-        }
+    if (seasonMatches.length > 0) {
+        movie = seasonMatches[0].item;
 
     } else {
+        console.warn(
+            "[KKPHIM] NO EXPLICIT SEASON MATCH - REFUSING WRONG SEASON",
+            {
+                requestedSeason: seasonNumber,
+                movieName
+            }
+        );
 
-        movie =
-            ranked[0]?.item;
-
+        return streams;
     }
 
+} else if (
+    streamType === "series" &&
+    movieYear
+) {
+    const yearMatched = ranked.filter(
+        candidate =>
+            Number(candidate?.item?.year) === Number(movieYear)
+    );
+
+    if (yearMatched.length) {
+        movie = yearMatched[0].item;
+    } else {
+        console.log(
+            "[KKPHIM] NO EXACT YEAR MATCH:",
+            movieYear
+        );
+
+        return streams;
+    }
+
+} else {
+    movie = ranked[0]?.item;
 }
 
 // -------------------------------------------------
@@ -26570,7 +26708,29 @@ const toStremioStream = stream => {
             }
         };
 
-        addVariant(movieName);
+        
+addVariant(movieName);
+
+if (
+    streamType === "series" &&
+    Number(seasonNumber) > 0
+) {
+    for (const variant of movinaBuildSeasonSearchVariants(
+        movieName,
+        seasonNumber
+    )) {
+        addVariant(variant);
+    }
+}
+
+console.log(
+    "[VSMOV] SEASON SEARCH VARIANTS:",
+    {
+        requestedSeason: seasonNumber,
+        variants: titleVariants
+    }
+);
+
 
         console.log(
             "[VSMOV] Title variants:",
@@ -26823,13 +26983,33 @@ const toStremioStream = stream => {
                         }
                     }
 
-                    return {
-                        item,
-                        score,
-                        itemYear,
-                        normalizedName,
-                        normalizedOrigin
-                    };
+const seasonStatus =
+    streamType === "series" && Number(seasonNumber) > 0
+        ? movinaGetSeasonMatchStatus(
+            [
+                item?.name,
+                item?.origin_name,
+                item?.original_name,
+                item?.slug
+            ],
+            seasonNumber
+        )
+        : "not_applicable";
+
+if (seasonStatus === "match") {
+    score += 10000;
+} else if (seasonStatus === "mismatch") {
+    score -= 10000;
+}
+                    
+return {
+    item,
+    score,
+    itemYear,
+    normalizedName,
+    normalizedOrigin,
+    seasonStatus
+};
 
                 })
                 .sort(
@@ -26861,55 +27041,71 @@ const toStremioStream = stream => {
         // [PRV-VSMOV.12] [PROVIDERS: VSMOV] CANDIDATE SELECTION
         // =====================================================
 
-        let selected = null;
 
-        if (movieYear) {
+let selected = null;
 
-            const yearMatches =
-                ranked.filter(
-                    row =>
-                        Number(
-                            row.itemYear
-                        ) ===
-                        Number(movieYear)
-                );
+if (
+    streamType === "series" &&
+    Number(seasonNumber) > 0
+) {
+    const seasonMatches = ranked.filter(
+        row =>
+            row.seasonStatus === "match"
+    );
 
-            console.log(
-                "[VSMOV] Year matches:",
-                yearMatches.length
-            );
+    console.log(
+        "[VSMOV] SEASON MATCHES:",
+        seasonMatches.map(row => ({
+            name: row.item?.name,
+            origin: row.item?.origin_name,
+            year: row.itemYear,
+            slug: row.item?.slug,
+            score: row.score
+        }))
+    );
 
-            if (yearMatches.length) {
+    if (seasonMatches.length > 0) {
+        selected = seasonMatches[0];
 
-                selected =
-                    yearMatches[0];
-
-            } else {
-
-                console.log(
-                    "[VSMOV] NO EXACT YEAR MATCH:",
-                    movieYear
-                );
+    } else {
+        console.warn(
+            "[VSMOV] NO EXPLICIT SEASON MATCH - REFUSING WRONG SEASON",
+            {
+                movieName,
+                requestedSeason: seasonNumber,
+                candidates: ranked.slice(0, 10).map(row => ({
+                    name: row.item?.name,
+                    origin: row.item?.origin_name,
+                    slug: row.item?.slug,
+                    seasonStatus: row.seasonStatus
+                }))
             }
-        }
+        );
 
-        if (
-            !selected &&
-            !movieYear
-        ) {
+        return streams;
+    }
 
-            selected =
-                ranked[0] || null;
-        }
+} else if (movieYear) {
+    const yearMatches = ranked.filter(
+        row =>
+            Number(row.itemYear) === Number(movieYear)
+    );
 
-        if (!selected) {
+    if (yearMatches.length > 0) {
+        selected = yearMatches[0];
+    }
 
-            console.log(
-                "[VSMOV] REFUSING MISMATCHED VERSION"
-            );
+} else {
+    selected = ranked[0] || null;
+}
 
-            return streams;
-        }
+if (!selected) {
+    console.log(
+        "[VSMOV] REFUSING MISMATCHED VERSION"
+    );
+
+    return streams;
+}
 
         const selectedMovie =
             selected.item;
