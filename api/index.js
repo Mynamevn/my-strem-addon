@@ -40976,18 +40976,48 @@ async function scrapePhimHDCS(
     episodeNumber = 0,
     streamType = "movie",
     titleVariants = [],
-    imdbId = ""
+    imdbId = "",
+    providerContext = null
 ) {
 
     const streams = [];
-
     const requestedTitleVariants = [
         movieName,
-        ...(Array.isArray(titleVariants) ? titleVariants : [])
+
+        ...(Array.isArray(titleVariants)
+            ? titleVariants
+            : []),
+
+        ...(streamType === "series" &&
+            Array.isArray(providerContext?.seasonKeywords)
+                ? providerContext.seasonKeywords
+                : [])
     ]
-        .map(value => String(value || "").replace(/\s+/g, " ").trim())
+        .map(value =>
+            String(value || "")
+                .replace(/\s+/g, " ")
+                .trim()
+        )
         .filter(Boolean)
-        .filter((value, index, list) => list.indexOf(value) === index);
+        .filter(
+            (value, index, list) =>
+                list.indexOf(value) === index
+        )
+        .slice(0, 32);
+
+    console.log(
+        "[PHIMHDCS] SHARED PROVIDER CONTEXT:",
+        JSON.stringify({
+            imdbId: providerContext?.imdbId || imdbId || null,
+            requestedSeason: seasonNumber,
+            requestedEpisode: episodeNumber,
+            seasonYear: providerContext?.seasonYear || 0,
+            seasonKeywords:
+                providerContext?.seasonKeywords || [],
+            searchVariantCount:
+                requestedTitleVariants.length
+        })
+    );
 
     // =====================================================
     // PHIMAPI IMDb LOOKUP
@@ -47833,7 +47863,9 @@ const animehayPromise = (async () => {
 
 
 // =====================================================
-// NGUONC — UNIVERSAL TITLE IDENTITY
+// [CORE-IDENTITY-003] UNIVERSAL IDENTITY + PROVIDER CONTEXT
+// [PROVIDERS: ALL VOD EXCEPT NGUONC CLIENT]
+// Tạo identity và season context đúng một lần.
 // =====================================================
 
 const nguoncUniversalTitleIdentityPromise =
@@ -47845,6 +47877,30 @@ const nguoncUniversalTitleIdentityPromise =
         metadata: resolvedMetadata,
         cachedItem: phimhdcsCachedItem
     });
+
+const movinaUniversalProviderContextPromise =
+    nguoncUniversalTitleIdentityPromise.then(identity =>
+        movinaBuildUniversalProviderContext({
+            identity,
+            metadata: resolvedMetadata,
+            title: movieName,
+            year: movieYear,
+            type: streamType,
+            seasonNumber,
+            episodeNumber
+        })
+    );
+
+console.log(
+    "[MOVINA] UNIVERSAL CONTEXT PROMISE CREATED:",
+    JSON.stringify({
+        title: movieName,
+        year: movieYear,
+        type: streamType,
+        seasonNumber,
+        episodeNumber
+    })
+);
 
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
@@ -47874,20 +47930,23 @@ const nguoncUniversalTitleIdentityPromise =
             imdbId: identity.imdbId
         }
     );
-})(),(async () => {
-    const identity =
-        await nguoncUniversalTitleIdentityPromise;
+})(),
 
+(async () => {
     const providerContext =
-        movinaBuildUniversalProviderContext({
-            identity,
-            metadata: resolvedMetadata,
-            title: movieName,
-            year: movieYear,
-            type: streamType,
-            seasonNumber,
-            episodeNumber
-        });
+        await movinaUniversalProviderContextPromise;
+
+    console.log(
+        "[VSMOV] SHARED IDENTITY + SEASON CONTEXT:",
+        JSON.stringify({
+            imdbId: providerContext.imdbId || null,
+            titles: providerContext.titles,
+            season: providerContext.seasonNumber,
+            episode: providerContext.episodeNumber,
+            seasonYear: providerContext.seasonYear,
+            seasonKeywords: providerContext.seasonKeywords
+        })
+    );
 
     return await fetchVSMov(
         movieName,
@@ -47901,18 +47960,22 @@ const nguoncUniversalTitleIdentityPromise =
 
       
 (async () => {
-    const identity =
-        await nguoncUniversalTitleIdentityPromise;
+    const [
+        identity,
+        providerContext
+    ] = await Promise.all([
+        nguoncUniversalTitleIdentityPromise,
+        movinaUniversalProviderContextPromise
+    ]);
 
     console.log(
-        "[PHIMHDCS] UNIVERSAL IDENTITY READY:",
+        "[PHIMHDCS] SHARED IDENTITY READY:",
         JSON.stringify({
-            title: movieName,
             imdbId: identity.imdbId || null,
-            year: movieYear,
-            type: streamType,
             titleCount: identity.titles.length,
-            titles: identity.titles
+            season: providerContext.seasonNumber,
+            episode: providerContext.episodeNumber,
+            seasonYear: providerContext.seasonYear || null
         })
     );
 
@@ -47923,10 +47986,10 @@ const nguoncUniversalTitleIdentityPromise =
         episodeNumber,
         streamType,
         identity.titles,
-        identity.imdbId || phimhdcsImdbIdForTitles
+        identity.imdbId || phimhdcsImdbIdForTitles,
+        providerContext
     );
 })()
-
 
   ]);
 
@@ -47934,7 +47997,14 @@ const nguoncUniversalTitleIdentityPromise =
   // bằng chứng hỗ trợ. Không chờ NguonC/VSMov/PhimHDCS.
   const longtiengPromise = (async () => {
       try {
-          const kkphimSupport = await kkphimPromise;
+
+          const [
+              kkphimSupport,
+              providerContext
+          ] = await Promise.all([
+              kkphimPromise,
+              movinaUniversalProviderContextPromise
+          ]);
 
           const supportContext = {
               originalName: movieName,
@@ -47943,12 +48013,19 @@ const nguoncUniversalTitleIdentityPromise =
               episodeNumber,
               streamType,
 
+              // Identity và season context dùng chung.
+              universalIdentity: providerContext,
+              titleVariants: providerContext.titles,
+              seasonKeywords: providerContext.seasonKeywords,
+              seasonYear: providerContext.seasonYear,
+              globalEpisode: providerContext.globalEpisode,
+              globalEpisodeVerified:
+                  providerContext.globalEpisodeVerified,
+
               kkphim: Array.isArray(kkphimSupport)
                   ? kkphimSupport
                   : [],
 
-              // Các nguồn này vẫn đang chạy song song.
-              // PhimLongTieng tự đối chiếu bằng tên/năm/tập.
               nguonc: [],
               vsmov: [],
               phimhdcs: []
