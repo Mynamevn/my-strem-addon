@@ -22529,6 +22529,29 @@ async function fetchNguonC(movieName, options = {}) {
             detailData?.data ||
             {};
 
+        // =================================================
+        // [NGUONC IDENTITY BRIDGE] PUBLISH SELECTED DETAIL
+        // Không chặn quá trình lấy stream NguonC.
+        // =================================================
+
+        if (typeof options.onCanonicalIdentity === "function") {
+            Promise.resolve()
+                .then(() =>
+                    options.onCanonicalIdentity({
+                        selectedMovie,
+                        detailMovie: movie,
+                        type: targetType,
+                        slug: movieSlug
+                    })
+                )
+                .catch(error => {
+                    console.log(
+                        "[NGUONC CANONICAL ID CALLBACK ERROR]:",
+                        error?.message || error
+                    );
+                });
+        }
+
         const rawEpisodes =
             movie?.episodes ||
             detailData?.episodes ||
@@ -47860,6 +47883,31 @@ const fetchPromise = fetchOnflixProvider(
 
 
 // =====================================================
+// [NGUONC IDENTITY BRIDGE] CANONICAL ID CHANNEL
+// =====================================================
+
+let resolveMovinaNguonCCanonicalIdentity = null;
+
+let movinaNguonCCanonicalIdentitySettled = false;
+
+const movinaNguonCCanonicalIdentityPromise =
+    new Promise(resolve => {
+        resolveMovinaNguonCCanonicalIdentity = resolve;
+    });
+
+function movinaPublishNguonCCanonicalIdentity(identity) {
+    if (movinaNguonCCanonicalIdentitySettled) {
+        return;
+    }
+
+    movinaNguonCCanonicalIdentitySettled = true;
+
+    resolveMovinaNguonCCanonicalIdentity(
+        identity || null
+    );
+}
+
+// =====================================================
 // NGUONC — UNIVERSAL TITLE IDENTITY
 // =====================================================
 
@@ -47892,15 +47940,134 @@ const nguoncUniversalTitleIdentityPromise =
         })
     );
 
+
     return await fetchNguonC(
         nguonCFallbackName,
         {
             titleVariants: identity.titles,
             year: movieYear,
             type: streamType,
-            imdbId: identity.imdbId
+            imdbId: identity.imdbId,
+
+            onCanonicalIdentity: async ({
+                selectedMovie,
+                detailMovie,
+                type,
+                slug
+            }) => {
+                try {
+                    // Lấy IMDb ID nếu NguonC có sẵn.
+                    const directImdbId = String(
+                        selectedMovie?.imdb_id ||
+                        selectedMovie?.imdbId ||
+                        (
+                            typeof selectedMovie?.imdb === "string"
+                                ? selectedMovie.imdb
+                                : selectedMovie?.imdb?.id
+                        ) ||
+                        detailMovie?.imdb_id ||
+                        detailMovie?.imdbId ||
+                        (
+                            typeof detailMovie?.imdb === "string"
+                                ? detailMovie.imdb
+                                : detailMovie?.imdb?.id
+                        ) ||
+                        ""
+                    ).trim().toLowerCase();
+
+                    // Không truyền slug để tránh tác động
+                    // đến cơ chế promote catalog hiện tại.
+                    const identityItem = {
+                        ...selectedMovie,
+                        slug: "",
+                        imdb_id: directImdbId
+                    };
+
+                    const identityDetail = {
+                        ...detailMovie,
+                        slug: "",
+                        imdb_id: directImdbId
+                    };
+
+                    // Xác minh IMDb từ chính phim NguonC đã chọn.
+                    const verifiedImdbId =
+                        await movinaResolveAndVerifyImdb(
+                            identityItem,
+                            identityDetail,
+                            type,
+                            {
+                                yearTolerance: 1,
+                                allowMissingYear: true
+                            }
+                        );
+
+                    const normalizedImdbId =
+                        String(verifiedImdbId || "")
+                            .trim()
+                            .toLowerCase();
+
+                    if (!/^tt\d+$/i.test(normalizedImdbId)) {
+                        console.log(
+                            "[NGUONC CANONICAL ID FAIL]:",
+                            JSON.stringify({
+                                title:
+                                    selectedMovie?.name ||
+                                    detailMovie?.name ||
+                                    "",
+                                year:
+                                    detailMovie?.year ||
+                                    selectedMovie?.year ||
+                                    0,
+                                slug,
+                                reason: "IMDb verification failed"
+                            })
+                        );
+
+                        movinaPublishNguonCCanonicalIdentity(null);
+                        return null;
+                    }
+
+                    const canonicalIdentity = {
+                        imdbId: normalizedImdbId,
+                        title:
+                            detailMovie?.name ||
+                            selectedMovie?.name ||
+                            "",
+                        year:
+                            Number(
+                                detailMovie?.year ||
+                                selectedMovie?.year ||
+                                0
+                            ),
+                        type,
+                        slug
+                    };
+
+                    console.log(
+                        "[NGUONC CANONICAL ID READY]:",
+                        JSON.stringify(canonicalIdentity)
+                    );
+
+                    movinaPublishNguonCCanonicalIdentity(
+                        canonicalIdentity
+                    );
+
+                    return canonicalIdentity;
+
+                } catch (error) {
+                    console.log(
+                        "[NGUONC CANONICAL ID ERROR]:",
+                        error?.message || error
+                    );
+
+                    movinaPublishNguonCCanonicalIdentity(null);
+
+                    return null;
+                }
+            }
         }
     );
+
 })(),
 
       fetchVSMov(
