@@ -46254,6 +46254,12 @@ function rewriteNguonCPlaylist(
 
 builder.defineStreamHandler(async (args) => {
 
+    const movinaStreamStartedAt = Date.now();
+
+    console.log(
+        "[MOVINA LATENCY] STREAM REQUEST START"
+    );
+
     // -----------------------------------------------------------------
     // [CẬP NHẬT GOOGLE DORKING] - NHÁNH TỰ ĐỘNG TÌM KIẾM BẰNG GOOGLE (CHÍNH XÁC 100%)
     // -----------------------------------------------------------------
@@ -48040,6 +48046,11 @@ return await scrapePhimHDCS(
       }
   ];
 
+console.log(
+    "[MOVINA LATENCY] CORE PROVIDERS READY:",
+    Date.now() - movinaStreamStartedAt,
+    "ms"
+);
 
 // =====================================================
 // 9. LẤY KẾT QUẢ TỪ CÁC NGUỒN
@@ -48461,6 +48472,21 @@ console.log(
       "[MOVINA-ONFLIX] STREAM COUNT:",
       onflix.length
   );
+
+console.log(
+    "[MOVINA LATENCY] PROVIDERS READY:",
+    Date.now() - movinaStreamStartedAt,
+    "ms",
+    JSON.stringify({
+        nguonc: nguonc.length,
+        kkphim: kkphim.length,
+        vsmov: vsmov.length,
+        phimlongtieng: longtieng.length,
+        phimhdcs: phimhdcs.length,
+        animehay: animehay.length,
+        onflix: onflix.length
+    })
+);
 
 const directStreams = [
 
@@ -49054,9 +49080,17 @@ console.log(
     // 18. TRẢ VỀ STREMIO
     // =====================================================
 
-       return {
-        streams: uniqueStreams
-    };
+console.log(
+    "[MOVINA LATENCY] RESPONSE READY:",
+    Date.now() - movinaStreamStartedAt,
+    "ms",
+    "| Total streams:",
+    uniqueStreams.length
+);
+
+return {
+    streams: uniqueStreams
+};
 
 });
 
