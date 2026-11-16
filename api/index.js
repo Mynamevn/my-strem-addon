@@ -29169,7 +29169,9 @@ function animeHayFindBestSearchResult(
 async function animeHayFindEpisode(
     domain,
     detailUrl,
-    episodeNumber = 1
+    episodeNumber = 1,
+    seasonNumber = 0,
+    seasonContext = null
 ) {
 
     try {
@@ -29272,10 +29274,41 @@ async function animeHayFindEpisode(
         }
 
 
-        const wanted =
-            Number(
-                episodeNumber || 1
-            );
+let wanted =
+    Number(episodeNumber || 1);
+
+if (
+    Number(seasonNumber) > 1
+) {
+    if (
+        seasonContext?.verified === true &&
+        Number(seasonContext.globalEpisode) > 0
+    ) {
+        wanted =
+            Number(seasonContext.globalEpisode);
+
+        console.log(
+            "[ANIMEHAY] VERIFIED GLOBAL EPISODE:",
+            {
+                season: Number(seasonNumber),
+                episode: Number(episodeNumber),
+                globalEpisode: wanted,
+                previousSeasonCounts:
+                    seasonContext.previousSeasonCounts
+            }
+        );
+    } else {
+        console.warn(
+            "[ANIMEHAY] GLOBAL EPISODE NOT VERIFIED — REFUSING WRONG EPISODE",
+            {
+                seasonNumber,
+                episodeNumber
+            }
+        );
+
+        return null;
+    }
+}
 
 
         let selected =
@@ -32126,8 +32159,10 @@ async function fetchAnimeHay(
     seasonNumber = 0,
     episodeNumber = 0,
     streamType = "movie",
-    imdbId = ""
+    imdbId = "",
+    seasonContext = null
 ) {
+
     const originalTitle = String(movieName || "").trim();
 
     if (!originalTitle) {
@@ -32593,11 +32628,13 @@ async function fetchAnimeHay(
             Number.parseInt(episodeNumber, 10) || 1
         );
 
-        const episodeUrl = await animeHayFindEpisode(
-            domain,
-            detailUrl,
-            wantedEpisode
-        );
+const episodeUrl = await animeHayFindEpisode(
+    domain,
+    detailUrl,
+    wantedEpisode,
+    seasonNumber,
+    seasonContext
+);
 
         if (!episodeUrl) {
             console.log("[ANIMEHAY] EPISODE NOT FOUND:", {
@@ -35371,8 +35408,10 @@ async function fetchOnflixProvider(
     movieYear = 0,
     seasonNumber = 0,
     episodeNumber = 1,
-    streamType = "series"
+    streamType = "series",
+    seasonContext = null
 ) {
+
     const TAG = "[MOVINA-ONFLIX]";
 
     try {
@@ -35496,21 +35535,71 @@ try {
             // FIX: phim lẻ vẫn cần record để gọi resolver.
             // Không tạo records: [] nếu onflixLoad đã trích xuất được.
             selected = episodes[0] || null;
-        } else if (episodes.length) {
-            const targetEpisode = Math.max(
-                1,
-                Number(episodeNumber) || 1
+
+} else if (episodes.length) {
+    let targetEpisode = Math.max(
+        1,
+        Number(episodeNumber) || 1
+    );
+
+    if (Number(seasonNumber) > 1) {
+        if (
+            seasonContext?.verified === true &&
+            Number(seasonContext.globalEpisode) > 0
+        ) {
+            targetEpisode =
+                Number(seasonContext.globalEpisode);
+
+            console.info(
+                TAG,
+                "VERIFIED GLOBAL EPISODE:",
+                JSON.stringify({
+                    season: Number(seasonNumber),
+                    episode: Number(episodeNumber),
+                    globalEpisode: targetEpisode,
+                    previousSeasonCounts:
+                        seasonContext.previousSeasonCounts
+                })
+            );
+        } else {
+            console.warn(
+                TAG,
+                "GLOBAL EPISODE NOT VERIFIED — REFUSING WRONG EPISODE",
+                JSON.stringify({
+                    seasonNumber,
+                    episodeNumber
+                })
             );
 
-            selected = episodes.find(
-                episode => Number(episode.number) === targetEpisode
-            ) || episodes[targetEpisode - 1] || null;
-
-            if (!selected) {
-                console.warn(TAG, "EPISODE NOT FOUND:", targetEpisode);
-                return [];
-            }
+            return [];
         }
+    }
+
+    selected = episodes.find(
+        episode =>
+            Number(episode.number) === targetEpisode
+    ) || null;
+
+    if (!selected) {
+        console.warn(
+            TAG,
+            "EPISODE NOT FOUND:",
+            targetEpisode
+        );
+        return [];
+    }
+
+    console.info(
+        TAG,
+        "VERIFIED EPISODE SELECTED:",
+        JSON.stringify({
+            requestedSeason: seasonNumber,
+            requestedEpisode: episodeNumber,
+            selectedEpisode: selected.number,
+            selectedName: selected.name
+        })
+    );
+}
 
         let linkInput;
 
@@ -40840,7 +40929,8 @@ async function scrapePhimHDCS(
     episodeNumber = 0,
     streamType = "movie",
     titleVariants = [],
-    imdbId = ""
+    imdbId = "",
+    seasonContext = null
 ) {
 
     const streams = [];
@@ -42310,6 +42400,49 @@ console.log(
                 continue;
             }
 
+// ====================================================
+// [PHIMHDCS-SERIES-TYPE-GUARD]
+// Loại phim lẻ khi yêu cầu phim bộ.
+// Chỉ từ chối khi có dấu hiệu loại nội dung rõ ràng.
+// ====================================================
+
+if (streamType === "series") {
+    const candidateTypeText = [
+        candidate.title,
+        detail.title,
+        detail.name,
+        detail.type,
+        detail.category
+    ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d");
+
+    const explicitlyMovie = [
+        /\bmovie\b/i,
+        /\bthe movie\b/i,
+        /\bfilm\b/i,
+        /\bphim le\b/i,
+        /\bphim chieu rap\b/i
+    ].some(pattern => pattern.test(candidateTypeText));
+
+    if (explicitlyMovie) {
+        console.log(
+            "[PHIMHDCS] CANDIDATE REJECTED — MOVIE INSTEAD OF SERIES:",
+            JSON.stringify({
+                requestedType: streamType,
+                candidateTitle: candidate.title,
+                detailTitle: detail.title || detail.name || "",
+                candidateTypeText
+            })
+        );
+
+        continue;
+    }
+}
 
 // ====================================================
 // [PHIMHDCS-IDENTITY-GUARD-V2]
@@ -42985,127 +43118,133 @@ console.log(
 // 6. CHỌN TẤT CẢ EPISODE THEO TỪNG SERVER
 // ====================================================
 
-const targetEpisode =
-    Number(
-        episodeNumber
-    ) || 1;
+let targetEpisode =
+    Number(episodeNumber) || 1;
 
 const selectedEpisodes = [];
 
-if (
-    streamType ===
-    "series"
-) {
+if (streamType === "series") {
+    const requestedSeason =
+        Number(seasonNumber) || 0;
 
-    for (
-        const server
-        of servers
-    ) {
+    if (requestedSeason > 1) {
+        if (
+            seasonContext?.verified === true &&
+            Number(seasonContext.globalEpisode) > 0
+        ) {
+            console.log(
+                "[PHIMHDCS] VERIFIED GLOBAL EPISODE:",
+                JSON.stringify({
+                    season: requestedSeason,
+                    episode: targetEpisode,
+                    globalEpisode:
+                        seasonContext.globalEpisode,
+                    previousSeasonCounts:
+                        seasonContext.previousSeasonCounts
+                })
+            );
+        } else {
+            console.warn(
+                "[PHIMHDCS] GLOBAL EPISODE NOT VERIFIED — REFUSING WRONG EPISODE",
+                JSON.stringify({
+                    season: requestedSeason,
+                    episode: targetEpisode
+                })
+            );
 
-        const found =
-            server.episodes.find(
-                function (
-                    episode
-                ) {
+            addFallback();
+            return streams;
+        }
+    }
 
-                    return (
-                        Number(
-                            episode.number
-                        ) ===
-                        targetEpisode
-                    );
+    for (const server of servers) {
+        const serverSeason =
+            movinaDetectSeasonNumber([
+                server.name
+            ]);
 
+        // Nếu server ghi rõ mùa, chỉ nhận đúng mùa yêu cầu.
+        if (
+            serverSeason > 0 &&
+            serverSeason !== requestedSeason
+        ) {
+            console.log(
+                "[PHIMHDCS] SERVER SEASON MISMATCH:",
+                {
+                    server: server.name,
+                    serverSeason,
+                    requestedSeason
                 }
             );
 
-        if (
-            found
-        ) {
+            continue;
+        }
 
+        // Server ghi rõ mùa: dùng số tập trong mùa.
+        // Server không ghi mùa: dùng vị trí tập toàn series.
+        const expectedEpisode =
+            requestedSeason > 1 &&
+            serverSeason === 0
+                ? Number(seasonContext.globalEpisode)
+                : targetEpisode;
+
+        const found =
+            server.episodes.find(
+                episode =>
+                    Number(episode.number) ===
+                    expectedEpisode
+            );
+
+        if (found) {
             selectedEpisodes.push({
-
-                server:
-                    server.name,
-
-                episode:
-                    found
-
+                server: server.name,
+                episode: found
             });
 
             console.log(
                 "[PHIMHDCS] SELECTED EPISODE:",
                 {
-                    server:
-                        server.name,
-
-                    name:
-                        found.name,
-
-                    url:
-                        found.url
+                    server: server.name,
+                    serverSeason,
+                    requestedSeason,
+                    requestedEpisode: targetEpisode,
+                    expectedEpisode,
+                    name: found.name,
+                    url: found.url
                 }
             );
-
         } else {
-
             console.log(
                 "[PHIMHDCS] EPISODE NOT FOUND ON SERVER:",
                 {
-                    server:
-                        server.name,
-
-                    target:
-                        targetEpisode
+                    server: server.name,
+                    serverSeason,
+                    requestedSeason,
+                    expectedEpisode
                 }
             );
-
         }
-
     }
-
 } else {
-
-    for (
-        const server
-        of servers
-    ) {
-
-        if (
-            server.episodes.length >
-            0
-        ) {
-
-            const found =
-                server.episodes[0];
+    for (const server of servers) {
+        if (server.episodes.length > 0) {
+            const found = server.episodes[0];
 
             selectedEpisodes.push({
-
-                server:
-                    server.name,
-
-                episode:
-                    found
-
+                server: server.name,
+                episode: found
             });
 
             console.log(
                 "[PHIMHDCS] SELECTED MOVIE SERVER:",
                 {
-                    server:
-                        server.name,
-
-                    name:
-                        found.name,
-
-                    url:
-                        found.url
+                    server: server.name,
+                    name: found.name,
+                    url: found.url
                 }
             );
-
         }
-
     }
-
 }
 
 if (
@@ -47469,16 +47608,21 @@ const animehayPromise = (async () => {
 
     try {
         const legacyPromise = Promise.race([
-            fetchAnimeHay(
-                movieName,
-                movieYear,
-                seasonNumber,
-                episodeNumber,
-                streamType,
-                rawId.startsWith("tt")
-                    ? rawId.split(":")[0]
-                    : ""
-            ),
+ fetchAnimeHay(
+    movieName,
+    movieYear,
+    seasonNumber,
+    episodeNumber,
+    streamType,
+    rawId.startsWith("tt")
+        ? rawId.split(":")[0]
+        : "",
+    movinaBuildKKPhimSeasonContext(
+        resolvedMetadata,
+        seasonNumber,
+        episodeNumber
+    )
+),
 
             new Promise(resolve => {
                 legacyTimer = setTimeout(
@@ -47608,13 +47752,18 @@ const animehayPromise = (async () => {
               );
           });
 
-          const fetchPromise = fetchOnflixProvider(
-              movieName,
-              movieYear,
-              seasonNumber,
-              episodeNumber,
-              streamType
-          );
+const fetchPromise = fetchOnflixProvider(
+    movieName,
+    movieYear,
+    seasonNumber,
+    episodeNumber,
+    streamType,
+    movinaBuildKKPhimSeasonContext(
+        resolvedMetadata,
+        seasonNumber,
+        episodeNumber
+    )
+);
 
           const result = await Promise.race([
               fetchPromise,
@@ -47773,15 +47922,21 @@ const nguoncUniversalTitleIdentityPromise =
         })
     );
 
-    return await scrapePhimHDCS(
-        movieName,
-        movieYear,
+return await scrapePhimHDCS(
+    movieName,
+    movieYear,
+    seasonNumber,
+    episodeNumber,
+    streamType,
+    identity.titles,
+    identity.imdbId || phimhdcsImdbIdForTitles,
+    movinaBuildKKPhimSeasonContext(
+        resolvedMetadata,
         seasonNumber,
-        episodeNumber,
-        streamType,
-        identity.titles,
-        identity.imdbId || phimhdcsImdbIdForTitles
-    );
+        episodeNumber
+    )
+);
+
 })()
 
 
