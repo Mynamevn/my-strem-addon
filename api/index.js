@@ -46263,7 +46263,7 @@ builder.defineStreamHandler(async (args) => {
     // -----------------------------------------------------------------
     // [CẬP NHẬT GOOGLE DORKING] - NHÁNH TỰ ĐỘNG TÌM KIẾM BẰNG GOOGLE (CHÍNH XÁC 100%)
     // -----------------------------------------------------------------
-    if (args.type === "movie" || args.type === "series") {
+   if (false && (args.type === "movie" || args.type === "series")) {
         const MAIN_URL = "https://animesub.site";
         const fakeVietnameseIP = "115.79.139.142"; 
         const commonHeaders = {
