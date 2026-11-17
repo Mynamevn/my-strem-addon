@@ -34893,9 +34893,9 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
 const selectedEpisodeForEmbeds = Math.max(
     1,
     Number(
-        requestedEpisodeNumberArg ||
         payload?.selectedEpisode ||
         payload?.episodeNumber ||
+        requestedEpisodeNumberArg ||
         String(currentWatchUrl).match(
             /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
         )?.[1] ||
@@ -35025,18 +35025,18 @@ console.info("[ONFLIX-DEBUG] AFTER PA FETCH BLOCK", {
         }
 
         // FALLBACK: chọn đúng tập, ưu tiên URL media trực tiếp.
-        const requestedEpisodeNumber = Math.max(
-            1,
-            Number(requestedEpisodeNumberArg) ||
-            Number(payload?.selectedEpisode) ||
-            Number(payload?.episodeNumber) ||
-            Number(
-                String(currentWatchUrl).match(
-                    /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
-                )?.[1]
-            ) ||
-            1
-        );
+const requestedEpisodeNumber = Math.max(
+    1,
+    Number(payload?.selectedEpisode) ||
+    Number(payload?.episodeNumber) ||
+    Number(requestedEpisodeNumberArg) ||
+    Number(
+        String(currentWatchUrl).match(
+            /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
+        )?.[1]
+    ) ||
+    1
+);
 
         const fallbackSeen = new Set();
 
