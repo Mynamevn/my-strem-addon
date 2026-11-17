@@ -33,60 +33,6 @@ const crypto = require('crypto');
 const http2 = require('http2');
 const express = require('express');
 
-// =========================================================================
-// [MỚI CHÈN] - CÁC HÀM TIỆN ÍCH BYPASS ANIMESUB (MIỄN PHÍ)
-// =========================================================================
-const { HttpsProxyAgent } = require("https-proxy-agent");
-
-let cachedFreeProxy = null;
-
-async function getFreeVietnameseProxy() {
-    if (cachedFreeProxy) return cachedFreeProxy;
-    try {
-        const proxyApiUrl = "https://proxyscrape.com";
-        const response = await axios.get(proxyApiUrl, { timeout: 4000 });
-        const proxyList = response.data.split("\r\n").filter(p => p.trim() !== "");
-        for (let i = 0; i < Math.min(proxyList.length, 5); i++) {
-            const [host, port] = proxyList[i].split(":");
-            try {
-                const agent = new HttpsProxyAgent(`http://${host}:${port}`);
-                await axios.get("https://httpbin.org", { httpsAgent: agent, proxy: false, timeout: 2000 });
-                cachedFreeProxy = `http://${host}:${port}`;
-                return cachedFreeProxy;
-            } catch (err) {}
-        }
-    } catch (e) {}
-    return null;
-}
-
-function unpackPacker(p, a, c, k) {
-    const baseConvert = (n) => {
-        return (n < a ? '' : baseConvert(Math.floor(n / a))) + 
-               ((n % a) > 35 ? String.fromCharCode((n % a) + 29) : (n % a).toString(36));
-    };
-    const dict = {};
-    while (c--) { if (k[c]) dict[baseConvert(c)] = k[c]; }
-    return p.replace(/\b\w+\b/g, (match) => dict[match] || match);
-}
-
-function generateHydraxToken(index, size, md5Id, resId, frag) {
-    try {
-        const sizeStr = String(size);
-        const digitBytes = Buffer.alloc(sizeStr.length);
-        for (let i = 0; i < sizeStr.length; i++) { digitBytes[i] = sizeStr.charCodeAt(i) - 0x30; }
-        const keyHexStr = crypto.createHash('md5').update(digitBytes).digest('hex');
-        const keyHex = Buffer.from(keyHexStr, 'ascii');
-        const iv = Buffer.alloc(16); keyHex.copy(iv, 0, 0, 16);
-        const pathStr = `/mp4/${md5Id}/${resId}/${size}/${frag}/${index}`;
-        const path = Buffer.from(pathStr, 'utf-8');
-        const cipher = crypto.createCipheriv('aes-128-ctr', keyHex.slice(0, 16), iv);
-        let enc = Buffer.concat([cipher.update(path), cipher.final()]);
-        let firstBase64 = enc.toString('base64').replace(/=+$/, '');
-        const firstBytes = Buffer.from(firstBase64, 'binary');
-        return firstBytes.toString('base64').replace(/=+$/, '');
-    } catch (e) { return null; }
-}
-
 const manifest = {
 
     id:
@@ -115,7 +61,6 @@ const manifest = {
 
         idPrefixes: [
         "tt",
-        "animet:",
         "vnwpsw:",
         "movina-classic:",
         "vmttv:",
@@ -19363,2403 +19308,6 @@ console.log(
     "[CS3 PROVIDER] SYSTEM READY"
 );
 
-// ============================================================
-// [PRV-XEM20.01] XEM20 CONFIG + AUTH SESSION
-// ============================================================
-
-const XEM20_BASE_URL = "https://xem20.net";
-
-// BẠN TỰ ĐIỀN THÔNG TIN TÀI KHOẢN CỦA MÌNH
-const XEM20_EMAIL = process.env.XEM20_EMAIL || "";
-const XEM20_PASSWORD = process.env.XEM20_PASSWORD || "";
-
-const XEM20_UA =
-    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
-
-const XEM20_COOKIE_JAR = new Map();
-
-let XEM20_AUTH_AT = 0;
-let XEM20_LOGIN_PROMISE = null;
-
-const XEM20_AUTH_TTL = 5 * 60 * 1000;
-
-
-// ------------------------------------------------------------
-// COOKIE HELPERS
-// ------------------------------------------------------------
-
-function xem20CookieHeader() {
-    return [...XEM20_COOKIE_JAR.entries()]
-        .map(([name, value]) => `${name}=${value}`)
-        .join("; ");
-}
-
-
-function xem20StoreCookies(headers) {
-    const setCookies =
-        headers?.["set-cookie"] || [];
-
-    for (const rawCookie of setCookies) {
-        const firstPart =
-            String(rawCookie || "").split(";")[0];
-
-        const separator =
-            firstPart.indexOf("=");
-
-        if (separator <= 0) continue;
-
-        const name =
-            firstPart.slice(0, separator).trim();
-
-        const value =
-            firstPart.slice(separator + 1).trim();
-
-        if (!name) continue;
-
-        if (/max-age=0|expires=Thu, 01 Jan 1970/i.test(rawCookie)) {
-            XEM20_COOKIE_JAR.delete(name);
-        } else {
-            XEM20_COOKIE_JAR.set(name, value);
-        }
-    }
-}
-
-
-// ------------------------------------------------------------
-// HTTP REQUEST
-// ------------------------------------------------------------
-
-
-async function xem20Request(
-    url,
-    options = {}
-) {
-    let currentUrl = String(url || "");
-
-    let method =
-        String(options.method || "GET").toUpperCase();
-
-    let data = options.data;
-
-    let previousUrl = "";
-
-    let stripBodyHeaders = false;
-
-    const redirectLimit =
-        Number.isInteger(options.maxRedirects)
-            ? Math.max(0, options.maxRedirects)
-            : 5;
-
-    let response = null;
-
-    for (
-        let hop = 0;
-        hop <= redirectLimit;
-        hop++
-    ) {
-
-        const headers = {
-            "User-Agent": XEM20_UA,
-            "Accept":
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "vi-VN,vi;q=0.9",
-            ...(options.headers || {})
-        };
-
-        if (previousUrl) {
-            headers.Referer = previousUrl;
-        }
-
-        if (stripBodyHeaders) {
-            delete headers["Content-Type"];
-            delete headers["X-XSRF-TOKEN"];
-        }
-
-        let currentHost = "";
-        let baseHost = "";
-
-        try {
-            currentHost =
-                new URL(currentUrl).hostname.toLowerCase();
-
-            baseHost =
-                new URL(XEM20_BASE_URL).hostname.toLowerCase();
-
-        } catch (_) {
-            throw new Error(
-                "XEM20 invalid request URL"
-            );
-        }
-
-        const sameSite =
-            currentHost === baseHost ||
-            currentHost.endsWith("." + baseHost);
-
-        if (sameSite) {
-
-            const cookie =
-                xem20CookieHeader();
-
-            if (cookie) {
-                headers.Cookie = cookie;
-            } else {
-                delete headers.Cookie;
-            }
-
-        } else {
-            delete headers.Cookie;
-        }
-
-        response = await axios({
-            url: currentUrl,
-            method,
-            data,
-            headers,
-            timeout: options.timeout || 15000,
-
-            // Tự xử lý redirect bên dưới.
-            maxRedirects: 0,
-
-            validateStatus: () => true
-        });
-
-        if (sameSite) {
-            xem20StoreCookies(response.headers);
-        }
-
-        response.xem20FinalUrl = currentUrl;
-
-        const status =
-            Number(response.status || 0);
-
-        const location =
-            String(
-                response.headers?.location || ""
-            ).trim();
-
-        const isRedirect =
-            [301, 302, 303, 307, 308].includes(status);
-
-        if (
-            !isRedirect ||
-            !location ||
-            hop >= redirectLimit
-        ) {
-            return response;
-        }
-
-        let nextUrl;
-
-        try {
-            nextUrl =
-                new URL(location, currentUrl).href;
-        } catch (_) {
-            return response;
-        }
-
-        console.log(
-            "[XEM20] HTTP REDIRECT:",
-            {
-                status,
-                from: currentUrl,
-                to: nextUrl,
-                hop: hop + 1
-            }
-        );
-
-        previousUrl = currentUrl;
-        currentUrl = nextUrl;
-
-        // POST + 301/302/303 chuyển thành GET.
-        if (
-            status === 303 ||
-            (
-                [301, 302].includes(status) &&
-                method === "POST"
-            )
-        ) {
-            method = "GET";
-            data = undefined;
-            stripBodyHeaders = true;
-        }
-    }
-
-    return response;
-}
-
-// ------------------------------------------------------------
-// AUTOMATIC LOGIN
-// ------------------------------------------------------------
-
-async function xem20EnsureLogin(force = false) {
-    if (!XEM20_EMAIL.trim() || !XEM20_PASSWORD) {
-        console.log("[XEM20] LOGIN DISABLED: Chưa điền tài khoản.");
-        return false;
-    }
-
-    if (
-        !force &&
-        XEM20_AUTH_AT &&
-        Date.now() - XEM20_AUTH_AT < XEM20_AUTH_TTL
-    ) {
-        return true;
-    }
-
-    if (XEM20_LOGIN_PROMISE) {
-        return XEM20_LOGIN_PROMISE;
-    }
-
-    XEM20_LOGIN_PROMISE = (async () => {
-        try {
-            console.log("[XEM20] LOGIN START");
-
-            const loginPage = await xem20Request(
-                `${XEM20_BASE_URL}/login`
-            );
-
-            if (
-                !loginPage ||
-                loginPage.status < 200 ||
-                loginPage.status >= 300
-            ) {
-                throw new Error(
-                    `GET login failed: ${loginPage?.status}`
-                );
-            }
-
-            const login$ = cheerio.load(
-                String(loginPage.data || "")
-            );
-
-const loginForm = login$("form").first();
-
-console.log("[XEM20] LOGIN FORM STRUCTURE:", {
-    action: loginForm.attr("action") || "",
-    method: loginForm.attr("method") || "",
-    fields: loginForm.find("input").map((_, el) => ({
-        name: login$(el).attr("name") || "",
-        type: login$(el).attr("type") || "",
-        autocomplete: login$(el).attr("autocomplete") || ""
-    })).get(),
-    buttons: loginForm.find("button, input[type='submit']").map((_, el) => ({
-        name: login$(el).attr("name") || "",
-        type: login$(el).attr("type") || "",
-        text: login$(el).text().replace(/\s+/g, " ").trim().slice(0, 60)
-    })).get()
-});
-
-            const csrf = String(
-                login$('input[name="_token"]').attr("value") || ""
-            ).trim();
-
-            if (!csrf) {
-                throw new Error("Không tìm thấy CSRF token.");
-            }
-
-            const xsrfCookie =
-                XEM20_COOKIE_JAR.get("XSRF-TOKEN") || "";
-
-            let xsrfToken = xsrfCookie;
-
-            try {
-                xsrfToken = decodeURIComponent(xsrfCookie);
-            } catch (_) {}
-
-            const body = new URLSearchParams({
-                _token: csrf,
-                login: XEM20_EMAIL.trim(),
-                password: XEM20_PASSWORD,
-                remember: "on"
-            }).toString();
-
-            const loginResponse = await xem20Request(
-                `${XEM20_BASE_URL}/login`,
-                {
-                    method: "POST",
-                    data: body,
-                    headers: {
-                        "User-Agent": XEM20_UA,
-                        "Referer": `${XEM20_BASE_URL}/login`,
-                        "Origin": XEM20_BASE_URL,
-                        "Content-Type":
-                            "application/x-www-form-urlencoded",
-                        "X-XSRF-TOKEN": xsrfToken,
-                        "Accept":
-                            "text/html,application/xhtml+xml,*/*"
-                    }
-                }
-            );
-
-            const hasSession =
-                XEM20_COOKIE_JAR.has("phimhdchill-session");
-
-            const loginResponse$ = cheerio.load(
-                String(loginResponse?.data || "")
-            );
-
-            const loginResponseUrl = String(
-                loginResponse?.xem20FinalUrl || ""
-            );
-
-console.log("[XEM20] LOGIN RESPONSE FORM:", {
-    hasLoginForm: loginResponse$("form").length > 0,
-    formAction: loginResponse$("form").first().attr("action") || "",
-    inputNames: loginResponse$("form").first().find("input").map(
-        (_, el) => loginResponse$(el).attr("name") || ""
-    ).get(),
-    pageTitle: loginResponse$("title").text().trim().slice(0, 100),
-    bodyText: loginResponse$("body").text().replace(/\s+/g, " ").trim().slice(0, 500)
-});
-
-            const loginErrors = [];
-
-            loginResponse$(
-                ".alert, [role='alert'], .invalid-feedback, .text-danger"
-            ).each((_, element) => {
-                const message = String(
-                    loginResponse$(element).text() || ""
-                ).replace(/\s+/g, " ").trim();
-
-                if (
-                    message &&
-                    !loginErrors.includes(message)
-                ) {
-                    loginErrors.push(message.slice(0, 180));
-                }
-            });
-
-            console.log("[XEM20] LOGIN RESPONSE:", {
-                status: loginResponse?.status,
-                finalUrl: loginResponseUrl,
-                hasSession,
-                loginErrors: loginErrors.slice(0, 5)
-            });
-
-            const home = await xem20Request(
-                `${XEM20_BASE_URL}/`
-            );
-
-            const homeHtml = String(home?.data || "");
-            const home$ = cheerio.load(homeHtml);
-
-            const loginLinks = [];
-            const logoutLinks = [];
-            const accountLinks = [];
-
-            home$("a[href]").each((_, element) => {
-                const node = home$(element);
-
-                const href = String(
-                    node.attr("href") || ""
-                ).trim();
-
-                const label = String(
-                    node.text() || ""
-                ).replace(/\s+/g, " ").trim();
-
-                const path = (() => {
-                    try {
-                        return new URL(
-                            href,
-                            XEM20_BASE_URL
-                        ).pathname.toLowerCase();
-                    } catch (_) {
-                        return "";
-                    }
-                })();
-
-                if (
-                    /\/login\/?$|\/dang-nhap\/?/.test(path) ||
-                    /đăng nhập|log in|sign in/i.test(label)
-                ) {
-                    loginLinks.push({
-                        text: label.slice(0, 100),
-                        path
-                    });
-                }
-
-                if (
-                    /\/logout\/?$|\/dang-xuat\/?/.test(path) ||
-                    /đăng xuất|log out|sign out/i.test(label)
-                ) {
-                    logoutLinks.push({
-                        text: label.slice(0, 100),
-                        path
-                    });
-                }
-
-                if (
-                    /\/account|\/profile|\/tai-khoan/i.test(path)
-                ) {
-                    accountLinks.push({
-                        text: label.slice(0, 100),
-                        path
-                    });
-                }
-            });
-
-            const loginWall =
-                home$("#cd-login-form").length > 0 ||
-                home$('input[type="password"][name="password"]').length > 0 ||
-                loginLinks.length > 0;
-
-            const authenticated =
-                Boolean(
-                    home &&
-                    home.status >= 200 &&
-                    home.status < 300 &&
-                    hasSession &&
-                    !loginWall &&
-                    logoutLinks.length > 0
-                );
-
-            console.log("[XEM20] AUTH VERIFICATION:", {
-                status: home?.status,
-                finalUrl: home?.xem20FinalUrl,
-                hasSession,
-                loginWall,
-                loginLinks: loginLinks.slice(0, 5),
-                logoutLinks: logoutLinks.slice(0, 5),
-                accountLinks: accountLinks.slice(0, 5),
-                authenticated
-            });
-
-            if (!authenticated) {
-                XEM20_AUTH_AT = 0;
-
-                console.log(
-                    "[XEM20] LOGIN REJECTED: Website chưa xác nhận tài khoản đăng nhập."
-                );
-
-                return false;
-            }
-
-            XEM20_AUTH_AT = Date.now();
-
-            console.log("[XEM20] LOGIN VERIFIED:", {
-                status: home.status,
-                hasSession: true,
-                hasLogoutLink: true
-            });
-
-            return true;
-
-        } catch (error) {
-            XEM20_AUTH_AT = 0;
-
-            console.error(
-                "[XEM20] LOGIN ERROR:",
-                error?.message || error
-            );
-
-            return false;
-
-        } finally {
-            XEM20_LOGIN_PROMISE = null;
-        }
-    })();
-
-    return XEM20_LOGIN_PROMISE;
-}
-
-// ------------------------------------------------------------
-// AUTHENTICATED DOCUMENT FETCH
-// ------------------------------------------------------------
-
-
-async function xem20FetchDoc(
-    url,
-    retry = true
-) {
-    const authenticated =
-        await xem20EnsureLogin();
-
-    if (!authenticated) {
-        console.log(
-            "[XEM20] FETCH STOP: AUTH FAILED"
-        );
-
-        return null;
-    }
-
-    try {
-
-        const response =
-            await xem20Request(url);
-
-        const html =
-            String(response?.data || "");
-
-        const $ =
-            cheerio.load(html);
-
-        const loginWall =
-            $("#cd-login-form").length > 0 ||
-            $('input[type="password"][name="password"]').length > 0;
-
-        console.log(
-            "[XEM20] DOCUMENT RESPONSE:",
-            {
-                requestedUrl: url,
-                finalUrl: response?.xem20FinalUrl,
-                status: response?.status,
-                htmlLength: html.length,
-                pageTitle: $("title").text().trim().slice(0, 120),
-                cardCount: $(".cd-card").length,
-                loginWall
-            }
-        );
-
-        if (loginWall && retry) {
-
-            console.log(
-                "[XEM20] SESSION EXPIRED — RELOGIN"
-            );
-
-            XEM20_AUTH_AT = 0;
-
-            const relogin =
-                await xem20EnsureLogin(true);
-
-            if (!relogin) return null;
-
-            return xem20FetchDoc(url, false);
-        }
-
-        if (
-            !response ||
-            response.status < 200 ||
-            response.status >= 300 ||
-            loginWall
-        ) {
-            console.log(
-                "[XEM20] DOCUMENT REJECTED:",
-                {
-                    status: response?.status,
-                    finalUrl: response?.xem20FinalUrl,
-                    loginWall
-                }
-            );
-
-            return null;
-        }
-
-        return {
-            html,
-            url:
-                response.xem20FinalUrl ||
-                url,
-            status:
-                response.status
-        };
-
-    } catch (error) {
-
-        console.log(
-            "[XEM20] FETCH ERROR:",
-            error?.message || error
-        );
-
-        return null;
-    }
-}
-
-// ============================================================
-// [PRV-XEM20.02] SEARCH + DETAIL + RELEASE PARSER
-// ============================================================
-
-function xem20NormalizeTitle(value) {
-    return String(value || "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/đ/g, "d")
-        .replace(/[^\p{L}\p{N}]+/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
-
-function xem20TitleScore(a, b) {
-    const first = xem20NormalizeTitle(a);
-    const second = xem20NormalizeTitle(b);
-
-    if (!first || !second) return 0;
-    if (first === second) return 1;
-
-    const aWords = new Set(first.split(" "));
-    const bWords = new Set(second.split(" "));
-
-    let common = 0;
-
-    for (const word of aWords) {
-        if (bWords.has(word)) common++;
-    }
-
-    return common / Math.max(aWords.size, bWords.size);
-}
-
-
-// ------------------------------------------------------------
-// MATCH TITLE WITH ORIGINAL TITLE / SEARCH RESULT TEXT
-// ------------------------------------------------------------
-
-function xem20SearchMatchScore(query, item = {}) {
-    const normalizedQuery =
-        xem20NormalizeTitle(query);
-
-    if (!normalizedQuery) return 0;
-
-    const searchable =
-        xem20NormalizeTitle([
-            item.title,
-            item.originalTitle,
-            item.searchText
-        ].filter(Boolean).join(" "));
-
-    // Ưu tiên khớp nguyên cụm tên phim.
-    if (searchable.includes(normalizedQuery)) {
-        return 1;
-    }
-
-    let slugTitle = "";
-
-    try {
-        const pathname =
-            new URL(
-                item.url,
-                XEM20_BASE_URL
-            ).pathname;
-
-        slugTitle =
-            decodeURIComponent(
-                pathname.split("/").filter(Boolean).pop() || ""
-            ).replace(/[-_]+/g, " ");
-
-    } catch (_) {}
-
-    return Math.max(
-        xem20TitleScore(query, item.title),
-        xem20TitleScore(query, slugTitle)
-    );
-}
-
-
-// ------------------------------------------------------------
-// SEARCH RESULT PARSER — LEGACY + FALLBACK
-// ------------------------------------------------------------
-
-function xem20ParseSearch(html) {
-    const $ = cheerio.load(html);
-
-    const results = [];
-    const seen = new Set();
-
-    const reservedPaths = new Set([
-        "tim-kiem",
-        "login",
-        "logout",
-        "register",
-        "dang-nhap",
-        "danh-muc",
-        "the-loai",
-        "category",
-        "tag",
-        "trailer",
-        "download"
-    ]);
-
-    function addResult(anchor, preferredContainer = null) {
-        const href =
-            String(anchor.attr("href") || "").trim();
-
-        if (!href) return;
-
-        let target;
-
-        try {
-            target = new URL(href, XEM20_BASE_URL);
-        } catch (_) {
-            return;
-        }
-
-        if (
-            target.protocol !== "http:" &&
-            target.protocol !== "https:"
-        ) {
-            return;
-        }
-
-        const host =
-            target.hostname.toLowerCase();
-
-        if (
-            host !== "xem20.net" &&
-            !host.endsWith(".xem20.net")
-        ) {
-            return;
-        }
-
-        const segments =
-            target.pathname.split("/").filter(Boolean);
-
-        if (!segments.length || segments.length > 2) {
-            return;
-        }
-
-        const slug =
-            segments[segments.length - 1].toLowerCase();
-
-        if (reservedPaths.has(slug)) return;
-
-        let container =
-            preferredContainer ||
-            anchor.closest(
-                "article, li, .cd-card, .movie-item, .film-item, .card, [class*='movie'], [class*='film'], [class*='poster'], [class*='item']"
-            );
-
-        if (!container || !container.length) {
-            container = anchor.parent();
-        }
-
-        const containerText =
-            String(container.text() || "")
-                .replace(/\s+/g, " ")
-                .trim();
-
-        const anchorText =
-            String(anchor.text() || "")
-                .replace(/\s+/g, " ")
-                .trim();
-
-        const heading =
-            String(
-                container.find(
-                    "h1, h2, h3, h4, .cd-card__title, [class*='title']"
-                ).first().text() || ""
-            ).replace(/\s+/g, " ").trim();
-
-        const imageNode =
-            anchor.find("img").first().length
-                ? anchor.find("img").first()
-                : container.find("img").first();
-
-        const imageAlt =
-            String(imageNode.attr("alt") || "").trim();
-
-        const slugTitle =
-            decodeURIComponent(slug)
-                .replace(/[-_]+/g, " ");
-
-        const titleOptions = [
-            heading,
-            imageAlt,
-            anchor.attr("title"),
-            anchor.attr("aria-label"),
-            anchorText,
-            slugTitle
-        ].map(value =>
-            String(value || "")
-                .replace(/\s+/g, " ")
-                .trim()
-        );
-
-        const title =
-            titleOptions.find(value =>
-                value.length >= 2 &&
-                value.length <= 180 &&
-                !/^(xem|xem phim|xem ngay|chi tiết|tải|bản tải|download|trailer)$/i.test(
-                    xem20NormalizeTitle(value)
-                )
-            ) || "";
-
-        if (!title) return;
-
-        const pageUrl = target.href;
-
-        if (seen.has(pageUrl)) return;
-        seen.add(pageUrl);
-
-        const image =
-            String(
-                imageNode.attr("data-src") ||
-                imageNode.attr("data-original") ||
-                imageNode.attr("src") ||
-                ""
-            ).trim();
-
-        const badges = [];
-
-        container.find(
-            ".cd-poster-badge--bottom-left, [class*='badge'], [class*='quality']"
-        ).each((_, element) => {
-            const value =
-                String($(element).text() || "").trim();
-
-            if (value && !badges.includes(value)) {
-                badges.push(value);
-            }
-        });
-
-        results.push({
-            title,
-            url: pageUrl,
-            image,
-            badges,
-            searchText: [
-                title,
-                imageAlt,
-                anchorText,
-                containerText
-            ].filter(Boolean).join(" ").slice(0, 1500)
-        });
-    }
-
-    // Cách cũ: giữ nguyên hỗ trợ .cd-card.
-    $(".cd-card").each((_, element) => {
-        const card = $(element);
-        const anchor = card.find("a[href]").first();
-
-        if (anchor.length) {
-            addResult(anchor, card);
-        }
-    });
-
-    // Cách mới: dự phòng khi website thay đổi class CSS.
-    $("a[href]").each((_, element) => {
-        addResult($(element));
-    });
-
-    return results;
-}
-
-// ------------------------------------------------------------
-// RELEASE PARSER
-// ------------------------------------------------------------
-
-
-function xem20ParseDetail(html, pageUrl) {
-    const $ = cheerio.load(html);
-
-    const title =
-        String(
-            $('meta[property="og:title"]').attr("content") ||
-            $("h1").first().text() ||
-            $("title").text() ||
-            ""
-        )
-            .replace(/\s*-\s*Thuyết Minh\s*$/i, "")
-            .trim();
-
-    const summary =
-        String(
-            $(".cd-download-hero__summary").text() ||
-            $('meta[property="og:description"]').attr("content") ||
-            ""
-        ).trim();
-
-    const information =
-        String(
-            $("#movie-information").text() ||
-            $("aside").text() ||
-            ""
-        ).trim();
-
-    const pageText =
-        String($("body").text() || "")
-            .replace(/\s+/g, " ");
-
-    const yearMatch =
-        (summary + " " + information + " " + pageText)
-            .match(/(?:Năm|Year)\s*[:：]?\s*([12]\d{3})/i);
-
-    const year =
-        yearMatch
-            ? Number(yearMatch[1])
-            : 0;
-
-    const poster =
-        String(
-            $('meta[property="og:image"]').attr("content") ||
-            ""
-        ).trim();
-
-    const releases = [];
-    const seenReleaseIds = new Set();
-
-    // Không phụ thuộc duy nhất vào article.cd-release.
-    $("form[action*='download-links']").each((_, element) => {
-        const form = $(element);
-
-        const action =
-            String(form.attr("action") || "").trim();
-
-        const idMatch =
-            action.match(
-                /\/download-links\/(\d+)\/access/i
-            );
-
-        if (!idMatch) return;
-
-        const releaseId = idMatch[1];
-
-        if (seenReleaseIds.has(releaseId)) return;
-        seenReleaseIds.add(releaseId);
-
-        let container =
-            form.closest(
-                "article.cd-release, article, li, details, .cd-release, [class*='release'], .card, [class*='file']"
-            );
-
-        if (!container.length) {
-            container = form.parent();
-        }
-
-        const containerText =
-            String(container.text() || "")
-                .replace(/\s+/g, " ")
-                .trim();
-
-        const releaseName =
-            String(
-                container.find(
-                    ".cd-release__name, [class*='release__name'], h2, h3, h4, strong"
-                ).first().text() ||
-                form.find("button").first().text() ||
-                form.find("input[type='submit']").attr("value") ||
-                ""
-            ).replace(/\s+/g, " ").trim();
-
-        const filenameMatch =
-            containerText.match(
-                /[^\s"'<>]{2,180}\.(?:mp4|mkv|avi|mov)/i
-            );
-
-        const finalName =
-            releaseName ||
-            filenameMatch?.[0] ||
-            "Server";
-
-        let releaseMeta =
-            String(
-                container.find(
-                    ".cd-release__meta, [class*='release__meta']"
-                ).first().text() || ""
-            ).replace(/\s+/g, " ").trim();
-
-        if (!releaseMeta) {
-            releaseMeta =
-                containerText
-                    .replace(finalName, "")
-                    .trim()
-                    .slice(0, 500);
-        }
-
-        const seasonElement =
-            container.closest(
-                "details.cd-season, details, [class*='season']"
-            );
-
-        const seasonText =
-            String(
-                seasonElement.find("summary").first().text() ||
-                ""
-            ).trim();
-
-        const seasonMatch =
-            (seasonText + " " + releaseMeta)
-                .match(/(?:season|mùa|phần)\s*(\d+)/i);
-
-        const episodeMatch =
-            releaseMeta.match(/Tập\s*(\d+)/i);
-
-        let absoluteAction = action;
-
-        try {
-            absoluteAction =
-                new URL(action, pageUrl).href;
-        } catch (_) {
-            return;
-        }
-
-        releases.push({
-            id: releaseId,
-            name: finalName,
-            meta: releaseMeta,
-            season: seasonMatch
-                ? Number(seasonMatch[1])
-                : 0,
-            episode: episodeMatch
-                ? Number(episodeMatch[1])
-                : 0,
-            action: absoluteAction,
-            pageUrl
-        });
-    });
-
-        const releaseCards = [];
-
-    $(".cd-release").each((_, element) => {
-        const card = $(element);
-
-        const safeAttrs = node => {
-            const result = {};
-
-            for (const [key, value] of Object.entries(
-                node?.attribs || {}
-            )) {
-                if (/token|csrf|password|cookie|secret|authorization/i.test(key)) {
-                    result[key] = "[redacted]";
-                    continue;
-                }
-
-                result[key] = String(value || "").slice(0, 500);
-            }
-
-            return result;
-        };
-
-        const children = [];
-
-        card.find(
-            "a, button, form, input, [data-release-id], [data-id], [id]"
-        ).each((__, child) => {
-            const node = $(child);
-
-            children.push({
-                tag: child.tagName,
-                attrs: safeAttrs(child),
-                text: String(node.text() || "")
-                    .replace(/\s+/g, " ")
-                    .trim()
-                    .slice(0, 200)
-            });
-        });
-
-        releaseCards.push({
-            attrs: safeAttrs(element),
-            name: card.find(".cd-release__name").first().text().trim(),
-            meta: card.find(".cd-release__meta").first().text().trim(),
-            children
-        });
-    });
-
-    const scriptMatches = [];
-
-    $("script").each((_, element) => {
-        if (scriptMatches.length >= 15) return;
-
-        const source = String($(element).html() || "");
-
-        const pattern =
-            /download-links|release[_-]?id|releaseId|ticket|downloadLink|download-link/ig;
-
-        let match;
-
-        while (
-            (match = pattern.exec(source)) &&
-            scriptMatches.length < 15
-        ) {
-            const start = Math.max(0, match.index - 250);
-            const end = Math.min(source.length, match.index + 500);
-
-            let excerpt = source.slice(start, end);
-
-            excerpt = excerpt
-                .replace(
-                    /(_token|csrf|password|authorization|cookie)\s*[:=]\s*["'][^"']*["']/gi,
-                    '$1:"[redacted]"'
-                );
-
-            scriptMatches.push({
-                keyword: match[0],
-                excerpt
-            });
-        }
-    });
-
-    const accountLinks = $("a[href]").filter((_, element) => {
-        const text = String($(element).text() || "").trim();
-
-        return /đăng xuất|logout|tài khoản|account|profile/i.test(text);
-    }).map((_, element) => ({
-        text: String($(element).text() || "").trim(),
-        href: String($(element).attr("href") || "")
-    })).get();
-
-    console.log(
-        "[XEM20] RELEASE STRUCTURE:",
-        JSON.stringify({
-            releaseCardCount: $(".cd-release").length,
-            releaseCards,
-            scriptMatches,
-            accountLinks,
-            hasLoginButton: $("a[href='/login']").length > 0,
-            csrfFieldCount: $('input[name="_token"]').length
-        })
-    );
-
-    return {
-        title,
-        year,
-        poster,
-        releases
-    };
-}
-
-// ------------------------------------------------------------
-// SELECT REQUESTED EPISODE / SEASON
-// ------------------------------------------------------------
-
-function xem20SelectReleases(
-    releases,
-    streamType,
-    seasonNumber,
-    episodeNumber
-) {
-    if (!Array.isArray(releases)) return [];
-
-    const isSeries =
-        streamType === "series";
-
-    const targetSeason =
-        Number(seasonNumber || 1);
-
-    const targetEpisode =
-        Number(episodeNumber || 1);
-
-    const selected = [];
-
-    for (const release of releases) {
-
-        if (isSeries) {
-
-            if (
-                release.season &&
-                release.season !== targetSeason
-            ) {
-                continue;
-            }
-
-            if (
-                release.episode &&
-                release.episode !== targetEpisode
-            ) {
-                continue;
-            }
-
-            // Không chọn release không rõ tập
-            // cho các tập lớn hơn 1.
-            if (
-                !release.episode &&
-                targetEpisode > 1
-            ) {
-                continue;
-            }
-
-        } else {
-
-            // Phim lẻ: bỏ các release chỉ rõ là tập.
-            if (release.episode) continue;
-        }
-
-        selected.push(release);
-    }
-
-    return selected;
-}
-
-// ============================================================
-// [PRV-XEM20.03] TICKET + DOWNFSHARE + SSO RESOLVER
-// ============================================================
-
-async function xem20RequestTicket(
-    release,
-    csrf
-) {
-    try {
-
-        const body =
-            new URLSearchParams({
-                _token: csrf
-            }).toString();
-
-        const response =
-            await xem20Request(
-                `${XEM20_BASE_URL}/download-links/${release.id}/access`,
-                {
-                    method: "POST",
-                    data: body,
-
-                    // Phải giữ nguyên redirect để đọc Location.
-                    maxRedirects: 0,
-
-                    headers: {
-                        "User-Agent": XEM20_UA,
-                        "Referer": release.pageUrl,
-                        "Accept": "*/*",
-                        "Origin": XEM20_BASE_URL,
-                        "X-Requested-With": "XMLHttpRequest",
-                        "Content-Type":
-                            "application/x-www-form-urlencoded"
-                    }
-                }
-            );
-
-        const location =
-            String(
-                response.headers?.location || ""
-            ).trim();
-
-        console.log(
-            "[XEM20] TICKET RESPONSE:",
-            {
-                releaseId: release.id,
-                status: response.status,
-                hasLocation: Boolean(location),
-                contentType:
-                    response.headers?.["content-type"] || ""
-            }
-        );
-
-        if (location) {
-            return new URL(
-                location,
-                XEM20_BASE_URL
-            ).href;
-        }
-
-        const bodyText =
-            typeof response.data === "string"
-                ? response.data
-                : JSON.stringify(response.data || {});
-
-        const urlMatch =
-            bodyText.match(
-                /https?:\\?\/\\?\/[^"'\\\s<>]+/i
-            );
-
-        return urlMatch
-            ? urlMatch[0].replace(/\\\//g, "/")
-            : "";
-
-    } catch (error) {
-
-        console.log(
-            "[XEM20] TICKET ERROR:",
-            release.id,
-            error?.response?.status ||
-            error?.message ||
-            error
-        );
-
-        return "";
-    }
-}
-
-// ------------------------------------------------------------
-// DOWNFSHARE COOKIE HELPERS
-// ------------------------------------------------------------
-
-function xem20DownCookieHeader(jar, host) {
-
-    const result = [];
-
-    for (const [domain, cookies] of jar.entries()) {
-
-        if (
-            host === domain ||
-            host.endsWith("." + domain)
-        ) {
-            for (const [name, value] of cookies.entries()) {
-                result.push(`${name}=${value}`);
-            }
-        }
-    }
-
-    return result.join("; ");
-}
-
-
-function xem20StoreDownCookies(jar, responseUrl, headers) {
-
-    const setCookies =
-        headers?.["set-cookie"] || [];
-
-    let host = "";
-
-    try {
-        host = new URL(responseUrl).hostname;
-    } catch (_) {
-        return;
-    }
-
-    for (const rawCookie of setCookies) {
-
-        const first =
-            String(rawCookie || "").split(";")[0];
-
-        const index =
-            first.indexOf("=");
-
-        if (index <= 0) continue;
-
-        const name =
-            first.slice(0, index).trim();
-
-        const value =
-            first.slice(index + 1).trim();
-
-        const domainMatch =
-            String(rawCookie).match(/domain=\.?([^;]+)/i);
-
-        const domain =
-            domainMatch
-                ? domainMatch[1].trim().toLowerCase()
-                : host.toLowerCase();
-
-        if (!jar.has(domain)) {
-            jar.set(domain, new Map());
-        }
-
-        jar.get(domain).set(name, value);
-    }
-}
-
-// ------------------------------------------------------------
-// READ LIMITED HTML FROM STREAM
-// ------------------------------------------------------------
-
-async function xem20ReadLimitedText(
-    stream,
-    maxBytes = 1500000
-) {
-    if (!stream) return "";
-
-    const chunks = [];
-    let total = 0;
-
-    try {
-        for await (const chunk of stream) {
-            const buffer =
-                Buffer.isBuffer(chunk)
-                    ? chunk
-                    : Buffer.from(chunk);
-
-            const remaining =
-                maxBytes - total;
-
-            if (remaining > 0) {
-                const part =
-                    buffer.subarray(0, remaining);
-
-                chunks.push(part);
-                total += part.length;
-            }
-
-            if (
-                buffer.length > remaining ||
-                total >= maxBytes
-            ) {
-                stream.destroy?.();
-                break;
-            }
-        }
-
-    } catch (error) {
-        if (!stream.destroyed) {
-            throw error;
-        }
-    }
-
-    return Buffer.concat(chunks).toString("utf8");
-}
-
-
-// ------------------------------------------------------------
-// FOLLOW DOWNFSHARE / SSO REDIRECTS
-// ------------------------------------------------------------
-
-async function xem20WalkSso(
-    startUrl,
-    initialReferer
-) {
-    let currentUrl =
-        String(startUrl || "").trim();
-
-    if (!/^https?:\/\//i.test(currentUrl)) {
-        return null;
-    }
-
-    const cookieJar = new Map();
-
-    let referer =
-        initialReferer || XEM20_BASE_URL + "/";
-
-    for (let hop = 0; hop < 12; hop++) {
-        let response;
-
-        let host = "";
-
-        try {
-            host =
-                new URL(currentUrl).hostname.toLowerCase();
-
-            const cookies =
-                xem20DownCookieHeader(
-                    cookieJar,
-                    host
-                );
-
-            const headers = {
-                "User-Agent": XEM20_UA,
-                "Referer": referer,
-                "Accept":
-                    "text/html,application/xhtml+xml,application/json,*/*"
-            };
-
-            if (cookies) {
-                headers.Cookie = cookies;
-            }
-
-            response =
-                await axios.get(
-                    currentUrl,
-                    {
-                        headers,
-                        timeout: 15000,
-                        maxRedirects: 0,
-                        validateStatus: () => true,
-                        responseType: "stream"
-                    }
-                );
-
-            xem20StoreDownCookies(
-                cookieJar,
-                currentUrl,
-                response.headers
-            );
-
-        } catch (error) {
-            console.log(
-                "[XEM20] SSO HOP ERROR:",
-                hop,
-                error?.response?.status ||
-                error?.message ||
-                error
-            );
-
-            return null;
-        }
-
-        const status =
-            Number(response.status || 0);
-
-        const location =
-            String(
-                response.headers?.location || ""
-            ).trim();
-
-        const contentType =
-            String(
-                response.headers?.["content-type"] || ""
-            ).toLowerCase();
-
-        const disposition =
-            String(
-                response.headers?.["content-disposition"] || ""
-            );
-
-        console.log(
-            "[XEM20] SSO HOP:",
-            {
-                hop,
-                status,
-                host,
-                contentType,
-                hasLocation: Boolean(location),
-                hasDisposition: Boolean(disposition)
-            }
-        );
-
-        if (status === 429) {
-            response.data?.destroy?.();
-
-            console.log(
-                "[XEM20] DOWNFSHARE QUOTA LIMIT"
-            );
-
-            return null;
-        }
-
-        // Redirect phải được xử lý trước khi đọc body.
-        if (
-            status >= 300 &&
-            status < 400 &&
-            location
-        ) {
-            response.data?.destroy?.();
-
-            referer = currentUrl;
-
-            try {
-                currentUrl =
-                    new URL(location, currentUrl).href;
-            } catch (_) {
-                return null;
-            }
-
-            continue;
-        }
-
-        const isDownFshare =
-            host === "dl.downfshare.top" ||
-            host.endsWith(".downfshare.top");
-
-        const hasMediaFilename =
-            /\.(m3u8|mp4|mkv)(?:["';\s]|$)/i.test(
-                disposition
-            );
-
-        const looksLikeMedia =
-            /video\/|mpegurl|matroska/i.test(contentType) ||
-            /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(currentUrl) ||
-            (
-                /application\/octet-stream|binary\/octet-stream/i.test(contentType) &&
-                (isDownFshare || hasMediaFilename)
-            ) ||
-            hasMediaFilename;
-
-        if (
-            (status === 200 || status === 206) &&
-            looksLikeMedia
-        ) {
-            response.data?.destroy?.();
-
-            const playbackHeaders = {
-                "User-Agent": XEM20_UA,
-                "Referer": referer
-            };
-
-            const playbackCookies =
-                xem20DownCookieHeader(
-                    cookieJar,
-                    host
-                );
-
-            if (playbackCookies) {
-                playbackHeaders.Cookie =
-                    playbackCookies;
-            }
-
-            console.log(
-                "[XEM20] DIRECT MEDIA FOUND:",
-                {
-                    host,
-                    status,
-                    contentType
-                }
-            );
-
-            return {
-                url: currentUrl,
-                headers: playbackHeaders,
-                contentType
-            };
-        }
-
-        // Chỉ đọc HTML có giới hạn.
-        const html =
-            await xem20ReadLimitedText(
-                response.data,
-                1500000
-            );
-
-        // CloudStream source: const playUrl = "..."
-        const playMatch =
-            html.match(
-                /(?:const|let|var)\s+playUrl\s*=\s*["']([^"']+)["']/i
-            );
-
-        if (playMatch?.[1]) {
-            const playUrl =
-                playMatch[1].replace(/\\\//g, "/");
-
-            referer = currentUrl;
-
-            try {
-                currentUrl =
-                    new URL(playUrl, currentUrl).href;
-            } catch (_) {
-                return null;
-            }
-
-            continue;
-        }
-
-        // JavaScript location redirect.
-        const jsLocationMatch =
-            html.match(
-                /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
-            );
-
-        if (jsLocationMatch?.[1]) {
-            referer = currentUrl;
-
-            try {
-                currentUrl =
-                    new URL(
-                        jsLocationMatch[1],
-                        currentUrl
-                    ).href;
-            } catch (_) {
-                return null;
-            }
-
-            continue;
-        }
-
-        // Meta refresh.
-        const metaMatch =
-            html.match(
-                /http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)/i
-            );
-
-        if (metaMatch?.[1]) {
-            referer = currentUrl;
-
-            try {
-                currentUrl =
-                    new URL(
-                        metaMatch[1],
-                        currentUrl
-                    ).href;
-            } catch (_) {
-                return null;
-            }
-
-            continue;
-        }
-
-        console.log(
-            "[XEM20] SSO PAGE HAS NO PLAY URL:",
-            {
-                hop,
-                status,
-                host,
-                contentType,
-                htmlLength: html.length
-            }
-        );
-
-        return null;
-    }
-
-    console.log(
-        "[XEM20] SSO STOP: vượt quá số hop cho phép."
-    );
-
-    return null;
-}
-
-
-// ------------------------------------------------------------
-// RESOLVE DOWNLOAD TICKET
-// ------------------------------------------------------------
-
-async function xem20ResolveTicket(
-    ticketUrl,
-    release
-) {
-    if (!ticketUrl) return null;
-
-    const candidates = [ticketUrl];
-
-    const hashMatch =
-        ticketUrl.match(
-            /\/x\/([0-9a-f]{16,})/i
-        );
-
-    if (hashMatch) {
-        const base =
-            `https://dl.downfshare.top/x/${hashMatch[1]}`;
-
-        candidates.push(
-            `${base}/play`,
-            `${base}/download`
-        );
-    }
-
-    for (const candidate of [...new Set(candidates)]) {
-        const resolved =
-            await xem20WalkSso(
-                candidate,
-                release.pageUrl
-            );
-
-        if (!resolved?.url) continue;
-
-        try {
-            // Chỉ kiểm tra header và 2 byte đầu.
-            // Không tải toàn bộ video vào bộ nhớ.
-            const probe =
-                await axios.get(
-                    resolved.url,
-                    {
-                        headers: {
-                            ...resolved.headers,
-                            Range: "bytes=0-1"
-                        },
-                        timeout: 12000,
-                        maxRedirects: 3,
-                        validateStatus: () => true,
-                        responseType: "stream"
-                    }
-                );
-
-            const probeStatus =
-                Number(probe.status || 0);
-
-            const finalUrl =
-                probe.request?.res?.responseUrl ||
-                resolved.url;
-
-            const contentType =
-                String(
-                    probe.headers?.["content-type"] ||
-                    resolved.contentType ||
-                    ""
-                ).toLowerCase();
-
-            const disposition =
-                String(
-                    probe.headers?.["content-disposition"] || ""
-                );
-
-            let finalHost = "";
-
-            try {
-                finalHost =
-                    new URL(finalUrl).hostname.toLowerCase();
-            } catch (_) {}
-
-            const sourceHost =
-                (() => {
-                    try {
-                        return new URL(resolved.url).hostname.toLowerCase();
-                    } catch (_) {
-                        return "";
-                    }
-                })();
-
-            const downFshareSource =
-                sourceHost === "dl.downfshare.top" ||
-                sourceHost.endsWith(".downfshare.top");
-
-            const hasMediaFilename =
-                /\.(m3u8|mp4|mkv)(?:["';\s]|$)/i.test(
-                    disposition
-                );
-
-            const looksLikeMedia =
-                /video\/|mpegurl|matroska/i.test(contentType) ||
-                /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(finalUrl) ||
-                hasMediaFilename ||
-                (
-                    /application\/octet-stream|binary\/octet-stream/i.test(contentType) &&
-                    downFshareSource
-                );
-
-            // Đóng response stream ngay sau khi đọc header.
-            probe.data?.destroy?.();
-
-            console.log(
-                "[XEM20] MEDIA PROBE:",
-                {
-                    status: probeStatus,
-                    host: finalHost,
-                    contentType,
-                    hasDisposition: Boolean(disposition),
-                    looksLikeMedia
-                }
-            );
-
-            if (
-                (probeStatus === 200 || probeStatus === 206) &&
-                looksLikeMedia
-            ) {
-                return {
-                    ...resolved,
-                    url: finalUrl,
-                    contentType
-                };
-            }
-
-        } catch (error) {
-            console.log(
-                "[XEM20] MEDIA PROBE ERROR:",
-                {
-                    status: error?.response?.status || 0,
-                    message: error?.message || String(error)
-                }
-            );
-
-            if (
-                /\.(m3u8|mp4|mkv)(?:$|[?#])/i.test(resolved.url) &&
-                !error?.response
-            ) {
-                return resolved;
-            }
-        }
-    }
-
-    return null;
-}
-
-// ============================================================
-// [PRV-XEM20.04] XEM20 MAIN PROVIDER
-// ============================================================
-
-async function scrapeXem20(
-    movieName,
-    movieYear = 0,
-    seasonNumber = 0,
-    episodeNumber = 1,
-    streamType = "movie"
-) {
-    const streams = [];
-
-    const startedAt = Date.now();
-
-    try {
-
-        if (
-            !String(movieName || "").trim()
-        ) {
-            return streams;
-        }
-
-        if (
-            !XEM20_EMAIL.trim() ||
-            !XEM20_PASSWORD
-        ) {
-            console.log(
-                "[XEM20] SKIPPED: chưa điền tài khoản."
-            );
-
-            return streams;
-        }
-
-        console.log(
-            "[XEM20] START:",
-            {
-                title: movieName,
-                year: movieYear,
-                season: seasonNumber,
-                episode: episodeNumber,
-                type: streamType
-            }
-        );
-
-// ----------------------------------------------------
-// 1. SEARCH — EXACT + YEARLESS + TITLE PREFIX
-// ----------------------------------------------------
-
-const originalQuery =
-    String(movieName || "").trim();
-
-const searchQueries = [
-    originalQuery
-];
-
-const titleWithoutYear =
-    originalQuery
-        .replace(/\b(?:19|20)\d{2}\b/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-if (titleWithoutYear) {
-    searchQueries.push(titleWithoutYear);
-}
-
-// Ví dụ:
-// Final Destination: Bloodlines
-// -> Final Destination
-const titlePrefix =
-    originalQuery
-        .split(/\s*[:：|–—]\s*/)
-        [0]
-        .trim();
-
-if (
-    titlePrefix &&
-    titlePrefix.split(/\s+/).length >= 2
-) {
-    searchQueries.push(titlePrefix);
-}
-
-const uniqueQueries = [
-    ...new Map(
-        searchQueries
-            .filter(Boolean)
-            .map(query => [
-                xem20NormalizeTitle(query),
-                query
-            ])
-    ).values()
-];
-
-let candidates = [];
-
-for (const searchQuery of uniqueQueries) {
-    const searchUrl =
-        XEM20_BASE_URL +
-        "/tim-kiem?keyword=" +
-        encodeURIComponent(searchQuery);
-
-    console.log(
-        "[XEM20] SEARCH REQUEST:",
-        {
-            query: searchQuery,
-            url: searchUrl
-        }
-    );
-
-    const searchPage =
-        await xem20FetchDoc(searchUrl);
-
-    if (!searchPage?.html) {
-        console.log(
-            "[XEM20] SEARCH EMPTY RESPONSE:",
-            searchQuery
-        );
-
-        continue;
-    }
-
-    const $search =
-        cheerio.load(searchPage.html);
-
-    const parsedResults =
-        xem20ParseSearch(searchPage.html);
-
-    console.log(
-        "[XEM20] SEARCH PAGE CHECK:",
-        {
-            query: searchQuery,
-            status: searchPage.status,
-            finalUrl: searchPage.url,
-            htmlLength: searchPage.html.length,
-            pageTitle: $search("title").text().trim(),
-            legacyCardCount: $search(".cd-card").length,
-            anchorCount: $search("a[href]").length,
-            parsedCount: parsedResults.length,
-            sampleTitles:
-                parsedResults
-                    .slice(0, 8)
-                    .map(item => ({
-                        title: item.title,
-                        searchText:
-                            String(item.searchText || "").slice(0, 160)
-                    }))
-        }
-    );
-
-    const ranked =
-        parsedResults
-            .map(item => ({
-                ...item,
-                score:
-                    xem20SearchMatchScore(
-                        originalQuery,
-                        item
-                    )
-            }))
-            .filter(item => item.score >= 0.30)
-            .sort((a, b) => b.score - a.score);
-
-    candidates = ranked.slice(0, 8);
-
-    if (candidates.length) {
-        console.log(
-            "[XEM20] SEARCH MATCH FOUND:",
-            searchQuery
-        );
-
-        break;
-    }
-}
-
-console.log(
-    "[XEM20] SEARCH CANDIDATES:",
-    candidates.map(item => ({
-        title: item.title,
-        score: item.score,
-        url: item.url
-    }))
-);
-
-if (!candidates.length) {
-    console.log(
-        "[XEM20] NO SEARCH MATCH"
-    );
-
-    return streams;
-}
-
-// ----------------------------------------------------
-// 2. DETAIL — VERIFY TITLE + YEAR
-// ----------------------------------------------------
-
-let selectedMovie = null;
-
-for (const candidate of candidates) {
-    const detailPage =
-        await xem20FetchDoc(candidate.url);
-
-    if (!detailPage?.html) continue;
-
-    const detail =
-        xem20ParseDetail(
-            detailPage.html,
-            candidate.url
-        );
-
-    const detail$ =
-        cheerio.load(detailPage.html);
-
-    const detailText =
-        String(detail$("body").text() || "")
-            .replace(/\s+/g, " ");
-
-    const detailScore =
-        xem20SearchMatchScore(
-            movieName,
-            {
-                ...candidate,
-                title:
-                    detail.title ||
-                    candidate.title,
-                searchText: [
-                    candidate.searchText,
-                    detailText
-                ].filter(Boolean).join(" ")
-            }
-        );
-
-    console.log(
-        "[XEM20] DETAIL MATCH CHECK:",
-        {
-            candidate: candidate.title,
-            detailTitle: detail.title,
-            requestedYear: movieYear,
-            foundYear: detail.year,
-            score: detailScore,
-            releaseCount: detail.releases.length
-        }
-    );
-
-    if (detailScore < 0.30) {
-        continue;
-    }
-
-    if (
-        Number(movieYear) > 0 &&
-        detail.year > 0 &&
-        Math.abs(
-            Number(movieYear) - detail.year
-        ) > 1
-    ) {
-        console.log(
-            "[XEM20] YEAR MISMATCH:",
-            {
-                requested: movieYear,
-                found: detail.year,
-                title: detail.title
-            }
-        );
-
-        continue;
-    }
-
-    selectedMovie = {
-        ...candidate,
-        ...detail,
-        html: detailPage.html,
-        url: candidate.url
-    };
-
-    break;
-}
-
-if (!selectedMovie) {
-    console.log(
-        "[XEM20] NO VERIFIED DETAIL MATCH"
-    );
-
-    return streams;
-}
-
-
-// ----------------------------------------------------
-// 3. SELECT RELEASES
-// ----------------------------------------------------
-
-const selectedReleases =
-    xem20SelectReleases(
-        selectedMovie.releases,
-        streamType,
-        seasonNumber,
-        episodeNumber
-    );
-
-console.log(
-    "[XEM20] RELEASE SELECTION:",
-    {
-        title: selectedMovie.title,
-        siteYear: selectedMovie.year,
-        total: selectedMovie.releases.length,
-        selected: selectedReleases.length,
-        season: seasonNumber,
-        episode: episodeNumber,
-        releases:
-            selectedReleases.map(item => ({
-                id: item.id,
-                name: item.name,
-                meta: item.meta
-            }))
-    }
-);
-
-if (!selectedReleases.length) {
-    console.log(
-        "[XEM20] NO SELECTED RELEASES"
-    );
-
-    return streams;
-}
-
-
-// ----------------------------------------------------
-// 4. CSRF TOKEN
-// ----------------------------------------------------
-
-const selectedDetail$ =
-    cheerio.load(selectedMovie.html);
-
-const csrf =
-    String(
-        selectedDetail$('input[name="_token"]').attr("value") ||
-        selectedDetail$('input[name="_token"]').val() ||
-        ""
-    ).trim();
-
-if (!csrf) {
-    console.log(
-        "[XEM20] DETAIL CSRF NOT FOUND"
-    );
-
-    return streams;
-}
-
-        // ----------------------------------------------------
-        // 5. REQUEST TICKETS — PARALLEL
-        // ----------------------------------------------------
-
-        const limitedReleases =
-            selectedReleases.slice(0, 6);
-
-        const ticketResults =
-            await Promise.allSettled(
-                limitedReleases.map(release =>
-                    xem20RequestTicket(
-                        release,
-                        csrf
-                    )
-                )
-            );
-
-        const ticketEntries = [];
-
-        ticketResults.forEach((result, index) => {
-
-            if (
-                result.status !== "fulfilled" ||
-                !result.value
-            ) {
-                return;
-            }
-
-            ticketEntries.push({
-                release: limitedReleases[index],
-                ticketUrl: result.value
-            });
-        });
-
-        console.log(
-            "[XEM20] TICKETS:",
-            ticketEntries.length
-        );
-
-
-        // ----------------------------------------------------
-        // 6. RESOLVE MEDIA — PARALLEL
-        // ----------------------------------------------------
-
-        const resolveResults =
-            await Promise.allSettled(
-                ticketEntries.map(entry =>
-                    xem20ResolveTicket(
-                        entry.ticketUrl,
-                        entry.release
-                    )
-                )
-            );
-
-        for (
-            let index = 0;
-            index < resolveResults.length;
-            index++
-        ) {
-            const result =
-                resolveResults[index];
-
-            if (
-                result.status !== "fulfilled" ||
-                !result.value?.url
-            ) {
-                continue;
-            }
-
-            const entry =
-                ticketEntries[index];
-
-            const release =
-                entry.release;
-
-            const resolved =
-                result.value;
-
-            const mediaUrl =
-                String(resolved.url || "").trim();
-
-            if (
-                !/^https?:\/\//i.test(mediaUrl)
-            ) {
-                continue;
-            }
-
-            const mediaType =
-                /\.m3u8(?:$|[?#])/i.test(mediaUrl) ||
-                /mpegurl/i.test(
-                    resolved.contentType || ""
-                )
-                    ? "m3u8"
-                    : "video";
-
-            const releaseLabel =
-                [
-                    release.name,
-                    release.meta
-                ]
-                    .filter(Boolean)
-                    .join(" · ");
-
-            const episodeLabel =
-                streamType === "series"
-                    ? `S${Number(seasonNumber || 1)}E${Number(episodeNumber || 1)}`
-                    : "Phim lẻ";
-
-            streams.push({
-
-                name:
-                    "▶️ [Xem20] " +
-                    (releaseLabel || "Direct"),
-
-                title:
-                    String(movieName || selectedMovie.title) +
-                    " · " +
-                    episodeLabel,
-
-                url:
-                    mediaUrl,
-
-                type:
-                    mediaType,
-
-                provider:
-                    "xem20",
-
-                source:
-                    "xem20",
-
-                headers:
-                    resolved.headers || {},
-
-                behaviorHints: {
-                    bingeGroup: "xem20",
-
-                    proxyHeaders: {
-                        request:
-                            resolved.headers || {}
-                    }
-                }
-
-            });
-
-        }
-
-
-        // ----------------------------------------------------
-        // 7. FINAL LOG
-        // ----------------------------------------------------
-
-        console.log(
-    "[XEM20] FINAL STREAMS:",
-    JSON.stringify(
-        streams.map(stream => {
-            let host = "";
-
-            try {
-                host = new URL(stream.url).hostname;
-            } catch (_) {}
-
-            return {
-                name: stream.name,
-                title: stream.title,
-                host,
-                type: stream.type
-            };
-        })
-    )
-);
-
-        console.log(
-            "[XEM20] COMPLETE:",
-            {
-                count: streams.length,
-                elapsedMs:
-                    Date.now() - startedAt
-            }
-        );
-
-        return streams;
-
-    } catch (error) {
-
-        console.error(
-            "[XEM20] PROVIDER ERROR:",
-            error?.response?.status ||
-            error?.stack ||
-            error?.message ||
-            error
-        );
-
-        return streams;
-    }
-}
-
-
 
 // ============================================================
 // [REG-003] [PROVIDERS: VMTTV, LIVE-OTHER] LIVE / IPTV PROVIDER SYSTEM
@@ -25631,21 +23179,6 @@ if (!hasYearTitleCandidate) {
         )
     );
 
-// Đưa alias vào bộ từ khóa chấm điểm.
-// Nếu không, kết quả tìm bằng tên thay thế sẽ bị
-// loại ở bước ranking vì chỉ so với tên ban đầu.
-uniqueSearchTerms = [
-    ...new Set([
-        ...uniqueSearchTerms,
-        ...aliasTerms
-    ])
-];
-
-console.log(
-    "[KKPHIM] RANKING TERMS WITH ALIASES:",
-    uniqueSearchTerms
-);
-
     if (aliasTerms.length) {
 
         console.log(
@@ -29254,6 +26787,3549 @@ return streams;
 }
 }
 
+
+/* ============================================================
+   [PRV-ASUPNIMER.01] [PROVIDERS: ASUPNIMER]
+   CONFIGURATION AND CACHE
+   ============================================================ */
+
+const ASUPNIMER_BOOTSTRAP_DOMAINS = [
+    "https://www.asupnimer.com",
+    "https://www.asup.autos"
+];
+
+const ASUPNIMER_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+const ASUPNIMER_FEED_CACHE = new Map();
+const ASUPNIMER_FEED_CACHE_TTL = 5 * 60 * 1000;
+
+const ASUPNIMER_POST_CACHE = new Map();
+const ASUPNIMER_POST_CACHE_TTL = 10 * 60 * 1000;
+
+let asupnimerActiveDomain = null;
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.02] [PROVIDERS: ASUPNIMER]
+   TEXT AND URL HELPERS
+   ============================================================ */
+
+function asupnimerNormalizeText(value = "") {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/gi, "d")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function asupnimerAbsoluteUrl(url, baseUrl) {
+    if (!url) return null;
+
+    try {
+        return new URL(
+            String(url).trim(),
+            baseUrl
+        ).href;
+    } catch (_) {
+        return null;
+    }
+}
+
+function asupnimerExtractPostPath(postUrl) {
+    try {
+        const parsed = new URL(postUrl);
+
+        return parsed.pathname
+            .replace(/^\/+/, "")
+            .replace(/\/+$/, "");
+
+    } catch (_) {
+        return "";
+    }
+}
+
+function asupnimerGetEntryValue(value) {
+    if (value && typeof value === "object") {
+        return String(value.$t || "");
+    }
+
+    return String(value || "");
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.03] [PROVIDERS: ASUPNIMER]
+   ACTIVE DOMAIN DISCOVERY AND BLOGGER FEED
+   ============================================================ */
+
+
+async function asupnimerResolveActiveDomain() {
+    if (asupnimerActiveDomain) {
+        return asupnimerActiveDomain;
+    }
+
+    const isAllowedDomain = hostname =>
+        /(^|\.)asupnimer\.com$/i.test(hostname) ||
+        /(^|\.)asup\.autos$/i.test(hostname);
+
+    const extractNewDomain = html => {
+        const match = String(html || "").match(
+            /const\s+newDomain\s*=\s*['"]([^'"]+)['"]/i
+        );
+
+        return match?.[1]?.trim() || "";
+    };
+
+    for (const bootstrap of ASUPNIMER_BOOTSTRAP_DOMAINS) {
+        let currentDomain = bootstrap;
+        let requestPath = "/search?m=1";
+        let splashHops = 0;
+
+        try {
+            for (let attempt = 0; attempt < 4; attempt++) {
+                const response = await axios.get(
+                    currentDomain + requestPath,
+                    {
+                        timeout: 12000,
+                        maxRedirects: 5,
+                        headers: {
+                            "User-Agent": ASUPNIMER_USER_AGENT,
+                            "Accept":
+                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                        },
+                        validateStatus: status =>
+                            status >= 200 && status < 400
+                    }
+                );
+
+                const html = String(response?.data || "");
+
+                const responseUrl =
+                    response?.request?.res?.responseUrl ||
+                    response?.request?.responseURL ||
+                    currentDomain;
+
+                let responseOrigin = currentDomain;
+
+                try {
+                    responseOrigin = new URL(responseUrl).origin;
+                } catch (_) {}
+
+                const responseHost =
+                    new URL(responseOrigin).hostname;
+
+                if (!isAllowedDomain(responseHost)) {
+                    throw new Error(
+                        "Unexpected ASUPNIMER domain: " +
+                        responseHost
+                    );
+                }
+
+                const newDomainValue =
+                    extractNewDomain(html);
+
+                const isSplashPage =
+                    Boolean(newDomainValue) &&
+                    !html.includes("[id]");
+
+                if (isSplashPage) {
+                    let nextOrigin = "";
+
+                    try {
+                        nextOrigin = new URL(
+                            newDomainValue,
+                            currentDomain
+                        ).origin;
+                    } catch (_) {}
+
+                    if (!nextOrigin) {
+                        throw new Error(
+                            "Invalid ASUPNIMER newDomain"
+                        );
+                    }
+
+                    const nextHost =
+                        new URL(nextOrigin).hostname;
+
+                    if (!isAllowedDomain(nextHost)) {
+                        throw new Error(
+                            "Blocked ASUPNIMER redirect: " +
+                            nextHost
+                        );
+                    }
+
+                    if (nextOrigin === currentDomain) {
+                        break;
+                    }
+
+                    console.log(
+                        "[ASUPNIMER] DOMAIN TRANSITION:",
+                        JSON.stringify({
+                            from: currentDomain,
+                            to: nextOrigin,
+                            hop: splashHops + 1
+                        })
+                    );
+
+                    currentDomain = nextOrigin;
+                    requestPath = "/?m=1";
+                    splashHops++;
+                    continue;
+                }
+
+                asupnimerActiveDomain = responseOrigin;
+
+                console.log(
+                    "[ASUPNIMER] ACTIVE DOMAIN:",
+                    JSON.stringify({
+                        domain: asupnimerActiveDomain,
+                        splashHops,
+                        responseUrl
+                    })
+                );
+
+                return asupnimerActiveDomain;
+            }
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] DOMAIN CHECK FAILED:",
+                currentDomain,
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+        }
+    }
+
+    console.log(
+        "[ASUPNIMER] DOMAIN DISCOVERY FAILED"
+    );
+
+    return null;
+}
+
+
+async function asupnimerFetchFeed(
+    feedUrl,
+    cacheKey = ""
+) {
+    const key = cacheKey || feedUrl;
+    const cached = ASUPNIMER_FEED_CACHE.get(key);
+
+    if (
+        cached &&
+        Date.now() - cached.at <
+            ASUPNIMER_FEED_CACHE_TTL
+    ) {
+        return cached.data;
+    }
+
+    try {
+        const response = await axios.get(
+            feedUrl,
+            {
+                timeout: 15000,
+                maxRedirects: 5,
+                responseType: "text",
+                headers: {
+                    "User-Agent": ASUPNIMER_USER_AGENT,
+                    "Accept":
+                        "application/json,application/atom+xml,text/xml,*/*"
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 300
+            }
+        );
+
+        const rawText =
+            typeof response?.data === "string"
+                ? response.data.trim()
+                : "";
+
+        let data = response?.data || null;
+
+        // Blogger JSON.
+        if (rawText) {
+            try {
+                data = JSON.parse(rawText);
+            } catch (_) {
+                // Một số phản hồi có thể bọc JSON.
+                const first = rawText.indexOf("{");
+                const last = rawText.lastIndexOf("}");
+
+                if (first >= 0 && last > first) {
+                    try {
+                        data = JSON.parse(
+                            rawText.slice(first, last + 1)
+                        );
+                    } catch (_) {
+                        data = null;
+                    }
+                }
+            }
+        }
+
+        let entries = [];
+        let validFeed = Boolean(data?.feed);
+
+        if (validFeed) {
+            const rawEntries = data.feed.entry;
+
+            if (Array.isArray(rawEntries)) {
+                entries = rawEntries;
+            } else if (
+                rawEntries &&
+                typeof rawEntries === "object"
+            ) {
+                entries = [rawEntries];
+            }
+        }
+
+        // Dự phòng trường hợp Blogger trả Atom XML.
+        if (!validFeed && rawText) {
+            try {
+                const $ = cheerio.load(
+                    rawText,
+                    { xmlMode: true }
+                );
+
+                const feedNode = $("feed").first();
+
+                if (feedNode.length) {
+                    validFeed = true;
+
+                    $("feed > entry").each((_, element) => {
+                        const entry = $(element);
+
+                        const links = [];
+                        entry.children("link").each(
+                            (_, link) => {
+                                links.push({
+                                    rel: $(link).attr("rel"),
+                                    href: $(link).attr("href")
+                                });
+                            }
+                        );
+
+                        const categories = [];
+                        entry.children("category").each(
+                            (_, category) => {
+                                categories.push({
+                                    term: $(category).attr("term")
+                                });
+                            }
+                        );
+
+                        const thumbnail = entry.find(
+                            "thumbnail, media\\:thumbnail"
+                        ).first();
+
+                        entries.push({
+                            title: {
+                                $t: entry.children("title").first().text()
+                            },
+                            content: {
+                                $t: entry.children("content").first().text()
+                            },
+                            published: {
+                                $t: entry.children("published").first().text()
+                            },
+                            link: links,
+                            category: categories,
+                            "media$thumbnail": {
+                                url: thumbnail.attr("url") || ""
+                            }
+                        });
+                    });
+                }
+            } catch (_) {}
+        }
+
+        // Không lưu phản hồi lỗi hoặc trang xác minh vào cache.
+        if (!validFeed) {
+            console.log(
+                "[ASUPNIMER] FEED INVALID RESPONSE:",
+                JSON.stringify({
+                    status: response?.status || null,
+                    contentType:
+                        response?.headers?.["content-type"] || null,
+                    url:
+                        response?.request?.res?.responseUrl ||
+                        feedUrl,
+                    body: rawText.slice(0, 220)
+                })
+            );
+
+            return [];
+        }
+
+        ASUPNIMER_FEED_CACHE.set(
+            key,
+            {
+                at: Date.now(),
+                data: entries
+            }
+        );
+
+        
+console.log(
+    "[ASUPNIMER] FEED PARSED:",
+    JSON.stringify({
+        cacheKey: key,
+        count: entries.length,
+        format: data?.feed
+            ? "json"
+            : validFeed
+                ? "xml"
+                : "unknown",
+        status: response?.status || null,
+        contentType:
+            response?.headers?.["content-type"] || null,
+        responseUrl:
+            response?.request?.res?.responseUrl ||
+            feedUrl,
+        feedTitle:
+            asupnimerGetEntryValue(
+                data?.feed?.title
+            ),
+        hasEntries:
+            Boolean(data?.feed?.entry)
+    })
+);
+
+
+        return entries;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER] FEED ERROR:",
+            error?.response?.status ||
+            error?.message ||
+            error
+        );
+
+        return [];
+    }
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.04] [PROVIDERS: ASUPNIMER]
+   SEARCH POSTS AND LOAD POST DETAILS
+   ============================================================ */
+
+async function asupnimerSearchPosts(
+    query,
+    maxResults = 25
+) {
+    const title = String(query || "").trim();
+
+    if (!title) return [];
+
+    const domain =
+        await asupnimerResolveActiveDomain();
+
+    if (!domain) return [];
+
+    const queryKey =
+        asupnimerBuildTitleKey(title);
+
+    const feedUrl =
+        domain +
+        "/feeds/posts/summary?alt=json&q=" +
+        encodeURIComponent(title) +
+        "&max-results=" +
+        Math.max(1, Math.min(25, Number(maxResults) || 25)) +
+        "&start-index=1";
+
+    let entries = await asupnimerFetchFeed(
+        feedUrl,
+        "search:" + asupnimerNormalizeText(title)
+    );
+
+    const convertEntriesToPosts = sourceEntries => {
+        const posts = [];
+
+        for (const entry of sourceEntries || []) {
+            const postTitle =
+                asupnimerGetEntryValue(
+                    entry?.title
+                ).trim();
+
+            if (!postTitle) continue;
+
+            const links = Array.isArray(entry?.link)
+                ? entry.link
+                : [];
+
+            const alternate = links.find(
+                item => item?.rel === "alternate"
+            );
+
+            const postUrl =
+                asupnimerAbsoluteUrl(
+                    alternate?.href,
+                    domain
+                );
+
+            if (!postUrl) continue;
+
+            const thumbnail =
+                entry?.media$thumbnail?.url ||
+                "";
+
+            const categories = Array.isArray(
+                entry?.category
+            )
+                ? entry.category
+                    .map(item =>
+                        String(item?.term || "").trim()
+                    )
+                    .filter(Boolean)
+                : [];
+
+            posts.push({
+                title: postTitle,
+                url: postUrl,
+                poster: asupnimerAbsoluteUrl(
+                    thumbnail,
+                    domain
+                ),
+                published:
+                    asupnimerGetEntryValue(
+                        entry?.published
+                    ),
+                categories
+            });
+        }
+
+        return posts;
+    };
+
+    let posts = convertEntriesToPosts(entries);
+
+    // -----------------------------------------------------
+    // Blogger q không tìm thấy tên chính xác:
+    // thử đối chiếu với 150 bài mới nhất.
+    // Chỉ dùng với tên đủ mạnh, tránh khóa ngắn như "fx".
+    // -----------------------------------------------------
+
+    const exactPosts = posts.filter(post =>
+        asupnimerBuildTitleKey(post.title) === queryKey
+    );
+
+    if (
+        !exactPosts.length &&
+        asupnimerIsStrongTitleKey(queryKey)
+    ) {
+        console.log(
+            "[ASUPNIMER] QUERY EMPTY; TRY RECENT FEED:",
+            title
+        );
+
+        const recentUrl =
+            domain +
+            "/feeds/posts/summary?alt=json&max-results=150&start-index=1";
+
+        const recentEntries =
+            await asupnimerFetchFeed(
+                recentUrl,
+                "recent:150"
+            );
+
+        const recentPosts =
+            convertEntriesToPosts(recentEntries);
+
+        const recentMatches =
+            recentPosts.filter(post =>
+                asupnimerBuildTitleKey(post.title) === queryKey
+            );
+
+        if (recentMatches.length) {
+            posts = recentMatches;
+
+            console.log(
+                "[ASUPNIMER] RECENT FEED TITLE MATCH:",
+                JSON.stringify({
+                    query: title,
+                    matches: recentMatches.map(item => item.title)
+                })
+            );
+        } else {
+            console.log(
+                "[ASUPNIMER] RECENT FEED NO EXACT MATCH:",
+                JSON.stringify({
+                    query: title,
+                    scanned: recentEntries.length
+                })
+            );
+        }
+    }
+
+    console.log(
+        "[ASUPNIMER] SEARCH RESULT:",
+        JSON.stringify({
+            query: title,
+            count: posts.length,
+            exactCount: posts.filter(post =>
+                asupnimerBuildTitleKey(post.title) === queryKey
+            ).length
+        })
+    );
+
+    return posts;
+}
+
+
+async function asupnimerFetchPost(postUrl) {
+    const url = String(postUrl || "").trim();
+
+    if (!url) return null;
+
+    const cached = ASUPNIMER_POST_CACHE.get(url);
+
+    if (
+        cached &&
+        Date.now() - cached.at <
+            ASUPNIMER_POST_CACHE_TTL
+    ) {
+        return cached.data;
+    }
+
+    const domain =
+        await asupnimerResolveActiveDomain();
+
+    if (!domain) return null;
+
+    const path =
+        asupnimerExtractPostPath(url);
+
+    let result = null;
+
+    // -----------------------------------------------------
+    // 1. Thử lấy nội dung bằng Blogger Feed API.
+    // -----------------------------------------------------
+
+    if (path) {
+        const feedUrl =
+            domain +
+            "/feeds/posts/default?alt=json&path=" +
+            encodeURIComponent(path) +
+            "&max-results=1";
+
+        const entries = await asupnimerFetchFeed(
+            feedUrl,
+            "post:" + path
+        );
+
+        const entry = entries[0];
+
+        if (entry) {
+            const links = Array.isArray(entry?.link)
+                ? entry.link
+                : [];
+
+            const alternate = links.find(
+                item => item?.rel === "alternate"
+            );
+
+            const categories = Array.isArray(
+                entry?.category
+            )
+                ? entry.category
+                    .map(item =>
+                        String(item?.term || "").trim()
+                    )
+                    .filter(Boolean)
+                : [];
+
+            result = {
+                title: asupnimerGetEntryValue(
+                    entry?.title
+                ).trim(),
+
+                content: asupnimerGetEntryValue(
+                    entry?.content
+                ),
+
+                poster:
+                    entry?.media$thumbnail?.url
+                        ? asupnimerAbsoluteUrl(
+                            entry.media$thumbnail.url,
+                            domain
+                        )
+                        : null,
+
+                categories,
+
+                url:
+                    asupnimerAbsoluteUrl(
+                        alternate?.href,
+                        domain
+                    ) || url
+            };
+
+            console.log(
+                "[ASUPNIMER] POST LOADED FROM FEED:",
+                JSON.stringify({
+                    title: result.title,
+                    contentLength: result.content.length
+                })
+            );
+        }
+    }
+
+    // -----------------------------------------------------
+    // 1B. FALLBACK: BLOGGER FULL POST FEED
+    // Dùng khi feed theo path không trả bài.
+    // Ưu tiên nội dung đầy đủ từ Blogger thay vì trang HTML
+    // có thể bị Cloudflare trả 429.
+    // -----------------------------------------------------
+
+    if (!result || !result.content) {
+        try {
+            const fullFeedUrl =
+                domain +
+                "/feeds/posts/default?alt=json&max-results=150&start-index=1";
+
+            console.log(
+                "[ASUPNIMER] TRY FULL POST FEED:",
+                JSON.stringify({
+                    path,
+                    title: postUrl
+                })
+            );
+
+            const fullEntries =
+                await asupnimerFetchFeed(
+                    fullFeedUrl,
+                    "full-post-feed:150"
+                );
+
+            const targetPath =
+                String(path || "").toLowerCase();
+
+            const entry = fullEntries.find(item => {
+                const links = Array.isArray(item?.link)
+                    ? item.link
+                    : [];
+
+                const alternate = links.find(
+                    link => link?.rel === "alternate"
+                );
+
+                const entryPath =
+                    asupnimerExtractPostPath(
+                        asupnimerAbsoluteUrl(
+                            alternate?.href,
+                            domain
+                        ) || ""
+                    ).toLowerCase();
+
+                return (
+                    targetPath &&
+                    entryPath === targetPath
+                );
+            });
+
+            if (entry) {
+                const links = Array.isArray(entry?.link)
+                    ? entry.link
+                    : [];
+
+                const alternate = links.find(
+                    item => item?.rel === "alternate"
+                );
+
+                const categories = Array.isArray(
+                    entry?.category
+                )
+                    ? entry.category
+                        .map(item =>
+                            String(item?.term || "").trim()
+                        )
+                        .filter(Boolean)
+                    : [];
+
+                const content =
+                    asupnimerGetEntryValue(
+                        entry?.content
+                    );
+
+                if (content.length > 50) {
+                    result = {
+                        title:
+                            asupnimerGetEntryValue(
+                                entry?.title
+                            ).trim(),
+
+                        content,
+
+                        poster:
+                            entry?.media$thumbnail?.url
+                                ? asupnimerAbsoluteUrl(
+                                    entry.media$thumbnail.url,
+                                    domain
+                                )
+                                : null,
+
+                        categories,
+
+                        url:
+                            asupnimerAbsoluteUrl(
+                                alternate?.href,
+                                domain
+                            ) || url
+                    };
+
+                    console.log(
+                        "[ASUPNIMER] POST LOADED FROM FULL FEED:",
+                        JSON.stringify({
+                            title: result.title,
+                            contentLength: content.length,
+                            categories
+                        })
+                    );
+                }
+            } else {
+                console.log(
+                    "[ASUPNIMER] FULL FEED POST NOT FOUND:",
+                    JSON.stringify({
+                        path,
+                        scanned: fullEntries.length
+                    })
+                );
+            }
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] FULL FEED FALLBACK ERROR:",
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+        }
+    }
+
+    // -----------------------------------------------------
+    // 2. Blogger Feed API lỗi hoặc không tìm thấy bài:
+    //    tải trực tiếp URL bài viết.
+    // -----------------------------------------------------
+
+    if (!result || !result.content) {
+        try {
+            console.log(
+                "[ASUPNIMER] FEED EMPTY; TRY DIRECT POST:",
+                url
+            );
+
+            const response = await axios.get(
+                url,
+                {
+                    timeout: 15000,
+                    maxRedirects: 5,
+                    responseType: "text",
+
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                        "Referer": domain + "/"
+                    },
+
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            const html = String(
+                response.data || ""
+            );
+
+            const $ = cheerio.load(html);
+
+            const contentSelectors = [
+                ".post-body.entry-content",
+                ".post-body",
+                ".entry-content",
+                "article .post-body",
+                "article"
+            ];
+
+            let content = "";
+
+            for (const selector of contentSelectors) {
+                const candidate =
+                    $(selector).first().html() || "";
+
+                if (
+                    candidate.length > content.length
+                ) {
+                    content = candidate;
+                }
+
+                if (content.length > 100) {
+                    break;
+                }
+            }
+
+            const title =
+                $('meta[property="og:title"]').attr("content") ||
+                $("h1.post-title").first().text() ||
+                $("h1.entry-title").first().text() ||
+                $("title").first().text() ||
+                "";
+
+            const poster =
+                $('meta[property="og:image"]').attr("content") ||
+                $('meta[name="twitter:image"]').attr("content") ||
+                "";
+
+            const categories = [];
+
+            $(
+                ".post-labels a, .post-labels span, .labels a"
+            ).each((_, element) => {
+                const value = $(element)
+                    .text()
+                    .trim();
+
+                if (
+                    value &&
+                    !categories.includes(value)
+                ) {
+                    categories.push(value);
+                }
+            });
+
+            if (
+                !content ||
+                content.length < 50
+            ) {
+                console.log(
+                    "[ASUPNIMER] DIRECT POST EMPTY:",
+                    JSON.stringify({
+                        status: response.status,
+                        finalUrl:
+                            response.request?.res?.responseUrl ||
+                            url,
+                        htmlLength: html.length,
+                        title
+                    })
+                );
+
+                return null;
+            }
+
+            result = {
+                title: String(title).trim(),
+
+                content,
+
+                poster: poster
+                    ? asupnimerAbsoluteUrl(
+                        poster,
+                        url
+                    )
+                    : null,
+
+                categories,
+
+                url:
+                    response.request?.res?.responseUrl ||
+                    url
+            };
+
+            console.log(
+                "[ASUPNIMER] POST LOADED DIRECT:",
+                JSON.stringify({
+                    title: result.title,
+                    contentLength: result.content.length,
+                    categories: result.categories,
+                    hasPoster: Boolean(result.poster),
+                    finalUrl: result.url
+                })
+            );
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] DIRECT POST ERROR:",
+                JSON.stringify({
+                    status:
+                        error?.response?.status || 0,
+                    message:
+                        error?.message || String(error),
+                    url
+                })
+            );
+
+            return null;
+        }
+    }
+
+    if (
+        !result ||
+        !result.content
+    ) {
+        return null;
+    }
+
+    ASUPNIMER_POST_CACHE.set(
+        url,
+        {
+            at: Date.now(),
+            data: result
+        }
+    );
+
+    console.log(
+        "[ASUPNIMER] POST LOADED:",
+        JSON.stringify({
+            title: result.title,
+            categories: result.categories,
+            contentLength: result.content.length,
+            hasPoster: Boolean(result.poster)
+        })
+    );
+
+    return result;
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.05] [PROVIDERS: ASUPNIMER]
+   HTML CLEANING AND POST CONTENT EXTRACTION
+   ============================================================ */
+
+function asupnimerDecodeHtml(value = "") {
+    const html = String(value || "");
+
+    try {
+        return cheerio.load(
+            `<div>${html}</div>`
+        ).text()
+            .replace(/\u00a0/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    } catch (_) {
+        return html
+            .replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/&nbsp;/gi, " ")
+            .replace(/&amp;/gi, "&")
+            .replace(/&quot;/gi, '"')
+            .replace(/&#39;/gi, "'")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+}
+
+function asupnimerExtractDescription(html = "") {
+    const source = String(html || "");
+
+    const patterns = [
+        /<noidung\b[^>]*>([\s\S]*?)<\/noidung>/i,
+        /<div\b[^>]*id=["']?noidung["']?[^>]*>([\s\S]*?)<\/div>/i,
+        /<div\b[^>]*id=["']?summary\d+["']?[^>]*>([\s\S]*?)<\/div>/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = source.match(pattern);
+
+        if (match?.[1]) {
+            const description =
+                asupnimerDecodeHtml(
+                    match[1]
+                        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+                        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+                );
+
+            if (description.length >= 20) {
+                return description;
+            }
+        }
+    }
+
+    return "";
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.06] [PROVIDERS: ASUPNIMER]
+   TITLE, YEAR AND POSTER EXTRACTION
+   ============================================================ */
+
+function asupnimerExtractPostMetadata(
+    html = "",
+    post = {}
+) {
+    const source = String(html || "");
+
+    const decodeAttribute = value =>
+        asupnimerDecodeHtml(value)
+            .replace(/^["']|["']$/g, "")
+            .trim();
+
+    let title =
+        String(post?.title || "").trim();
+
+    if (!title) {
+        const rawTitlePatterns = [
+            /var\s+a\s*=\s*&quot;([^&]+)&quot;/i,
+            /var\s+a\s*=\s*"([^"]+)"/i,
+            /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
+            /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i,
+            /<title[^>]*>([^<]*)<\/title>/i
+        ];
+
+        for (const pattern of rawTitlePatterns) {
+            const match = source.match(pattern);
+
+            if (match?.[1]) {
+                title = decodeAttribute(match[1]);
+                if (title) break;
+            }
+        }
+    }
+
+    const thumbnailTag =
+        source.match(/<img\b[^>]*post-thumbnail[^>]*>/i)?.[0] ||
+        "";
+
+    const thumbnail =
+        thumbnailTag.match(/\bsrc=["']([^"']+)["']/i)?.[1] ||
+        thumbnailTag.match(/\bdata-src=["']([^"']+)["']/i)?.[1] ||
+        "";
+
+    const poster =
+        post?.poster ||
+        asupnimerAbsoluteUrl(
+            thumbnail,
+            post?.url || asupnimerActiveDomain
+        );
+
+    const yearMatch =
+        String(title || source).match(
+            /\((19\d{2}|20\d{2})\)/
+        );
+
+    const publishedYear =
+        String(post?.published || "").match(
+            /\b(19\d{2}|20\d{2})\b/
+        );
+
+    const year = yearMatch
+        ? Number(yearMatch[1])
+        : publishedYear
+            ? Number(publishedYear[1])
+            : 0;
+
+    return {
+        title,
+        year,
+        poster: poster || null
+    };
+}
+
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.07] [PROVIDERS: ASUPNIMER]
+   MULTI-SERVER / MULTI-LANGUAGE EPISODE SOURCE PARSING
+   ============================================================ */
+
+function asupnimerExtractEpisodeBlock(html = "") {
+    const source = String(html || "");
+
+    const bracketStart = source.indexOf("[id]");
+    const bracketEnd = source.lastIndexOf("[/id]");
+
+    if (
+        bracketStart >= 0 &&
+        bracketEnd > bracketStart
+    ) {
+        return source.slice(
+            bracketStart + 4,
+            bracketEnd
+        );
+    }
+
+    const tagStart = source.indexOf("<id>");
+    const tagEnd = source.lastIndexOf("</id>");
+
+    if (
+        tagStart >= 0 &&
+        tagEnd > tagStart
+    ) {
+        return source.slice(
+            tagStart + 4,
+            tagEnd
+        );
+    }
+
+    return source;
+}
+
+function asupnimerParseAudioField(raw = "") {
+    const field = String(raw || "").trim();
+
+    if (!field) return null;
+
+    const separator = field.indexOf("=");
+
+    if (separator < 0) return null;
+
+    const head = field
+        .slice(0, separator)
+        .trim();
+
+    if (!/^ad?([-:\d.]*)$/i.test(head)) {
+        return null;
+    }
+
+    let url = field
+        .slice(separator + 1)
+        .trim();
+
+    if (!/^https?:\/\//i.test(url)) {
+        return null;
+    }
+
+    if (url.endsWith(",m")) {
+        url = url.slice(0, -2).trim();
+    }
+
+    url = url.replace(/,\d{1,3}$/, "").trim();
+
+    return /^https?:\/\//i.test(url)
+        ? url
+        : null;
+}
+
+function asupnimerIsPlayableUrl(url = "") {
+    const value = String(url || "").toLowerCase();
+
+    return (
+        value.includes("youtube.com/watch") ||
+        value.includes("youtu.be/") ||
+        value.includes("loadvid.com/videos/play/") ||
+        value.includes("playhydrax.com") ||
+        value.includes(".m3u8") ||
+        value.includes(".mp4")
+    );
+}
+
+function asupnimerParseEpisodeSources(html = "") {
+    const episodeBlock =
+        asupnimerExtractEpisodeBlock(html);
+
+    const segments =
+        String(episodeBlock || "").split("|");
+
+    const episodesByNumber = new Map();
+
+    const movieSources = [];
+
+    let currentLanguage = "";
+    let currentServer = "";
+
+    const addSource = (
+        collection,
+        source
+    ) => {
+        if (!Array.isArray(collection)) return;
+
+        const duplicate = collection.some(item =>
+            item.video === source.video &&
+            item.server === source.server &&
+            item.language === source.language
+        );
+
+        if (!duplicate) {
+            collection.push(source);
+        }
+    };
+
+    for (const rawSegment of segments) {
+        const segment = String(rawSegment || "").trim();
+
+        if (!segment) continue;
+
+        // -------------------------------------------------
+        // Cập nhật nhóm ngôn ngữ.
+        // Ví dụ: {TT Thuyết Minh}, {TT VietSub}
+        // -------------------------------------------------
+
+        const languageMatch =
+            segment.match(
+                /\{\s*TT\s+([^}]+)\s*\}/i
+            );
+
+        if (languageMatch?.[1]) {
+            currentLanguage =
+                languageMatch[1].trim();
+        }
+
+        // -------------------------------------------------
+        // Cập nhật server.
+        // Ví dụ: (TS Muse), (TS Ani-One)
+        // -------------------------------------------------
+
+        const serverMatch =
+            segment.match(
+                /\(\s*TS\s+([^)]+)\s*\)/i
+            );
+
+        if (serverMatch?.[1]) {
+            currentServer =
+                serverMatch[1].trim();
+        }
+
+        // -------------------------------------------------
+        // Đọc dữ liệu tập: 01;URL;...;a=audio
+        // -------------------------------------------------
+
+        const parts = segment
+            .split(";")
+            .map(value => value.trim());
+
+        if (parts.length < 2) continue;
+
+        const label = parts[0];
+
+        if (
+            !label ||
+            /trailer/i.test(label)
+        ) {
+            continue;
+        }
+
+        const rawVideo = parts[1] || "";
+
+        const videoMatch =
+            rawVideo.match(/https?:\/\/\S+/i);
+
+        if (!videoMatch) continue;
+
+        const video = videoMatch[0]
+            .replace(/,\d{1,3}$/, "")
+            .replace(/[)"'\]]+$/, "")
+            .trim();
+
+        if (!asupnimerIsPlayableUrl(video)) {
+            continue;
+        }
+
+        let audio = null;
+
+        for (let i = 2; i < parts.length; i++) {
+            const candidate =
+                asupnimerParseAudioField(parts[i]);
+
+            if (candidate) {
+                audio = candidate;
+            }
+        }
+
+        const source = {
+            label,
+            server: currentServer || "",
+            language: currentLanguage || "",
+            video,
+            audio
+        };
+
+        const numberMatch =
+            label.match(/^(\d+)/);
+
+        if (numberMatch) {
+            const episodeNumber =
+                Number(numberMatch[1]);
+
+            if (
+                !Number.isInteger(episodeNumber) ||
+                episodeNumber <= 0
+            ) {
+                continue;
+            }
+
+            if (!episodesByNumber.has(episodeNumber)) {
+                episodesByNumber.set(
+                    episodeNumber,
+                    {
+                        number: episodeNumber,
+                        label,
+                        video,
+                        audio,
+                        sources: []
+                    }
+                );
+            }
+
+            const episode =
+                episodesByNumber.get(episodeNumber);
+
+            addSource(
+                episode.sources,
+                source
+            );
+
+            // Giữ tương thích với code cũ.
+            if (!episode.video) {
+                episode.video = video;
+                episode.audio = audio;
+            }
+
+        } else {
+            addSource(
+                movieSources,
+                source
+            );
+        }
+    }
+
+    const episodes = [
+        ...episodesByNumber.values()
+    ].sort((a, b) => a.number - b.number);
+
+    return {
+        movieSource: movieSources[0] || null,
+        movieSources,
+        episodes
+    };
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.08] [PROVIDERS: ASUPNIMER]
+   NORMALIZED POST DETAIL
+   ============================================================ */
+
+async function asupnimerBuildPostDetail(post) {
+    if (!post?.url) return null;
+
+    const detail =
+        await asupnimerFetchPost(post.url);
+
+    if (!detail) return null;
+
+    const metadata =
+        asupnimerExtractPostMetadata(
+            detail.content,
+            {
+                ...post,
+                ...detail
+            }
+        );
+
+    if (!metadata.title) {
+        console.log(
+            "[ASUPNIMER] DETAIL SKIP: TITLE NOT FOUND",
+            post.url
+        );
+
+        return null;
+    }
+
+    const parsedSources =
+        asupnimerParseEpisodeSources(
+            detail.content
+        );
+
+    const description =
+        asupnimerExtractDescription(
+            detail.content
+        );
+
+    const categories =
+        Array.isArray(detail.categories)
+            ? detail.categories
+            : Array.isArray(post.categories)
+                ? post.categories
+                : [];
+
+    const categoryText =
+        categories.join(" ").toLowerCase();
+
+    const titleText =
+        metadata.title.toLowerCase();
+
+    const isMovieLabel =
+        /\bmovie\b/i.test(metadata.title) ||
+        /\banime-sp\b/i.test(categoryText);
+
+    const isSeriesLabel =
+        /\banime-seri\b/i.test(categoryText);
+
+    const hasNumberedEpisodes =
+        parsedSources.episodes.length > 0;
+
+    const isMovie =
+        isMovieLabel &&
+        !hasNumberedEpisodes;
+
+    const type = isMovie
+        ? "movie"
+        : isSeriesLabel || hasNumberedEpisodes
+            ? "series"
+            : parsedSources.movieSource
+                ? "movie"
+                : "unknown";
+
+    const result = {
+        title: metadata.title,
+        year: metadata.year,
+        poster: metadata.poster,
+        description,
+        categories,
+        url: detail.url || post.url,
+        type,
+        movieSource: parsedSources.movieSource,
+        episodes: parsedSources.episodes,
+        episodeCount: parsedSources.episodes.length
+    };
+
+    console.log(
+        "[ASUPNIMER] DETAIL PARSED:",
+        JSON.stringify({
+            title: result.title,
+            year: result.year,
+            type: result.type,
+            categories: result.categories,
+            episodeCount: result.episodeCount,
+            hasMovieSource: Boolean(result.movieSource),
+            hasDescription: Boolean(result.description),
+            hasPoster: Boolean(result.poster)
+        })
+    );
+
+    return result;
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.09] [PROVIDERS: ASUPNIMER]
+   LOADVID CACHE
+   ============================================================ */
+
+const ASUPNIMER_LOADVID_CACHE = new Map();
+const ASUPNIMER_LOADVID_CACHE_TTL = 3 * 60 * 1000;
+
+function asupnimerGetLoadVidHash(sourceUrl = "") {
+    const value = String(sourceUrl || "").trim();
+
+    const match = value.match(
+        /(?:https?:\/\/)?(?:cdn\.)?loadvid\.com\/videos\/play\/([A-Za-z0-9]+)/i
+    );
+
+    return match?.[1] || null;
+}
+
+function asupnimerGetLoadVidCookies(headers = {}) {
+    const setCookie =
+        headers["set-cookie"] ||
+        headers["Set-Cookie"] ||
+        [];
+
+    const cookies = Array.isArray(setCookie)
+        ? setCookie
+        : [setCookie];
+
+    return cookies
+        .map(cookie =>
+            String(cookie || "").split(";")[0].trim()
+        )
+        .filter(Boolean)
+        .join("; ");
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.10] [PROVIDERS: ASUPNIMER]
+   LOADVID TOKEN AND HLS RESOLUTION
+   ============================================================ */
+
+async function asupnimerResolveLoadVid(sourceUrl) {
+    const hash =
+        asupnimerGetLoadVidHash(sourceUrl);
+
+    if (!hash) {
+        return null;
+    }
+
+    const cached =
+        ASUPNIMER_LOADVID_CACHE.get(hash);
+
+    if (
+        cached &&
+        Date.now() - cached.at <
+            ASUPNIMER_LOADVID_CACHE_TTL
+    ) {
+        console.log(
+            "[ASUPNIMER LOADVID] CACHE HIT:",
+            hash
+        );
+
+        return cached.data;
+    }
+
+    const playUrl =
+        "https://cdn.loadvid.com/videos/play/" +
+        hash;
+
+    try {
+        console.log(
+            "[ASUPNIMER LOADVID] OPEN:",
+            hash
+        );
+
+        const playResponse = await axios.get(
+            playUrl,
+            {
+                timeout: 20000,
+                maxRedirects: 5,
+                responseType: "text",
+                headers: {
+                    "User-Agent": ASUPNIMER_USER_AGENT,
+                    "Accept":
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        const playHtml =
+            String(playResponse?.data || "");
+
+        const tokenMatch = playHtml.match(
+            /videoToken\s*:\s*['"]([^'"]+)['"]/i
+        );
+
+        const videoToken =
+            tokenMatch?.[1] || "";
+
+        if (!videoToken) {
+            console.log(
+                "[ASUPNIMER LOADVID] VIDEO TOKEN NOT FOUND:",
+                hash
+            );
+
+            return null;
+        }
+
+        const $ = cheerio.load(playHtml);
+
+        const csrfToken =
+            String(
+                $("meta[name='csrf-token']")
+                    .attr("content") || ""
+            ).trim();
+
+        const isProtected =
+            /isProtected\s*:\s*true/i.test(
+                playHtml
+            );
+
+        if (!csrfToken || !isProtected) {
+            console.log(
+                "[ASUPNIMER LOADVID] PROTECTION CHECK FAILED:",
+                JSON.stringify({
+                    hash,
+                    hasCsrf: Boolean(csrfToken),
+                    isProtected
+                })
+            );
+
+            return null;
+        }
+
+        const cookies =
+            asupnimerGetLoadVidCookies(
+                playResponse?.headers || {}
+            );
+
+        const postHeaders = {
+            "User-Agent": ASUPNIMER_USER_AGENT,
+            "Accept":
+                "application/vnd.apple.mpegurl,*/*",
+            "X-CSRF-TOKEN": csrfToken,
+            "X-XSRF-TOKEN": csrfToken,
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": "https://cdn.loadvid.com",
+            "Referer": playUrl,
+            "Content-Type": "application/json"
+        };
+
+        if (cookies) {
+            postHeaders.Cookie = cookies;
+        }
+
+        console.log(
+            "[ASUPNIMER LOADVID] RESOLVE TOKEN:",
+            hash
+        );
+
+        const resolveResponse = await axios.post(
+            "https://cdn.loadvid.com/videos/resolve-token",
+            {
+                token: videoToken,
+                hash
+            },
+            {
+                timeout: 25000,
+                maxRedirects: 5,
+                responseType: "text",
+                headers: postHeaders,
+                validateStatus: status =>
+                    status >= 200 && status < 400
+            }
+        );
+
+        const playlist =
+            String(resolveResponse?.data || "").trim();
+
+        if (
+            !playlist ||
+            !playlist.includes("#EXTM3U")
+        ) {
+            console.log(
+                "[ASUPNIMER LOADVID] INVALID HLS RESPONSE:",
+                JSON.stringify({
+                    hash,
+                    status: resolveResponse?.status,
+                    responseLength: playlist.length,
+                    responsePreview:
+                        playlist.slice(0, 180)
+                })
+            );
+
+            return null;
+        }
+
+        const result = {
+            provider: "asupnimer",
+            resolver: "loadvid",
+            hash,
+            playlist,
+            playlistUrl:
+                "https://cdn.loadvid.com/resolve/" +
+                hash +
+                ".m3u8",
+            contentType:
+                "application/vnd.apple.mpegurl",
+            resolvedAt: Date.now()
+        };
+
+        ASUPNIMER_LOADVID_CACHE.set(
+            hash,
+            {
+                at: Date.now(),
+                data: result
+            }
+        );
+
+        console.log(
+            "[ASUPNIMER LOADVID] RESOLVED:",
+            JSON.stringify({
+                hash,
+                playlistLength: playlist.length,
+                hasSegments:
+                    /#EXTINF/i.test(playlist),
+                hasVariant:
+                    /#EXT-X-STREAM-INF/i.test(playlist)
+            })
+        );
+
+        return result;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER LOADVID] ERROR:",
+            JSON.stringify({
+                hash,
+                status: error?.response?.status || 0,
+                message:
+                    error?.response?.data
+                        ? String(error.response.data).slice(0, 250)
+                        : error?.message || String(error)
+            })
+        );
+
+        return null;
+    }
+}
+
+
+/* ============================================================
+   [PRV-ASUPNIMER.11] [PROVIDERS: ASUPNIMER]
+   LOADVID / DIRECT / HYDRAX SOURCE DISPATCHER
+   ============================================================ */
+
+async function asupnimerResolveVideoSource(sourceUrl) {
+    const url = String(sourceUrl || "").trim();
+
+    if (!url) return null;
+
+    if (/loadvid\.com\/videos\/play\//i.test(url)) {
+        return await asupnimerResolveLoadVid(url);
+    }
+
+    if (
+        /\.m3u8(?:$|[?#])/i.test(url) ||
+        /\.mp4(?:$|[?#])/i.test(url)
+    ) {
+        return {
+            provider: "asupnimer",
+            resolver: "direct",
+            url
+        };
+    }
+
+    if (
+        /youtube\.com\/watch|youtu\.be\//i.test(url)
+    ) {
+        return {
+            provider: "asupnimer",
+            resolver: "youtube",
+            url
+        };
+    }
+
+    if (/playhydrax\.com|abysscdn\.com/i.test(url)) {
+        try {
+            console.log(
+                "[ASUPNIMER HYDRAX] OPEN:",
+                url
+            );
+
+            const response = await axios.get(
+                url,
+                {
+                    timeout: 20000,
+                    maxRedirects: 5,
+                    responseType: "text",
+                    headers: {
+                        "User-Agent":
+                            ASUPNIMER_USER_AGENT,
+                        "Referer":
+                            "https://www.asupnimer.com/",
+                        "Accept":
+                            "text/html,application/xhtml+xml,*/*"
+                    },
+                    validateStatus: status =>
+                        status >= 200 && status < 400
+                }
+            );
+
+            const decoded =
+                asupnimerHydraxDecodeDatas(
+                    String(response?.data || "")
+                );
+
+            if (!decoded) {
+                console.log(
+                    "[ASUPNIMER HYDRAX] DECODE FAILED"
+                );
+                return null;
+            }
+
+            const selected =
+                asupnimerHydraxSelectSource(decoded);
+
+            if (!selected) {
+                console.log(
+                    "[ASUPNIMER HYDRAX] NO VALID SOURCE"
+                );
+                return null;
+            }
+
+            const proxyUrl =
+                asupnimerHydraxCreateProxyUrl(
+                    selected
+                );
+
+            if (!proxyUrl) {
+                console.log(
+                    "[ASUPNIMER HYDRAX] PROXY URL NOT CREATED"
+                );
+                return null;
+            }
+
+            const result = {
+                provider: "asupnimer",
+                resolver: "hydrax",
+                url: proxyUrl,
+                type: "mp4",
+                quality: selected.label || "Auto",
+                source: selected
+            };
+
+            console.log(
+                "[ASUPNIMER HYDRAX] RESOLVED:",
+                JSON.stringify({
+                    quality: result.quality,
+                    codec: selected.codec,
+                    proxyReady: true
+                })
+            );
+
+            return result;
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER HYDRAX] RESOLVE ERROR:",
+                error?.response?.status ||
+                error?.message ||
+                error
+            );
+
+            return null;
+        }
+    }
+
+    console.log(
+        "[ASUPNIMER] UNSUPPORTED VIDEO SOURCE:",
+        JSON.stringify({
+            url,
+            hostname: (() => {
+                try {
+                    return new URL(url).hostname;
+                } catch (_) {
+                    return null;
+                }
+            })()
+        })
+    );
+
+    return null;
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.12] [PROVIDERS: ASUPNIMER]
+   HYDRAX DATA DECODER
+   ============================================================ */
+
+function asupnimerHydraxMd5Hex(data) {
+    return crypto
+        .createHash("md5")
+        .update(data)
+        .digest("hex");
+}
+
+function asupnimerHydraxAesCtrDecrypt(
+    data,
+    key,
+    iv
+) {
+    const decipher = crypto.createDecipheriv(
+        "aes-256-ctr",
+        Buffer.from(key),
+        Buffer.from(iv)
+    );
+
+    return Buffer.concat([
+        decipher.update(Buffer.from(data)),
+        decipher.final()
+    ]);
+}
+
+function asupnimerHydraxDecodeDatas(pageHtml = "") {
+    try {
+        const html = String(pageHtml || "");
+
+        const match = html.match(
+            /datas\s*=\s*"([^"]+)"/i
+        );
+
+        if (!match?.[1]) {
+            return null;
+        }
+
+        const rawBuffer = Buffer.from(
+            match[1],
+            "base64"
+        );
+
+        const rawJson = rawBuffer.toString(
+            "latin1"
+        );
+
+        const root = JSON.parse(rawJson);
+
+        const md5Id = String(
+            root?.md5_id ?? ""
+        );
+
+        const userId = String(
+            root?.user_id ?? ""
+        );
+
+        const slug = String(
+            root?.slug ?? ""
+        );
+
+        const media = String(
+            root?.media ?? ""
+        );
+
+        if (
+            !/^\d+$/.test(md5Id) ||
+            !/^\d+$/.test(userId) ||
+            !slug ||
+            !media
+        ) {
+            return null;
+        }
+
+        const keyHex =
+            asupnimerHydraxMd5Hex(
+                Buffer.from(
+                    `${userId}:${slug}:${md5Id}`,
+                    "utf8"
+                )
+            );
+
+        const key = Buffer.from(
+            keyHex,
+            "ascii"
+        );
+
+        const iv = key.subarray(0, 16);
+
+        const mediaBytes = Buffer.from(
+            media,
+            "latin1"
+        );
+
+        const decrypted =
+            asupnimerHydraxAesCtrDecrypt(
+                mediaBytes,
+                key,
+                iv
+            );
+
+        const mediaJson = JSON.parse(
+            decrypted.toString("utf8")
+        );
+
+        const sources =
+            mediaJson?.mp4?.sources;
+
+        const domains =
+            mediaJson?.mp4?.domains;
+
+        if (
+            !Array.isArray(sources) ||
+            !sources.length ||
+            !Array.isArray(domains) ||
+            !domains.length
+        ) {
+            return null;
+        }
+
+        const firstDomain = String(
+            domains[0] || ""
+        ).trim();
+
+        if (!firstDomain.includes(".")) {
+            return null;
+        }
+
+        const suffix =
+            firstDomain.substring(
+                firstDomain.indexOf(".") + 1
+            );
+
+        if (!suffix) {
+            return null;
+        }
+
+        return {
+            md5Id,
+            userId,
+            slug,
+            mediaJson,
+            sources,
+            domains,
+            suffix
+        };
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] DATA DECODE ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.13] [PROVIDERS: ASUPNIMER]
+   HYDRAX SOURCE SELECTION
+   ============================================================ */
+
+function asupnimerHydraxSelectSource(
+    decoded
+) {
+    try {
+        const sources =
+            decoded?.sources;
+
+        if (
+            !Array.isArray(sources) ||
+            !sources.length
+        ) {
+            return null;
+        }
+
+        const preferredQualities = [
+            "1080p",
+            "720p",
+            "480p"
+        ];
+
+        let selected = null;
+
+        for (const quality of preferredQualities) {
+
+            selected = sources.find(source =>
+                String(source?.label || "") === quality &&
+                String(source?.codec || "") === "h264"
+            );
+
+            if (selected) break;
+
+            selected = sources.find(source =>
+                String(source?.label || "") === quality
+            );
+
+            if (selected) break;
+        }
+
+        if (!selected) {
+            selected = sources[0];
+        }
+
+        const size = String(
+            selected?.size ?? ""
+        );
+
+        const resId = String(
+            selected?.res_id ?? ""
+        );
+
+        const sub = String(
+            selected?.sub ?? ""
+        );
+
+        if (
+            !/^\d+$/.test(size) ||
+            !/^\d+$/.test(resId) ||
+            !sub
+        ) {
+            return null;
+        }
+
+        return {
+            size,
+            resId,
+            sub,
+            label: String(
+                selected?.label || ""
+            ),
+            codec: String(
+                selected?.codec || ""
+            ),
+            suffix: decoded.suffix,
+            md5Id: decoded.md5Id,
+            userId: decoded.userId,
+            slug: decoded.slug
+        };
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] SOURCE SELECT ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.14] [PROVIDERS: ASUPNIMER]
+   HYDRAX RANGE TOKEN GENERATOR
+   ============================================================ */
+
+function asupnimerHydraxCreateToken({
+    index,
+    size,
+    md5Id,
+    resId,
+    frag
+}) {
+    try {
+        const indexValue = Number(index);
+        const sizeValue = String(size || "");
+        const md5IdValue = String(md5Id || "");
+        const resIdValue = String(resId || "");
+        const fragValue = String(frag ?? "");
+
+        if (
+            !Number.isInteger(indexValue) ||
+            indexValue < 0 ||
+            !/^\d+$/.test(sizeValue) ||
+            !/^\d+$/.test(md5IdValue) ||
+            !/^\d+$/.test(resIdValue) ||
+            !/^\d+$/.test(fragValue)
+        ) {
+            return null;
+        }
+
+        // Mỗi chữ số size được chuyển thành byte số 0–9.
+        const digitBytes = Buffer.from(
+            [...sizeValue].map(Number)
+        );
+
+        const keyHex =
+            asupnimerHydraxMd5Hex(digitBytes);
+
+        const key = Buffer.from(
+            keyHex,
+            "ascii"
+        );
+
+        const iv = key.subarray(0, 16);
+
+        // Thứ tự đã đối chiếu trực tiếp với Smali:
+        // /mp4/{md5Id}/{resId}/{size}/{frag}/{index}
+        const path = Buffer.from(
+            `/mp4/${md5IdValue}/${resIdValue}/${sizeValue}/${fragValue}/${indexValue}`,
+            "utf8"
+        );
+
+        const encrypted =
+            asupnimerHydraxAesCtrDecrypt(
+                path,
+                key,
+                iv
+            );
+
+        const first = encrypted
+            .toString("base64")
+            .replace(/=+$/g, "");
+
+        const second = Buffer
+            .from(first, "latin1")
+            .toString("base64")
+            .replace(/=+$/g, "");
+
+        return second;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] TOKEN ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.15] [PROVIDERS: ASUPNIMER]
+   HYDRAX PROXY URL AND SIGNED TOKEN
+   ============================================================ */
+
+const ASUPNIMER_HYDRAX_FRAG =
+    2 * 1024 * 1024;
+
+const ASUPNIMER_HYDRAX_TOKEN_TTL =
+    30 * 60 * 1000;
+
+function asupnimerHydraxPublicBaseUrl() {
+    const configured =
+        process.env.MOVINA_PUBLIC_URL ||
+        process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+        process.env.VERCEL_URL ||
+        "";
+
+    if (!configured) return null;
+
+    try {
+        const value = /^https?:\/\//i.test(configured)
+            ? configured
+            : "https://" + configured;
+
+        return new URL(value).origin;
+
+    } catch (_) {
+        return null;
+    }
+}
+
+function asupnimerHydraxSigningSecret() {
+    return String(
+        process.env.ASUPNIMER_PROXY_SECRET ||
+        process.env.VERCEL_PROJECT_ID ||
+        process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+        ""
+    );
+}
+
+function asupnimerHydraxSignPayload(payload) {
+    const secret =
+        asupnimerHydraxSigningSecret();
+
+    if (!secret) return null;
+
+    const encoded = Buffer
+        .from(JSON.stringify(payload))
+        .toString("base64url");
+
+    const signature = crypto
+        .createHmac("sha256", secret)
+        .update(encoded)
+        .digest("base64url");
+
+    return encoded + "." + signature;
+}
+
+function asupnimerHydraxVerifyToken(token) {
+    try {
+        const parts = String(token || "").split(".");
+
+        if (parts.length !== 2) return null;
+
+        const [encoded, suppliedSignature] = parts;
+
+        const secret =
+            asupnimerHydraxSigningSecret();
+
+        if (!secret) return null;
+
+        const expectedSignature = crypto
+            .createHmac("sha256", secret)
+            .update(encoded)
+            .digest();
+
+        const suppliedBuffer = Buffer.from(
+            suppliedSignature,
+            "base64url"
+        );
+
+        if (
+            suppliedBuffer.length !== expectedSignature.length ||
+            !crypto.timingSafeEqual(
+                suppliedBuffer,
+                expectedSignature
+            )
+        ) {
+            return null;
+        }
+
+        const payload = JSON.parse(
+            Buffer.from(
+                encoded,
+                "base64url"
+            ).toString("utf8")
+        );
+
+        if (
+            !payload ||
+            Number(payload.exp || 0) < Date.now()
+        ) {
+            return null;
+        }
+
+        return payload;
+
+    } catch (_) {
+        return null;
+    }
+}
+
+function asupnimerHydraxCreateProxyUrl(source) {
+    try {
+        const baseUrl =
+            asupnimerHydraxPublicBaseUrl();
+
+        if (!baseUrl || !source) return null;
+
+        const sub = String(source.sub || "")
+            .trim()
+            .replace(/\.$/, "");
+
+        const suffix = String(source.suffix || "")
+            .trim()
+            .replace(/^\./, "");
+
+        const size = String(source.size || "");
+        const md5Id = String(source.md5Id || "");
+        const resId = String(source.resId || "");
+
+        if (
+            !/^[a-z0-9-]+$/i.test(sub) ||
+            !/^[a-z0-9.-]+$/i.test(suffix) ||
+            !/^\d+$/.test(size) ||
+            !/^\d+$/.test(md5Id) ||
+            !/^\d+$/.test(resId)
+        ) {
+            return null;
+        }
+
+        const payload = {
+            provider: "asupnimer",
+            resolver: "hydrax",
+            sub,
+            suffix,
+            size,
+            md5Id,
+            resId,
+            exp:
+                Date.now() +
+                ASUPNIMER_HYDRAX_TOKEN_TTL
+        };
+
+        const token =
+            asupnimerHydraxSignPayload(payload);
+
+        if (!token) {
+            console.log(
+                "[ASUPNIMER HYDRAX] SIGNING SECRET NOT CONFIGURED"
+            );
+            return null;
+        }
+
+        return (
+            baseUrl +
+            "/asupnimer/hydrax/" +
+            encodeURIComponent(token)
+        );
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER HYDRAX] PROXY URL ERROR:",
+            error?.message || String(error)
+        );
+
+        return null;
+    }
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.16] [PROVIDERS: ASUPNIMER]
+   HYDRAX FRAGMENT RANGE FETCHER
+   ============================================================ */
+
+async function asupnimerHydraxFetchRange(
+    source,
+    start,
+    end
+) {
+    const total = Number(source?.size);
+
+    if (
+        !Number.isSafeInteger(total) ||
+        total <= 0 ||
+        !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        start < 0 ||
+        end < start ||
+        end >= total
+    ) {
+        throw new Error(
+            "Invalid Hydrax byte range"
+        );
+    }
+
+    const baseCdn =
+        `https://${source.sub}.${source.suffix}`;
+
+    const parts = [];
+
+    let position = start;
+
+    while (position <= end) {
+        const index = Math.floor(
+            position / ASUPNIMER_HYDRAX_FRAG
+        );
+
+        const offset =
+            position % ASUPNIMER_HYDRAX_FRAG;
+
+        const remaining =
+            end - position + 1;
+
+        const take = Math.min(
+            remaining,
+            ASUPNIMER_HYDRAX_FRAG - offset
+        );
+
+        const token =
+            asupnimerHydraxCreateToken({
+                index,
+                size: source.size,
+                md5Id: source.md5Id,
+                resId: source.resId,
+                frag: ASUPNIMER_HYDRAX_FRAG
+            });
+
+        if (!token) {
+            throw new Error(
+                "Hydrax fragment token generation failed"
+            );
+        }
+
+        const segmentUrl =
+            baseCdn +
+            "/sora/" +
+            source.size +
+            "/" +
+            token;
+
+        const response = await axios.get(
+            segmentUrl,
+            {
+                responseType: "arraybuffer",
+                timeout: 25000,
+                maxRedirects: 3,
+                headers: {
+                    "Range":
+                        `bytes=${offset}-${offset + take - 1}`,
+                    "Referer":
+                        "https://abysscdn.com/",
+                    "User-Agent":
+                        ASUPNIMER_USER_AGENT,
+                    "Accept": "*/*"
+                },
+                validateStatus: status =>
+                    status >= 200 && status < 300
+            }
+        );
+
+        let data = Buffer.from(
+            response.data || []
+        );
+
+        // Nếu CDN bỏ qua Range và trả cả fragment,
+        // lấy đúng phần byte mà MOVINA đang cần.
+        if (data.length !== take) {
+            if (
+                data.length >= offset + take
+            ) {
+                data = data.subarray(
+                    offset,
+                    offset + take
+                );
+            }
+        }
+
+        if (data.length !== take) {
+            throw new Error(
+                `Hydrax fragment length mismatch: expected ${take}, received ${data.length}`
+            );
+        }
+
+        parts.push(data);
+
+        position += take;
+    }
+
+    return Buffer.concat(parts);
+}
+
+/* ============================================================
+   [PRV-ASUPNIMER.18] [PROVIDERS: ASUPNIMER]
+   STRICT TITLE / YEAR / TYPE MATCH AND STREAM BUILDER
+   ============================================================ */
+
+function asupnimerBuildTitleKey(value = "") {
+    return asupnimerNormalizeText(
+        String(value || "")
+            .replace(/\b(vietsub|thuyet minh|long tieng|full hd|full)\b/gi, " ")
+            .replace(/\b(19|20)\d{2}\b/g, " ")
+            .replace(/\[[^\]]*\]/g, " ")
+            .replace(/\([^)]*\)/g, " ")
+    );
+}
+
+function asupnimerIsStrongTitleKey(value = "") {
+    const key = asupnimerBuildTitleKey(value);
+
+    if (key.length < 5) {
+        return false;
+    }
+
+    const words = key.split(/\s+/).filter(Boolean);
+
+    return (
+        words.length >= 2 ||
+        key.length >= 7
+    );
+}
+
+function asupnimerTitleMatches(
+    candidateTitle = "",
+    titleKeys = new Set()
+) {
+    const candidateKey =
+        asupnimerBuildTitleKey(candidateTitle);
+
+    if (!candidateKey) return false;
+
+    const paddedCandidate =
+        ` ${candidateKey} `;
+
+    for (const key of titleKeys) {
+        const normalizedKey =
+            asupnimerBuildTitleKey(key);
+
+        if (
+            !asupnimerIsStrongTitleKey(normalizedKey)
+        ) {
+            continue;
+        }
+
+        if (
+            paddedCandidate.includes(
+                ` ${normalizedKey} `
+            )
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+function asupnimerGetExplicitSeason(value = "") {
+    const normalized =
+        asupnimerNormalizeText(value);
+
+    const patterns = [
+        /\bseason\s*(\d{1,2})\b/,
+        /\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/,
+        /\b(?:phan|mua|ss)\s*(\d{1,2})\b/
+    ];
+
+    for (const pattern of patterns) {
+        const match = normalized.match(pattern);
+
+        if (match?.[1]) {
+            const season = Number(match[1]);
+
+            if (
+                Number.isInteger(season) &&
+                season > 0
+            ) {
+                return season;
+            }
+        }
+    }
+
+    return null;
+}
+
+function asupnimerMatchesRequestedEdition(
+    post,
+    titleKeys,
+    requestedType,
+    requestedSeason
+) {
+    if (
+        !asupnimerTitleMatches(
+            post?.title,
+            titleKeys
+        )
+    ) {
+        return false;
+    }
+
+    if (requestedType !== "series") {
+        return true;
+    }
+
+    const postSeason =
+        asupnimerGetExplicitSeason(post?.title);
+
+    // Bài không ghi rõ mùa: chưa đủ căn cứ để loại.
+    if (postSeason === null) {
+        return true;
+    }
+
+    return postSeason === requestedSeason;
+}
+
+async function asupnimerFetchStreams({
+    title,
+    titleVariants = [],
+    year = 0,
+    type = "movie",
+    season = 1,
+    episode = 0
+} = {}) {
+    const requestedTitle = String(title || "").trim();
+
+    if (!requestedTitle) return [];
+
+    const requestedType =
+        type === "series" ? "series" : "movie";
+
+    const requestedYear =
+        Number(year) || 0;
+
+    const requestedSeason =
+        Math.max(1, Number(season) || 1);
+
+    const requestedEpisode =
+        Number(episode) || 0;
+
+    // -----------------------------------------------------
+    // 1. Chuẩn hóa và loại tên trùng.
+    // -----------------------------------------------------
+
+    const allTitleVariants = [
+        requestedTitle,
+        ...(Array.isArray(titleVariants) ? titleVariants : [])
+    ];
+
+    const queryMap = new Map();
+
+    const addQuery = value => {
+        const query = String(value || "").trim();
+        const key = asupnimerBuildTitleKey(query);
+
+        if (!query || !key || queryMap.has(key)) {
+            return;
+        }
+
+        queryMap.set(key, query);
+    };
+
+    for (const value of allTitleVariants) {
+        addQuery(value);
+    }
+
+    const initialQueries = [
+        ...queryMap.values()
+    ];
+
+    const titleKeys = new Set(
+    initialQueries
+        .map(asupnimerBuildTitleKey)
+        .filter(asupnimerIsStrongTitleKey)
+);
+
+    if (!titleKeys.size) return [];
+
+    console.log(
+        "[ASUPNIMER] SEARCH START:",
+        JSON.stringify({
+            title: requestedTitle,
+            year: requestedYear,
+            type: requestedType,
+            season,
+            episode: requestedEpisode,
+            initialQueries
+        })
+    );
+
+    const postMap = new Map();
+
+    // -----------------------------------------------------
+    // 2. Hàm tìm kiếm nhiều tên, không gửi truy vấn trùng.
+    // -----------------------------------------------------
+
+    const searchQueries = async queries => {
+        const uniqueQueries = [];
+        const seen = new Set();
+
+        for (const value of queries) {
+            const query = String(value || "").trim();
+            const key = asupnimerBuildTitleKey(query);
+
+            if (!query || !key || seen.has(key)) {
+                continue;
+            }
+
+            seen.add(key);
+            uniqueQueries.push(query);
+        }
+
+        if (!uniqueQueries.length) return;
+
+        console.log(
+            "[ASUPNIMER] SEARCH QUERIES:",
+            JSON.stringify(uniqueQueries)
+        );
+
+        const results = await Promise.all(
+            uniqueQueries.slice(0, 5).map(query =>
+                asupnimerSearchPosts(query, 15)
+                    .catch(error => {
+                        console.log(
+                            "[ASUPNIMER] QUERY ERROR:",
+                            JSON.stringify({
+                                query,
+                                message: error?.message || String(error)
+                            })
+                        );
+
+                        return [];
+                    })
+            )
+        );
+
+        for (const posts of results) {
+            for (const post of posts) {
+                if (post?.url && !postMap.has(post.url)) {
+                    postMap.set(post.url, post);
+                }
+            }
+        }
+    };
+
+    // -----------------------------------------------------
+    // 3. Tìm bằng tên metadata hiện có trước.
+    // -----------------------------------------------------
+
+    await searchQueries(initialQueries);
+
+    let candidates = [
+    ...postMap.values()
+].filter(post =>
+    asupnimerMatchesRequestedEdition(
+        post,
+        titleKeys,
+        requestedType,
+        requestedSeason
+    )
+);
+
+    console.log(
+        "[ASUPNIMER] PRIMARY TITLE MATCH:",
+        JSON.stringify({
+            searchedPosts: postMap.size,
+            exactCandidates: candidates.length
+        })
+    );
+
+    // -----------------------------------------------------
+    // 4. Nếu chưa tìm được bài khớp, dùng AniList lấy alias.
+    //    Chỉ sử dụng tên từ kết quả AniList có độ tin cậy.
+    // -----------------------------------------------------
+
+    if (!candidates.length) {
+        try {
+            if (
+                typeof animeHayGetAniListTitleVariants ===
+                "function"
+            ) {
+                console.log(
+                    "[ASUPNIMER] PRIMARY SEARCH EMPTY; TRY ANILIST:",
+                    JSON.stringify({
+                        title: requestedTitle,
+                        year: requestedYear
+                    })
+                );
+
+                const aniListVariants =
+                    await animeHayGetAniListTitleVariants(
+                        requestedTitle,
+                        requestedYear
+                    );
+
+                const aliasQueries = [];
+
+                if (Array.isArray(aniListVariants)) {
+                    for (const alias of aniListVariants) {
+                        const query = String(alias || "").trim();
+                        const key = asupnimerBuildTitleKey(query);
+
+                        if (!query || !key) continue;
+
+// Không tìm lại tên đã gửi ở lượt đầu.
+if (queryMap.has(key)) continue;
+
+queryMap.set(key, query);
+
+// Chỉ dùng khóa đủ mạnh để xác nhận danh tính.
+// Tên gốc vẫn được phép gửi đi tìm kiếm.
+if (asupnimerIsStrongTitleKey(key)) {
+    titleKeys.add(key);
+}
+
+aliasQueries.push(query);
+                    }
+                }
+
+                console.log(
+                    "[ASUPNIMER] ANILIST ALIASES:",
+                    JSON.stringify(aliasQueries)
+                );
+
+                if (aliasQueries.length) {
+                    await searchQueries(aliasQueries);
+                }
+            }
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER] ANILIST FALLBACK ERROR:",
+                error?.message || error
+            );
+        }
+
+
+        candidates = [
+            ...postMap.values()
+        ].filter(post =>
+            asupnimerTitleMatches(
+                post.title,
+                titleKeys
+            )
+        );
+    }
+
+    // -----------------------------------------------------
+    // 4.1. DEEP RECENT FEED FALLBACK
+    // Nếu tìm kiếm và alias AniList đều thất bại,
+    // quét thêm các trang bài đăng cũ hơn của Blogger.
+    // Chỉ kích hoạt khi chưa có ứng viên.
+    // -----------------------------------------------------
+
+    if (!candidates.length) {
+        const deepFeedDomain =
+            await asupnimerResolveActiveDomain();
+
+        if (deepFeedDomain) {
+            const pageStarts = [
+                1,
+                52,
+                103,
+                154,
+                205
+            ];
+
+            console.log(
+                "[ASUPNIMER] DEEP FEED SCAN START:",
+                JSON.stringify({
+                    title: requestedTitle,
+                    pages: pageStarts.length
+                })
+            );
+
+            const pageResults = await Promise.all(
+                pageStarts.map(async startIndex => {
+                    const feedUrl =
+                        deepFeedDomain +
+                        "/feeds/posts/summary?alt=json&max-results=50&start-index=" +
+                        startIndex;
+
+                    try {
+                        const entries =
+                            await asupnimerFetchFeed(
+                                feedUrl,
+                                "deep-recent:" + startIndex
+                            );
+
+                        return {
+                            startIndex,
+                            entries
+                        };
+
+                    } catch (error) {
+                        console.log(
+                            "[ASUPNIMER] DEEP FEED PAGE ERROR:",
+                            JSON.stringify({
+                                startIndex,
+                                message:
+                                    error?.message ||
+                                    String(error)
+                            })
+                        );
+
+                        return {
+                            startIndex,
+                            entries: []
+                        };
+                    }
+                })
+            );
+
+            let deepScanned = 0;
+
+            for (const page of pageResults) {
+                for (const entry of page.entries || []) {
+                    const postTitle =
+                        asupnimerGetEntryValue(
+                            entry?.title
+                        ).trim();
+
+                    if (!postTitle) continue;
+
+                    const links = Array.isArray(entry?.link)
+                        ? entry.link
+                        : [];
+
+                    const alternate = links.find(
+                        item => item?.rel === "alternate"
+                    );
+
+                    const postUrl =
+                        asupnimerAbsoluteUrl(
+                            alternate?.href,
+                            deepFeedDomain
+                        );
+
+                    if (!postUrl) continue;
+
+                    const categories = Array.isArray(
+                        entry?.category
+                    )
+                        ? entry.category
+                            .map(item =>
+                                String(item?.term || "").trim()
+                            )
+                            .filter(Boolean)
+                        : [];
+
+                    const post = {
+                        title: postTitle,
+                        url: postUrl,
+                        poster: asupnimerAbsoluteUrl(
+                            entry?.media$thumbnail?.url || "",
+                            deepFeedDomain
+                        ),
+                        published:
+                            asupnimerGetEntryValue(
+                                entry?.published
+                            ),
+                        categories
+                    };
+
+                    if (!postMap.has(postUrl)) {
+                        postMap.set(postUrl, post);
+                        deepScanned++;
+                    }
+                }
+            }
+
+            candidates = [
+                ...postMap.values()
+            ].filter(post =>
+                asupnimerTitleMatches(
+                    post.title,
+                    titleKeys
+                )
+            );
+
+            console.log(
+                "[ASUPNIMER] DEEP FEED SCAN RESULT:",
+                JSON.stringify({
+                    pages: pageResults.map(page => ({
+                        startIndex: page.startIndex,
+                        count: page.entries.length
+                    })),
+                    newlyScanned: deepScanned,
+                    totalPosts: postMap.size,
+                    matchedCandidates: candidates.length,
+                    matchedTitles: candidates.map(
+                        post => post.title
+                    )
+                })
+            );
+        }
+    }
+
+    console.log(
+    "[ASUPNIMER] STRICT TITLE MATCH:",
+    JSON.stringify({
+        searchedPosts: postMap.size,
+        searchedTitles: [...postMap.values()].map(post => ({
+            title: post.title,
+            url: post.url,
+            categories: post.categories
+        })),
+        exactCandidates: candidates.length,
+        matchedTitles: candidates.map(post => post.title),
+        acceptedTitleKeys: [...titleKeys]
+    })
+);
+
+    if (!candidates.length) {
+        console.log(
+            "[ASUPNIMER] NO EXACT TITLE CANDIDATE"
+        );
+
+        return [];
+    }
+
+    // -----------------------------------------------------
+    // 5. Tải chi tiết và kiểm tra tên / năm / loại phim.
+    // -----------------------------------------------------
+
+    const matchedDetails = [];
+
+    for (const post of candidates.slice(0, 5)) {
+        const detail =
+            await asupnimerBuildPostDetail(post);
+
+        if (!detail) continue;
+
+        const detailKey =
+            asupnimerBuildTitleKey(detail.title);
+
+        if (
+    !detailKey ||
+    !asupnimerTitleMatches(
+        detail.title,
+        titleKeys
+    )
+) {
+    console.log(
+        "[ASUPNIMER] DETAIL TITLE MISMATCH:",
+        JSON.stringify({
+            title: detail.title,
+            detailKey,
+            acceptedTitleKeys: [...titleKeys]
+        })
+    );
+
+    continue;
+}
+
+        const detailYear =
+            Number(detail.year) || 0;
+
+        const detailSeason =
+            asupnimerGetExplicitSeason(
+                detail.title
+            );
+
+        // Không nhận nhầm mùa khác của cùng một anime.
+        if (
+            requestedType === "series" &&
+            detailSeason !== null &&
+            detailSeason !== requestedSeason
+        ) {
+            console.log(
+                "[ASUPNIMER] SEASON MISMATCH:",
+                JSON.stringify({
+                    title: detail.title,
+                    requestedSeason,
+                    detailSeason
+                })
+            );
+
+            continue;
+        }
+
+        // Với bài ghi rõ đúng mùa, năm phát hành của mùa
+        // có thể khác năm phát hành ban đầu của cả series.
+        // Chỉ bỏ qua chênh lệch năm trong trường hợp này.
+        const sameExplicitSeason =
+            requestedType === "series" &&
+            detailSeason !== null &&
+            detailSeason === requestedSeason;
+
+        if (
+            requestedYear &&
+            detailYear &&
+            requestedYear !== detailYear &&
+            !sameExplicitSeason
+        ) {
+            console.log(
+                "[ASUPNIMER] YEAR MISMATCH:",
+                JSON.stringify({
+                    title: detail.title,
+                    requestedYear,
+                    detailYear,
+                    requestedSeason,
+                    detailSeason
+                })
+            );
+
+            continue;
+        }
+
+        if (
+            requestedType === "series" &&
+            detail.type !== "series"
+        ) {
+            continue;
+        }
+
+        if (
+            requestedType === "movie" &&
+            detail.type !== "movie"
+        ) {
+            continue;
+        }
+
+        matchedDetails.push(detail);
+    }
+
+    if (!matchedDetails.length) {
+        console.log(
+            "[ASUPNIMER] NO VERIFIED DETAIL MATCH"
+        );
+
+        return [];
+    }
+
+    
+    // -----------------------------------------------------
+    // 6. Chọn toàn bộ nguồn của tập hoặc phim lẻ.
+    // -----------------------------------------------------
+
+    const allStreams = [];
+    const emittedKeys = new Set();
+
+    for (const detail of matchedDetails) {
+        let selectedSources = [];
+
+        if (requestedType === "series") {
+            const selectedEpisode =
+                detail.episodes.find(item =>
+                    Number(item?.number) === requestedEpisode
+                );
+
+            if (!selectedEpisode) {
+                console.log(
+                    "[ASUPNIMER] EPISODE NOT FOUND:",
+                    JSON.stringify({
+                        title: detail.title,
+                        requestedEpisode,
+                        availableEpisodes:
+                            detail.episodes.map(item =>
+                                item.number
+                            )
+                    })
+                );
+
+                continue;
+            }
+
+            selectedSources =
+                Array.isArray(selectedEpisode.sources) &&
+                selectedEpisode.sources.length
+                    ? selectedEpisode.sources
+                    : selectedEpisode.video
+                        ? [{
+                            video: selectedEpisode.video,
+                            audio: selectedEpisode.audio,
+                            server: "",
+                            language: ""
+                        }]
+                        : [];
+
+        } else {
+            selectedSources =
+                Array.isArray(detail.movieSources) &&
+                detail.movieSources.length
+                    ? detail.movieSources
+                    : detail.movieSource
+                        ? [detail.movieSource]
+                        : [];
+        }
+
+        console.log(
+            "[ASUPNIMER] EPISODE SOURCES:",
+            JSON.stringify({
+                title: detail.title,
+                episode: requestedEpisode || null,
+                sourceCount: selectedSources.length,
+                sources: selectedSources.map(source => ({
+                    server: source.server,
+                    language: source.language,
+                    video: source.video,
+                    hasAudio: Boolean(source.audio)
+                }))
+            })
+        );
+
+        if (!selectedSources.length) {
+            continue;
+        }
+
+        // -------------------------------------------------
+        // 7. Giải mã TẤT CẢ nguồn video.
+        // -------------------------------------------------
+
+        const resolvedResults =
+            await Promise.allSettled(
+                selectedSources.map(async source => {
+                    const videoUrl =
+                        String(source?.video || "").trim();
+
+                    if (!videoUrl) return null;
+
+                    const resolved =
+                        await asupnimerResolveVideoSource(
+                            videoUrl
+                        );
+
+                    if (!resolved) return null;
+
+                    const playableUrl =
+                        String(
+                            resolved.url ||
+                            resolved.playlistUrl ||
+                            ""
+                        ).trim();
+
+                    if (!playableUrl) return null;
+
+                    return {
+                        source,
+                        resolved,
+                        playableUrl
+                    };
+                })
+            );
+
+        for (const result of resolvedResults) {
+            if (result.status !== "fulfilled") {
+                console.log(
+                    "[ASUPNIMER] SOURCE RESOLVE ERROR:",
+                    result.reason?.message ||
+                    String(result.reason)
+                );
+
+                continue;
+            }
+
+            const item = result.value;
+
+            if (!item) continue;
+
+            const {
+                source,
+                resolved,
+                playableUrl
+            } = item;
+
+            const youtubeId =
+                resolved.resolver === "youtube"
+                    ? (
+                        playableUrl.match(
+                            /(?:youtube\.com\/watch\?[^#]*\bv=|youtu\.be\/)([A-Za-z0-9_-]{11})/i
+                        )?.[1] || null
+                    )
+                    : null;
+
+            if (
+                resolved.resolver === "youtube" &&
+                !youtubeId
+            ) {
+                console.log(
+                    "[ASUPNIMER] INVALID YOUTUBE ID:",
+                    playableUrl
+                );
+
+                continue;
+            }
+
+            const isHls =
+                /\.m3u8(?:$|[?#])/i.test(playableUrl);
+
+            // -------------------------------------------------
+            // Chuẩn hóa tên server và ngôn ngữ.
+            // -------------------------------------------------            
+            
+            const rawServer =
+                String(source.server || "").trim();
+
+            const rawLanguage =
+                String(source.language || "").trim();
+
+            const normalizedServer =
+                asupnimerNormalizeText(rawServer);
+
+            const normalizedLanguage =
+                asupnimerNormalizeText(rawLanguage);
+
+            const serverName =
+                rawServer || "Server";
+
+            // -------------------------------------------------
+            // XÁC ĐỊNH NGÔN NGỮ VIDEO
+            //
+            // Khi có audio riêng được khai báo bằng a=...,
+            // video chính được ưu tiên nhận diện là VietSub.
+            // Audio phụ không được tạo thành stream độc lập.
+            // -------------------------------------------------
+
+            let languageName = "Chưa xác định";
+
+            let languageBasis = "unknown";
+
+            if (source.audio) {
+
+                languageName = "Vsub";
+
+                languageBasis = "separate-audio";
+
+            } else if (
+                normalizedLanguage.includes("vietsub") ||
+                normalizedLanguage.includes("viet sub") ||
+                normalizedLanguage.includes("phu de") ||
+                normalizedLanguage.includes("sub")
+            ) {
+
+                languageName = "Vsub";
+
+                languageBasis = "source-language";
+
+            } else if (
+                normalizedLanguage.includes("thuyet minh") ||
+                normalizedLanguage.includes("long tieng") ||
+                normalizedLanguage.includes("dub")
+            ) {
+
+                languageName = "TM";
+
+                languageBasis = "source-language";
+
+            } else if (rawLanguage) {
+
+                languageName = rawLanguage;
+
+                languageBasis = "source-language";
+            }
+
+            const deliveryName =
+                resolved.resolver === "youtube"
+                    ? "YT"
+                    : "";
+
+            const streamName =
+                "ASUPNIMER - " +
+                serverName +
+                (
+                    deliveryName
+                        ? " - " + deliveryName
+                        : ""
+                ) +
+                " - " +
+                languageName;
+
+            const streamTitle =
+                requestedType === "series"
+                    ? requestedTitle +
+                      " · Tập " +
+                      requestedEpisode
+                    : requestedTitle;
+
+            // -------------------------------------------------
+            // Không tạo stream trùng cùng server / ngôn ngữ
+            // / URL video.
+            // -------------------------------------------------
+
+            const streamKey = [
+                serverName.toLowerCase(),
+                languageName.toLowerCase(),
+                playableUrl.toLowerCase()
+            ].join("|");
+
+            if (emittedKeys.has(streamKey)) {
+                continue;
+            }
+
+            emittedKeys.add(streamKey);
+
+            // -------------------------------------------------
+            // Tạo Stremio stream.
+            // MP3 chỉ giữ trong dữ liệu parser, không tạo
+            // thành stream độc lập hoặc externalUrl.
+            // -------------------------------------------------
+
+            const stream = {
+                name: streamName,
+                title: streamTitle,
+
+                ...(resolved.resolver === "youtube"
+                    ? {
+                        ytId: youtubeId
+                    }
+                    : {
+                        url: playableUrl,
+                        type: isHls ? "m3u8" : "mp4"
+                    }),
+
+                provider: "asupnimer",
+                source: "asupnimer",
+
+                description:
+                    streamName +
+                    (
+                        resolved.quality
+                            ? " · " + resolved.quality
+                            : ""
+                    )
+            };
+
+            if (resolved.resolver === "loadvid") {
+                stream.type = "m3u8";
+
+                stream.behaviorHints = {
+                    proxyHeaders: {
+                        request: {
+                            "Referer":
+                                "https://cdn.loadvid.com/"
+                        }
+                    }
+                };
+            }
+
+            allStreams.push(stream);
+
+            console.log(
+                "[ASUPNIMER] STREAM READY:",
+                JSON.stringify({
+                    title: detail.title,
+                    year: detail.year,
+                    type: detail.type,
+                    episode: requestedEpisode || null,
+                    server: serverName,                    
+                    language: languageName,
+                    rawLanguage,
+                    hasSeparateAudio: Boolean(source.audio),
+                    languageBasis,
+                    resolver: resolved.resolver,
+                    quality: resolved.quality || null,
+                    url: playableUrl
+                })
+            );
+        }
+    }
+
+    console.log(
+        "[ASUPNIMER] FINAL STREAM COUNT:",
+        allStreams.length
+    );
+
+    console.log(
+        "[ASUPNIMER] FINAL STREAM NAMES:",
+        JSON.stringify(
+            allStreams.map(stream => stream.name)
+        )
+    );
+
+    return allStreams;
+}
 
 // ============================================================
 // [PRV-ANIMEHAY] [PROVIDERS: ANIMEHAY] ANIMEHAY PROVIDER
@@ -43997,129 +45073,6 @@ function rewriteNguonCPlaylist(
 
 builder.defineStreamHandler(async (args) => {
 
-    // -----------------------------------------------------------------
-    // [CẬP NHẬT GOOGLE DORKING] - NHÁNH TỰ ĐỘNG TÌM KIẾM BẰNG GOOGLE (CHÍNH XÁC 100%)
-    // -----------------------------------------------------------------
-    if (args.type === "movie" || args.type === "series") {
-        const MAIN_URL = "https://animesub.site";
-        const fakeVietnameseIP = "115.79.139.142"; 
-        const commonHeaders = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Origin": MAIN_URL, 
-            "Referer": MAIN_URL + "/",
-            "X-Forwarded-For": fakeVietnameseIP, "X-Real-IP": fakeVietnameseIP, "Client-IP": fakeVietnameseIP
-        };
-
-        let requestOptions = { headers: commonHeaders, timeout: 8000 };
-        const freeProxyUrl = await getFreeVietnameseProxy();
-        if (freeProxyUrl) {
-            requestOptions.httpsAgent = new HttpsProxyAgent(freeProxyUrl);
-            requestOptions.proxy = false;
-        }
-
-        try {
-            // 1. LẤY TÊN PHIM CHUẨN TỪ CINEMETA
-            const idParts = args.id.split(":");
-            const imdbId = idParts[0];
-            const episode = idParts[2] ? parseInt(idParts[2], 10) : 1;
-
-            const metaRes = await axios.get(`https://stremio.com{args.type}/${imdbId}.json`, { timeout: 4000 });
-            if (!metaRes.data || !metaRes.data.meta) return { streams: [] };
-            
-            // Lấy tên phim và cắt bỏ các ký tự đặc biệt gây nhiễu Google
-            let movieTitle = metaRes.data.meta.name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
-
-            // 2. SỬ DỤNG GOOGLE ĐỂ TÌM LINK PHIM TRÊN TRANG ANIMESUB
-            // Cú pháp tìm kiếm: site:animesub.site + Tên Phim
-            const googleSearchUrl = `https://google.com{encodeURIComponent(movieTitle)}`;
-            
-            // Gọi request lên Google (Không dùng proxy Việt Nam đoạn này để đạt tốc độ cao nhất từ server Vercel)
-            const googleResponse = await axios.get(googleSearchUrl, {
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-                timeout: 5000
-            });
-            const googleHtml = googleResponse.data;
-
-            let movieSlug = null;
-
-            // Dùng Regex quét kết quả trả về của Google để bóc tách đường dẫn /phim/ chuẩn xác
-            const googleSlugMatch = googleHtml.match(/animesub\.site\/phim\/([^"&/]+)/i);
-            if (googleSlugMatch && googleSlugMatch[1]) {
-                movieSlug = googleSlugMatch[1];
-            }
-
-            if (!movieSlug) {
-                throw new Error("Google không tìm thấy link bộ phim này trên hệ thống Animesub.");
-            }
-
-            // 3. ĐỊNH HƯỚNG URL XEM PHIM THEO TẬP VÀ CHÈN PROXY VIỆT NAM MIỄN PHÍ
-            let watchUrl = args.type === "movie"
-                ? `${MAIN_URL}/xem-phim/${movieSlug}/full.html`
-                : `${MAIN_URL}/xem-phim/${movieSlug}/tap-${episode}.html`;
-
-            // Từ bước này bắt đầu gọi vào trang phim lậu, kích hoạt hệ thống mạng đi qua Proxy Việt Nam
-            const watchPageResponse = await axios.get(watchUrl, requestOptions);
-            const watchHtml = watchPageResponse.data;
-
-            const iframeMatch = watchHtml.match(/<iframe[^>]+src="([^"]+)"/i) || watchHtml.match(/data-embed="([^"]+)"/i);
-            if (!iframeMatch) throw new Error("Không tìm thấy iframe phát video của tập phim.");
-
-            let embedUrl = iframeMatch[1];
-            if (embedUrl.startsWith("//")) embedUrl = `https:${embedUrl}`;
-
-            const playerResponse = await axios.get(embedUrl, requestOptions);
-            const playerHtml = playerResponse.data;
-            const streams = [];
-
-            // 4. GIẢI MÃ BẺ KHÓA TRÌNH PHÁT VIDEO (HYDRAX & SSPLAY)
-            if (embedUrl.includes("hydrax") || playerHtml.includes("atoken") || playerHtml.includes("slug")) {
-                const sizeMatch = playerHtml.match(/size\s*=\s*"([^"]+)"|size\s*=\s*(\d+)/);
-                const md5IdMatch = playerHtml.match(/md5Id\s*=\s*"([^"]+)"|id\s*=\s*(\d+)/); 
-                if (sizeMatch && md5IdMatch) {
-                    const size = parseInt(sizeMatch[1] || sizeMatch[2], 10);
-                    const md5Id = md5IdMatch[1] || md5IdMatch[2];
-                    const generatedToken = generateHydraxToken(0, size, md5Id, 0, 2097152);
-                    if (generatedToken) {
-                        streams.push({
-                            title: `MOVINA (Animesub) - Hydrax [Tập ${episode}]`,
-                            url: `https://abysscdn.com{size}/${generatedToken}`,
-                            behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": "https://abysscdn.com" } }
-                        });
-                    }
-                }
-            }
-
-            const packerRegex = /eval\(function\(p,a,c,k,e,d\)\{.*?\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)\)\)/s;
-            const ssplayMatch = playerHtml.match(packerRegex);
-            if (ssplayMatch) {
-                const p = ssplayMatch[1];
-                const a = parseInt(ssplayMatch[2], 10);
-                const c = parseInt(ssplayMatch[3], 10);
-                const k = ssplayMatch[4].split("|");
-
-                const decodedJs = unpackPacker(p, a, c, k);
-                const fileMatch = decodedJs.match(/"file"\s*:\s*"([^"]+\.m3u8)"/);
-                if (fileMatch && fileMatch[1]) {
-                    let directLink = fileMatch[1];
-                    if (directLink.startsWith("/")) directLink = `${new URL(embedUrl).origin}${directLink}`;
-                    streams.push({
-                        title: `MOVINA (Animesub) - SSPlay [Tập ${episode}] (HLS)`,
-                        url: directLink,
-                        behaviorHints: { requestHeaders: { "User-Agent": commonHeaders["User-Agent"], "Referer": embedUrl } }
-                    });
-                }
-            }
-
-            if (streams.length > 0) {
-                return { streams: streams };
-            }
-
-        } catch (error) {
-            console.error("Bỏ qua nguồn Animesub do lỗi:", error.message);
-        }
-    }
-    // -----------------------------------------------------------------
-
     console.log(
         "========== STREAM REQUEST =========="
     );
@@ -45353,6 +46306,88 @@ const animeProvidersEnabled =
       }
   })();
 
+// =====================================================
+// ASUPNIMER — ANIME / ANIMATION FALLBACK
+// Chỉ tìm khi metadata xác nhận anime hoặc hoạt hình.
+// Chạy song song, không chặn các provider khác.
+// =====================================================
+
+const asupnimerPromise = (async () => {
+    const asupnimerEnabled =
+        hasAnimationMetadata ||
+        (
+            hasJapaneseMetadata &&
+            hasExplicitAnimeTitle
+        );
+
+    if (!asupnimerEnabled) {
+        console.log(
+            "[ASUPNIMER] SKIPPED: Không phải anime/hoạt hình."
+        );
+        return [];
+    }
+
+    let timeoutHandle;
+
+    try {
+        const titleVariants = [
+            resolvedMetadata?.name,
+            resolvedMetadata?.original_name,
+            resolvedMetadata?.origin_name
+        ]
+            .map(value => String(value || "").trim())
+            .filter(Boolean);
+
+        const fetchPromise =
+            asupnimerFetchStreams({
+                title: movieName,
+                titleVariants,
+                year: movieYear,
+                type: streamType,
+                season: seasonNumber || 1,
+                episode: episodeNumber
+            });
+
+        const timeoutPromise =
+            new Promise(resolve => {
+                timeoutHandle = setTimeout(
+                    () => resolve(null),
+                    24000
+                );
+            });
+
+        const result = await Promise.race([
+            fetchPromise,
+            timeoutPromise
+        ]);
+
+        const streams =
+            Array.isArray(result) ? result : [];
+
+        console.log(
+            "[ASUPNIMER] FETCH COMPLETE:",
+            JSON.stringify({
+                count: streams.length,
+                timedOut: result === null
+            })
+        );
+
+        return streams;
+
+    } catch (error) {
+        console.log(
+            "[ASUPNIMER] FETCH ERROR:",
+            error?.message || error
+        );
+
+        return [];
+
+    } finally {
+        if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+        }
+    }
+})();
   
   // =====================================================
   // MOVINA — ONFLIX PROVIDER
@@ -45423,59 +46458,6 @@ const animeProvidersEnabled =
       }
   })();
 
-// =====================================================
-// [STREMIO-XEM20.01] XEM20 — PARALLEL PROVIDER
-// =====================================================
-
-const xem20Promise = (async () => {
-
-    const timeoutMs = 15000;
-
-    let timeoutHandle;
-
-    try {
-
-        const timeoutPromise =
-            new Promise(resolve => {
-                timeoutHandle = setTimeout(
-                    () => resolve(null),
-                    timeoutMs
-                );
-            });
-
-        const result = await Promise.race([
-            scrapeXem20(
-                movieName,
-                movieYear,
-                seasonNumber,
-                episodeNumber,
-                streamType
-            ),
-            timeoutPromise
-        ]);
-
-        return Array.isArray(result)
-            ? result
-            : [];
-
-    } catch (error) {
-
-        console.log(
-            "[XEM20] PARALLEL ERROR:",
-            error?.message || error
-        );
-
-        return [];
-
-    } finally {
-
-        if (timeoutHandle) {
-            clearTimeout(timeoutHandle);
-        }
-
-    }
-
-})();
 
   // NguonC, VSMov và PhimHDCS chạy đồng thời.
   const providerResultsPromise = Promise.allSettled([
@@ -45828,37 +46810,6 @@ console.log(
       onflix.length
   );
 
-// =====================================================
-// [STREMIO-XEM20.02] COLLECT XEM20 RESULT
-// =====================================================
-
-let xem20 = [];
-
-try {
-
-    const xem20Result =
-        await xem20Promise;
-
-    xem20 =
-        Array.isArray(xem20Result)
-            ? xem20Result
-            : [];
-
-} catch (error) {
-
-    console.log(
-        "[XEM20] COLLECT ERROR:",
-        error?.message || error
-    );
-
-    xem20 = [];
-
-}
-
-console.log(
-    "[XEM20] STREAM COUNT:",
-    xem20.length
-);
 
 // =====================================================
 // DEBUG — STREAM THỰC TẾ SAU FETCH
@@ -45916,6 +46867,36 @@ console.log(
     )
 );
 
+// =====================================================
+// ASUPNIMER — COLLECT VERIFIED STREAMS
+// =====================================================
+
+let asupnimerStreams = [];
+
+try {
+    const result = await asupnimerPromise;
+
+    asupnimerStreams =
+        Array.isArray(result) ? result : [];
+
+} catch (error) {
+    console.log(
+        "[ASUPNIMER] COLLECT ERROR:",
+        error?.message || error
+    );
+
+    asupnimerStreams = [];
+}
+
+console.log(
+    "[ASUPNIMER] FINAL STREAM COUNT:",
+    asupnimerStreams.length
+);
+
+// Gộp vào pipeline direct stream hiện có.
+// Không thay đổi kết quả của các provider khác.
+animehay.push(...asupnimerStreams);
+
 const directStreams = [
 
     ...nguonc,
@@ -45923,6 +46904,7 @@ const directStreams = [
     ...kkphim,
 
     ...vsmov,
+
     ...longtieng,
 
     ...phimhdcs,
@@ -45930,8 +46912,6 @@ const directStreams = [
     ...animehay,
 
     ...onflix,
-
-    ...xem20,
 
     nguoncClientStream
 
@@ -46533,7 +47513,31 @@ console.log(
     // 18. TRẢ VỀ STREMIO
     // =====================================================
 
-       return {
+    console.log(
+        "[ASUPNIMER] FINAL RESPONSE CHECK:",
+        JSON.stringify({
+            count: uniqueStreams.filter(
+                stream =>
+                    stream?.provider === "asupnimer" ||
+                    stream?.source === "asupnimer"
+            ).length,
+
+            streams: uniqueStreams.filter(
+                stream =>
+                    stream?.provider === "asupnimer" ||
+                    stream?.source === "asupnimer"
+            ).map(stream => ({
+                name: stream.name,
+                title: stream.title,
+                ytId: stream.ytId,
+                url: stream.url,
+                provider: stream.provider,
+                source: stream.source
+            }))
+        }, null, 2)
+    );
+
+    return {
         streams: uniqueStreams
     };
 
@@ -46572,6 +47576,171 @@ app.use(
 
         next();
 
+    }
+);
+
+
+/* ============================================================
+   [ROUTE-ASUPNIMER.17] [PROVIDERS: ASUPNIMER]
+   HYDRAX VIDEO RANGE PROXY
+   ============================================================ */
+
+app.get(
+    "/asupnimer/hydrax/:token",
+    async (req, res) => {
+        try {
+            const payload =
+                asupnimerHydraxVerifyToken(
+                    req.params.token
+                );
+
+            if (
+                !payload ||
+                payload.provider !== "asupnimer" ||
+                payload.resolver !== "hydrax"
+            ) {
+                return res
+                    .status(403)
+                    .send("Invalid or expired Hydrax token");
+            }
+
+            const source = {
+                sub: String(payload.sub || ""),
+                suffix: String(payload.suffix || ""),
+                size: String(payload.size || ""),
+                md5Id: String(payload.md5Id || ""),
+                resId: String(payload.resId || "")
+            };
+
+            const total = Number(source.size);
+
+            if (
+                !Number.isSafeInteger(total) ||
+                total <= 0 ||
+                !/^[a-z0-9-]+$/i.test(source.sub) ||
+                !/^[a-z0-9.-]+$/i.test(source.suffix) ||
+                !/^\d+$/.test(source.md5Id) ||
+                !/^\d+$/.test(source.resId)
+            ) {
+                return res
+                    .status(400)
+                    .send("Invalid Hydrax source parameters");
+            }
+
+            const rangeHeader =
+                String(req.headers.range || "");
+
+            let start = 0;
+            let end = Math.min(
+                total - 1,
+                8 * 1024 * 1024 - 1
+            );
+
+            let partial = true;
+
+            if (rangeHeader) {
+                const match = rangeHeader.match(
+                    /^bytes=(\d+)-(\d*)$/i
+                );
+
+                if (!match) {
+                    res.setHeader(
+                        "Content-Range",
+                        `bytes */${total}`
+                    );
+
+                    return res
+                        .status(416)
+                        .send("Invalid byte range");
+                }
+
+                start = Number(match[1]);
+
+                end = match[2]
+                    ? Number(match[2])
+                    : total - 1;
+
+                if (
+                    !Number.isSafeInteger(start) ||
+                    !Number.isSafeInteger(end) ||
+                    start < 0 ||
+                    start >= total ||
+                    end < start
+                ) {
+                    res.setHeader(
+                        "Content-Range",
+                        `bytes */${total}`
+                    );
+
+                    return res
+                        .status(416)
+                        .send("Range not satisfiable");
+                }
+
+                end = Math.min(
+                    end,
+                    total - 1
+                );
+            }
+
+            const data =
+                await asupnimerHydraxFetchRange(
+                    source,
+                    start,
+                    end
+                );
+
+            res.setHeader(
+                "Content-Type",
+                "video/mp4"
+            );
+
+            res.setHeader(
+                "Accept-Ranges",
+                "bytes"
+            );
+
+            res.setHeader(
+                "Content-Length",
+                String(data.length)
+            );
+
+            res.setHeader(
+                "Cache-Control",
+                "private, no-store"
+            );
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
+
+            res.setHeader(
+                "Content-Range",
+                `bytes ${start}-${end}/${total}`
+            );
+
+            return res
+                .status(206)
+                .send(data);
+
+        } catch (error) {
+            console.log(
+                "[ASUPNIMER HYDRAX PROXY ERROR]",
+                JSON.stringify({
+                    status:
+                        error?.response?.status || 0,
+                    message:
+                        error?.message || String(error)
+                })
+            );
+
+            if (!res.headersSent) {
+                return res
+                    .status(502)
+                    .send("ASUPNIMER Hydrax proxy error");
+            }
+        }
     }
 );
 
