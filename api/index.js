@@ -35714,25 +35714,27 @@ try {
                 : pageRecords.length
         }));
 
+
         // 4. Giải quyết link.
-        
-        
-        // Truyền nguyên số tập MOVINA yêu cầu.
-        // Không tự trừ 1 vì chưa xác nhận quy tắc lệch tập
-        // áp dụng cho mọi phim Onflix.
-        const requestedEpisodeNumber = Math.max(
-            1,
-            Number(episodeNumber) || 1
-        );
+
+        // Onflix dùng số tập toàn series để lọc record PA.
+        // Chỉ áp dụng số tập đã chọn cho riêng resolver Onflix.
+        const onflixResolverEpisode =
+            streamType === "series" &&
+            Number(selected?.number) > 0
+                ? Number(selected.number)
+                : Math.max(1, Number(episodeNumber) || 1);
 
         console.info(TAG, "LINKS REQUESTED EPISODE:", JSON.stringify({
-            incomingEpisodeNumber: episodeNumber,
-            requestedEpisodeNumber
+            requestedSeason: seasonNumber,
+            requestedEpisode: episodeNumber,
+            selectedEpisode: selected?.number || null,
+            resolverEpisode: onflixResolverEpisode
         }));
 
         const linkResult = await fetchOnflix(linkInput, {
             action: "links",
-            episodeNumber: requestedEpisodeNumber
+            episodeNumber: onflixResolverEpisode
         });
 
                 
