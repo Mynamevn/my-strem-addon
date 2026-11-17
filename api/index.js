@@ -49185,45 +49185,147 @@ if (animetFallbackTitle && animeProvidersEnabled) {
     // 16. LOẠI URL TRÙNG + BẢO TOÀN ONFLIX DIRECT HLS
     // =====================================================
 
-    const seen = new Set();
-    const uniqueStreams = [];
 
-    // 16A. Gộp và loại URL trùng.
-    // Hỗ trợ cả URL media và YouTube ytId.
+const seen = new Set();
+const uniqueStreams = [];
 
-    for (const stream of allStreams) {
-        if (!stream || typeof stream !== "object") {
+// -----------------------------------------------------
+// [16A] DEDUPE AN TOÀN THEO URL + REQUEST HEADERS
+// -----------------------------------------------------
+
+function movinaStreamHeaderSignature(stream) {
+    const hints = stream?.behaviorHints || {};
+
+    const sources = [
+        stream?.headers,
+        hints?.proxyHeaders?.request,
+        hints?.requestHeaders
+    ];
+
+    const normalized = {};
+
+    for (const source of sources) {
+        if (
+            !source ||
+            typeof source !== "object" ||
+            Array.isArray(source)
+        ) {
             continue;
         }
 
-        const url = String(
-            stream.url ||
-            stream.externalUrl ||
+        for (const [key, value] of Object.entries(source)) {
+            if (value === undefined || value === null) {
+                continue;
+            }
+
+            normalized[String(key).toLowerCase()] =
+                String(value).trim();
+        }
+    }
+
+    return JSON.stringify(
+        Object.keys(normalized)
+            .sort()
+            .map(key => [key, normalized[key]])
+    );
+}
+
+function movinaStreamHeadersCompatible(a, b) {
+    return (
+        movinaStreamHeaderSignature(a) ===
+        movinaStreamHeaderSignature(b)
+    );
+}
+
+function movinaAppendStreamSourceName(target, incoming) {
+    if (!target || !incoming) return;
+
+    const currentName =
+        String(target.name || "").trim();
+
+    const incomingName =
+        String(
+            incoming.name ||
+            incoming.provider ||
+            incoming.source ||
             ""
         ).trim();
 
-        const youtubeId =
-            String(stream.ytId || "").trim();
+    if (!incomingName) return;
 
-        let dedupeKey = "";
+    const names = currentName
+        ? currentName.split(/\s+\/\s+/).map(s => s.trim()).filter(Boolean)
+        : [];
 
-        if (/^https?:\/\//i.test(url)) {
-            dedupeKey = "url:" + url;
-        } else if (
-            /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
-        ) {
-            dedupeKey = "youtube:" + youtubeId;
-        } else {
-            continue;
-        }
-
-        if (seen.has(dedupeKey)) {
-            continue;
-        }
-
-        seen.add(dedupeKey);
-        uniqueStreams.push(stream);
+    if (!names.includes(incomingName)) {
+        names.push(incomingName);
     }
+
+    if (names.length > 0) {
+        target.name = names.join(" / ");
+    }
+}
+
+const seenVariants = new Map();
+
+for (const stream of allStreams) {
+    if (!stream || typeof stream !== "object") {
+        continue;
+    }
+
+    const url = String(
+        stream.url ||
+        stream.externalUrl ||
+        ""
+    ).trim();
+
+    const youtubeId =
+        String(stream.ytId || "").trim();
+
+    let dedupeKey = "";
+
+    if (/^https?:\/\//i.test(url)) {
+        dedupeKey = "url:" + url;
+    } else if (
+        /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
+    ) {
+        dedupeKey = "youtube:" + youtubeId;
+    } else {
+        continue;
+    }
+
+    // Cùng URL nhưng khác headers vẫn là hai biến thể riêng.
+    const variantKey =
+        dedupeKey +
+        "|headers:" +
+        movinaStreamHeaderSignature(stream);
+
+    const existingIndex =
+        seenVariants.get(variantKey);
+
+    if (existingIndex !== undefined) {
+        const existingStream =
+            uniqueStreams[existingIndex];
+
+        // Chỉ bổ sung tên nguồn.
+        // Không thay URL, headers, provider hay behaviorHints.
+        movinaAppendStreamSourceName(
+            existingStream,
+            stream
+        );
+
+        continue;
+    }
+
+    seenVariants.set(
+        variantKey,
+        uniqueStreams.length
+    );
+
+    seen.add(dedupeKey);
+    uniqueStreams.push(stream);
+}
+
 
     // 16B. Bảo đảm các luồng PA direct HLS của Onflix
     // được giữ trong danh sách trả về cho Stremio.
@@ -49250,9 +49352,14 @@ if (animetFallbackTitle && animeProvidersEnabled) {
             continue;
         }
 
-        const existingIndex = uniqueStreams.findIndex(
-            item => String(item?.url || "").trim() === url
-        );
+const existingIndex = uniqueStreams.findIndex(
+    item =>
+        String(item?.url || "").trim() === url &&
+        movinaStreamHeadersCompatible(
+            item,
+            stream
+        )
+);
 
         const existing = existingIndex >= 0
             ? uniqueStreams[existingIndex]
@@ -49348,30 +49455,42 @@ if (animetFallbackTitle && animeProvidersEnabled) {
             }
         };
 
+
 if (existingIndex >= 0) {
-    // URL đã được provider khác cung cấp.
-    // Giữ nguyên stream hiện có, đặc biệt là KKPhim.
-    // Không để Onflix ghi đè tên, provider hoặc metadata.
-    const existingStream = uniqueStreams[existingIndex];
+    // URL và headers tương thích:
+    // Giữ stream hiện tại, chỉ ghép tên Onflix.
+
+    const existingStream =
+        uniqueStreams[existingIndex];
+
+    movinaAppendStreamSourceName(
+        existingStream,
+        directStream
+    );
 
     console.info(
-        "[MOVINA-ONFLIX] DUPLICATE DIRECT URL — PRESERVE EXISTING",
+        "[MOVINA-ONFLIX] DUPLICATE MERGED",
         JSON.stringify({
-            existingName: existingStream?.name || "",
-            existingProvider:
-                existingStream?.provider ||
-                existingStream?.source ||
-                existingStream?.behaviorHints?.bingeGroup ||
-                "",
-            onflixName: directStream.name,
+            name: existingStream.name,
             url
         })
     );
+
 } else {
-    seen.add(url);
+    // URL mới hoặc headers khác:
+    // Giữ riêng stream Onflix để không mất khả năng phát.
+
     uniqueStreams.push(directStream);
-    onflixDirectRestored++;
+
+    console.info(
+        "[MOVINA-ONFLIX] STREAM PRESERVED SEPARATELY",
+        JSON.stringify({
+            name: directStream.name,
+            url
+        })
+    );
 }
+
 
         onflixDirectRestored++;
 
