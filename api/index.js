@@ -35714,34 +35714,27 @@ try {
                 : pageRecords.length
         }));
 
-// 4. Giải quyết link.
+        // 4. Giải quyết link.
+        
+        
+        // Truyền nguyên số tập MOVINA yêu cầu.
+        // Không tự trừ 1 vì chưa xác nhận quy tắc lệch tập
+        // áp dụng cho mọi phim Onflix.
+        const requestedEpisodeNumber = Math.max(
+            1,
+            Number(episodeNumber) || 1
+        );
 
-// Onflix lưu tập theo thứ tự toàn series.
-// Ví dụ Naruto S3E1 = tập 84.
-// Phải truyền số tập đã chọn vào resolver PA/SN,
-// không truyền lại số tập cục bộ của mùa.
-const requestedEpisodeNumber = Math.max(
-    1,
-    Number(episodeNumber) || 1
-);
+        console.info(TAG, "LINKS REQUESTED EPISODE:", JSON.stringify({
+            incomingEpisodeNumber: episodeNumber,
+            requestedEpisodeNumber
+        }));
 
-const episodeNumberForResolver = Math.max(
-    1,
-    Number(selected?.number) || requestedEpisodeNumber
-);
+        const linkResult = await fetchOnflix(linkInput, {
+            action: "links",
+            episodeNumber: requestedEpisodeNumber
+        });
 
-console.info(TAG, "LINKS REQUESTED EPISODE:", JSON.stringify({
-    requestedSeason: seasonNumber,
-    requestedEpisode: requestedEpisodeNumber,
-    selectedEpisode: selected?.number || null,
-    resolverEpisode: episodeNumberForResolver,
-    globalEpisodeUsed: episodeNumberForResolver !== requestedEpisodeNumber
-}));
-
-const linkResult = await fetchOnflix(linkInput, {
-    action: "links",
-    episodeNumber: episodeNumberForResolver
-});
                 
         // 5. Chuẩn hóa toàn bộ kết quả resolver.
         // Không dùng || giữa các mảng vì normalized có thể không chứa
@@ -35793,19 +35786,10 @@ const linkResult = await fetchOnflix(linkInput, {
             const url = String(item.url || "").trim();
             const externalUrl = String(item.externalUrl || "").trim();
 
-const rawTitle = item.title ||
-    (selected
-        ? `${detail?.title || candidate.title} · ${selected.name}`
-        : (detail?.title || candidate.title));
-
-// Resolver dùng tập toàn series để lấy đúng bản ghi,
-// nhưng tên hiển thị vẫn phải là tập cục bộ của mùa.
-const title = streamType === "series"
-    ? rawTitle.replace(
-        /\bTập\s*0*\d+\b/i,
-        "Tập " + Math.max(1, Number(episodeNumber) || 1)
-    )
-    : rawTitle;
+            const title = item.title ||
+                (selected
+                    ? `${detail?.title || candidate.title} · ${selected.name}`
+                    : (detail?.title || candidate.title));
 
             // A. DIRECT: giữ nguyên URL media thật.
             if (/^https?:\/\//i.test(url)) {
@@ -41846,20 +41830,16 @@ function isPhimHDCSUrl(value) {
 // ====================================================
 
 const phimhdcsSearchKeywords = [
-    ...new Set([
-        // Với phim bộ, tìm thêm bằng tên + năm phát hành.
-        // Ví dụ: Naruto 2002.
-        // Giúp tránh chỉ nhận các kết quả Naruto Movie.
-        ...(streamType === "series" && Number(movieYear) > 0
-            ? [`${movieName} ${movieYear}`]
-            : []),
-
-        ...finalRequestedTitleVariants
-    ])
-]
-    .filter(value =>
-        String(value || "").trim().length >= 3
+    ...new Set(
+        finalRequestedTitleVariants
+            .map(value =>
+                String(value || "")
+                    .replace(/\s+/g, " ")
+                    .trim()
+            )
+            .filter(value => value.length >= 3)
     )
+]
     .filter(value =>
         normalizeTitle(value) !==
         normalizeTitle(movieName)
