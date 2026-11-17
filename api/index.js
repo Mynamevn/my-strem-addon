@@ -34892,15 +34892,15 @@ if (/\/vietsub-sn\//i.test(currentWatchUrl)) {
  // 3. Giữ embed đúng tập và phân loại ngôn ngữ tổng quát.
 const selectedEpisodeForEmbeds = Math.max(
     1,
+    Number(payload?.selectedEpisode) ||
+    Number(payload?.episodeNumber) ||
+    Number(requestedEpisodeNumberArg) ||
     Number(
-        requestedEpisodeNumberArg ||
-        payload?.selectedEpisode ||
-        payload?.episodeNumber ||
         String(currentWatchUrl).match(
             /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
-        )?.[1] ||
-        1
-    )
+        )?.[1]
+    ) ||
+    1
 );
 
 function onflixGetAudioLabel(record, src) {
@@ -35025,18 +35025,7 @@ console.info("[ONFLIX-DEBUG] AFTER PA FETCH BLOCK", {
         }
 
         // FALLBACK: chọn đúng tập, ưu tiên URL media trực tiếp.
-        const requestedEpisodeNumber = Math.max(
-            1,
-            Number(requestedEpisodeNumberArg) ||
-            Number(payload?.selectedEpisode) ||
-            Number(payload?.episodeNumber) ||
-            Number(
-                String(currentWatchUrl).match(
-                    /\/vietsub-(?:sn|pa)\/vietsub\/(\d+)/i
-                )?.[1]
-            ) ||
-            1
-        );
+        const requestedEpisodeNumber = selectedEpisodeForEmbeds;
 
         const fallbackSeen = new Set();
 
@@ -49359,14 +49348,30 @@ if (animetFallbackTitle && animeProvidersEnabled) {
             }
         };
 
-        if (existingIndex >= 0) {
-            // Thay object cùng URL bằng bản đã chuẩn hóa,
-            // không tạo thêm một stream trùng.
-            uniqueStreams[existingIndex] = directStream;
-        } else {
-            seen.add(url);
-            uniqueStreams.push(directStream);
-        }
+if (existingIndex >= 0) {
+    // URL đã được provider khác cung cấp.
+    // Giữ nguyên stream hiện có, đặc biệt là KKPhim.
+    // Không để Onflix ghi đè tên, provider hoặc metadata.
+    const existingStream = uniqueStreams[existingIndex];
+
+    console.info(
+        "[MOVINA-ONFLIX] DUPLICATE DIRECT URL — PRESERVE EXISTING",
+        JSON.stringify({
+            existingName: existingStream?.name || "",
+            existingProvider:
+                existingStream?.provider ||
+                existingStream?.source ||
+                existingStream?.behaviorHints?.bingeGroup ||
+                "",
+            onflixName: directStream.name,
+            url
+        })
+    );
+} else {
+    seen.add(url);
+    uniqueStreams.push(directStream);
+    onflixDirectRestored++;
+}
 
         onflixDirectRestored++;
 
