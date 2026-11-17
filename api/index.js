@@ -42051,55 +42051,79 @@ console.log(
     })
 );
 
-        // ====================================================
-        // LOẠI BỎ URL TRÙNG
-        // ====================================================
+ 
+// ====================================================
+// LOẠI BỎ URL TRÙNG + ƯU TIÊN ĐÚNG TÊN PHIM
+// ====================================================
 
-        const uniqueCandidates = [];
-        const seenUrls = new Set();
+const uniqueCandidates = [];
+const seenUrls = new Set();
 
-        for (
-            const candidate of candidates
-        ) {
+for (const candidate of candidates) {
+    if (seenUrls.has(candidate.url)) {
+        continue;
+    }
 
-            if (
-                seenUrls.has(candidate.url)
-            ) {
-                continue;
-            }
+    seenUrls.add(candidate.url);
+    uniqueCandidates.push(candidate);
+}
 
-            seenUrls.add(
-                candidate.url
-            );
+// Ưu tiên kết quả có tên trùng chính xác với phim yêu cầu.
+// Không loại bỏ ứng viên khác và không thay đổi bộ lọc
+// xác minh loại phim, năm phát hành ở các bước phía sau.
 
-            uniqueCandidates.push(
-                candidate
-            );
+function phimhdcsPriorityTitle(value) {
+    return normalizeTitle(value)
+        .replace(/\b(19|20)\d{2}\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
 
-        }
+const phimhdcsRequestedPriorityTitle =
+    phimhdcsPriorityTitle(movieName);
 
-        console.log(
-            "[PHIMHDCS] SEARCH RESULTS:",
-            {
-                domain: BASE_URL,
-                count: uniqueCandidates.length
-            }
-        );
+function phimhdcsCandidatePriority(candidate) {
+    const title =
+        phimhdcsPriorityTitle(candidate.title);
 
-        if (
-            uniqueCandidates.length === 0
-        ) {
+    let score = 0;
 
-            console.log(
-                "[PHIMHDCS] NO SEARCH RESULTS"
-            );
+    if (title === phimhdcsRequestedPriorityTitle) {
+        score += 1000;
+    } else if (
+        title.includes(phimhdcsRequestedPriorityTitle) ||
+        phimhdcsRequestedPriorityTitle.includes(title)
+    ) {
+        score += 300;
+    }
 
-            addFallback();
+    if (
+        Number(movieYear) > 0 &&
+        Number(candidate.year) === Number(movieYear)
+    ) {
+        score += 100;
+    }
 
-            return streams;
+    return score;
+}
 
-        }
+uniqueCandidates.sort(
+    (a, b) =>
+        phimhdcsCandidatePriority(b) -
+        phimhdcsCandidatePriority(a)
+);
 
+console.log(
+    "[PHIMHDCS] PRIORITIZED CANDIDATES:",
+    JSON.stringify(
+        uniqueCandidates.slice(0, 12).map(candidate => ({
+            title: candidate.title,
+            year: candidate.year,
+            priority: phimhdcsCandidatePriority(candidate),
+            url: candidate.url
+        }))
+    )
+);
 
         // ====================================================
         // 3. CHỌN PHIM — TITLE + ORIGINAL TITLE + KEYWORDS
