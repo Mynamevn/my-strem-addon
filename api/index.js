@@ -35730,11 +35730,14 @@ try {
             requestedEpisodeNumber
         }));
 
-        const linkResult = await fetchOnflix(linkInput, {
-            action: "links",
-            episodeNumber: requestedEpisodeNumber
-        });
-
+const linkResult = await fetchOnflix(linkInput, {
+    action: "links",
+    episodeNumber:
+        streamType === "series" &&
+        Number(selected?.number) > 0
+            ? Number(selected.number)
+            : requestedEpisodeNumber
+});
                 
         // 5. Chuẩn hóa toàn bộ kết quả resolver.
         // Không dùng || giữa các mảng vì normalized có thể không chứa
