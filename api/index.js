@@ -27019,10 +27019,10 @@ console.log(
         // [PRV-VSMOV.07] [PROVIDERS: VSMOV] TITLE VARIANTS
         // =====================================================
 
+
         const titleVariants = [];
 
         const addVariant = value => {
-
             const text =
                 String(value || "").trim();
 
@@ -27034,44 +27034,48 @@ console.log(
             }
         };
 
-        
-addVariant(movieName);
+        // Dùng chung bộ tạo từ khóa tương thích NguonC.
+        // Giữ giới hạn 6 alias như logic VSMOV trước đây.
+        const sharedSearchTitles =
+            movinaBuildNguonCSearchTitles(
+                movieName,
+                Array.isArray(nguoncCanonicalIdentity?.titles)
+                    ? nguoncCanonicalIdentity.titles.slice(0, 6)
+                    : []
+            );
 
-// Tìm thêm bằng các tên đã được NguonC xác nhận.
-// Giới hạn 6 tên để không tạo quá nhiều request.
-if (Array.isArray(nguoncCanonicalIdentity?.titles)) {
-    for (
-        const alias of nguoncCanonicalIdentity.titles.slice(0, 6)
-    ) {
-        addVariant(alias);
-    }
-}
+        for (const title of sharedSearchTitles) {
+            addVariant(title);
+        }
 
-if (
-    streamType === "series" &&
-    Number(seasonNumber) > 0
-) {
-    for (const variant of movinaBuildSeasonSearchVariants(
-        movieName,
-        seasonNumber
-    )) {
-        addVariant(variant);
-    }
-}
+        // Giữ nguyên các biến thể tìm kiếm theo mùa.
+        if (
+            streamType === "series" &&
+            Number(seasonNumber) > 0
+        ) {
+            for (
+                const variant of movinaBuildSeasonSearchVariants(
+                    movieName,
+                    seasonNumber
+                )
+            ) {
+                addVariant(variant);
+            }
+        }
 
-console.log(
-    "[VSMOV] SEASON SEARCH VARIANTS:",
-    {
-        requestedSeason: seasonNumber,
-        variants: titleVariants
-    }
-);
-
+        console.log(
+            "[VSMOV] SEASON SEARCH VARIANTS:",
+            {
+                requestedSeason: seasonNumber,
+                variants: titleVariants
+            }
+        );
 
         console.log(
             "[VSMOV] Title variants:",
             titleVariants
         );
+
 
         // =====================================================
         // [PRV-VSMOV.08] [PROVIDERS: VSMOV] SEARCH
