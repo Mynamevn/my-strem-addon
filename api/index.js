@@ -26644,7 +26644,9 @@ async function fetchVSMov(
     movieYear = 0,
     seasonNumber = 0,
     episodeNumber = 0,
-    streamType = "movie"
+    streamType = "movie",
+    canonicalIdentityWaiter = null,
+    canonicalIdentityMatcher = null
 ) {
 
     // =====================================================
@@ -27385,15 +27387,19 @@ if (!selected) {
         // [PRV-VSMOV.14] NGUONC CANONICAL ID VERIFICATION
         // =====================================================
 
-        const nguoncCanonicalIdentity =
-            await movinaWaitForNguonCCanonicalIdentity();
+         const nguoncCanonicalIdentity =
+            typeof canonicalIdentityWaiter === "function"
+                ? await canonicalIdentityWaiter()
+                : null;
 
         if (nguoncCanonicalIdentity) {
             const canonicalMatch =
-                movinaCandidateMatchesNguonCCanonical(
-                    selectedMovie,
-                    nguoncCanonicalIdentity
-                );
+                typeof canonicalIdentityMatcher === "function"
+                    ? canonicalIdentityMatcher(
+                        selectedMovie,
+                        nguoncCanonicalIdentity
+                    )
+                    : false;
 
             console.log(
                 "[VSMOV] NGUONC CANONICAL CHECK:",
@@ -35364,7 +35370,6 @@ const embedUrl = rawEmbedUrl
         // A. Ưu tiên endpoint playlist mà Onflix cung cấp.
         if (playlistUrl) {
 
-        } else if (playlistUrl) {
             try {
                 const response = await onflixRequest(playlistUrl, {
                     timeout: 7000,
@@ -48568,7 +48573,9 @@ const canonicalIdentity = {
           movieYear,
           seasonNumber,
           episodeNumber,
-          streamType
+          streamType,
+          movinaWaitForNguonCCanonicalIdentity,
+          movinaCandidateMatchesNguonCCanonical
       ),
 
       
