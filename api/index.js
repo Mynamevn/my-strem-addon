@@ -22067,6 +22067,49 @@ console.log(
 //
 // ============================================================
 
+// ============================================================
+// [CORE-IDENTITY-002] [PROVIDERS: ALL VOD]
+// NGUONC-COMPATIBLE SEARCH TITLE BUILDER
+// ============================================================
+
+function movinaBuildNguonCSearchTitles(
+    movieName,
+    titleVariants = []
+) {
+    const normalizeTitle = value =>
+        String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+    const variants = [
+        movieName,
+        ...(Array.isArray(titleVariants)
+            ? titleVariants
+            : [])
+    ];
+
+    return variants
+        .map(value =>
+            String(value || "")
+                .replace(/\s+/g, " ")
+                .trim()
+        )
+        .filter(Boolean)
+        .filter((value, index, array) =>
+            array.findIndex(
+                other =>
+                    normalizeTitle(other) ===
+                    normalizeTitle(value)
+            ) === index
+        )
+        .slice(0, 8);
+}
+
 async function fetchNguonC(movieName, options = {}) {
 
     const streams = [];
@@ -22104,21 +22147,11 @@ async function fetchNguonC(movieName, options = {}) {
                 .trim();
         };
 
-        const queryTitles = [
-            movieName,
-            ...(Array.isArray(options.titleVariants)
-                ? options.titleVariants
-                : [])
-        ]
-            .map(value => String(value || "").replace(/\s+/g, " ").trim())
-            .filter(Boolean)
-            .filter((value, index, array) =>
-                array.findIndex(
-                    other =>
-                        normalizeTitle(other) === normalizeTitle(value)
-                ) === index
-            )
-            .slice(0, 8);
+        const queryTitles =
+            movinaBuildNguonCSearchTitles(
+                movieName,
+                options.titleVariants
+            );
 
         console.log(
             "[NGUONC] SEARCH TITLE VARIANTS:",
