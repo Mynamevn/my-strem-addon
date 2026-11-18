@@ -23624,6 +23624,17 @@ function movinaBuildSeasonSearchVariants(title, seasonNumber) {
 
     const padded = String(season).padStart(2, "0");
 
+    const ordinalSuffix =
+        season % 100 >= 11 && season % 100 <= 13
+            ? "th"
+            : season % 10 === 1
+                ? "st"
+                : season % 10 === 2
+                    ? "nd"
+                    : season % 10 === 3
+                        ? "rd"
+                        : "th";
+
     return [
         `${base} Phần ${season}`,
         `${base} phần ${season}`,
@@ -23631,7 +23642,8 @@ function movinaBuildSeasonSearchVariants(title, seasonNumber) {
         `${base} Season ${season}`,
         `${base} S${padded}`,
         `${base} S${season}`,
-        `${base} Season ${padded}`
+        `${base} Season ${padded}`,
+        `${base} ${season}${ordinalSuffix} Season`
     ];
 }
 
@@ -23646,6 +23658,7 @@ function movinaDetectSeasonNumber(values = []) {
         .replace(/đ/g, "d");
 
     const patterns = [
+        /\b0*(\d{1,2})(?:st|nd|rd|th)[\s._-]*season\b/i,
         /\bseason[\s._-]*0*(\d{1,2})\b/i,
         /\bph[aâ]n[\s._-]*0*(\d{1,2})\b/i,
         /\bmu[aù][\s._-]*0*(\d{1,2})\b/i,
@@ -29055,8 +29068,10 @@ function animeHayFindBestSearchResult(
     candidates,
     movieName,
     movieYear = 0,
-    extraTitleVariants = []
+    extraTitleVariants = [],
+    seasonNumber = 0
 ) {
+
     if (!Array.isArray(candidates) || candidates.length === 0) {
         console.log("[ANIMEHAY] NO SEARCH CANDIDATES");
         return null;
@@ -29119,6 +29134,32 @@ function animeHayFindBestSearchResult(
         ).trim();
 
         if (!candidateTitle || !item?.url) continue;
+
+        const requestedSeason =
+            Number(seasonNumber) || 0;
+
+        const candidateSeason =
+            movinaDetectSeasonNumber([
+                candidateTitle,
+                item?.url,
+                item?.cardText
+            ]);
+
+        // Không cho phép một mùa khác thắng kết quả.
+        if (
+            requestedSeason > 0 &&
+            candidateSeason > 0 &&
+            candidateSeason !== requestedSeason
+        ) {
+            console.log("[ANIMEHAY] REJECT WRONG SEASON:", {
+                requestedSeason,
+                candidateSeason,
+                title: candidateTitle,
+                url: item.url
+            });
+
+            continue;
+        }
 
         const title = normalize(candidateTitle);
         const titleWords = new Set(
@@ -29187,18 +29228,26 @@ function animeHayFindBestSearchResult(
             ? Number(yearMatch[1])
             : 0;
 
-    if (targetYear && candidateYear) {
-    const yearDifference =
-        Math.abs(candidateYear - targetYear);
+        if (targetYear && candidateYear) {
+            const yearDifference =
+                Math.abs(candidateYear - targetYear);
 
-    if (yearDifference === 0) {
-        score += 150;
-    } else if (yearDifference === 1) {
-        score += 100;
-    } else {
-        score -= 120;
-    }
-}
+            if (yearDifference === 0) {
+                score += 150;
+            } else if (yearDifference === 1) {
+                score += 100;
+            } else {
+                score -= 120;
+            }
+        }
+
+        // Ưu tiên mạnh ứng viên ghi rõ đúng mùa.
+        if (
+            requestedSeason > 0 &&
+            candidateSeason === requestedSeason
+        ) {
+            score += 10000;
+        }
 
         console.log("[ANIMEHAY] MATCH SCORE:", {
             title: candidateTitle,
@@ -29346,41 +29395,82 @@ async function animeHayFindEpisode(
         }
 
 
-let wanted =
-    Number(episodeNumber || 1);
+        let wanted =
+            Number(episodeNumber || 1);
 
-if (
-    Number(seasonNumber) > 1
-) {
-    if (
-        seasonContext?.verified === true &&
-        Number(seasonContext.globalEpisode) > 0
-    ) {
-        wanted =
-            Number(seasonContext.globalEpisode);
+        const requestedSeason =
+            Number(seasonNumber) || 0;
 
-        console.log(
-            "[ANIMEHAY] VERIFIED GLOBAL EPISODE:",
-            {
-                season: Number(seasonNumber),
-                episode: Number(episodeNumber),
-                globalEpisode: wanted,
-                previousSeasonCounts:
-                    seasonContext.previousSeasonCounts
+        const detailSeason =
+            movinaDetectSeasonNumber([
+                detailUrl,
+                $("h1").first().text(),
+                $("title").text()
+            ]);
+
+        if (
+            requestedSeason > 1 &&
+            detailSeason > 0 &&
+            detailSeason !== requestedSeason
+        ) {
+            console.warn(
+                "[ANIMEHAY] DETAIL SEASON MISMATCH:",
+                {
+                    requestedSeason,
+                    detailSeason,
+                    detailUrl
+                }
+            );
+
+            return null;
+        }
+
+        if (requestedSeason > 1) {
+            if (detailSeason === requestedSeason) {
+                // Trang chi tiết đã xác nhận đúng mùa:
+                // dùng số tập nội bộ của mùa đó.
+                wanted =
+                    Number(episodeNumber || 1);
+
+                console.log(
+                    "[ANIMEHAY] EXPLICIT SEASON PAGE — LOCAL EPISODE:",
+                    {
+                        season: requestedSeason,
+                        episode: wanted,
+                        detailUrl
+                    }
+                );
+            } else if (
+                seasonContext?.verified === true &&
+                Number(seasonContext.globalEpisode) > 0
+            ) {
+                // Chỉ dùng tập toàn series khi trang không ghi rõ mùa.
+                wanted =
+                    Number(seasonContext.globalEpisode);
+
+                console.log(
+                    "[ANIMEHAY] VERIFIED GLOBAL EPISODE:",
+                    {
+                        season: requestedSeason,
+                        episode: Number(episodeNumber),
+                        globalEpisode: wanted,
+                        previousSeasonCounts:
+                            seasonContext.previousSeasonCounts
+                    }
+                );
+            } else {
+                console.warn(
+                    "[ANIMEHAY] GLOBAL EPISODE NOT VERIFIED — REFUSING WRONG EPISODE",
+                    {
+                        seasonNumber,
+                        episodeNumber,
+                        detailUrl
+                    }
+                );
+
+                return null;
             }
-        );
-    } else {
-        console.warn(
-            "[ANIMEHAY] GLOBAL EPISODE NOT VERIFIED — REFUSING WRONG EPISODE",
-            {
-                seasonNumber,
-                episodeNumber
-            }
-        );
-
-        return null;
-    }
-}
+        }
 
 
         let selected =
@@ -32460,7 +32550,9 @@ async function fetchAnimeHay(
                 best = animeHayFindBestSearchResult(
                     validCandidates,
                     searchTitle,
-                    movieYear
+                    movieYear,
+                    [],
+                    seasonNumber
                 );
             } catch (error) {
                 console.log(
@@ -32469,7 +32561,40 @@ async function fetchAnimeHay(
                 );
             }
 
-            if (!best?.url) best = validCandidates[0];
+            if (!best?.url) {
+                const requestedSeason =
+                    Number(seasonNumber) || 0;
+
+                const safeCandidates =
+                    validCandidates.filter(candidate => {
+                        const candidateSeason =
+                            movinaDetectSeasonNumber([
+                                candidate?.title,
+                                candidate?.url,
+                                candidate?.cardText
+                            ]);
+
+                        return (
+                            requestedSeason < 1 ||
+                            candidateSeason === 0 ||
+                            candidateSeason === requestedSeason
+                        );
+                    });
+
+                best = safeCandidates[0] || null;
+            }
+
+            if (!best?.url) {
+                console.log(
+                    "[ANIMEHAY] NO SAFE SEASON CANDIDATE:",
+                    {
+                        searchTitle,
+                        requestedSeason: seasonNumber
+                    }
+                );
+
+                return null;
+            }
 
             const bestTitle =
                 best.title ||
@@ -37922,26 +38047,23 @@ title:
 // Vietsub, Lồng Tiếng và Thuyết Minh được xếp hạng
 // dựa trên mức độ khớp phim, không dựa vào loại tiếng Việt.
 
-                        if (
-                            /(?:phần|phan)\s*(?:hai|2|ba|3|bon|4|năm|5)\b/i.test(
-                                item.title
-                            )
-                        ) {
-
-                            score -=
-                                2500;
-
-                        }
+                        const candidateSeason =
+                            movinaDetectSeasonNumber([
+                                item?.title,
+                                item?.href
+                            ]);
 
                         if (
-                            /\b(?:part|season|mùa)\s*(?:2|3|4|5)\b/i.test(
-                                item.title
-                            )
+                            supportSeasonNumber > 0 &&
+                            candidateSeason ===
+                                Number(supportSeasonNumber)
                         ) {
-
-                            score -=
-                                2500;
-
+                            score += 3500;
+                        } else if (
+                            supportSeasonNumber > 0 &&
+                            candidateSeason > 0
+                        ) {
+                            score -= 2500;
                         }
 
                         return {
@@ -38164,6 +38286,52 @@ title:
             );
         };
 
+        // Ứng viên Việt hóa có thể không trùng tên tiếng Anh,
+        // nhưng vẫn được nhận nếu xác nhận đúng mùa và có
+        // ít nhất một từ khóa tên phim đủ đặc trưng.
+        const pltSeasonMatches =
+            supportSeasonNumber > 0
+                ? ranked.filter(candidate => {
+                    const candidateSeason =
+                        movinaDetectSeasonNumber([
+                            candidate?.title,
+                            candidate?.href
+                        ]);
+
+                    if (
+                        candidateSeason !==
+                        Number(supportSeasonNumber)
+                    ) {
+                        return false;
+                    }
+
+                    const candidateWords = new Set(
+                        pltNormalizeCandidateText(
+                            candidate?.title
+                        )
+                            .split(" ")
+                            .filter(word => word.length >= 5)
+                    );
+
+                    const sharedDistinctiveWords =
+                        pltTargetTitleWords.filter(word =>
+                            word.length >= 5 &&
+                            candidateWords.has(word)
+                        );
+
+                    return sharedDistinctiveWords.length >= 1;
+                })
+                : [];
+
+        console.log(
+            "[PHIMLONGTIENG] EXACT SEASON MATCHES:",
+            pltSeasonMatches.map(candidate => ({
+                title: candidate.title,
+                href: candidate.href,
+                season: supportSeasonNumber
+            }))
+        );
+
         // Fallback độc lập với phiên bản ngôn ngữ:
         // chỉ dùng khi chưa có bằng chứng khớp tiêu đề,
         // năm hoặc series gốc.
@@ -38207,7 +38375,8 @@ title:
                     ...pltDirectMatches,
                     ...pltYearMatches,
                     ...pltOriginalSeriesMatches,
-                    ...pltLocalizedFallbackMatches
+                    ...pltLocalizedFallbackMatches,
+                    ...pltSeasonMatches
                 ].map(candidate => [
                     String(candidate?.href || candidate?.title || ""),
                     candidate
@@ -38230,6 +38399,20 @@ title:
                     const text = String(
                         `${candidate?.title || ""} ${candidate?.href || ""}`
                     );
+
+                    const candidateSeason =
+                        movinaDetectSeasonNumber([
+                            candidate?.title,
+                            candidate?.href
+                        ]);
+
+                    if (
+                        supportSeasonNumber > 0 &&
+                        candidateSeason ===
+                            Number(supportSeasonNumber)
+                    ) {
+                        return true;
+                    }
 
                     const explicitYears =
                         text.match(/\b(?:19|20)\d{2}\b/g) || [];
@@ -38599,9 +38782,21 @@ title:
                 let yearScore =
                     0;
 
+                const detailSeason =
+                    movinaDetectSeasonNumber([
+                        selected?.title,
+                        selected?.href,
+                        detailTitle
+                    ]);
+
                 if (
                     supportTargetYear &&
-                    detailYear
+                    detailYear &&
+                    !(
+                        supportSeasonNumber > 0 &&
+                        detailSeason ===
+                            Number(supportSeasonNumber)
+                    )
                 ) {
 
                     if (
@@ -41100,11 +41295,27 @@ async function scrapePhimHDCS(
                     !candidateYear ||
                     Math.abs(candidateYear - Number(movieYear)) <= 1;
 
+                const phimApiSeason =
+                    movinaDetectSeasonNumber([
+                        phimApiItem?.name,
+                        phimApiItem?.origin_name,
+                        phimApiItem?.original_name,
+                        phimApiItem?.slug
+                    ]);
+
+                const phimApiSeasonMatches =
+                    streamType === "series" &&
+                    Number(seasonNumber) > 0 &&
+                    phimApiSeason === Number(seasonNumber);
+
                 if (
                     phimApiItem.slug &&
-                    imdbMatches &&
+                                        imdbMatches &&
                     typeMatches &&
-                    yearMatches
+                    (
+                        yearMatches ||
+                        phimApiSeasonMatches
+                    )
                 ) {
                     requestedTitleVariants.push(
                         phimApiItem.name,
@@ -42512,13 +42723,20 @@ if (streamType === "series") {
 // ====================================================
 
 function phimhdcsExtractInstallment(value) {
+    const detectedSeason =
+        movinaDetectSeasonNumber([value]);
+
+    if (detectedSeason > 0) {
+        return detectedSeason;
+    }
+
     const normalized =
         normalizeAliasTitle(value);
 
     if (!normalized) return 0;
 
     const namedPart = normalized.match(
-        /\b(?:part|pt|phan|volume|vol|chapter|book)\s*(\d+)\b/i
+        /\b(?:part|pt|phan|season|mua|volume|vol|chapter|book)\s*(\d+)\b/i
     );
 
     if (namedPart) {
@@ -42543,27 +42761,49 @@ const requestedInstallments = [
     )
 ];
 
+const requestedSeasonForGuard =
+    streamType === "series"
+        ? Number(seasonNumber) || 0
+        : 0;
+
+const candidateSeasonForGuard =
+    movinaDetectSeasonNumber([
+        candidate?.title,
+        detail?.title,
+        detail?.name,
+        candidate?.url,
+        detail?.url
+    ]);
+
 const candidateInstallment =
-    phimhdcsExtractInstallment(
-        candidate.title
-    );
+    candidateSeasonForGuard ||
+    phimhdcsExtractInstallment(candidate.title);
 
 const installmentMismatch =
-    requestedInstallments.length > 0
+    requestedSeasonForGuard > 1
         ? (
-            candidateInstallment !==
-            requestedInstallments[0]
+            candidateInstallment > 0 &&
+            candidateInstallment !== requestedSeasonForGuard
         )
-        : candidateInstallment > 0;
+        : (
+            requestedInstallments.length > 0
+                ? (
+                    candidateInstallment !==
+                    requestedInstallments[0]
+                )
+                : candidateInstallment > 0
+        );
 
 if (installmentMismatch) {
     console.log(
         "[PHIMHDCS] CANDIDATE REJECTED — WRONG INSTALLMENT:",
         JSON.stringify({
             requestedTitle: movieName,
+            requestedSeason: requestedSeasonForGuard,
             requestedInstallments,
             candidateTitle: candidate.title,
             candidateInstallment,
+            candidateSeasonForGuard,
             url: candidate.url
         })
     );
@@ -42579,7 +42819,11 @@ if (
     Math.abs(
         Number(detail.year) -
         Number(movieYear)
-    ) > 1
+    ) > 1 &&
+    !(
+        requestedSeasonForGuard > 1 &&
+        candidateSeasonForGuard === requestedSeasonForGuard
+    )
 ) {
     console.log(
         "[PHIMHDCS] CANDIDATE REJECTED — WRONG YEAR:",
@@ -43184,12 +43428,64 @@ let targetEpisode =
 
 const selectedEpisodes = [];
 
+const selectedDetailTitle =
+    String(selectedDetailHtml || "");
+
+const selectedDetailSeason =
+    movinaDetectSeasonNumber([
+        selectedMovie?.title,
+        selectedMovie?.name,
+        selectedDetailUrl,
+        selectedDetailTitle.match(
+            /<title[^>]*>([\s\S]*?)<\/title>/i
+        )?.[1],
+        selectedDetailTitle.match(
+            /<h1[^>]*>([\s\S]*?)<\/h1>/i
+        )?.[1]
+    ]);
+
+console.log(
+    "[PHIMHDCS] SELECTED DETAIL SEASON:",
+    {
+        requestedSeason: Number(seasonNumber) || 0,
+        selectedDetailSeason,
+        selectedTitle: selectedMovie?.title || "",
+        selectedDetailUrl
+    }
+);
+
 if (streamType === "series") {
     const requestedSeason =
         Number(seasonNumber) || 0;
 
     if (requestedSeason > 1) {
         if (
+            selectedDetailSeason > 0 &&
+            selectedDetailSeason !== requestedSeason
+        ) {
+            console.warn(
+                "[PHIMHDCS] DETAIL SEASON MISMATCH — REFUSING:",
+                {
+                    requestedSeason,
+                    selectedDetailSeason,
+                    selectedTitle: selectedMovie?.title || "",
+                    selectedDetailUrl
+                }
+            );
+
+            addFallback();
+            return streams;
+        }
+
+        if (selectedDetailSeason === requestedSeason) {
+            console.log(
+                "[PHIMHDCS] EXPLICIT DETAIL SEASON — LOCAL EPISODE:",
+                {
+                    season: requestedSeason,
+                    episode: targetEpisode
+                }
+            );
+        } else if (
             seasonContext?.verified === true &&
             Number(seasonContext.globalEpisode) > 0
         ) {
@@ -43243,9 +43539,12 @@ if (streamType === "series") {
 
         // Server ghi rõ mùa: dùng số tập trong mùa.
         // Server không ghi mùa: dùng vị trí tập toàn series.
+        const explicitSeason =
+            serverSeason || selectedDetailSeason;
+
         const expectedEpisode =
             requestedSeason > 1 &&
-            serverSeason === 0
+            explicitSeason === 0
                 ? Number(seasonContext.globalEpisode)
                 : targetEpisode;
 
