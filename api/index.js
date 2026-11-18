@@ -35628,22 +35628,87 @@ async function fetchOnflixProvider(
         const normalize = onflixNormalizeText;
         const wanted = normalize(query);
 
+
+        // Ưu tiên ứng viên đã xác minh đúng mùa.
+        // Chỉ áp dụng cho phim bộ có mùa cụ thể.
+        let candidatePool = candidates;
+
+        if (
+            streamType === "series" &&
+            Number(seasonNumber) > 0
+        ) {
+            const seasonChecks = candidates.map(item => ({
+                item,
+                status: movinaGetSeasonMatchStatus(
+                    [
+                        item?.title,
+                        item?.url,
+                        item?.slug
+                    ],
+                    seasonNumber
+                )
+            }));
+
+            const seasonMatches = seasonChecks
+                .filter(entry => entry.status === "match")
+                .map(entry => entry.item);
+
+            const hasExplicitSeason =
+                seasonChecks.some(
+                    entry =>
+                        entry.status === "match" ||
+                        entry.status === "mismatch"
+                );
+
+            if (seasonMatches.length > 0) {
+                candidatePool = seasonMatches;
+
+                console.info(TAG, "SEASON CANDIDATES FILTERED:", {
+                    requestedSeason: Number(seasonNumber),
+                    before: candidates.length,
+                    after: candidatePool.length,
+                    titles: candidatePool.map(item => ({
+                        title: item?.title || "",
+                        year: item?.year || 0,
+                        url: item?.url || ""
+                    }))
+                });
+
+            } else if (hasExplicitSeason) {
+                console.warn(
+                    TAG,
+                    "REJECT: NO CANDIDATE FOR REQUESTED SEASON",
+                    {
+                        requestedSeason: Number(seasonNumber),
+                        candidates: seasonChecks.map(entry => ({
+                            title: entry.item?.title || "",
+                            status: entry.status,
+                            url: entry.item?.url || ""
+                        }))
+                    }
+                );
+
+                return [];
+            }
+        }
+
         const candidate =
-            candidates.find(item =>
+            candidatePool.find(item =>
                 normalize(item.title) === wanted
             ) ||
-            candidates.find(item => {
+            candidatePool.find(item => {
                 const title = normalize(item.title);
 
                 return title &&
                     (title.includes(wanted) || wanted.includes(title));
             }) ||
-            candidates.find(item =>
+            candidatePool.find(item =>
                 movieYear &&
                 item.year &&
                 Number(item.year) === Number(movieYear)
             ) ||
-            candidates[0];
+            candidatePool[0];
+
 
         if (!candidate?.url) {
             console.warn(TAG, "CANDIDATE URL MISSING");
@@ -38343,16 +38408,51 @@ title:
         //
         // Không yêu cầu ứng viên phải có bản Vietsub/Lồng Tiếng
         // cùng tên làm đối chứng.
+
+        // -----------------------------------------------------
+        // LOCALIZED FALLBACK — STRICT IDENTITY GUARD
+        //
+        // Không chấp nhận ứng viên chỉ vì:
+        // - Có bản Vietsub / Lồng Tiếng
+        // - Có cùng số mùa
+        // - Có tập 1
+        //
+        // Khi không có tên hoặc năm xác nhận,
+        // yêu cầu ít nhất 2 từ đặc trưng trùng nhau.
+        // -----------------------------------------------------
+
         const pltLocalizedFallbackMatches =
+            pltTargetTitleWords.length >= 2 &&
             pltDirectMatches.length === 0 &&
             pltYearMatches.length === 0 &&
             pltOriginalSeriesMatches.length === 0
-                ? ranked.filter(candidate =>
-                    pltIsVietnameseVersion(candidate) &&
-                    !pltIsSequelCandidate(candidate) &&
-                    Number(candidate?.score || 0) >= 0
-                )
+                ? ranked.filter(candidate => {
+                    if (
+                        !pltIsVietnameseVersion(candidate) ||
+                        pltIsSequelCandidate(candidate) ||
+                        Number(candidate?.score || 0) < 0
+                    ) {
+                        return false;
+                    }
+
+                    const candidateWords = new Set(
+                        pltNormalizeCandidateText(
+                            candidate?.title
+                        )
+                            .split(" ")
+                            .filter(word => word.length >= 4)
+                    );
+
+                    const matchedDistinctiveWords =
+                        pltTargetTitleWords.filter(word =>
+                            word.length >= 4 &&
+                            candidateWords.has(word)
+                        );
+
+                    return matchedDistinctiveWords.length >= 2;
+                })
                 : [];
+
 
         const pltHasSafeLocalizedFallback =
             pltLocalizedFallbackMatches.length > 0;
