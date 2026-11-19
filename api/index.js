@@ -23643,6 +23643,165 @@ return {
 }
 
 // ============================================================
+// [CORE-IDENTITY-003] [PROVIDERS: ALL VOD]
+// SHARED PROVIDER CANDIDATE IDENTITY VALIDATOR
+// ============================================================
+
+function movinaValidateProviderCandidate(
+    candidate,
+    identity = {},
+    options = {}
+) {
+    if (!candidate || typeof candidate !== "object") {
+        return {
+            accepted: false,
+            reason: "invalid_candidate"
+        };
+    }
+
+    const normalize = value =>
+        String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+    const extractYear = value => {
+        const match = String(value || "").match(
+            /\b(?:19|20)\d{2}\b/
+        );
+
+        return match ? Number(match[0]) : 0;
+    };
+
+    const expectedTitles = [
+        identity.title,
+        ...(Array.isArray(identity.titles)
+            ? identity.titles
+            : []),
+        ...(Array.isArray(options.titleVariants)
+            ? options.titleVariants
+            : [])
+    ]
+        .map(normalize)
+        .filter(Boolean);
+
+    const uniqueExpectedTitles = [
+        ...new Set(expectedTitles)
+    ];
+
+    if (!uniqueExpectedTitles.length) {
+        return {
+            accepted: false,
+            reason: "missing_expected_titles"
+        };
+    }
+
+    const candidateTitles = [
+        candidate.title,
+        candidate.name,
+        candidate.origin_name,
+        candidate.original_name,
+        candidate.originalTitle
+    ]
+        .filter(value => typeof value === "string")
+        .map(normalize)
+        .filter(Boolean);
+
+    if (!candidateTitles.length) {
+        return {
+            accepted: false,
+            reason: "missing_candidate_title"
+        };
+    }
+
+    // Không dùng includes() hoặc fuzzy matching để xác nhận.
+    // Tên gần giống chỉ có giá trị tìm kiếm, không đủ chứng minh
+    // hai kết quả là cùng một tác phẩm.
+    const matchedTitle = candidateTitles.find(title =>
+        uniqueExpectedTitles.includes(title)
+    );
+
+    if (!matchedTitle) {
+        return {
+            accepted: false,
+            reason: "title_mismatch",
+            candidateTitles,
+            expectedTitles: uniqueExpectedTitles
+        };
+    }
+
+    const expectedYear = Number(
+        identity.identityYear ||
+        identity.year ||
+        options.year ||
+        0
+    );
+
+    const candidateYear =
+        Number(
+            candidate.year ||
+            candidate.release_year ||
+            candidate.releaseYear ||
+            0
+        ) ||
+        extractYear(candidate.title) ||
+        extractYear(candidate.name) ||
+        extractYear(candidate.url);
+
+    // Chỉ kết luận lệch năm khi cả hai phía đều có năm.
+    // Không tự suy ra năm của ứng viên khi website không cung cấp.
+    if (
+        expectedYear > 0 &&
+        candidateYear > 0 &&
+        expectedYear !== candidateYear
+    ) {
+        return {
+            accepted: false,
+            reason: "year_mismatch",
+            expectedYear,
+            candidateYear,
+            matchedTitle
+        };
+    }
+
+    const expectedImdbId = String(
+        identity.imdbId || ""
+    ).trim().toLowerCase();
+
+    const candidateImdbId = String(
+        candidate.imdb_id ||
+        candidate.imdbId ||
+        candidate.imdb?.id ||
+        ""
+    ).trim().toLowerCase();
+
+    if (
+        /^tt\d+$/i.test(expectedImdbId) &&
+        /^tt\d+$/i.test(candidateImdbId) &&
+        expectedImdbId !== candidateImdbId
+    ) {
+        return {
+            accepted: false,
+            reason: "imdb_mismatch",
+            expectedImdbId,
+            candidateImdbId
+        };
+    }
+
+    return {
+        accepted: true,
+        reason: "identity_match",
+        matchedTitle,
+        expectedYear,
+        candidateYear
+    };
+}
+
+// ============================================================
 // [CORE-021] [PROVIDERS: KKPHIM, VSMOV]
 // SEASON SEARCH AND CANDIDATE IDENTITY
 // ============================================================
@@ -35793,18 +35952,61 @@ if (!availableCandidates.length) {
     return [];
 }
 
-const normalize = onflixNormalizeText;
-const wanted = normalize(query);
+// =====================================================
+// ONFLIX — SHARED IDENTITY VALIDATION
+// =====================================================
 
-// Ưu tiên ứng viên đúng mùa, nhưng chỉ trong danh sách
-// những URL chưa được thử.
+const onflixIdentity = {
+    title: query,
+    titles: [
+        query,
+        ...(Array.isArray(titleVariants)
+            ? titleVariants
+            : [])
+    ],
+    year: Number(movieYear) || 0,
+    identityYear: Number(movieYear) || 0
+};
+
+// Chỉ giữ ứng viên vượt qua kiểm tra tên và năm.
+// Không tự chọn candidatePool[0] khi chưa xác minh.
 let candidatePool = availableCandidates;
 
+const identityChecks = availableCandidates.map(item => ({
+    item,
+    validation: movinaValidateProviderCandidate(
+        item,
+        onflixIdentity
+    )
+}));
+
+const identityMatchedCandidates =
+    identityChecks
+        .filter(entry => entry.validation.accepted)
+        .map(entry => entry.item);
+
+console.info(TAG, "IDENTITY VALIDATION:", {
+    inputCount: availableCandidates.length,
+    acceptedCount: identityMatchedCandidates.length,
+    rejected: identityChecks
+        .filter(entry => !entry.validation.accepted)
+        .slice(0, 15)
+        .map(entry => ({
+            title: entry.item?.title || "",
+            year: entry.item?.year || 0,
+            url: entry.item?.url || "",
+            reason: entry.validation.reason
+        }))
+});
+
+candidatePool = identityMatchedCandidates;
+
+// Tiếp tục lọc mùa trên những ứng viên đã xác minh danh tính.
 if (
     streamType === "series" &&
     Number(seasonNumber) > 0
 ) {
-    const seasonChecks = availableCandidates.map(item => ({
+    const seasonChecks = candidatePool.map(item => ({
         item,
         status: movinaGetSeasonMatchStatus(
             [
@@ -35830,17 +36032,6 @@ if (
     if (seasonMatches.length > 0) {
         candidatePool = seasonMatches;
 
-        console.info(TAG, "SEASON CANDIDATES FILTERED:", {
-            requestedSeason: Number(seasonNumber),
-            before: availableCandidates.length,
-            after: candidatePool.length,
-            titles: candidatePool.map(item => ({
-                title: item?.title || "",
-                year: item?.year || 0,
-                url: item?.url || ""
-            }))
-        });
-
     } else if (hasExplicitSeason) {
         console.warn(
             TAG,
@@ -35859,22 +36050,17 @@ if (
     }
 }
 
-const candidate =
-    candidatePool.find(item =>
-        normalize(item.title) === wanted
-    ) ||
-    candidatePool.find(item => {
-        const title = normalize(item.title);
+const candidate = candidatePool[0] || null;
 
-        return title &&
-            (title.includes(wanted) || wanted.includes(title));
-    }) ||
-    candidatePool.find(item =>
-        movieYear &&
-        item.year &&
-        Number(item.year) === Number(movieYear)
-    ) ||
-    candidatePool[0];
+if (!candidate?.url) {
+    console.warn(TAG, "NO VERIFIED IDENTITY CANDIDATE:", {
+        query,
+        year: movieYear,
+        candidateCount: availableCandidates.length
+    });
+
+    return [];
+}
 
 if (!candidate?.url) {
     console.warn(TAG, "CANDIDATE URL MISSING");
@@ -35888,17 +36074,6 @@ if (!candidate?.url) {
             url: candidate.url,
             streamType
         }));
-
-        if (
-            movieYear &&
-            candidate.year &&
-            Math.abs(Number(candidate.year) - Number(movieYear)) > 1
-        ) {
-            console.warn(TAG, "YEAR MISMATCH:", {
-                wanted: movieYear,
-                found: candidate.year
-            });
-        }
 
         // 2. Tải trang thông tin phim — chẩn đoán điểm dừng.
 console.info(TAG, "DETAIL REQUEST START:", JSON.stringify({
