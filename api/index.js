@@ -35695,7 +35695,8 @@ async function fetchOnflixProvider(
     episodeNumber = 1,
     streamType = "series",
     seasonContext = null,
-    excludedCandidateUrls = []
+    excludedCandidateUrls = [],
+    titleVariants = []
 ) {
 
     const TAG = "[MOVINA-ONFLIX]";
@@ -35708,12 +35709,69 @@ async function fetchOnflixProvider(
             return [];
         }
 
-// 1. Tìm phim.
-const search = await fetchOnflix(query, {
-    action: "search"
+// 1. Tìm phim bằng bộ tên dùng chung.
+// Mỗi truy vấn vẫn đi qua API tìm kiếm riêng của Onflix.
+const onflixSearchTitles =
+    movinaBuildNguonCSearchTitles(
+        query,
+        Array.isArray(titleVariants)
+            ? titleVariants.slice(0, 6)
+            : []
+    );
+
+console.info(TAG, "SEARCH TITLE VARIANTS:", {
+    titles: onflixSearchTitles
 });
 
-const candidates = search?.results || search?.items || [];
+const searchResponses = await Promise.allSettled(
+    onflixSearchTitles.map(searchTitle =>
+        fetchOnflix(searchTitle, {
+            action: "search"
+        })
+    )
+);
+
+// Gộp kết quả theo thứ tự truy vấn:
+// tên chính trước, alias sau.
+// Giữ nguyên thứ tự ứng viên do API Onflix trả về.
+const candidateMap = new Map();
+
+for (const result of searchResponses) {
+    if (result.status !== "fulfilled") {
+        console.warn(
+            TAG,
+            "SEARCH VARIANT FAILED:",
+            result.reason?.message || result.reason
+        );
+        continue;
+    }
+
+    const searchResult = result.value;
+    const items =
+        searchResult?.results ||
+        searchResult?.items ||
+        [];
+
+    for (const item of items) {
+        const url = String(item?.url || "").trim();
+
+        if (url && !candidateMap.has(url)) {
+            candidateMap.set(url, item);
+        }
+    }
+}
+
+const candidates = Array.from(candidateMap.values());
+
+console.info(TAG, "MERGED SEARCH CANDIDATES:", {
+    queryCount: onflixSearchTitles.length,
+    candidateCount: candidates.length,
+    titles: candidates.slice(0, 10).map(item => ({
+        title: item?.title || "",
+        year: item?.year || 0,
+        url: item?.url || ""
+    }))
+});
 
 const excludedUrls = new Set(
     (Array.isArray(excludedCandidateUrls)
@@ -36164,15 +36222,17 @@ if (
         }
     );
 
-    return await fetchOnflixProvider(
-        movieName,
-        movieYear,
-        seasonNumber,
-        episodeNumber,
-        streamType,
-        seasonContext,
-        nextExcludedUrls
-    );
+return await fetchOnflixProvider(
+    movieName,
+    movieYear,
+    seasonNumber,
+    episodeNumber,
+    streamType,
+    seasonContext,
+    nextExcludedUrls,
+    titleVariants
+);
+
 }
 
 return streams;
@@ -48374,6 +48434,19 @@ const animehayPromise = (async () => {
               );
           });
 
+const onflixTitleVariants =
+    movinaBuildNguonCSearchTitles(
+        movieName,
+        [
+            resolvedMetadata?.name,
+            resolvedMetadata?.origin_name,
+            resolvedMetadata?.original_name,
+            resolvedMetadata?.title,
+            resolvedMetadata?.english_name,
+            resolvedMetadata?.englishName
+        ]
+    ).slice(1, 7);
+
 const fetchPromise = fetchOnflixProvider(
     movieName,
     movieYear,
@@ -48384,7 +48457,9 @@ const fetchPromise = fetchOnflixProvider(
         resolvedMetadata,
         seasonNumber,
         episodeNumber
-    )
+    ),
+    [],
+    onflixTitleVariants
 );
 
           const result = await Promise.race([
