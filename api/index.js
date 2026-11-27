@@ -23801,6 +23801,168 @@ function movinaValidateProviderCandidate(
     };
 }
 
+
+// ============================================================
+// [CORE-IDENTITY-004] [PROVIDERS: ALL VOD]
+// UNIVERSAL PROVIDER SEARCH CONTEXT
+// ============================================================
+//
+// Chuẩn hóa dữ liệu tìm kiếm dùng chung cho mọi provider.
+// Không gọi API, không tạo request mạng.
+// Không tự sinh alias chưa được xác minh.
+// Không trộn Season với Part/Cour.
+//
+
+function movinaBuildProviderSearchContext(
+    identity = {},
+    options = {}
+) {
+    const normalize = value =>
+        String(value || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+    const flattenTitles = values => {
+        const result = [];
+
+        const add = value => {
+            if (!value) return;
+
+            if (Array.isArray(value)) {
+                value.forEach(add);
+                return;
+            }
+
+            if (typeof value === "object") {
+                add(
+                    value.name ||
+                    value.title ||
+                    value.value ||
+                    value.label
+                );
+                return;
+            }
+
+            if (typeof value === "string") {
+                const title = value
+                    .replace(/\s+/g, " ")
+                    .trim();
+
+                if (title) {
+                    result.push(title);
+                }
+            }
+        };
+
+        values.forEach(add);
+
+        return result;
+    };
+
+    const primaryTitle = String(
+        options.title ||
+        identity.title ||
+        identity.titles?.[0] ||
+        ""
+    ).trim();
+
+    // Thứ tự ưu tiên:
+    // 1. Tên đang được Stremio yêu cầu.
+    // 2. Tên trong Universal Identity.
+    // 3. Alias bổ sung từ metadata/cache của provider.
+    const rawTitles = flattenTitles([
+        primaryTitle,
+        identity.titles,
+        options.titleVariants
+    ]);
+
+    const seen = new Set();
+    const titles = [];
+
+    for (const title of rawTitles) {
+        const key = normalize(title);
+
+        if (
+            !key ||
+            key.length < 2 ||
+            key.length > 200 ||
+            seen.has(key)
+        ) {
+            continue;
+        }
+
+        seen.add(key);
+        titles.push(title);
+
+        if (titles.length >= 24) {
+            break;
+        }
+    }
+
+    const requestedYear =
+        Number(options.year) || 0;
+
+    const identityYear =
+        Number(
+            identity.identityYear ||
+            identity.year ||
+            requestedYear ||
+            0
+        );
+
+    const imdbId = String(
+        identity.imdbId ||
+        options.imdbId ||
+        ""
+    ).trim().toLowerCase();
+
+    const type =
+        options.type === "series" ||
+        identity.type === "series"
+            ? "series"
+            : "movie";
+
+    const seasonNumber =
+        Number(options.seasonNumber) || 0;
+
+    const episodeNumber =
+        Number(options.episodeNumber) || 0;
+
+    return {
+        primaryTitle:
+            primaryTitle || titles[0] || "",
+
+        titles,
+
+        // Danh sách tên tìm kiếm chung.
+        // Provider tự quyết định số truy vấn phù hợp
+        // với giới hạn của website/API riêng.
+        searchTitles: [...titles],
+
+        imdbId:
+            /^tt\d+$/i.test(imdbId)
+                ? imdbId
+                : "",
+
+        // Năm yêu cầu từ metadata Stremio.
+        requestedYear,
+
+        // Năm đã được Universal Identity xác định.
+        identityYear,
+
+        type,
+
+        seasonNumber,
+
+        episodeNumber
+    };
+}
+
 // ============================================================
 // [CORE-021] [PROVIDERS: KKPHIM, VSMOV]
 // SEASON SEARCH AND CANDIDATE IDENTITY
