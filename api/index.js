@@ -32743,7 +32743,8 @@ async function fetchAnimeHay(
     episodeNumber = 0,
     streamType = "movie",
     imdbId = "",
-    seasonContext = null
+    seasonContext = null,
+    titleVariants = []
 ) {
 
     const originalTitle = String(movieName || "").trim();
@@ -32752,6 +32753,41 @@ async function fetchAnimeHay(
         console.log("[ANIMEHAY] SKIP: empty title");
         return [];
     }
+
+
+    const animeHaySearchContext =
+        movinaBuildProviderSearchContext(
+            {
+                title: originalTitle,
+                titles: titleVariants,
+                year: movieYear,
+                identityYear: movieYear,
+                imdbId,
+                type: streamType
+            },
+            {
+                title: originalTitle,
+                titleVariants,
+                year: movieYear,
+                type: streamType,
+                seasonNumber,
+                episodeNumber
+            }
+        );
+
+    const animeHaySearchTitles =
+        animeHaySearchContext.searchTitles.slice(0, 8);
+
+    console.log(
+        "[ANIMEHAY] UNIVERSAL SEARCH CONTEXT:",
+        JSON.stringify({
+            titles: animeHaySearchTitles,
+            year: animeHaySearchContext.identityYear,
+            imdbId: animeHaySearchContext.imdbId,
+            season: animeHaySearchContext.seasonNumber,
+            episode: animeHaySearchContext.episodeNumber
+        })
+    );
 
     const normalize = value =>
         typeof animeHayNormalizeText === "function"
@@ -32871,26 +32907,76 @@ async function fetchAnimeHay(
                 });
             }
 
-            const getValidCandidates = items => items.filter(candidate => {
-                const candidateTitle =
-                    candidate?.title ||
-                    candidate?.name ||
-                    candidate?.cardText ||
-                    "";
+            
+            const getValidCandidates = items =>
+                items.filter(candidate => {
+                    const candidateTitle =
+                        candidate?.title ||
+                        candidate?.name ||
+                        candidate?.cardText ||
+                        "";
 
-                return candidate?.url &&
-                    /\/thong-tin-phim\//i.test(candidate.url) &&
-                    (
+                    if (
+                        !candidate?.url ||
+                        !/\/thong-tin-phim\//i.test(candidate.url)
+                    ) {
+                        return false;
+                    }
+
+                    // Không bỏ năm rồi mặc định hai phim là một.
+                    // Giữ tolerance 1 năm như logic AnimeHay hiện tại.
+                    const rawCandidateYear =
+                        candidate?.year ??
+                        candidate?.releaseYear ??
+                        candidate?.release_year ??
+                        candidateTitle ??
+                        candidate?.url ??
+                        "";
+
+                    const yearMatch = String(
+                        rawCandidateYear
+                    ).match(/\b(19\d{2}|20\d{2})\b/);
+
+                    const candidateYear = yearMatch
+                        ? Number(yearMatch[1])
+                        : 0;
+
+                    if (
+                        Number(movieYear) > 0 &&
+                        candidateYear > 0 &&
+                        Math.abs(
+                            candidateYear - Number(movieYear)
+                        ) > 1
+                    ) {
+                        console.log(
+                            "[ANIMEHAY] REJECT YEAR MISMATCH:",
+                            {
+                                requestedYear: movieYear,
+                                candidateYear,
+                                title: candidateTitle,
+                                url: candidate.url
+                            }
+                        );
+
+                        return false;
+                    }
+
+                    return (
                         titleMatches(searchTitle, candidateTitle) ||
                         titleMatches(searchTitle, candidate?.cardText)
                     );
-            });
+                });
+
 
             let validCandidates = getValidCandidates(candidates);
 
             // Nếu kết quả tìm kiếm không có ứng viên phù hợp,
             // thử duyệt danh mục AnimeHay.
-            if (!validCandidates.length && source !== "cinemeta") {
+            if (
+    !validCandidates.length &&
+    source !== "cinemeta" &&
+    source !== "identity-alias"
+) {
                 for (const path of ["/the-loai/anime-1.html", "/"]) {
                     try {
                         const page = await axios.get(domain + path, {
@@ -32969,12 +33055,12 @@ async function fetchAnimeHay(
 
             try {
                 best = animeHayFindBestSearchResult(
-                    validCandidates,
-                    searchTitle,
-                    movieYear,
-                    [],
-                    seasonNumber
-                );
+    validCandidates,
+    searchTitle,
+    movieYear,
+    animeHaySearchTitles,
+    seasonNumber
+);
             } catch (error) {
                 console.log(
                     "[ANIMEHAY] MATCH SCORING ERROR:",
@@ -33046,13 +33132,45 @@ async function fetchAnimeHay(
             "cinemeta"
         );
 
+       
         // -----------------------------------------------------
-        // 4. Lượt 2: nếu Cinemeta thất bại, thử AniList.
-        // IMDb fallback đã được loại bỏ.
+        // 4. Lượt 2: thử các alias đã xác minh.
+        // Chỉ tìm kiếm, không thay đổi parser hoặc resolver.
+        // -----------------------------------------------------
+        if (!selected) {
+            for (
+                const alternateTitle of
+                animeHaySearchTitles.slice(1)
+            ) {
+                if (
+                    normalize(alternateTitle) ===
+                    normalize(originalTitle)
+                ) {
+                    continue;
+                }
+
+                console.log(
+                    "[ANIMEHAY] TRY IDENTITY ALIAS:",
+                    alternateTitle
+                );
+
+                selected = await searchByTitle(
+                    alternateTitle,
+                    "identity-alias"
+                );
+
+                if (selected) {
+                    break;
+                }
+            }
+        }
+
+        // -----------------------------------------------------
+        // 4.1. Nếu alias thất bại, thử AniList như cũ.
         // -----------------------------------------------------
         if (!selected) {
             console.log(
-                "[ANIMEHAY] CINEMETA SEARCH FAILED; TRY ANILIST:",
+                "[ANIMEHAY] IDENTITY ALIASES FAILED; TRY ANILIST:",
                 {
                     originalTitle,
                     movieYear,
@@ -33082,6 +33200,7 @@ async function fetchAnimeHay(
                 if (selected) break;
             }
         }
+
 
         // -----------------------------------------------------
         // 4.5. VERIFIED IMDb DETAIL URL FALLBACK
@@ -36030,19 +36149,40 @@ async function fetchOnflixProvider(
             return [];
         }
 
-// 1. Tìm phim bằng bộ tên dùng chung.
-// Mỗi truy vấn vẫn đi qua API tìm kiếm riêng của Onflix.
-const onflixSearchTitles =
-    movinaBuildNguonCSearchTitles(
-        query,
-        Array.isArray(titleVariants)
-            ? titleVariants.slice(0, 6)
-            : []
-    );
 
-console.info(TAG, "SEARCH TITLE VARIANTS:", {
-    titles: onflixSearchTitles
-});
+        // 1. Build search context dùng chung.
+        const onflixSearchContext =
+            movinaBuildProviderSearchContext(
+                {
+                    title: query,
+                    titles: titleVariants,
+                    year: movieYear,
+                    identityYear: movieYear,
+                    type: streamType
+                },
+                {
+                    title: query,
+                    titleVariants,
+                    year: movieYear,
+                    type: streamType,
+                    seasonNumber,
+                    episodeNumber
+                }
+            );
+
+        // Giới hạn 7 truy vấn để không vượt timeout Onflix.
+        const onflixSearchTitles =
+            onflixSearchContext.searchTitles.slice(0, 7);
+
+        console.info(TAG, "SEARCH CONTEXT:", {
+            primaryTitle: onflixSearchContext.primaryTitle,
+            titles: onflixSearchTitles,
+            year: onflixSearchContext.identityYear,
+            type: onflixSearchContext.type,
+            season: onflixSearchContext.seasonNumber,
+            episode: onflixSearchContext.episodeNumber
+        });
+
 
 const searchResponses = await Promise.allSettled(
     onflixSearchTitles.map(searchTitle =>
@@ -48627,7 +48767,8 @@ const animehayPromise = (async () => {
 
     try {
         const legacyPromise = Promise.race([
- fetchAnimeHay(
+ 
+fetchAnimeHay(
     movieName,
     movieYear,
     seasonNumber,
@@ -48640,8 +48781,38 @@ const animehayPromise = (async () => {
         resolvedMetadata,
         seasonNumber,
         episodeNumber
-    )
+    ),
+    movinaBuildProviderSearchContext(
+        {
+            title: movieName,
+            titles: [
+                resolvedMetadata?.name,
+                resolvedMetadata?.origin_name,
+                resolvedMetadata?.original_name,
+                resolvedMetadata?.title,
+                resolvedMetadata?.english_name,
+                resolvedMetadata?.englishName,
+                resolvedMetadata?.aliases,
+                resolvedMetadata?.alternative_titles,
+                resolvedMetadata?.titles
+            ],
+            year: movieYear,
+            identityYear: movieYear,
+            imdbId: rawId.startsWith("tt")
+                ? rawId.split(":")[0]
+                : "",
+            type: streamType
+        },
+        {
+            title: movieName,
+            year: movieYear,
+            type: streamType,
+            seasonNumber,
+            episodeNumber
+        }
+    ).searchTitles.slice(1, 8)
 ),
+
 
             new Promise(resolve => {
                 legacyTimer = setTimeout(
@@ -48772,17 +48943,32 @@ const animehayPromise = (async () => {
           });
 
 const onflixTitleVariants =
-    movinaBuildNguonCSearchTitles(
-        movieName,
-        [
-            resolvedMetadata?.name,
-            resolvedMetadata?.origin_name,
-            resolvedMetadata?.original_name,
-            resolvedMetadata?.title,
-            resolvedMetadata?.english_name,
-            resolvedMetadata?.englishName
-        ]
-    ).slice(1, 7);
+    movinaBuildProviderSearchContext(
+        {
+            title: movieName,
+            titles: [
+                resolvedMetadata?.name,
+                resolvedMetadata?.origin_name,
+                resolvedMetadata?.original_name,
+                resolvedMetadata?.title,
+                resolvedMetadata?.english_name,
+                resolvedMetadata?.englishName,
+                resolvedMetadata?.aliases,
+                resolvedMetadata?.alternative_titles,
+                resolvedMetadata?.titles
+            ],
+            year: movieYear,
+            identityYear: movieYear,
+            type: streamType
+        },
+        {
+            title: movieName,
+            year: movieYear,
+            type: streamType,
+            seasonNumber,
+            episodeNumber
+        }
+    ).searchTitles.slice(1, 7);
 
 const fetchPromise = fetchOnflixProvider(
     movieName,
