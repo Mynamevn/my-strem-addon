@@ -39773,11 +39773,12 @@ if (
     // Nếu khác năm, chỉ được giữ ứng viên mùa riêng
     // khi tên gốc hoặc nguồn đối chiếu xác nhận chính xác.
     const seasonIdentityConfirmed =
-        explicitRequestedSeason &&
-        (
-            originalSimilarity >= 1 ||
-            contextBestSimilarity >= 1
-        );
+    supportStreamType === "series" &&
+    explicitRequestedSeason &&
+    (
+        originalSimilarity >= 0.75 ||
+        contextBestSimilarity >= 1
+    );
 
     if (exactYearMatch) {
         yearScore = 4500;
