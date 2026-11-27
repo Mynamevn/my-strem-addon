@@ -49002,13 +49002,26 @@ fetchAnimeHay(
     ).searchTitles.slice(1, 8)
 ),
 
-
             new Promise(resolve => {
                 legacyTimer = setTimeout(
-                    () => resolve([]),
-                    6500
+                    () => {
+                        console.log(
+                            "[ANIMEHAY] LEGACY SOFT TIMEOUT:",
+                            {
+                                title: movieName,
+                                year: movieYear,
+                                season: seasonNumber,
+                                episode: episodeNumber,
+                                timeoutMs: 20000
+                            }
+                        );
+
+                        resolve([]);
+                    },
+                    20000
                 );
             })
+
         ]);
 
         const externalPromise =
