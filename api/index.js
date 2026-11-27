@@ -39282,8 +39282,12 @@ title:
         // KHÔNG phải xác nhận ứng viên đúng phim.
         // -----------------------------------------------------
 
+        
         const pltLocalizedFallbackMatches =
-            supportStreamType === "series" &&
+            (
+                supportStreamType === "series" ||
+                supportStreamType === "movie"
+            ) &&
             pltTargetYear > 0 &&
             pltDirectMatches.length === 0 &&
             pltYearMatches.length === 0 &&
