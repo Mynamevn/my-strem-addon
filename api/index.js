@@ -27555,13 +27555,28 @@ console.log(
                 .trim();
         };
 
-        const inputTitle =
-            cleanTitle(movieName);
+                // =====================================================
+        // [PRV-VSMOV.10.01] [PROVIDERS: VSMOV]
+        // RANKING TITLE VARIANTS
+        // =====================================================
+        // Xếp hạng theo tên chính và các alias đã được
+        // NguonC xác minh, không đưa biến thể Season vào đây.
 
-        const inputWords =
-            inputTitle
-                .split(" ")
-                .filter(Boolean);
+        const rankingTitleVariants = [
+            ...new Set(
+                [
+                    movieName,
+                    ...sharedSearchTitles
+                ]
+                    .map(cleanTitle)
+                    .filter(Boolean)
+            )
+        ];
+
+        console.log(
+            "[VSMOV] RANKING TITLE VARIANTS:",
+            rankingTitleVariants
+        );
 
         // =====================================================
         // [PRV-VSMOV.11] [PROVIDERS: VSMOV] CANDIDATE RANKING
@@ -27597,69 +27612,87 @@ console.log(
                     const normalizedSlug =
                         cleanTitle(itemSlug);
 
+                                       // -------------------------------------------------
+                    // TITLE SCORING — PRIMARY + VERIFIED ALIASES
+                    // -------------------------------------------------
+
                     let score = 0;
+                    let matchedTitleVariant = "";
 
-                    if (
-                        normalizedName ===
-                        inputTitle
-                    ) {
-                        score += 1000;
-                    }
-
-                    if (
-                        normalizedOrigin ===
-                        inputTitle
-                    ) {
-                        score += 950;
-                    }
-
-                    if (
-                        normalizedName.includes(
-                            inputTitle
-                        )
-                    ) {
-                        score += 500;
-                    }
-
-                    if (
-                        inputTitle.includes(
-                            normalizedName
-                        )
-                    ) {
-                        score += 400;
-                    }
-
-                    if (
-                        normalizedOrigin.includes(
-                            inputTitle
-                        )
-                    ) {
-                        score += 450;
-                    }
-
-                    let overlap = 0;
+                    let bestTitleScore = -Infinity;
 
                     for (
-                        const word of inputWords
+                        const inputTitle of rankingTitleVariants
                     ) {
+                        const inputWords =
+                            inputTitle
+                                .split(" ")
+                                .filter(Boolean);
+
+                        let currentScore = 0;
 
                         if (
-                            word.length < 2
+                            normalizedName === inputTitle
                         ) {
-                            continue;
+                            currentScore += 1000;
                         }
 
                         if (
-                            normalizedName.includes(word) ||
-                            normalizedOrigin.includes(word) ||
-                            normalizedSlug.includes(word)
+                            normalizedOrigin === inputTitle
                         ) {
-                            overlap++;
+                            currentScore += 950;
+                        }
+
+                        if (
+                            normalizedName.includes(inputTitle)
+                        ) {
+                            currentScore += 500;
+                        }
+
+                        if (
+                            inputTitle.includes(normalizedName)
+                        ) {
+                            currentScore += 400;
+                        }
+
+                        if (
+                            normalizedOrigin.includes(inputTitle)
+                        ) {
+                            currentScore += 450;
+                        }
+
+                        let overlap = 0;
+
+                        for (
+                            const word of inputWords
+                        ) {
+                            if (word.length < 2) {
+                                continue;
+                            }
+
+                            if (
+                                normalizedName.includes(word) ||
+                                normalizedOrigin.includes(word) ||
+                                normalizedSlug.includes(word)
+                            ) {
+                                overlap++;
+                            }
+                        }
+
+                        currentScore += overlap * 25;
+
+                        if (
+                            currentScore > bestTitleScore
+                        ) {
+                            bestTitleScore = currentScore;
+                            matchedTitleVariant = inputTitle;
                         }
                     }
 
-                    score +=
-                        overlap * 25;
+                    score += Math.max(
+                        0,
+                        bestTitleScore
+                    );
 
                     const itemYear =
                         Number(
