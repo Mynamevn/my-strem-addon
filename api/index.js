@@ -39249,38 +39249,42 @@ title:
         // yêu cầu ít nhất 2 từ đặc trưng trùng nhau.
         // -----------------------------------------------------
 
+        
+        // -----------------------------------------------------
+        // LOCALIZED FALLBACK — DETAIL-VERIFIED
+        //
+        // Chỉ mở fallback khi:
+        // - Đang tìm phim bộ.
+        // - Có năm phát hành cần xác minh.
+        // - Không có ứng viên khớp tên, năm hoặc series gốc.
+        //
+        // Tên tiếng Anh và tên Việt có thể hoàn toàn khác nhau.
+        // Vì vậy không bắt buộc phải có từ chung.
+        //
+        // Đây chỉ là bước đưa ứng viên vào kiểm tra detail,
+        // KHÔNG phải xác nhận ứng viên đúng phim.
+        // -----------------------------------------------------
+
         const pltLocalizedFallbackMatches =
-            pltTargetTitleWords.length >= 2 &&
+            supportStreamType === "series" &&
+            pltTargetYear > 0 &&
             pltDirectMatches.length === 0 &&
             pltYearMatches.length === 0 &&
             pltOriginalSeriesMatches.length === 0
-                ? ranked.filter(candidate => {
-                    if (
-                        !pltIsVietnameseVersion(candidate) ||
-                        pltIsSequelCandidate(candidate) ||
-                        Number(candidate?.score || 0) < 0
-                    ) {
-                        return false;
-                    }
+                ? ranked
+                    .filter(candidate => {
+                        if (
+                            !pltIsVietnameseVersion(candidate) ||
+                            pltIsSequelCandidate(candidate) ||
+                            Number(candidate?.score || 0) < 0
+                        ) {
+                            return false;
+                        }
 
-                    const candidateWords = new Set(
-                        pltNormalizeCandidateText(
-                            candidate?.title
-                        )
-                            .split(" ")
-                            .filter(word => word.length >= 4)
-                    );
-
-                    const matchedDistinctiveWords =
-                        pltTargetTitleWords.filter(word =>
-                            word.length >= 4 &&
-                            candidateWords.has(word)
-                        );
-
-                    return matchedDistinctiveWords.length >= 2;
-                })
+                        return true;
+                    })
+                    .slice(0, 6)
                 : [];
-
 
         const pltHasSafeLocalizedFallback =
             pltLocalizedFallbackMatches.length > 0;
