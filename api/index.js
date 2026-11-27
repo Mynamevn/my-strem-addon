@@ -49574,10 +49574,44 @@ const canonicalIdentity = {
           seasonNumber,
           episodeNumber,
           streamType,
-          movinaWaitForNguonCCanonicalIdentity,
+
+          async () => {
+              // Ưu tiên Canonical Identity đã được NguonC xác minh.
+              const canonicalIdentity =
+                  await movinaWaitForNguonCCanonicalIdentity();
+
+              if (canonicalIdentity) {
+                  return canonicalIdentity;
+              }
+
+              // Nếu NguonC chưa có kết quả sau thời gian chờ,
+              // dùng Universal Identity đã được MOVINA xác minh.
+              const universalIdentity =
+                  await nguoncUniversalTitleIdentityPromise;
+
+              return {
+                  imdbId:
+                      universalIdentity?.imdbId || "",
+
+                  title:
+                      movieName,
+
+                  titles:
+                      Array.isArray(universalIdentity?.titles)
+                          ? universalIdentity.titles
+                          : [],
+
+                  year:
+                      Number(
+                          universalIdentity?.identityYear ||
+                          movieYear ||
+                          0
+                      )
+              };
+          },
+
           movinaCandidateMatchesNguonCCanonical
       ),
-
       
 (async () => {
     const identity =
