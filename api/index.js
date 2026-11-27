@@ -37218,6 +37218,19 @@ async function scrapePhimLongTieng(
         const streamHost =
             streamUrl.hostname.toLowerCase();
 
+        // Loại riêng Rophim S6 đã xác nhận không phát được.
+        // Giữ nguyên Rophim S1 /file/play/.
+        if (
+            /^player\.rophim12\.com$/i.test(streamHost) &&
+            /^\/stream\/play-b(?:\/|$)/i.test(streamUrl.pathname)
+        ) {
+            console.log(
+                "[PHIMLONGTIENG] SKIP UNWORKING ROPHIM SERVER:",
+                streamUrl.href
+            );
+            return;
+        }
+
         // =================================================
         // CHỈ PROXY CÁC SERVER PHIMLONGTIENG
         // =================================================
@@ -37231,6 +37244,9 @@ const is8PhimHost =
 
 const isRophimHost =
     /^player\.rophim12\.com$/i.test(streamHost);
+
+const isFbcdmHost =
+    /^(?:www\.)?fbcdm\.net$/i.test(streamHost);
 
 const isCloudbetaHost =
     /^api\.cloudbeta\.win$/i.test(streamHost);
@@ -37246,6 +37262,7 @@ const allowedHost =
     is1PhimHost ||
     is8PhimHost ||
     isRophimHost ||
+    isFbcdmHost ||
     isCloudbetaHost ||
     isCbPlayHost ||
     isByteTransformHost;
@@ -58872,6 +58889,9 @@ const is8PhimHost =
 const isRophimHost =
     /^player\.rophim12\.com$/i.test(hostname);
 
+const isFbcdmHost =
+    /^(?:www\.)?fbcdm\.net$/i.test(hostname);
+
 const isCloudbetaHost =
     /^api\.cloudbeta\.win$/i.test(hostname);
 
@@ -58886,6 +58906,7 @@ const allowedHost =
     is1PhimHost ||
     is8PhimHost ||
     isRophimHost ||
+    isFbcdmHost ||
     isCloudbetaHost ||
     isCbPlayHost ||
     isByteTransformRequest;
@@ -59187,13 +59208,14 @@ if (isM3U8) {
                             absolute.hostname
                                 .toLowerCase();
 
- const childAllowed =
-    /^(?:www\.)?1phim\d+\.com$/i.test(childHost) ||
-    /^www\.8phim1\.com$/i.test(childHost) ||
-    /^player\.rophim12\.com$/i.test(childHost) ||
-    /^api\.cloudbeta\.win$/i.test(childHost) ||
-    /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost) ||
-    isPltByteTransformUrl(absolute.href);
+  const childAllowed =
+     /^(?:www\.)?1phim\d+\.com$/i.test(childHost) ||
+     /^www\.8phim1\.com$/i.test(childHost) ||
+     /^player\.rophim12\.com$/i.test(childHost) ||
+     /^(?:www\.)?fbcdm\.net$/i.test(childHost) ||
+     /^api\.cloudbeta\.win$/i.test(childHost) ||
+     /^(?:[a-z0-9-]+\.)*cbplay\.(?:cc|live)$/i.test(childHost) ||
+     isPltByteTransformUrl(absolute.href);
 
                         if (
                             !childAllowed
