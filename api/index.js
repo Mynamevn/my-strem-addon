@@ -24035,6 +24035,46 @@ function movinaDetectSeasonNumber(values = []) {
 }
 
 
+// ============================================================
+// [CORE-021.02] [PROVIDERS: ANIMEHAY]
+// DETECT SEASON PART / COUR
+// Phân biệt Season 2 với Season 2 Part 2.
+// ============================================================
+
+function movinaDetectSeasonPartNumber(values = []) {
+    const text = (
+        Array.isArray(values) ? values : [values]
+    )
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d");
+
+    const patterns = [
+        /\b(?:season|s)\s*0*\d+\s*(?:part|pt|cour)\s*0*(\d{1,2})\b/i,
+        /\b(?:part|pt|cour)\s*0*(\d{1,2})\b/i,
+        /\b0*(\d{1,2})(?:st|nd|rd|th)\s*cour\b/i,
+        /\bsplit[\s_-]*cour\s*0*(\d{1,2})\b/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+
+        if (match) {
+            const part = Number(match[1]) || 0;
+
+            if (part >= 1 && part <= 20) {
+                return part;
+            }
+        }
+    }
+
+    return 0;
+}
+
+
 function movinaGetSeasonMatchStatus(values, requestedSeason) {
     const target = Number(requestedSeason) || 0;
 
@@ -29490,7 +29530,8 @@ function animeHayFindBestSearchResult(
     movieName,
     movieYear = 0,
     extraTitleVariants = [],
-    seasonNumber = 0
+    seasonNumber = 0,
+    episodeNumber = 1
 ) {
 
     if (!Array.isArray(candidates) || candidates.length === 0) {
@@ -29582,10 +29623,37 @@ function animeHayFindBestSearchResult(
             continue;
         }
 
+        const candidatePart =
+            movinaDetectSeasonPartNumber([
+                candidateTitle,
+                item?.url,
+                item?.cardText
+            ]);
+
+        if (
+            requestedSeason > 0 &&
+            Number(episodeNumber || 1) === 1 &&
+            candidatePart > 1
+        ) {
+            console.log(
+                "[ANIMEHAY] REJECT WRONG PART:",
+                {
+                    requestedSeason,
+                    requestedEpisode: episodeNumber,
+                    candidatePart,
+                    title: candidateTitle,
+                    url: item.url
+                }
+            );
+
+            continue;
+        }
+
         const title = normalize(candidateTitle);
         const titleWords = new Set(
             title.split(/\s+/).filter(word => word.length > 1)
         );
+
 
         let titleScore = 0;
         let matchedWords = 0;
@@ -29664,11 +29732,20 @@ function animeHayFindBestSearchResult(
 
         // Ưu tiên mạnh ứng viên ghi rõ đúng mùa.
         if (
-            requestedSeason > 0 &&
-            candidateSeason === requestedSeason
-        ) {
-            score += 10000;
-        }
+    requestedSeason > 0 &&
+    candidateSeason === requestedSeason
+) {
+    score += 10000;
+}
+
+// Ưu tiên rõ ràng Part 1 khi ứng viên có ghi Part.
+if (
+    requestedSeason > 0 &&
+    Number(episodeNumber || 1) === 1 &&
+    candidatePart === 1
+) {
+    score += 3000;
+}
 
         console.log("[ANIMEHAY] MATCH SCORE:", {
             title: candidateTitle,
@@ -32925,17 +33002,23 @@ async function fetchAnimeHay(
 
                     // Không bỏ năm rồi mặc định hai phim là một.
                     // Giữ tolerance 1 năm như logic AnimeHay hiện tại.
-                    const rawCandidateYear =
-                        candidate?.year ??
-                        candidate?.releaseYear ??
-                        candidate?.release_year ??
-                        candidateTitle ??
-                        candidate?.url ??
-                        "";
+                    
+                    const yearSource = [
+                        candidate?.year,
+                        candidate?.releaseYear,
+                        candidate?.release_year,
+                        candidate?.releaseDate,
+                        candidate?.release_date,
+                        candidateTitle,
+                        candidate?.cardText,
+                        candidate?.url
+                    ]
+                        .filter(Boolean)
+                        .join(" ");
 
-                    const yearMatch = String(
-                        rawCandidateYear
-                    ).match(/\b(19\d{2}|20\d{2})\b/);
+                    const yearMatch = yearSource.match(
+                        /\b(19\d{2}|20\d{2})\b/
+                    );
 
                     const candidateYear = yearMatch
                         ? Number(yearMatch[1])
@@ -32960,6 +33043,40 @@ async function fetchAnimeHay(
 
                         return false;
                     }
+
+                    // -------------------------------------------------
+                    // SEASON PART VALIDATION
+                    // Nếu đang yêu cầu tập 1 của một mùa,
+                    // không chọn trang ghi rõ Part 2 trở lên.
+                    // -------------------------------------------------
+
+                    const candidatePart =
+                        movinaDetectSeasonPartNumber([
+                            candidateTitle,
+                            candidate?.url,
+                            candidate?.cardText
+                        ]);
+
+                    if (
+                        streamType === "series" &&
+                        Number(seasonNumber) > 0 &&
+                        Number(episodeNumber || 1) === 1 &&
+                        candidatePart > 1
+                    ) {
+                        console.log(
+                            "[ANIMEHAY] REJECT WRONG SEASON PART:",
+                            {
+                                requestedSeason: seasonNumber,
+                                requestedEpisode: episodeNumber,
+                                candidatePart,
+                                title: candidateTitle,
+                                url: candidate.url
+                            }
+                        );
+
+                        return false;
+                    }
+
 
                     return (
                         titleMatches(searchTitle, candidateTitle) ||
@@ -33059,7 +33176,8 @@ async function fetchAnimeHay(
     searchTitle,
     movieYear,
     animeHaySearchTitles,
-    seasonNumber
+    seasonNumber,
+    episodeNumber
 );
             } catch (error) {
                 console.log(
