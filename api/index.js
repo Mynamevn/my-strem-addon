@@ -36982,10 +36982,23 @@ async function scrapePhimLongTieng(
             ""
         ).trim();
 
-    const supportTargetYear =
-        context.targetYear ||
-        targetYear ||
-        null;
+const supportIdentityYear =
+    Number(context.identityYear) || 0;
+
+const supportIdentityImdbId =
+    String(context.imdbId || "")
+        .trim()
+        .toLowerCase();
+
+const supportTargetYear =
+    /^tt\d+$/i.test(supportIdentityImdbId) &&
+    supportIdentityYear > 0
+        ? supportIdentityYear
+        : (
+            context.targetYear ||
+            targetYear ||
+            null
+        );
 
     const supportSeasonNumber =
         context.seasonNumber !== undefined &&
@@ -49678,25 +49691,62 @@ return await scrapePhimHDCS(
   // bằng chứng hỗ trợ. Không chờ NguonC/VSMov/PhimHDCS.
   const longtiengPromise = (async () => {
       try {
-          const kkphimSupport = await kkphimPromise;
+         
+const kkphimSupport = await kkphimPromise;
 
-          const supportContext = {
-              originalName: movieName,
-              targetYear: movieYear,
-              seasonNumber,
-              episodeNumber,
-              streamType,
+// Dùng Universal Identity đã được MOVINA xác định.
+// Không tự lấy năm khác nếu không có IMDb ID hợp lệ.
+const pltUniversalIdentity =
+    await nguoncUniversalTitleIdentityPromise;
 
-              kkphim: Array.isArray(kkphimSupport)
-                  ? kkphimSupport
-                  : [],
+const pltIdentityImdbId =
+    String(pltUniversalIdentity?.imdbId || "")
+        .trim()
+        .toLowerCase();
 
-              // Các nguồn này vẫn đang chạy song song.
-              // PhimLongTieng tự đối chiếu bằng tên/năm/tập.
-              nguonc: [],
-              vsmov: [],
-              phimhdcs: []
-          };
+const pltIdentityYear =
+    Number(pltUniversalIdentity?.identityYear) || 0;
+
+const pltUseVerifiedIdentity =
+    /^tt\d+$/i.test(pltIdentityImdbId) &&
+    pltIdentityYear > 0;
+
+const supportContext = {
+    originalName: movieName,
+
+    targetYear: movieYear,
+
+    identityYear: pltUseVerifiedIdentity
+        ? pltIdentityYear
+        : 0,
+
+    imdbId: pltUseVerifiedIdentity
+        ? pltIdentityImdbId
+        : "",
+
+    seasonNumber,
+    episodeNumber,
+    streamType,
+
+    kkphim: Array.isArray(kkphimSupport)
+        ? kkphimSupport
+        : [],
+
+    nguonc: [],
+    vsmov: [],
+    phimhdcs: []
+};
+
+console.log(
+    "[PHIMLONGTIENG] IDENTITY YEAR CONTEXT:",
+    {
+        requestedYear: movieYear,
+        identityYear: pltIdentityYear,
+        imdbId: pltIdentityImdbId,
+        usingVerifiedIdentity: pltUseVerifiedIdentity
+    }
+);
+
 
           const streams = await scrapePhimLongTieng(
               movieName,
