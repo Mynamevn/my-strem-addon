@@ -39772,13 +39772,24 @@ if (
 
     // Nếu khác năm, chỉ được giữ ứng viên mùa riêng
     // khi tên gốc hoặc nguồn đối chiếu xác nhận chính xác.
+        const originalIdentityWords =
+        normalizeText(supportOriginalName)
+            .split(/\s+/)
+            .filter(word => word.length >= 3);
+
+    const hasDistinctiveOriginalTitle =
+        originalIdentityWords.length >= 2;
+
     const seasonIdentityConfirmed =
-    supportStreamType === "series" &&
-    explicitRequestedSeason &&
-    (
-        originalSimilarity >= 0.75 ||
-        contextBestSimilarity >= 1
-    );
+        supportStreamType === "series" &&
+        explicitRequestedSeason &&
+        (
+            (
+                hasDistinctiveOriginalTitle &&
+                originalSimilarity >= 0.75
+            ) ||
+            contextBestSimilarity >= 1
+        );
 
     if (exactYearMatch) {
         yearScore = 4500;
