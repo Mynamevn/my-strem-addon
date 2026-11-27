@@ -50189,12 +50189,13 @@ let animehay = [];
 let animeHayTimeoutHandle;
 
 try {
-    const animeHayTimeoutPromise = new Promise(resolve => {
-        animeHayTimeoutHandle = setTimeout(
-            () => resolve(null),
-            8000
-        );
-    });
+    
+const animeHayTimeoutPromise = new Promise(resolve => {
+    animeHayTimeoutHandle = setTimeout(
+        () => resolve(null),
+        22000
+    );
+});
 
     const animeHayResult = await Promise.race([
         animehayPromise,
